@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   commit_id INTEGER REFERENCES commits(id),
   git_ref TEXT NOT NULL,
   branch TEXT,
+  session_id TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
   reasoning TEXT NOT NULL DEFAULT 'thorough',
@@ -262,6 +263,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add session_id column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_id'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check session_id column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN session_id TEXT`)
+		if err != nil {
+			return fmt.Errorf("add session_id column: %w", err)
+		}
+	}
+
 	// Migration: add output_prefix column to review_jobs if missing
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'output_prefix'`).Scan(&count)
 	if err != nil {
@@ -318,6 +331,7 @@ func (db *DB) migrate() error {
 				commit_id INTEGER REFERENCES commits(id),
 				git_ref TEXT NOT NULL,
 				branch TEXT,
+				session_id TEXT,
 				agent TEXT NOT NULL DEFAULT 'codex',
 				model TEXT,
 				reasoning TEXT NOT NULL DEFAULT 'thorough',
@@ -338,8 +352,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasBranch bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'branch')`)
+		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasBranch, hasSessionID bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'branch', 'session_id')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -355,6 +369,8 @@ func (db *DB) migrate() error {
 					hasModel = true
 				case "branch":
 					hasBranch = true
+				case "session_id":
+					hasSessionID = true
 				}
 			}
 			checkRows.Close()
@@ -367,6 +383,9 @@ func (db *DB) migrate() error {
 		baseCols := []string{"id", "repo_id", "commit_id", "git_ref"}
 		if hasBranch {
 			baseCols = append(baseCols, "branch")
+		}
+		if hasSessionID {
+			baseCols = append(baseCols, "session_id")
 		}
 		baseCols = append(baseCols, "agent")
 		if hasModel {

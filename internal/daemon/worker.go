@@ -445,6 +445,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			outputWriter, &safeWriter{w: logFile},
 		)
 	}
+	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
+		if err := wp.db.SaveJobSessionID(job.ID, sessionID); err != nil {
+			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
+		}
+	})
+	agentOutput = sessionWriter
 
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
@@ -467,6 +473,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput)
+	sessionWriter.Flush()
+	if sessionID := sessionWriter.SessionID(); sessionID != "" {
+		if saveErr := wp.db.SaveJobSessionID(job.ID, sessionID); saveErr != nil {
+			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
+		}
+	}
 	if err != nil {
 		// Check if this was a cancellation
 		if ctx.Err() == context.Canceled {

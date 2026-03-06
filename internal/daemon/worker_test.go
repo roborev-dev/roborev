@@ -1,11 +1,15 @@
 package daemon
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -278,6 +282,89 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	}
 
 	tc.Pool.unregisterRunningJob(job.ID)
+}
+
+type sessionStreamingTestAgent struct {
+	name       string
+	streamLine string
+}
+
+func (a *sessionStreamingTestAgent) Name() string { return a.name }
+
+func (a *sessionStreamingTestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if output != nil {
+		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
+			return "", err
+		}
+	}
+	return "No issues found.", nil
+}
+
+func (a *sessionStreamingTestAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
+	return a
+}
+
+func (a *sessionStreamingTestAgent) WithAgentic(agentic bool) agent.Agent {
+	return a
+}
+
+func (a *sessionStreamingTestAgent) WithModel(model string) agent.Agent {
+	return a
+}
+
+func (a *sessionStreamingTestAgent) CommandLine() string { return a.name }
+
+func TestProcessJob_CapturesSessionID(t *testing.T) {
+	tests := []struct {
+		name       string
+		streamLine string
+		want       string
+	}{
+		{
+			name:       "claude session_id",
+			streamLine: `{"type":"system","subtype":"init","session_id":"claude-session-123"}`,
+			want:       "claude-session-123",
+		},
+		{
+			name:       "codex thread_id",
+			streamLine: `{"type":"thread.started","thread_id":"codex-thread-456"}`,
+			want:       "codex-thread-456",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tcxt := newWorkerTestContext(t, 1)
+			sha := testutil.GetHeadSHA(t, tcxt.TmpDir)
+			agentName := fmt.Sprintf("session-stream-%s", strings.ReplaceAll(tc.name, " ", "-"))
+			agent.Register(&sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine})
+
+			job := tcxt.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+			tcxt.Pool.processJob(testWorkerID, job)
+
+			updated, err := tcxt.DB.GetJobByID(job.ID)
+			if err != nil {
+				t.Fatalf("GetJobByID: %v", err)
+			}
+			if updated.Status != storage.JobStatusDone {
+				t.Fatalf("status=%q, want done", updated.Status)
+			}
+			if updated.SessionID != tc.want {
+				t.Fatalf("session_id=%q, want %q", updated.SessionID, tc.want)
+			}
+
+			review, err := tcxt.DB.GetReviewByJobID(job.ID)
+			if err != nil {
+				t.Fatalf("GetReviewByJobID: %v", err)
+			}
+			if review.Job == nil {
+				t.Fatal("expected joined job on review")
+			}
+			if review.Job.SessionID != tc.want {
+				t.Fatalf("review job session_id=%q, want %q", review.Job.SessionID, tc.want)
+			}
+		})
+	}
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {

@@ -51,6 +51,7 @@ type ReviewJob struct {
 	CommitID     *int64     `json:"commit_id,omitempty"` // nil for ranges
 	GitRef       string     `json:"git_ref"`             // SHA or "start..end" for ranges
 	Branch       string     `json:"branch,omitempty"`    // Branch name at time of job creation
+	SessionID    string     `json:"session_id,omitempty"`
 	Agent        string     `json:"agent"`
 	Model        string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
 	Provider     string     `json:"provider,omitempty"`  // Provider to use (e.g., anthropic, openai)

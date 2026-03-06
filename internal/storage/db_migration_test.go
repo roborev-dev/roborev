@@ -219,6 +219,20 @@ func TestMigrationAddsVerdictBoolColumn(t *testing.T) {
 	}
 }
 
+func TestMigrationAddsSessionIDColumn(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_id'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check session_id column: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("session_id column not found in review_jobs table")
+	}
+}
+
 func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

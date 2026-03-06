@@ -14,14 +14,14 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var closed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	var verdictBool sql.NullInt64
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -30,7 +30,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -50,6 +50,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 	if model.Valid {
 		job.Model = model.String
+	}
+	if sessionID.Valid {
+		job.SessionID = sessionID.String
 	}
 	if jobTypeStr.Valid {
 		job.JobType = jobTypeStr.String
@@ -98,7 +101,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var closed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
@@ -106,7 +109,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var verdictBool sql.NullInt64
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -117,7 +120,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		ORDER BY rv.created_at DESC
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -136,6 +139,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	}
 	if model.Valid {
 		job.Model = model.String
+	}
+	if sessionID.Valid {
+		job.SessionID = sessionID.String
 	}
 	if jobTypeStr.Valid {
 		job.JobType = jobTypeStr.String
@@ -308,7 +314,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	// contains the integer IDs, which are passed to the DB driver for parameterization.
 	// This prevents user-controlled input from being part of the SQL query string itself.
 	jobQuery := fmt.Sprintf(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type
 		FROM review_jobs j
@@ -327,13 +333,13 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, sessionID sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var agentic int
 		var model, branch, jobTypeStr, reviewTypeStr sql.NullString
 
-		if err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
+		if err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &agentic,
 			&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
@@ -348,6 +354,9 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 		}
 		if model.Valid {
 			j.Model = model.String
+		}
+		if sessionID.Valid {
+			j.SessionID = sessionID.String
 		}
 		if branch.Valid {
 			j.Branch = branch.String

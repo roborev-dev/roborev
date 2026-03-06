@@ -894,7 +894,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
 	var prompt sql.NullString
-	var model, provider, branch sql.NullString
+	var model, provider, branch, sessionID sql.NullString
 	var agenticInt int
 	var jobType sql.NullString
 	var reviewType sql.NullString
@@ -902,7 +902,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var patchID sql.NullString
 	var parentJobID sql.NullInt64
 	err = db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.provider, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id
 		FROM review_jobs j
@@ -911,7 +911,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE j.worker_id = ? AND j.status = 'running'
 		ORDER BY j.started_at DESC
 		LIMIT 1
-	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &provider, &job.Reasoning, &job.Status, &enqueuedAt,
+	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &model, &provider, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt, &jobType, &reviewType,
 		&outputPrefix, &patchID, &parentJobID)
 	if err != nil {
@@ -939,6 +939,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	if branch.Valid {
 		job.Branch = branch.String
 	}
+	if sessionID.Valid {
+		job.SessionID = sessionID.String
+	}
 	job.Agentic = agenticInt != 0
 	if jobType.Valid {
 		job.JobType = jobType.String
@@ -965,6 +968,21 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 // SaveJobPrompt stores the prompt for a running job
 func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 	_, err := db.Exec(`UPDATE review_jobs SET prompt = ? WHERE id = ?`, prompt, jobID)
+	return err
+}
+
+// SaveJobSessionID stores the captured agent session ID for a job.
+// The first captured ID wins so repeated lifecycle events do not overwrite it.
+func (db *DB) SaveJobSessionID(jobID int64, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	now := time.Now().Format(time.RFC3339)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET session_id = ?, updated_at = ?
+		WHERE id = ? AND (session_id IS NULL OR session_id = '')
+	`, sessionID, now, jobID)
 	return err
 }
 
@@ -1244,7 +1262,7 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	// Reset job status
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
 	`, jobID)
 	if err != nil {
@@ -1276,13 +1294,13 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int) (bool, erro
 	if workerID != "" {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL
 			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
 		`, jobID, maxRetries, workerID)
 	} else {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL
 			WHERE id = ? AND retry_count < ? AND status = 'running'
 		`, jobID, maxRetries)
 	}
@@ -1317,7 +1335,8 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 		    worker_id = NULL,
 		    started_at = NULL,
 		    finished_at = NULL,
-		    error = NULL
+		    error = NULL,
+		    session_id = NULL
 		WHERE id = ?
 		  AND status = 'running'
 		  AND worker_id = ?
@@ -1406,7 +1425,7 @@ func escapeLike(s string) string {
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
@@ -1489,14 +1508,14 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr, provider sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, sessionID, jobTypeStr, reviewTypeStr, patchIDStr, provider sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var closed sql.NullInt64
 		var agentic int
 		var parentJobID sql.NullInt64
 
-		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
+		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &closed, &output,
 			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
@@ -1538,6 +1557,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if model.Valid {
 			j.Model = model.String
+		}
+		if sessionID.Valid {
+			j.SessionID = sessionID.String
 		}
 		if provider.Valid {
 			j.Provider = provider.String
@@ -1630,7 +1652,7 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var j ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, prompt sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, prompt, sessionID sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 	var agentic int
@@ -1639,7 +1661,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 
 	var model, provider, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	err := db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.patch
@@ -1647,7 +1669,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
-	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
+	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
 		&j.RepoPath, &j.RepoName, &commitSubject, &model, &provider, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&parentJobID, &patch)
@@ -1679,6 +1701,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if prompt.Valid {
 		j.Prompt = prompt.String
+	}
+	if sessionID.Valid {
+		j.SessionID = sessionID.String
 	}
 	if model.Valid {
 		j.Model = model.String
