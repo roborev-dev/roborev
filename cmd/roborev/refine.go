@@ -365,16 +365,21 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	// Resolve model for refine workflow at this reasoning level
 	resolvedModel := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "refine", resolvedReasoning)
 
-	// Get the agent with configured reasoning level and model
-	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, resolvedModel, backupAgent)
-	if err == nil && backupAgent != "" && opts.model == "" {
-		preferredRefine := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
-		if agent.CanonicalName(addressAgent.Name()) == agent.CanonicalName(backupAgent) &&
-			agent.CanonicalName(addressAgent.Name()) != agent.CanonicalName(preferredRefine) {
-			bm := config.ResolveBackupModelForWorkflow(repoPath, cfg, "refine")
-			if bm != "" {
-				addressAgent = addressAgent.WithModel(bm)
+	// Get the agent with configured reasoning level (model applied after
+	// backup determination to avoid baking the primary model into a
+	// backup agent).
+	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, backupAgent)
+	if err == nil {
+		model := resolvedModel
+		if backupAgent != "" && opts.model == "" {
+			preferredRefine := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
+			if agent.CanonicalName(addressAgent.Name()) == agent.CanonicalName(backupAgent) &&
+				agent.CanonicalName(addressAgent.Name()) != agent.CanonicalName(preferredRefine) {
+				model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "refine")
 			}
+		}
+		if model != "" {
+			addressAgent = addressAgent.WithModel(model)
 		}
 	}
 	if err != nil {
@@ -1160,10 +1165,10 @@ func verifyRepoState(
 	return nil
 }
 
-func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string, backups ...string) (agent.Agent, error) {
+func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, backups ...string) (agent.Agent, error) {
 	baseAgent, err := agent.GetAvailableWithConfig(resolvedAgent, cfg, backups...)
 	if err != nil {
 		return nil, err
 	}
-	return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
+	return baseAgent.WithReasoning(reasoningLevel), nil
 }

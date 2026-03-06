@@ -402,7 +402,10 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 
 	// Configure agent with model and reasoning
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a = a.WithReasoning(reasoningLevel).WithModel(model)
+	a = a.WithReasoning(reasoningLevel)
+	if model != "" {
+		a = a.WithModel(model)
+	}
 
 	// Configure provider for pi agent
 	if provider != "" {
