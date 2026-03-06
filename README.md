@@ -176,14 +176,14 @@ command = "notify-send 'Review done for {repo_name} ({sha})'"
 
 Template variables: `{job_id}`, `{repo}`, `{repo_name}`, `{sha}`, `{verdict}`, `{error}`.
 
-For webhook destinations like Slack, Discord, or Teams, use the built-in
-`webhook` hook type to POST the review event JSON directly:
+For generic JSON webhook endpoints, use the built-in `webhook` hook type to
+POST the review event directly:
 
 ```toml
 [[hooks]]
 event = "review.completed"
 type = "webhook"
-url = "https://hooks.slack.com/services/T.../B.../xxx"
+url = "https://example.com/roborev-webhook"
 ```
 
 ### Beads Integration
