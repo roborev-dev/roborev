@@ -305,6 +305,24 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
+	// Cancel any in-progress batches for this PR at an older HEAD SHA.
+	// When a PR gets a new push, work on the old HEAD is wasted.
+	// This runs before the throttle check so superseding pushes are
+	// never delayed by the batch they're replacing.
+	if canceledIDs, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
+		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
+	} else if len(canceledIDs) > 0 {
+		headShort := gitpkg.ShortSHA(pr.HeadRefOid)
+		log.Printf("CI poller: canceled %d superseded jobs for %s#%d (new HEAD=%s)",
+			len(canceledIDs), ghRepo, pr.Number, headShort)
+		// Also kill running worker processes so they stop consuming compute.
+		if p.jobCancelFn != nil {
+			for _, jid := range canceledIDs {
+				p.jobCancelFn(jid)
+			}
+		}
+	}
+
 	// Throttle: skip if this PR was reviewed recently (any SHA).
 	// Bypass users are never throttled.
 	throttle := cfg.CI.ResolvedThrottleInterval()
@@ -443,24 +461,6 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 	if _, err = config.ValidateReviewTypes(rtList); err != nil {
 		return err
-	}
-
-	// Cancel any in-progress batches for this PR at an older HEAD SHA.
-	// When a PR gets a new push, work on the old HEAD is wasted.
-	// This runs before the empty-matrix guard so superseded work is
-	// always cleaned up, even when config changes remove all reviews.
-	if canceledIDs, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
-		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
-	} else if len(canceledIDs) > 0 {
-		headShort := gitpkg.ShortSHA(pr.HeadRefOid)
-		log.Printf("CI poller: canceled %d superseded jobs for %s#%d (new HEAD=%s)",
-			len(canceledIDs), ghRepo, pr.Number, headShort)
-		// Also kill running worker processes so they stop consuming compute.
-		if p.jobCancelFn != nil {
-			for _, jid := range canceledIDs {
-				p.jobCancelFn(jid)
-			}
-		}
 	}
 
 	if len(matrix) == 0 {
