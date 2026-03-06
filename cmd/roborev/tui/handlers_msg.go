@@ -163,7 +163,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 		switch nav {
 		case viewReview:
-			nextIdx := m.findNextViewableJob()
+			nextIdx := m.findPrevViewableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
@@ -182,7 +182,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case viewKindPrompt:
-			nextIdx := m.findNextPromptableJob()
+			nextIdx := m.findPrevPromptableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
@@ -199,7 +199,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case viewLog:
-			nextIdx := m.findNextLoggableJob()
+			nextIdx := m.findPrevLoggableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()

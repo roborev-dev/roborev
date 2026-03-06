@@ -81,11 +81,11 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHomeKey()
 	case "up":
 		return m.handleUpKey()
-	case "k", "left":
+	case "j", "left":
 		return m.handlePrevKey()
 	case "down":
 		return m.handleDownKey()
-	case "j", "right":
+	case "k", "right":
 		return m.handleNextKey()
 	case "pgup":
 		return m.handlePageUpKey()
@@ -224,7 +224,7 @@ func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
+func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
 		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
@@ -233,7 +233,7 @@ func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 			m.updateSelectedJobID()
 		}
 	case viewReview:
-		prevIdx := m.findPrevViewableJob()
+		prevIdx := m.findNextViewableJob()
 		if prevIdx >= 0 {
 			m.closeFixPanel()
 			m.selectedIdx = prevIdx
@@ -255,7 +255,7 @@ func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 			m.setFlash("No newer review", 2*time.Second, viewReview)
 		}
 	case viewKindPrompt:
-		prevIdx := m.findPrevPromptableJob()
+		prevIdx := m.findNextPromptableJob()
 		if prevIdx >= 0 {
 			m.selectedIdx = prevIdx
 			m.updateSelectedJobID()
@@ -275,7 +275,7 @@ func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 		}
 	case viewLog:
 		if m.logFromView == viewTasks {
-			idx := m.findPrevLoggableFixJob()
+			idx := m.findNextLoggableFixJob()
 			if idx >= 0 {
 				m.fixSelectedIdx = idx
 				job := m.fixJobs[idx]
@@ -285,7 +285,7 @@ func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 				)
 			}
 		} else {
-			prevIdx := m.findPrevLoggableJob()
+			prevIdx := m.findNextLoggableJob()
 			if prevIdx >= 0 {
 				m.selectedIdx = prevIdx
 				m.updateSelectedJobID()
@@ -335,7 +335,7 @@ func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleNextKey() (tea.Model, tea.Cmd) {
+func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
 		nextIdx := m.findNextVisibleJob(m.selectedIdx)
@@ -350,7 +350,7 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 			return m, m.fetchMoreJobs()
 		}
 	case viewReview:
-		nextIdx := m.findNextViewableJob()
+		nextIdx := m.findPrevViewableJob()
 		if nextIdx >= 0 {
 			m.closeFixPanel()
 			m.selectedIdx = nextIdx
@@ -376,7 +376,7 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 			m.setFlash("No older review", 2*time.Second, viewReview)
 		}
 	case viewKindPrompt:
-		nextIdx := m.findNextPromptableJob()
+		nextIdx := m.findPrevPromptableJob()
 		if nextIdx >= 0 {
 			m.selectedIdx = nextIdx
 			m.updateSelectedJobID()
@@ -400,7 +400,7 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 		}
 	case viewLog:
 		if m.logFromView == viewTasks {
-			idx := m.findNextLoggableFixJob()
+			idx := m.findPrevLoggableFixJob()
 			if idx >= 0 {
 				m.fixSelectedIdx = idx
 				job := m.fixJobs[idx]
@@ -410,7 +410,7 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 				)
 			}
 		} else {
-			nextIdx := m.findNextLoggableJob()
+			nextIdx := m.findPrevLoggableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()

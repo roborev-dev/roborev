@@ -12,22 +12,22 @@ func (m *model) updateSelectedJobID() {
 	}
 }
 
-// findNextViewableJob finds the next job that can be viewed (done or failed).
-// Respects active filters. Returns the index or -1 if none found.
-func (m *model) findNextViewableJob() int {
-	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
-		job := m.jobs[i]
-		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
-			m.isJobVisible(job) {
-			return i
-		}
-	}
-	return -1
-}
-
-// findPrevViewableJob finds the previous job that can be viewed (done or failed).
+// findPrevViewableJob finds the previous (older, lower ID) viewable job.
 // Respects active filters. Returns the index or -1 if none found.
 func (m *model) findPrevViewableJob() int {
+	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
+		job := m.jobs[i]
+		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
+			m.isJobVisible(job) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findNextViewableJob finds the next (newer, higher ID) viewable job.
+// Respects active filters. Returns the index or -1 if none found.
+func (m *model) findNextViewableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
@@ -38,22 +38,22 @@ func (m *model) findPrevViewableJob() int {
 	return -1
 }
 
-// findNextPromptableJob finds the next job that has a viewable prompt (done or running with prompt).
-// Respects active filters. Returns the index or -1 if none found.
-func (m *model) findNextPromptableJob() int {
-	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
-		job := m.jobs[i]
-		if m.isJobVisible(job) &&
-			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
-			return i
-		}
-	}
-	return -1
-}
-
-// findPrevPromptableJob finds the previous job that has a viewable prompt (done or running with prompt).
+// findPrevPromptableJob finds the previous (older) job with a viewable prompt.
 // Respects active filters. Returns the index or -1 if none found.
 func (m *model) findPrevPromptableJob() int {
+	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
+		job := m.jobs[i]
+		if m.isJobVisible(job) &&
+			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findNextPromptableJob finds the next (newer) job with a viewable prompt.
+// Respects active filters. Returns the index or -1 if none found.
+func (m *model) findNextPromptableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if m.isJobVisible(job) &&
@@ -64,9 +64,9 @@ func (m *model) findPrevPromptableJob() int {
 	return -1
 }
 
-// findNextLoggableJob finds the next job that has a log
-// (running, done, or failed). Respects active filters.
-func (m *model) findNextLoggableJob() int {
+// findPrevLoggableJob finds the previous (older) job with a log.
+// Respects active filters.
+func (m *model) findPrevLoggableJob() int {
 	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
 		job := m.jobs[i]
 		if job.Status != storage.JobStatusQueued &&
@@ -77,9 +77,9 @@ func (m *model) findNextLoggableJob() int {
 	return -1
 }
 
-// findPrevLoggableJob finds the previous job that has a log
-// (running, done, or failed). Respects active filters.
-func (m *model) findPrevLoggableJob() int {
+// findNextLoggableJob finds the next (newer) job with a log.
+// Respects active filters.
+func (m *model) findNextLoggableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if job.Status != storage.JobStatusQueued &&
@@ -90,8 +90,8 @@ func (m *model) findPrevLoggableJob() int {
 	return -1
 }
 
-// findNextLoggableFixJob finds the next fix job that has a log.
-func (m *model) findNextLoggableFixJob() int {
+// findPrevLoggableFixJob finds the previous (older) fix job with a log.
+func (m *model) findPrevLoggableFixJob() int {
 	for i := m.fixSelectedIdx + 1; i < len(m.fixJobs); i++ {
 		if m.fixJobs[i].Status != storage.JobStatusQueued {
 			return i
@@ -100,9 +100,8 @@ func (m *model) findNextLoggableFixJob() int {
 	return -1
 }
 
-// findPrevLoggableFixJob finds the previous fix job that has a
-// log.
-func (m *model) findPrevLoggableFixJob() int {
+// findNextLoggableFixJob finds the next (newer) fix job with a log.
+func (m *model) findNextLoggableFixJob() int {
 	for i := m.fixSelectedIdx - 1; i >= 0; i-- {
 		if m.fixJobs[i].Status != storage.JobStatusQueued {
 			return i

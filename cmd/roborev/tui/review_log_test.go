@@ -341,10 +341,10 @@ func TestTUILogNavFromTasks(t *testing.T) {
 	}
 	m.selectedIdx = 0
 
-	// Right arrow -> next fix job (ID 30)
-	m2, cmd := pressSpecial(m, tea.KeyRight)
+	// Left arrow -> prev (older) fix job (ID 30, index 2)
+	m2, cmd := pressSpecial(m, tea.KeyLeft)
 	if cmd == nil {
-		t.Fatal("expected command from right arrow nav")
+		t.Fatal("expected command from left arrow nav")
 	}
 	if m2.fixSelectedIdx != 2 {
 		t.Errorf(
@@ -360,10 +360,10 @@ func TestTUILogNavFromTasks(t *testing.T) {
 		)
 	}
 
-	// Left arrow from index 1 -> prev fix job (ID 10)
-	m3, cmd := pressSpecial(m, tea.KeyLeft)
+	// Right arrow from index 1 -> next (newer) fix job (ID 10, index 0)
+	m3, cmd := pressSpecial(m, tea.KeyRight)
 	if cmd == nil {
-		t.Fatal("expected command from left arrow nav")
+		t.Fatal("expected command from right arrow nav")
 	}
 	if m3.fixSelectedIdx != 0 {
 		t.Errorf(
