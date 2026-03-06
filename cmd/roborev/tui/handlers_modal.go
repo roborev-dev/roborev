@@ -253,7 +253,7 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "q":
+	case "ctrl+d", "esc", "q":
 		m.currentView = m.logFromView
 		m.logStreaming = false
 		return m, nil
@@ -329,7 +329,7 @@ func (m model) handleWorktreeConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "n":
+	case "ctrl+d", "esc", "n":
 		m.currentView = viewTasks
 		m.worktreeConfirmJobID = 0
 		m.worktreeConfirmBranch = ""
@@ -347,7 +347,7 @@ func (m model) handleWorktreeConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleTasksKey handles key input in the tasks view.
 func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c", "ctrl+d", "q":
 		return m, tea.Quit
 	case "esc", "T":
 		m.currentView = viewQueue
@@ -504,7 +504,7 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "q":
+	case "ctrl+d", "esc", "q":
 		m.currentView = viewTasks
 		m.patchText = ""
 		m.patchScroll = 0

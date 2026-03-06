@@ -75,7 +75,7 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // handleGlobalKey handles keys shared across queue, review, prompt, commit msg, and help views.
 func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c", "ctrl+d", "q":
 		return m.handleQuitKey()
 	case "home", "g":
 		return m.handleHomeKey()
