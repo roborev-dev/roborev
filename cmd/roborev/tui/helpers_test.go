@@ -599,6 +599,9 @@ func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
 	if !strings.Contains(stripTestANSI(disabled), "Trigger fix for selected review (disabled)") {
 		t.Fatalf("expected disabled F entry in help, got:\n%s", stripTestANSI(disabled))
 	}
+	if !strings.Contains(stripTestANSI(disabled), "Trigger fix (opens inline panel) (disabled)") {
+		t.Fatalf("expected disabled review-view F entry in help, got:\n%s", stripTestANSI(disabled))
+	}
 	if !strings.Contains(stripTestANSI(disabled), "Open Tasks view (disabled)") {
 		t.Fatalf("expected disabled T entry in help, got:\n%s", stripTestANSI(disabled))
 	}

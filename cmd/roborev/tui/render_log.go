@@ -221,6 +221,10 @@ func helpLines(tasksEnabled bool) []string {
 			continue
 		}
 		for _, k := range g.keys {
+			if g.group == "Review View" && k.key == "F" && !tasksEnabled {
+				lines = append(lines, disabledHelpLine(k.key, k.desc))
+				continue
+			}
 			lines = append(lines, formatHelpLine(k.key, k.desc))
 		}
 		if g.group == "Actions" {
