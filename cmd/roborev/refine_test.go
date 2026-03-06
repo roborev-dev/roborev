@@ -1050,6 +1050,13 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 		t.Fatalf("agent.Get: %v", err)
 	}
 
+	// Config with distinct primary and backup models so we can tell
+	// which resolution path was taken.
+	cfg := &config.Config{
+		ReviewModel:       "primary-model",
+		ReviewBackupModel: "backup-model",
+	}
+
 	// Primary and backup are the same agent. The helper should NOT
 	// treat this as "using backup" — the CanonicalName comparison
 	// against preferredAgent must prevent that.
@@ -1059,7 +1066,7 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 		"codex", // backup (same as preferred)
 		"",      // no CLI model
 		"",      // no repo path
-		nil,     // no config
+		cfg,
 		"review",
 		"standard",
 	)
@@ -1068,11 +1075,14 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *CodexAgent, got %T", result)
 	}
-	// Should NOT have picked a backup model — agent is the primary.
-	if codexAgent.Model != "" && model != "" {
+	// Should pick the primary workflow model, not the backup.
+	if model != "primary-model" {
+		t.Errorf("expected primary model %q, got %q", "primary-model", model)
+	}
+	if codexAgent.Model != "primary-model" {
 		t.Errorf(
-			"same-agent primary+backup should use workflow model (empty with nil config), got model=%q",
-			codexAgent.Model,
+			"expected agent model %q, got %q",
+			"primary-model", codexAgent.Model,
 		)
 	}
 }
