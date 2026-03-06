@@ -120,7 +120,18 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	}
 }
 
-func TestTUICtrlDQuitsFromReviewView(t *testing.T) {
+func TestTUICtrlDQuitsFromQueueView(t *testing.T) {
+	m := initTestModel(withCurrentView(viewQueue))
+
+	_, cmd := pressSpecial(m, tea.KeyCtrlD)
+
+	if cmd == nil {
+		t.Fatal("Expected quit command")
+	}
+	assertMsgType[tea.QuitMsg](t, cmd())
+}
+
+func TestTUICtrlDNavigatesBackFromReviewView(t *testing.T) {
 	job := makeJob(1)
 	m := initTestModel(
 		withCurrentView(viewReview),
@@ -128,16 +139,12 @@ func TestTUICtrlDQuitsFromReviewView(t *testing.T) {
 		withReviewFromView(viewQueue),
 	)
 
-	got, cmd := pressSpecial(m, tea.KeyCtrlD)
+	got, _ := pressSpecial(m, tea.KeyCtrlD)
 
-	assertView(t, got, viewReview)
-	if cmd == nil {
-		t.Fatal("Expected quit command")
-	}
-	assertMsgType[tea.QuitMsg](t, cmd())
+	assertView(t, got, viewQueue)
 }
 
-func TestTUICtrlDQuitsFromCommentModal(t *testing.T) {
+func TestTUICtrlDNoOpInCommentModal(t *testing.T) {
 	m := initTestModel(withCurrentView(viewKindComment))
 	m.commentFromView = viewQueue
 	m.commentText = "draft comment"
@@ -147,15 +154,14 @@ func TestTUICtrlDQuitsFromCommentModal(t *testing.T) {
 
 	assertView(t, got, viewKindComment)
 	if got.commentText != "draft comment" {
-		t.Errorf("Expected comment text to remain unchanged, got %q", got.commentText)
+		t.Errorf("Expected comment text preserved, got %q", got.commentText)
 	}
 	if got.commentJobID != 42 {
-		t.Errorf("Expected comment job ID to remain unchanged, got %d", got.commentJobID)
+		t.Errorf("Expected comment job ID preserved, got %d", got.commentJobID)
 	}
-	if cmd == nil {
-		t.Fatal("Expected quit command")
+	if cmd != nil {
+		t.Fatal("Expected no command from Ctrl-D in comment modal")
 	}
-	assertMsgType[tea.QuitMsg](t, cmd())
 }
 
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
