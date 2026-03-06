@@ -72,15 +72,15 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 			m.pendingClosed[job.ID] = pendingState{newState: newState, seq: seq}
 			m.applyStatsDelta(newState)
 			if m.hideClosed && newState {
-				nextIdx := m.findNextVisibleJob(m.selectedIdx)
-				if nextIdx < 0 {
-					nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+				idx := m.findPrevVisibleJob(m.selectedIdx)
+				if idx < 0 {
+					idx = m.findNextVisibleJob(m.selectedIdx)
 				}
-				if nextIdx < 0 {
-					nextIdx = m.findFirstVisibleJob()
+				if idx < 0 {
+					idx = m.findFirstVisibleJob()
 				}
-				if nextIdx >= 0 {
-					m.selectedIdx = nextIdx
+				if idx >= 0 {
+					m.selectedIdx = idx
 					m.updateSelectedJobID()
 				}
 			}
@@ -103,15 +103,15 @@ func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 		job.FinishedAt = &now
 		// Canceled jobs are hidden when hideClosed is active
 		if m.hideClosed {
-			nextIdx := m.findNextVisibleJob(m.selectedIdx)
-			if nextIdx < 0 {
-				nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+			idx := m.findPrevVisibleJob(m.selectedIdx)
+			if idx < 0 {
+				idx = m.findNextVisibleJob(m.selectedIdx)
 			}
-			if nextIdx < 0 {
-				nextIdx = m.findFirstVisibleJob()
+			if idx < 0 {
+				idx = m.findFirstVisibleJob()
 			}
-			if nextIdx >= 0 {
-				m.selectedIdx = nextIdx
+			if idx >= 0 {
+				m.selectedIdx = idx
 				m.updateSelectedJobID()
 			}
 		}

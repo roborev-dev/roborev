@@ -393,10 +393,10 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 	}
 
 	// Simulate what happens in 'a' handler - selection should move
-	// Since job 2 is now hidden, find next visible
-	nextIdx := m.findNextVisibleJob(m.selectedIdx)
-	if nextIdx != 2 {
-		t.Errorf("Expected next visible job at index 2, got %d", nextIdx)
+	// Since job 2 is now hidden, find prev (older) visible job
+	prevIdx := m.findPrevVisibleJob(m.selectedIdx)
+	if prevIdx != 2 {
+		t.Errorf("Expected prev visible job at index 2, got %d", prevIdx)
 	}
 }
 

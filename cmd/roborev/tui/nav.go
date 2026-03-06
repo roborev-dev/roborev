@@ -160,22 +160,23 @@ func (m *model) logHelpRows() [][]helpItem {
 // Call this when returning to queue view from review view.
 func (m *model) normalizeSelectionIfHidden() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
-		nextIdx := m.findNextVisibleJob(m.selectedIdx)
-		if nextIdx < 0 {
-			nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+		idx := m.findPrevVisibleJob(m.selectedIdx)
+		if idx < 0 {
+			idx = m.findNextVisibleJob(m.selectedIdx)
 		}
-		if nextIdx < 0 {
-			nextIdx = m.findFirstVisibleJob()
+		if idx < 0 {
+			idx = m.findFirstVisibleJob()
 		}
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
+		if idx >= 0 {
+			m.selectedIdx = idx
 			m.updateSelectedJobID()
 		}
 	}
 }
 
-// findNextVisibleJob returns the first visible job index after currentIdx.
-func (m model) findNextVisibleJob(currentIdx int) int {
+// findPrevVisibleJob returns the first visible job at a higher index
+// (older, lower ID) than currentIdx.
+func (m model) findPrevVisibleJob(currentIdx int) int {
 	for i := currentIdx + 1; i < len(m.jobs); i++ {
 		if m.isJobVisible(m.jobs[i]) {
 			return i
@@ -184,8 +185,9 @@ func (m model) findNextVisibleJob(currentIdx int) int {
 	return -1
 }
 
-// findPrevVisibleJob returns the first visible job index before currentIdx.
-func (m model) findPrevVisibleJob(currentIdx int) int {
+// findNextVisibleJob returns the first visible job at a lower index
+// (newer, higher ID) than currentIdx.
+func (m model) findNextVisibleJob(currentIdx int) int {
 	for i := currentIdx - 1; i >= 0; i-- {
 		if m.isJobVisible(m.jobs[i]) {
 			return i

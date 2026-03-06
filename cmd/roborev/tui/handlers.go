@@ -197,9 +197,9 @@ func (m model) handleHomeKey() (tea.Model, tea.Cmd) {
 func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-		if prevIdx >= 0 {
-			m.selectedIdx = prevIdx
+		nextIdx := m.findNextVisibleJob(m.selectedIdx)
+		if nextIdx >= 0 {
+			m.selectedIdx = nextIdx
 			m.updateSelectedJobID()
 		} else {
 			m.setFlash("No newer review", 2*time.Second, viewQueue)
@@ -227,7 +227,7 @@ func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		nextIdx := m.findPrevVisibleJob(m.selectedIdx)
+		nextIdx := m.findNextVisibleJob(m.selectedIdx)
 		if nextIdx >= 0 {
 			m.selectedIdx = nextIdx
 			m.updateSelectedJobID()
@@ -304,11 +304,11 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		nextIdx := m.findNextVisibleJob(m.selectedIdx)
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
+		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
+		if prevIdx >= 0 {
+			m.selectedIdx = prevIdx
 			m.updateSelectedJobID()
-			if cmd := m.maybePrefetch(nextIdx); cmd != nil {
+			if cmd := m.maybePrefetch(prevIdx); cmd != nil {
 				return m, cmd
 			}
 		} else if m.canPaginate() {
@@ -338,7 +338,7 @@ func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevIdx := m.findNextVisibleJob(m.selectedIdx)
+		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
 		if prevIdx >= 0 {
 			m.selectedIdx = prevIdx
 			m.updateSelectedJobID()
@@ -435,11 +435,11 @@ func (m model) handlePageUpKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
 		for range pageSize {
-			prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-			if prevIdx < 0 {
+			nextIdx := m.findNextVisibleJob(m.selectedIdx)
+			if nextIdx < 0 {
 				break
 			}
-			m.selectedIdx = prevIdx
+			m.selectedIdx = nextIdx
 		}
 		m.updateSelectedJobID()
 	case viewReview:
@@ -466,12 +466,12 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 	case viewQueue:
 		reachedEnd := false
 		for range pageSize {
-			nextIdx := m.findNextVisibleJob(m.selectedIdx)
-			if nextIdx < 0 {
+			prevIdx := m.findPrevVisibleJob(m.selectedIdx)
+			if prevIdx < 0 {
 				reachedEnd = true
 				break
 			}
-			m.selectedIdx = nextIdx
+			m.selectedIdx = prevIdx
 		}
 		m.updateSelectedJobID()
 		if reachedEnd && m.canPaginate() {
