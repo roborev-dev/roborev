@@ -30,7 +30,10 @@ When the user invokes `/roborev:fix [job_id...]`:
 **Check the conversation first.** If the user has already pasted review
 findings (verdicts, severities, file paths, suggested fixes), use those
 directly. Do not re-fetch reviews that are already present in the
-conversation.
+conversation. When reusing pasted findings, collect any job IDs mentioned
+alongside them — step 5 needs these to comment on and close the reviews.
+If job IDs are missing from the pasted output, discover them via
+`roborev fix --open --list` before closing.
 
 If job IDs are provided and findings are NOT already in the conversation,
 fetch them:

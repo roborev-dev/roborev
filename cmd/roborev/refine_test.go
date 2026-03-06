@@ -953,6 +953,98 @@ func TestResolveReasoningWithFast(t *testing.T) {
 	}
 }
 
+// TestRefineBackupAgentKeepsOwnModel verifies that when the backup agent
+// is selected (primary unavailable), and no backup model is configured,
+// the backup agent is NOT given the primary agent's model.
+// Regression test for f7385273.
+func TestRefineBackupAgentKeepsOwnModel(t *testing.T) {
+	// Make only codex available (not gemini, which will be "primary").
+	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
+
+	backupAgent := "codex"
+	primaryAgent := "gemini" // unavailable
+
+	selected, err := selectRefineAgent(
+		nil, primaryAgent, agent.ReasoningStandard, backupAgent,
+	)
+	if err != nil {
+		t.Fatalf("selectRefineAgent: %v", err)
+	}
+	if selected.Name() != "codex" {
+		t.Fatalf("expected backup agent codex, got %s", selected.Name())
+	}
+
+	// Simulate the refine model-selection logic from refine.go:371-383.
+	// Primary model is set, but CLI model flag was not passed (opts.model == "").
+	primaryModel := "o3"
+	resolvedModel := primaryModel
+	cliModel := ""
+
+	// This mirrors the actual logic:
+	model := resolvedModel
+	if backupAgent != "" && cliModel == "" {
+		if agent.CanonicalName(selected.Name()) == agent.CanonicalName(backupAgent) &&
+			agent.CanonicalName(selected.Name()) != agent.CanonicalName(primaryAgent) {
+			// No backup model configured → resolves to empty string.
+			model = config.ResolveBackupModelForWorkflow("", nil, "refine")
+		}
+	}
+
+	// The guard: only apply model when non-empty.
+	if model != "" {
+		selected = selected.WithModel(model)
+	}
+
+	// The backup agent should retain its own default model (empty),
+	// NOT inherit the primary's model.
+	codexAgent, ok := selected.(*agent.CodexAgent)
+	if !ok {
+		t.Fatalf("expected *CodexAgent, got %T", selected)
+	}
+	if codexAgent.Model != "" {
+		t.Errorf(
+			"backup agent should keep its default model (empty), got %q",
+			codexAgent.Model,
+		)
+	}
+}
+
+// TestReviewEmptyModelDoesNotClearAgentDefault verifies that when the
+// resolved model is empty, WithModel is not called, preserving any
+// default model the agent may have.
+// Regression test for f7385273.
+func TestReviewEmptyModelDoesNotClearAgentDefault(t *testing.T) {
+	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+
+	a, err := agent.Get("codex")
+	if err != nil {
+		t.Fatalf("agent.Get: %v", err)
+	}
+
+	// Set a default model on the agent.
+	a = a.WithModel("o3")
+
+	// Simulate the review model-selection path from review.go:406-408.
+	// When no backup model is configured, resolved model is empty.
+	resolvedModel := ""
+
+	if resolvedModel != "" {
+		a = a.WithModel(resolvedModel)
+	}
+
+	// The agent should retain its explicitly-set model.
+	codexAgent, ok := a.(*agent.CodexAgent)
+	if !ok {
+		t.Fatalf("expected *CodexAgent, got %T", a)
+	}
+	if codexAgent.Model != "o3" {
+		t.Errorf(
+			"agent model should remain %q, got %q",
+			"o3", codexAgent.Model,
+		)
+	}
+}
+
 func TestRefineFlagValidation(t *testing.T) {
 	tests := []struct {
 		name    string

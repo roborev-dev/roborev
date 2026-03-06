@@ -17,8 +17,7 @@ Request a design review for a commit and present the results.
 
 Do NOT invoke this skill when the user is presenting or pasting existing review
 results. Messages that contain review findings, verdicts, or summaries are
-outputs — not requests to start a new review. Only invoke when the user
-explicitly uses the `/roborev:design-review` slash command.
+outputs — not requests to start a new review.
 
 ## IMPORTANT
 
