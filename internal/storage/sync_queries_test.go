@@ -433,6 +433,87 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	})
 }
 
+func TestSessionID_SyncRoundTrip(t *testing.T) {
+	// Verify session_id survives the SQLite export → PulledJob → SQLite
+	// import cycle. This catches column-order or placeholder mismatches
+	// in GetJobsToSync and UpsertPulledJob that unit tests won't.
+	src := newSyncTestHelper(t)
+
+	// Create a completed job and set its session_id.
+	job := src.createCompletedJob("session-sync-sha")
+	_, err := src.db.Exec(
+		`UPDATE review_jobs SET session_id = ? WHERE id = ?`,
+		"agent-session-abc", job.ID)
+	if err != nil {
+		t.Fatalf("set session_id: %v", err)
+	}
+
+	// Export from source DB.
+	exported, err := src.db.GetJobsToSync(src.machineID, 10)
+	if err != nil {
+		t.Fatalf("GetJobsToSync: %v", err)
+	}
+	var syncJob *SyncableJob
+	for i := range exported {
+		if exported[i].ID == job.ID {
+			syncJob = &exported[i]
+			break
+		}
+	}
+	if syncJob == nil {
+		t.Fatal("completed job not returned by GetJobsToSync")
+	}
+	if syncJob.SessionID != "agent-session-abc" {
+		t.Fatalf("exported SessionID = %q, want %q",
+			syncJob.SessionID, "agent-session-abc")
+	}
+
+	// Import into a fresh destination DB via UpsertPulledJob.
+	dst := newSyncTestHelper(t)
+	pulled := PulledJob{
+		UUID:            syncJob.UUID,
+		RepoIdentity:    syncJob.RepoIdentity,
+		CommitSHA:       syncJob.CommitSHA,
+		CommitAuthor:    syncJob.CommitAuthor,
+		CommitSubject:   syncJob.CommitSubject,
+		CommitTimestamp: syncJob.CommitTimestamp,
+		GitRef:          syncJob.GitRef,
+		SessionID:       syncJob.SessionID,
+		Agent:           syncJob.Agent,
+		Model:           syncJob.Model,
+		Reasoning:       syncJob.Reasoning,
+		JobType:         syncJob.JobType,
+		ReviewType:      syncJob.ReviewType,
+		PatchID:         syncJob.PatchID,
+		Status:          syncJob.Status,
+		Agentic:         syncJob.Agentic,
+		EnqueuedAt:      syncJob.EnqueuedAt,
+		StartedAt:       syncJob.StartedAt,
+		FinishedAt:      syncJob.FinishedAt,
+		Prompt:          syncJob.Prompt,
+		DiffContent:     syncJob.DiffContent,
+		Error:           syncJob.Error,
+		SourceMachineID: syncJob.SourceMachineID,
+		UpdatedAt:       syncJob.UpdatedAt,
+	}
+	if err := dst.db.UpsertPulledJob(pulled, dst.repo.ID, nil); err != nil {
+		t.Fatalf("UpsertPulledJob: %v", err)
+	}
+
+	// Verify session_id survived the round-trip.
+	var gotSessionID sql.NullString
+	err = dst.db.QueryRow(
+		`SELECT session_id FROM review_jobs WHERE uuid = ?`,
+		syncJob.UUID).Scan(&gotSessionID)
+	if err != nil {
+		t.Fatalf("query imported session_id: %v", err)
+	}
+	if !gotSessionID.Valid || gotSessionID.String != "agent-session-abc" {
+		t.Fatalf("imported session_id = %v, want %q",
+			gotSessionID, "agent-session-abc")
+	}
+}
+
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	// This test verifies that legacy responses with job_id IS NULL (tied only to commit_id)
 	// are excluded from sync since they cannot be synced via job_uuid.

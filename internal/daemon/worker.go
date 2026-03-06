@@ -446,7 +446,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		)
 	}
 	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
-		if err := wp.db.SaveJobSessionID(job.ID, sessionID); err != nil {
+		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
 	})
@@ -475,7 +475,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput)
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
-		if saveErr := wp.db.SaveJobSessionID(job.ID, sessionID); saveErr != nil {
+		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
 		}
 	}

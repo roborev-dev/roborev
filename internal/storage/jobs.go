@@ -972,8 +972,14 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 }
 
 // SaveJobSessionID stores the captured agent session ID for a job.
-// The first captured ID wins so repeated lifecycle events do not overwrite it.
-func (db *DB) SaveJobSessionID(jobID int64, sessionID string) error {
+// The first captured ID wins so repeated lifecycle events do not
+// overwrite it. The update is scoped to the current execution
+// attempt: it requires status='running' and the given workerID so
+// that a stale worker unwinding after cancel/retry cannot overwrite
+// a session ID that belongs to a new attempt of the same job.
+func (db *DB) SaveJobSessionID(
+	jobID int64, workerID, sessionID string,
+) error {
 	if sessionID == "" {
 		return nil
 	}
@@ -981,8 +987,11 @@ func (db *DB) SaveJobSessionID(jobID int64, sessionID string) error {
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET session_id = ?, updated_at = ?
-		WHERE id = ? AND (session_id IS NULL OR session_id = '')
-	`, sessionID, now, jobID)
+		WHERE id = ?
+		  AND status = 'running'
+		  AND worker_id = ?
+		  AND (session_id IS NULL OR session_id = '')
+	`, sessionID, now, jobID, workerID)
 	return err
 }
 
