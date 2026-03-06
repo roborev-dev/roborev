@@ -953,19 +953,16 @@ func TestResolveReasoningWithFast(t *testing.T) {
 	}
 }
 
-// TestRefineBackupAgentKeepsOwnModel verifies that when the backup agent
-// is selected (primary unavailable), and no backup model is configured,
-// the backup agent is NOT given the primary agent's model.
+// TestApplyModelForAgent_BackupKeepsOwnModel verifies that when the backup
+// agent is selected (primary unavailable) and no backup model is configured,
+// applyModelForAgent does not apply the primary model to the backup agent.
 // Regression test for f7385273.
-func TestRefineBackupAgentKeepsOwnModel(t *testing.T) {
+func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 	// Make only codex available (not gemini, which will be "primary").
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
-	backupAgent := "codex"
-	primaryAgent := "gemini" // unavailable
-
 	selected, err := selectRefineAgent(
-		nil, primaryAgent, agent.ReasoningStandard, backupAgent,
+		nil, "gemini", agent.ReasoningStandard, "codex",
 	)
 	if err != nil {
 		t.Fatalf("selectRefineAgent: %v", err)
@@ -974,32 +971,23 @@ func TestRefineBackupAgentKeepsOwnModel(t *testing.T) {
 		t.Fatalf("expected backup agent codex, got %s", selected.Name())
 	}
 
-	// Simulate the refine model-selection logic from refine.go:371-383.
-	// Primary model is set, but CLI model flag was not passed (opts.model == "").
-	primaryModel := "o3"
-	resolvedModel := primaryModel
-	cliModel := ""
+	// Call the real helper with no CLI model and no config.
+	// The primary would resolve to some default model, but the backup
+	// agent should NOT inherit it.
+	result, model := applyModelForAgent(
+		selected,
+		"gemini", // preferred (unavailable)
+		"codex",  // backup (selected)
+		"",       // no CLI model
+		"",       // no repo path
+		nil,      // no config
+		"refine",
+		"standard",
+	)
 
-	// This mirrors the actual logic:
-	model := resolvedModel
-	if backupAgent != "" && cliModel == "" {
-		if agent.CanonicalName(selected.Name()) == agent.CanonicalName(backupAgent) &&
-			agent.CanonicalName(selected.Name()) != agent.CanonicalName(primaryAgent) {
-			// No backup model configured → resolves to empty string.
-			model = config.ResolveBackupModelForWorkflow("", nil, "refine")
-		}
-	}
-
-	// The guard: only apply model when non-empty.
-	if model != "" {
-		selected = selected.WithModel(model)
-	}
-
-	// The backup agent should retain its own default model (empty),
-	// NOT inherit the primary's model.
-	codexAgent, ok := selected.(*agent.CodexAgent)
+	codexAgent, ok := result.(*agent.CodexAgent)
 	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", selected)
+		t.Fatalf("expected *CodexAgent, got %T", result)
 	}
 	if codexAgent.Model != "" {
 		t.Errorf(
@@ -1007,35 +995,41 @@ func TestRefineBackupAgentKeepsOwnModel(t *testing.T) {
 			codexAgent.Model,
 		)
 	}
+	if model != "" {
+		t.Errorf("resolved model should be empty for unconfigured backup, got %q", model)
+	}
 }
 
-// TestReviewEmptyModelDoesNotClearAgentDefault verifies that when the
-// resolved model is empty, WithModel is not called, preserving any
-// default model the agent may have.
+// TestApplyModelForAgent_EmptyModelPreservesAgentDefault verifies that
+// applyModelForAgent does not clear an agent's existing model when the
+// resolved model is empty.
 // Regression test for f7385273.
-func TestReviewEmptyModelDoesNotClearAgentDefault(t *testing.T) {
+func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	a, err := agent.Get("codex")
 	if err != nil {
 		t.Fatalf("agent.Get: %v", err)
 	}
-
-	// Set a default model on the agent.
+	// Pre-set a model on the agent.
 	a = a.WithModel("o3")
 
-	// Simulate the review model-selection path from review.go:406-408.
-	// When no backup model is configured, resolved model is empty.
-	resolvedModel := ""
+	// Agent is the preferred agent (not a backup). No CLI model, no
+	// config → resolved model will be empty.
+	result, _ := applyModelForAgent(
+		a,
+		"codex", // preferred
+		"",      // no backup
+		"",      // no CLI model
+		"",      // no repo path
+		nil,     // no config
+		"review",
+		"standard",
+	)
 
-	if resolvedModel != "" {
-		a = a.WithModel(resolvedModel)
-	}
-
-	// The agent should retain its explicitly-set model.
-	codexAgent, ok := a.(*agent.CodexAgent)
+	codexAgent, ok := result.(*agent.CodexAgent)
 	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", a)
+		t.Fatalf("expected *CodexAgent, got %T", result)
 	}
 	if codexAgent.Model != "o3" {
 		t.Errorf(

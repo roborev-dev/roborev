@@ -388,24 +388,14 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		return fmt.Errorf("get agent: %w", err)
 	}
 
-	// Use backup model when the backup agent was selected and no
-	// explicit model was passed via CLI.
-	preferredAgent := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, workflow, reasoning)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
-	if usingBackup && model == "" {
-		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, workflow)
-	} else {
-		model = config.ResolveModelForWorkflow(model, repoPath, cfg, workflow, reasoning)
-	}
-
-	// Configure agent with model and reasoning
+	// Configure agent with model and reasoning. applyModelForAgent
+	// handles backup-vs-primary model resolution.
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithReasoning(reasoningLevel)
-	if model != "" {
-		a = a.WithModel(model)
-	}
+	a, model = applyModelForAgent(
+		a, agentName, backupAgent,
+		model, repoPath, cfg, workflow, reasoning,
+	)
 
 	// Configure provider for pi agent
 	if provider != "" {

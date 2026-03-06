@@ -362,29 +362,17 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	}
 
-	// Resolve model for refine workflow at this reasoning level
-	resolvedModel := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "refine", resolvedReasoning)
-
 	// Get the agent with configured reasoning level (model applied after
 	// backup determination to avoid baking the primary model into a
 	// backup agent).
 	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, backupAgent)
-	if err == nil {
-		model := resolvedModel
-		if backupAgent != "" && opts.model == "" {
-			preferredRefine := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
-			if agent.CanonicalName(addressAgent.Name()) == agent.CanonicalName(backupAgent) &&
-				agent.CanonicalName(addressAgent.Name()) != agent.CanonicalName(preferredRefine) {
-				model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "refine")
-			}
-		}
-		if model != "" {
-			addressAgent = addressAgent.WithModel(model)
-		}
-	}
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
+	addressAgent, _ = applyModelForAgent(
+		addressAgent, resolvedAgent, backupAgent,
+		opts.model, repoPath, cfg, "refine", resolvedReasoning,
+	)
 	fmt.Printf("Using agent: %s\n", addressAgent.Name())
 
 	// 3. Refinement loop
@@ -1171,4 +1159,40 @@ func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel 
 		return nil, err
 	}
 	return baseAgent.WithReasoning(reasoningLevel), nil
+}
+
+// applyModelForAgent resolves the correct model for the selected agent
+// and applies it. When the selected agent is the configured backup (not
+// the preferred primary), the backup model is used instead of the
+// primary model. Returns the agent with the model applied (if any) and
+// the resolved model string.
+func applyModelForAgent(
+	a agent.Agent,
+	preferredAgent string,
+	backupAgentName string,
+	cliModel string,
+	repoPath string,
+	cfg *config.Config,
+	workflow string,
+	reasoning string,
+) (agent.Agent, string) {
+	usingBackup := backupAgentName != "" &&
+		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgentName) &&
+		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
+
+	var model string
+	if usingBackup && cliModel == "" {
+		model = config.ResolveBackupModelForWorkflow(
+			repoPath, cfg, workflow,
+		)
+	} else {
+		model = config.ResolveModelForWorkflow(
+			cliModel, repoPath, cfg, workflow, reasoning,
+		)
+	}
+
+	if model != "" {
+		a = a.WithModel(model)
+	}
+	return a, model
 }

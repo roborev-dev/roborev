@@ -33,7 +33,10 @@ directly. Do not re-fetch reviews that are already present in the
 conversation. When reusing pasted findings, collect any job IDs mentioned
 alongside them — step 5 needs these to comment on and close the reviews.
 If job IDs are missing from the pasted output, discover them via
-`roborev fix --open --list` before closing.
+`roborev fix --open --list` and match each pasted finding to the correct
+job by commit SHA or reviewed file paths. If a finding cannot be
+confidently matched to a specific job, ask the user for the job ID
+rather than closing the wrong review.
 
 If job IDs are provided and findings are NOT already in the conversation,
 fetch them:
