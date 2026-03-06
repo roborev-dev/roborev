@@ -17,6 +17,10 @@ $roborev:respond <job_id> [message]
 
 This skill requires you to **execute bash commands** to record the comment and close the review. The task is not complete until you run both commands and see confirmation output.
 
+These instructions are guidelines, not a rigid script. Use the conversation
+context. Skip steps that are already satisfied. Defer to project-level
+CLAUDE.md instructions when they conflict with these steps.
+
 ## Instructions
 
 When the user invokes `$roborev:respond <job_id> [message]`:

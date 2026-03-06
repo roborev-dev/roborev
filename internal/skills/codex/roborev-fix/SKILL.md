@@ -17,25 +17,46 @@ $roborev:fix [job_id...]
 
 This skill requires you to **execute bash commands** to discover reviews, fetch them, fix code, record comments, and close reviews. The task is not complete until you run all commands and see confirmation output.
 
+These instructions are guidelines, not a rigid script. Use the conversation
+context. Skip steps that are already satisfied. Defer to project-level
+CLAUDE.md instructions when they conflict with these steps.
+
 ## Instructions
 
 When the user invokes `$roborev:fix [job_id...]`:
 
-### 1. Discover reviews
+### 1. Gather findings
 
-If job IDs are provided, use those. Otherwise, discover open reviews:
+**Check the conversation first.** If the user has already pasted review
+findings (verdicts, severities, file paths, suggested fixes), use those
+directly. Do not re-fetch reviews that are already present in the
+conversation.
+
+If job IDs are provided and findings are NOT already in the conversation,
+fetch them:
+
+```bash
+roborev show --job <job_id> --json
+```
+
+If no job IDs are provided and no findings are in the conversation, discover
+open reviews:
 
 ```bash
 roborev fix --open --list
 ```
 
-This prints one line per open job with its ID, commit SHA, agent, and summary. Collect the job IDs from the output.
+This prints one line per open job with its ID, commit SHA, agent, and summary.
+Collect the job IDs from the output.
 
-If the command fails, report the error to the user. Common causes: the daemon is not running, or the repo is not initialized (suggest `roborev init`).
+If the command fails, report the error to the user. Common causes: the daemon
+is not running, or the repo is not initialized (suggest `roborev init`).
 
 If no open reviews are found, inform the user there is nothing to fix.
 
-### 2. Fetch all reviews
+### 2. Fetch reviews (if needed)
+
+Skip this step if findings are already available from step 1.
 
 For each job ID, fetch the full review as JSON:
 
@@ -89,9 +110,10 @@ roborev comment --job <job_id> "<summary of changes>" && roborev close <job_id>
 
 The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
 
-### 6. Ask to commit
+### 6. Commit
 
-Ask the user if they want to commit all the changes together.
+Follow the project's commit conventions (see CLAUDE.md). If the project
+instructs you to always commit, do so without asking.
 
 ## Examples
 
@@ -108,7 +130,7 @@ Agent:
 6. Records comments and closes reviews:
    - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev close 1019`
    - `roborev comment --job 1021 "Fixed missing validation" && roborev close 1021`
-7. Asks: "I've fixed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
+7. Commits the changes per project conventions
 
 **Explicit job IDs:**
 
@@ -120,7 +142,7 @@ Agent:
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
 5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev close 1019`
-6. Asks: "I've fixed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
+6. Commits the changes per project conventions
 
 ## See also
 

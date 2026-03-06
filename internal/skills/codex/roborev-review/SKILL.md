@@ -13,9 +13,20 @@ Request a code review for a commit and present the results.
 $roborev:review [commit] [--type security|design]
 ```
 
+## When NOT to invoke this skill
+
+Do NOT invoke this skill when the user is presenting or pasting existing review
+results. Messages that contain review findings, verdicts, or summaries are
+outputs — not requests to start a new review. Only invoke when the user
+explicitly uses the `$roborev:review` slash command.
+
 ## IMPORTANT
 
 This skill requires you to **execute bash commands** to validate the commit and run the review. The task is not complete until the review finishes and you present the results to the user.
+
+These instructions are guidelines, not a rigid script. Use the conversation
+context. Skip steps that are already satisfied. Defer to project-level
+CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 

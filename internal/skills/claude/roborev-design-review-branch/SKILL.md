@@ -13,9 +13,20 @@ Request a design review for all commits on the current branch and present the re
 /roborev:design-review-branch [--base <branch>]
 ```
 
+## When NOT to invoke this skill
+
+Do NOT invoke this skill when the user is presenting or pasting existing review
+results. Messages that contain review findings, verdicts, or summaries are
+outputs — not requests to start a new review. Only invoke when the user
+explicitly uses the `/roborev:design-review-branch` slash command.
+
 ## IMPORTANT
 
 This skill requires you to **execute bash commands** to validate inputs and launch the review. The task is not complete until the background review finishes and you present the results to the user.
+
+These instructions are guidelines, not a rigid script. Use the conversation
+context. Skip steps that are already satisfied. Defer to project-level
+CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
