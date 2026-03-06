@@ -140,6 +140,10 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", err
 	}
 
+	if result == "" {
+		return "No review output generated", nil
+	}
+
 	return result, nil
 }
 

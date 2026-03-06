@@ -190,6 +190,10 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", err
 	}
 
+	if result == "" {
+		return "No review output generated", nil
+	}
+
 	return result, nil
 }
 
@@ -197,13 +201,43 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 type claudeStreamMessage struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype,omitempty"`
+	IsError bool   `json:"is_error,omitempty"`
 	Message struct {
-		Content string `json:"content,omitempty"`
+		Content json.RawMessage `json:"content,omitempty"`
 	} `json:"message,omitempty"`
 	Result string `json:"result,omitempty"`
 	Error  struct {
 		Message string `json:"message,omitempty"`
 	} `json:"error,omitempty"`
+}
+
+// extractContentText extracts text from a Claude message content field.
+// Content can be a plain string or an array of content blocks
+// (e.g. [{"type":"text","text":"..."}]).
+func extractContentText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try string first (simple format)
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Try array of content blocks (real Claude Code format)
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var texts []string
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				texts = append(texts, b.Text)
+			}
+		}
+		return strings.Join(texts, "\n")
+	}
+	return ""
 }
 
 // parseStreamJSON parses Claude's stream-json output and extracts the final result.
@@ -236,17 +270,33 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 			if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
 				validEventsParsed = true
 
-				// Collect assistant messages for the result
-				if msg.Type == "assistant" && msg.Message.Content != "" {
-					assistantMessages = append(assistantMessages, msg.Message.Content)
+				// Collect assistant messages for the result.
+				// Content can be a string or an array of content blocks.
+				if msg.Type == "assistant" {
+					if text := extractContentText(msg.Message.Content); text != "" {
+						assistantMessages = append(assistantMessages, text)
+					}
 				}
 
-				// The final result message contains the summary
-				if msg.Type == "result" && msg.Result != "" {
-					lastResult = msg.Result
+				// The final result message contains the summary.
+				// When is_error is set, the result event signals a
+				// failure (auth, API, quota, etc.) — capture the
+				// error details instead of treating it as output.
+				if msg.Type == "result" {
+					if msg.IsError {
+						errMsg := "review returned error"
+						if msg.Error.Message != "" {
+							errMsg = msg.Error.Message
+						} else if msg.Result != "" {
+							errMsg = msg.Result
+						}
+						errorMessages = append(errorMessages, errMsg)
+					} else if msg.Result != "" {
+						lastResult = msg.Result
+					}
 				}
 
-				// Capture error events from Claude Code
+				// Capture standalone error events from Claude Code
 				if msg.Type == "error" && msg.Error.Message != "" {
 					errorMessages = append(errorMessages, msg.Error.Message)
 				}
@@ -280,8 +330,6 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 		return strings.Join(assistantMessages, "\n"), nil
 	}
 
-	// Valid events were parsed but no result or assistant content found
-	// This is not an error - Claude might have used tools without text output
 	return "", nil
 }
 

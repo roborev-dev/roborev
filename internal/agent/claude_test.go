@@ -147,6 +147,82 @@ still not json
 			expectedResult: "Done",
 			expectOutput:   true,
 		},
+		// Error detection: is_error flag on result events
+		{
+			name: "ErrorResultWithErrorMessage",
+			input: `{"type":"system","subtype":"init"}
+{"type":"result","is_error":true,"result":"","error":{"message":"Invalid API key"}}
+`,
+			expectedErr: "Invalid API key",
+		},
+		{
+			name: "ErrorResultWithResultText",
+			input: `{"type":"system","subtype":"init"}
+{"type":"result","is_error":true,"result":"Your credit balance is too low"}
+`,
+			expectedErr: "Your credit balance is too low",
+		},
+		{
+			name: "ErrorResultNoDetails",
+			input: `{"type":"system","subtype":"init"}
+{"type":"result","is_error":true,"result":""}
+`,
+			expectedErr: "review returned error",
+		},
+		{
+			name: "ErrorResultWithPartialAssistant",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"I'll review this commit..."}}
+{"type":"result","is_error":true,"result":"","error":{"message":"rate limit exceeded"}}
+`,
+			expectedErr: "rate limit exceeded",
+		},
+		// Content array format (real Claude Code output)
+		{
+			name: "ContentBlockArray",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reviewing the changes..."}]}}
+{"type":"result","result":"All good."}
+`,
+			expectedResult: "All good.",
+		},
+		{
+			name: "ContentBlockArrayFallback",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"First block"},{"type":"text","text":"Second block"}]}}
+`,
+			expectedResult: "First block\nSecond block",
+		},
+		{
+			name: "ContentBlockArrayWithToolUse",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."},{"type":"tool_use","name":"Read"}]}}
+{"type":"result","result":"Found the issue."}
+`,
+			expectedResult: "Found the issue.",
+		},
+		// Standalone error events (non-result)
+		{
+			name: "StandaloneErrorEvent",
+			input: `{"type":"system","subtype":"init"}
+{"type":"error","error":{"message":"connection reset"}}
+`,
+			expectedErr: "connection reset",
+		},
+		// Empty output (valid events, no content)
+		{
+			name:           "ValidEventsNoContent",
+			input:          `{"type":"system","subtype":"init"}` + "\n",
+			expectedResult: "",
+		},
+		// Non-error result with is_error=false (normal path)
+		{
+			name: "ResultIsErrorFalse",
+			input: `{"type":"system","subtype":"init"}
+{"type":"result","is_error":false,"result":"No issues found."}
+`,
+			expectedResult: "No issues found.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -177,6 +253,136 @@ still not json
 				t.Error("expected output to be written")
 			}
 		})
+	}
+}
+
+func TestExtractContentText(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "PlainString",
+			raw:  `"Hello world"`,
+			want: "Hello world",
+		},
+		{
+			name: "SingleTextBlock",
+			raw:  `[{"type":"text","text":"Review complete."}]`,
+			want: "Review complete.",
+		},
+		{
+			name: "MultipleTextBlocks",
+			raw:  `[{"type":"text","text":"First"},{"type":"text","text":"Second"}]`,
+			want: "First\nSecond",
+		},
+		{
+			name: "MixedBlockTypes",
+			raw:  `[{"type":"text","text":"Analysis"},{"type":"tool_use","name":"Read"},{"type":"text","text":"Done"}]`,
+			want: "Analysis\nDone",
+		},
+		{
+			name: "EmptyArray",
+			raw:  `[]`,
+			want: "",
+		},
+		{
+			name: "NilInput",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "EmptyString",
+			raw:  `""`,
+			want: "",
+		},
+		{
+			name: "EmptyTextBlock",
+			raw:  `[{"type":"text","text":""}]`,
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractContentText([]byte(tt.raw))
+			if got != tt.want {
+				t.Errorf("extractContentText(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeReviewEmptyOutput(t *testing.T) {
+	// When Claude produces valid events but no review content,
+	// Review() should return "No review output generated" (not empty).
+	script := `#!/bin/sh
+if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
+echo '{"type":"system","subtype":"init"}'
+exit 0
+`
+	cmdPath := writeTempCommand(t, script)
+
+	a := NewClaudeAgent(cmdPath)
+	result, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "No review output generated" {
+		t.Errorf("expected %q, got %q", "No review output generated", result)
+	}
+}
+
+func TestClaudeReviewErrorResult(t *testing.T) {
+	// When Claude exits with code 0 but emits is_error result,
+	// the error should propagate as a failure.
+	script := `#!/bin/sh
+if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"result","is_error":true,"result":"","error":{"message":"Invalid API key"}}'
+exit 0
+`
+	cmdPath := writeTempCommand(t, script)
+
+	a := NewClaudeAgent(cmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Invalid API key") {
+		t.Errorf("expected error containing %q, got %q", "Invalid API key", err.Error())
+	}
+}
+
+func TestClaudeReviewErrorResultNonZeroExit(t *testing.T) {
+	// When Claude emits is_error result AND exits non-zero,
+	// the error should include both stream error and exit status.
+	script := `#!/bin/sh
+if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"result","is_error":true,"result":"","error":{"message":"quota exceeded"}}'
+exit 1
+`
+	cmdPath := writeTempCommand(t, script)
+
+	a := NewClaudeAgent(cmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "quota exceeded") {
+		t.Errorf("expected error containing %q, got %q", "quota exceeded", errStr)
+	}
+	if !strings.Contains(errStr, "failed") {
+		t.Errorf("expected error containing %q, got %q", "failed", errStr)
 	}
 }
 
