@@ -537,18 +537,19 @@ type RepoCIConfig struct {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent              string   `toml:"agent"`
-	Model              string   `toml:"model"` // Model for agents (format varies by agent)
-	BackupAgent        string   `toml:"backup_agent"`
-	BackupModel        string   `toml:"backup_model"`
-	ReviewContextCount int      `toml:"review_context_count"`
-	ReviewGuidelines   string   `toml:"review_guidelines"`
-	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
-	ExcludedBranches   []string `toml:"excluded_branches"`
-	DisplayName        string   `toml:"display_name"`
-	ReviewReasoning    string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning    string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
-	FixReasoning       string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
+	Agent                  string   `toml:"agent"`
+	Model                  string   `toml:"model"` // Model for agents (format varies by agent)
+	BackupAgent            string   `toml:"backup_agent"`
+	BackupModel            string   `toml:"backup_model"`
+	ReviewContextCount     int      `toml:"review_context_count"`
+	ReviewGuidelines       string   `toml:"review_guidelines"`
+	JobTimeoutMinutes      int      `toml:"job_timeout_minutes"`
+	ExcludedBranches       []string `toml:"excluded_branches"`
+	ExcludedCommitPatterns []string `toml:"excluded_commit_patterns"`
+	DisplayName            string   `toml:"display_name"`
+	ReviewReasoning        string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning        string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
+	FixReasoning           string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
@@ -806,6 +807,22 @@ func IsBranchExcluded(repoPath, branch string) bool {
 	}
 
 	return slices.Contains(repoCfg.ExcludedBranches, branch)
+}
+
+// IsCommitMessageExcluded checks if a commit should be excluded from reviews
+// based on substring patterns configured in the repo's .roborev.toml.
+func IsCommitMessageExcluded(repoPath, message string) bool {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil || repoCfg == nil {
+		return false
+	}
+	lower := strings.ToLower(message)
+	for _, pattern := range repoCfg.ExcludedCommitPatterns {
+		if pattern != "" && strings.Contains(lower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetDisplayName returns the display name for a repo, or empty if not set

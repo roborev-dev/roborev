@@ -739,6 +739,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Check if commit message matches an excluded pattern
+		fullMessage := info.Subject + "\n" + info.Body
+		if config.IsCommitMessageExcluded(repoRoot, fullMessage) {
+			writeJSON(w, map[string]any{
+				"skipped": true,
+				"reason":  "commit message matches an excluded pattern",
+			})
+			return
+		}
+
 		// Get or create commit
 		commit, err := s.db.GetOrCreateCommit(repo.ID, sha, info.Author, info.Subject, info.Timestamp)
 		if err != nil {
