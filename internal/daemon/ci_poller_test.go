@@ -2421,8 +2421,8 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 		t.Fatal("expected batch for first push")
 	}
 
-	// Second push within throttle window — should be
-	// deferred
+	// Second push within throttle window — supersedes
+	// the unsynthesized first batch, so NOT throttled.
 	*captured = nil
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
@@ -2437,6 +2437,102 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 
 	hasBatch, err = h.DB.HasCIBatch(
 		"acme/api", 70, "second-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal(
+			"expected batch for second push (supersedes in-progress first)")
+	}
+
+	// First-sha batch should be canceled (deleted).
+	hasBatch, err = h.DB.HasCIBatch(
+		"acme/api", 70, "first-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch first-sha: %v", err)
+	}
+	if hasBatch {
+		t.Fatal(
+			"expected first-sha batch to be canceled")
+	}
+
+	// No "Review deferred" status should have been set.
+	for _, sc := range *captured {
+		if strings.Contains(sc.Desc, "Review deferred") {
+			t.Errorf(
+				"unexpected deferred status: %+v", sc)
+		}
+	}
+}
+
+func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "1h"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push — reviewed normally
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      71,
+			HeadRefOid:  "first-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("first processPR: %v", err)
+	}
+
+	hasBatch, err := h.DB.HasCIBatch(
+		"acme/api", 71, "first-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal("expected batch for first push")
+	}
+
+	// Mark first batch as synthesized + finalized (completed review).
+	// Re-call CreateCIBatch (INSERT OR IGNORE) to retrieve the existing batch.
+	batch, _, err := h.DB.CreateCIBatch(
+		"acme/api", 71, "first-sha", 0,
+	)
+	if err != nil {
+		t.Fatalf("CreateCIBatch lookup: %v", err)
+	}
+	if _, err := h.DB.ClaimBatchForSynthesis(batch.ID); err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+	if err := h.DB.FinalizeBatch(batch.ID); err != nil {
+		t.Fatalf("FinalizeBatch: %v", err)
+	}
+
+	// Second push within throttle window — should be throttled
+	// because the first batch is synthesized (completed).
+	captured := h.CaptureCommitStatuses()
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      71,
+			HeadRefOid:  "second-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("second processPR: %v", err)
+	}
+
+	hasBatch, err = h.DB.HasCIBatch(
+		"acme/api", 71, "second-sha",
 	)
 	if err != nil {
 		t.Fatalf("HasCIBatch: %v", err)
