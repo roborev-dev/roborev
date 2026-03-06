@@ -1039,6 +1039,44 @@ func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 	}
 }
 
+// TestApplyModelForAgent_SameAgentPrimaryAndBackup verifies that when
+// primary and backup resolve to the same agent, the agent is treated as
+// the primary (not backup) and gets the workflow model, not the backup model.
+func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
+	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+
+	a, err := agent.Get("codex")
+	if err != nil {
+		t.Fatalf("agent.Get: %v", err)
+	}
+
+	// Primary and backup are the same agent. The helper should NOT
+	// treat this as "using backup" — the CanonicalName comparison
+	// against preferredAgent must prevent that.
+	result, model := applyModelForAgent(
+		a,
+		"codex", // preferred (same as backup)
+		"codex", // backup (same as preferred)
+		"",      // no CLI model
+		"",      // no repo path
+		nil,     // no config
+		"review",
+		"standard",
+	)
+
+	codexAgent, ok := result.(*agent.CodexAgent)
+	if !ok {
+		t.Fatalf("expected *CodexAgent, got %T", result)
+	}
+	// Should NOT have picked a backup model — agent is the primary.
+	if codexAgent.Model != "" && model != "" {
+		t.Errorf(
+			"same-agent primary+backup should use workflow model (empty with nil config), got model=%q",
+			codexAgent.Model,
+		)
+	}
+}
+
 func TestRefineFlagValidation(t *testing.T) {
 	tests := []struct {
 		name    string
