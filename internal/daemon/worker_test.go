@@ -683,6 +683,36 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	}
 }
 
+func TestFailoverOrFail_PassesBackupModel(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	// Configure backup agent AND backup model
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	cfg.DefaultBackupModel = "claude-sonnet"
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusQueued {
+		t.Errorf("status=%q, want queued (failover)", updated.Status)
+	}
+	if updated.Agent != "test" {
+		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+	}
+	if updated.Model != "claude-sonnet" {
+		t.Errorf("model=%q, want claude-sonnet (backup model)", updated.Model)
+	}
+}
+
 func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

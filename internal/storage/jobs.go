@@ -1299,17 +1299,19 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int) (bool, erro
 }
 
 // FailoverJob atomically switches a running job to the given backup agent
-// and requeues it. Returns false if the job is not in running state, the
-// worker doesn't own the job, or the backup agent is the same as the
+// and requeues it. When backupModel is non-empty the job's model is set
+// to that value; otherwise model is cleared (NULL) so the backup agent
+// uses its CLI default. Returns false if the job is not in running state,
+// the worker doesn't own the job, or the backup agent is the same as the
 // current agent.
-func (db *DB) FailoverJob(jobID int64, workerID string, backupAgent string) (bool, error) {
+func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string) (bool, error) {
 	if backupAgent == "" {
 		return false, nil
 	}
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET agent = ?,
-		    model = NULL,
+		    model = ?,
 		    retry_count = 0,
 		    status = 'queued',
 		    worker_id = NULL,
@@ -1320,7 +1322,7 @@ func (db *DB) FailoverJob(jobID int64, workerID string, backupAgent string) (boo
 		  AND status = 'running'
 		  AND worker_id = ?
 		  AND agent != ?
-	`, backupAgent, jobID, workerID, backupAgent)
+	`, backupAgent, nullString(backupModel), jobID, workerID, backupAgent)
 	if err != nil {
 		return false, err
 	}

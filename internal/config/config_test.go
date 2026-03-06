@@ -1165,6 +1165,64 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 	}
 }
 
+func TestResolveBackupModelForWorkflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     map[string]string
+		global   *Config
+		workflow string
+		expect   string
+	}{
+		// No backup model configured
+		{"empty config", nil, nil, "review", ""},
+		{"only backup agent configured", M{"review_backup_agent": "claude"}, nil, "review", ""},
+
+		// Global backup model
+		{"global backup model only", nil, &Config{ReviewBackupModel: "gpt-4"}, "review", "gpt-4"},
+		{"global backup model for refine", nil, &Config{RefineBackupModel: "claude-3"}, "refine", "claude-3"},
+		{"global backup model for fix", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "o3-mini"},
+		{"global backup model for security", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "gpt-4"},
+		{"global backup model for design", nil, &Config{DesignBackupModel: "claude-3"}, "design", "claude-3"},
+
+		// Repo backup model overrides global
+		{"repo overrides global", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "repo-model"},
+		{"repo backup model only", M{"review_backup_model": "gpt-4"}, nil, "review", "gpt-4"},
+
+		// Different workflows resolve independently
+		{"review backup model doesn't affect refine", M{"review_backup_model": "gpt-4"}, nil, "refine", ""},
+		{"each workflow has own backup model", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "review", "gpt-4"},
+		{"each workflow has own backup model - refine", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "refine", "claude-3"},
+
+		// Unknown workflow returns empty
+		{"unknown workflow", M{"review_backup_model": "gpt-4"}, nil, "unknown", ""},
+
+		// Default/generic backup model fallback
+		{"global default_backup_model", nil, &Config{DefaultBackupModel: "gpt-4"}, "review", "gpt-4"},
+		{"global default_backup_model for any workflow", nil, &Config{DefaultBackupModel: "gpt-4"}, "fix", "gpt-4"},
+		{"global workflow-specific overrides default", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "review", "claude-3"},
+		{"global default used when workflow not set", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "fix", "gpt-4"},
+		{"repo backup_model generic", M{"backup_model": "repo-model"}, nil, "review", "repo-model"},
+		{"repo backup_model generic for any workflow", M{"backup_model": "repo-model"}, nil, "refine", "repo-model"},
+		{"repo workflow-specific overrides repo generic", M{"backup_model": "generic", "review_backup_model": "specific"}, nil, "review", "specific"},
+		{"repo generic overrides global workflow-specific", M{"backup_model": "repo"}, &Config{ReviewBackupModel: "global"}, "review", "repo"},
+		{"repo generic overrides global default", M{"backup_model": "repo"}, &Config{DefaultBackupModel: "global"}, "review", "repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			if tt.repo != nil {
+				writeRepoConfig(t, repoDir, tt.repo)
+			}
+			result := ResolveBackupModelForWorkflow(repoDir, tt.global, tt.workflow)
+			if result != tt.expect {
+				t.Errorf("ResolveBackupModelForWorkflow(%q, global, %q) = %q, want %q",
+					repoDir, tt.workflow, result, tt.expect)
+			}
+		})
+	}
+}
+
 func TestResolvedReviewTypes(t *testing.T) {
 	t.Run("uses configured types", func(t *testing.T) {
 		ci := CIConfig{ReviewTypes: []string{"security", "review"}}

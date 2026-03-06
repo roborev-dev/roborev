@@ -51,6 +51,7 @@ type Config struct {
 	DefaultAgent       string `toml:"default_agent"`
 	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
 	DefaultBackupAgent string `toml:"default_backup_agent"`
+	DefaultBackupModel string `toml:"default_backup_model"`
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 
 	// Workflow-specific agent/model configuration
@@ -101,6 +102,13 @@ type Config struct {
 	FixBackupAgent      string `toml:"fix_backup_agent"`
 	SecurityBackupAgent string `toml:"security_backup_agent"`
 	DesignBackupAgent   string `toml:"design_backup_agent"`
+
+	// Backup models for failover (used when failing over to backup agent)
+	ReviewBackupModel   string `toml:"review_backup_model"`
+	RefineBackupModel   string `toml:"refine_backup_model"`
+	FixBackupModel      string `toml:"fix_backup_model"`
+	SecurityBackupModel string `toml:"security_backup_model"`
+	DesignBackupModel   string `toml:"design_backup_model"`
 
 	AllowUnsafeAgents *bool `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
@@ -532,6 +540,7 @@ type RepoConfig struct {
 	Agent              string   `toml:"agent"`
 	Model              string   `toml:"model"` // Model for agents (format varies by agent)
 	BackupAgent        string   `toml:"backup_agent"`
+	BackupModel        string   `toml:"backup_model"`
 	ReviewContextCount int      `toml:"review_context_count"`
 	ReviewGuidelines   string   `toml:"review_guidelines"`
 	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
@@ -592,6 +601,13 @@ type RepoConfig struct {
 	FixBackupAgent      string `toml:"fix_backup_agent"`
 	SecurityBackupAgent string `toml:"security_backup_agent"`
 	DesignBackupAgent   string `toml:"design_backup_agent"`
+
+	// Backup models for failover (used when failing over to backup agent)
+	ReviewBackupModel   string `toml:"review_backup_model"`
+	RefineBackupModel   string `toml:"refine_backup_model"`
+	FixBackupModel      string `toml:"fix_backup_model"`
+	SecurityBackupModel string `toml:"security_backup_model"`
+	DesignBackupModel   string `toml:"design_backup_model"`
 
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
@@ -1022,6 +1038,40 @@ func ResolveBackupAgentForWorkflow(repoPath string, globalCfg *Config, workflow 
 			return s
 		}
 		if s := strings.TrimSpace(globalCfg.DefaultBackupAgent); s != "" {
+			return s
+		}
+	}
+
+	return ""
+}
+
+// ResolveBackupModelForWorkflow returns the backup model for a workflow,
+// or empty string if none is configured.
+// Priority:
+//  1. Repo {workflow}_backup_model
+//  2. Repo backup_model (generic)
+//  3. Global {workflow}_backup_model
+//  4. Global default_backup_model
+//  5. "" (no override — agent uses its default)
+func ResolveBackupModelForWorkflow(repoPath string, globalCfg *Config, workflow string) string {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+
+	// Repo layer: workflow-specific > generic
+	if repoCfg != nil {
+		if s := lookupFieldByTag(reflect.ValueOf(*repoCfg), workflow+"_backup_model"); s != "" {
+			return s
+		}
+		if s := strings.TrimSpace(repoCfg.BackupModel); s != "" {
+			return s
+		}
+	}
+
+	// Global layer: workflow-specific > default
+	if globalCfg != nil {
+		if s := lookupFieldByTag(reflect.ValueOf(*globalCfg), workflow+"_backup_model"); s != "" {
+			return s
+		}
+		if s := strings.TrimSpace(globalCfg.DefaultBackupModel); s != "" {
 			return s
 		}
 	}
