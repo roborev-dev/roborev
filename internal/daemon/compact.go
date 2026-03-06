@@ -58,6 +58,12 @@ func IsValidCompactOutput(output string) bool {
 		return false
 	}
 
+	// Reject placeholder output from agents that ran but produced no
+	// review content (auth errors, empty responses, etc.).
+	if output == "No review output generated" {
+		return false
+	}
+
 	// Reject obvious agent error patterns at line starts
 	for line := range strings.SplitSeq(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))

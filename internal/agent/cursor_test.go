@@ -181,6 +181,68 @@ func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
 	assertFileNotContains(t, mock.ArgsFile, prompt)
 }
 
+func TestCursorReviewEmptyOutput(t *testing.T) {
+	a, _ := setupMockCursorAgent(t, MockCLIOpts{
+		StdoutLines: []string{`{"type":"system","subtype":"init"}`},
+	})
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "No review output generated" {
+		t.Errorf("expected %q, got %q", "No review output generated", result)
+	}
+}
+
+func TestCursorReviewErrorResult(t *testing.T) {
+	a, _ := setupMockCursorAgent(t, MockCLIOpts{
+		StdoutLines: []string{
+			`{"type":"system","subtype":"init"}`,
+			`{"type":"result","is_error":true,"result":"","error":{"message":"Invalid API key"}}`,
+		},
+	})
+
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Invalid API key") {
+		t.Errorf("expected error containing %q, got %q",
+			"Invalid API key", err.Error())
+	}
+}
+
+func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
+	a, _ := setupMockCursorAgent(t, MockCLIOpts{
+		StdoutLines: []string{
+			`{"type":"system","subtype":"init"}`,
+			`{"type":"result","is_error":true,"result":"","error":{"message":"quota exceeded"}}`,
+		},
+		ExitCode: 1,
+	})
+
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "quota exceeded") {
+		t.Errorf("expected error containing %q, got %q",
+			"quota exceeded", errStr)
+	}
+	if !strings.Contains(errStr, "failed") {
+		t.Errorf("expected error containing %q, got %q",
+			"failed", errStr)
+	}
+}
+
 func TestCursorName(t *testing.T) {
 	a := NewCursorAgent("")
 	if a.Name() != "cursor" {

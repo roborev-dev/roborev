@@ -115,6 +115,30 @@ func TestDeleteCompactMetadata(t *testing.T) {
 	})
 }
 
+func TestIsValidCompactOutput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"real_review", "No issues found.", true},
+		{"empty", "", false},
+		{"whitespace", "   \n  ", false},
+		{"error_prefix", "Error: something broke", false},
+		{"exception_prefix", "Exception: null pointer", false},
+		{"traceback", "Traceback (most recent call last):", false},
+		{"placeholder", "No review output generated", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidCompactOutput(tt.input); got != tt.want {
+				t.Errorf("IsValidCompactOutput(%q) = %v, want %v",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompactMetadataPath(t *testing.T) {
 	tmpDir := setupTestEnv(t)
 
