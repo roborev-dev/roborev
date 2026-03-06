@@ -294,6 +294,25 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 	return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
 }
 
+// resolveFixModel determines the model for a fix operation, skipping
+// generic default_model when the CLI agent differs from config default.
+func resolveFixModel(
+	cliAgent, cliModel, repoPath string,
+	cfg *config.Config, reasoning string,
+) string {
+	configAgent := config.ResolveAgentForWorkflow(
+		"", repoPath, cfg, "fix", reasoning,
+	)
+	cliAgentChanged := cliAgent != "" &&
+		agent.CanonicalName(cliAgent) != agent.CanonicalName(configAgent)
+	if cliAgentChanged && cliModel == "" {
+		return config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
+	}
+	return config.ResolveModelForWorkflow(
+		cliModel, repoPath, cfg, "fix", reasoning,
+	)
+}
+
 // resolveFixAgent resolves and configures the agent for fix operations.
 func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	cfg, err := config.LoadGlobal()
@@ -307,20 +326,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	}
 
 	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-
-	// When --agent overrides a different agent than what config resolves,
-	// skip generic default_model — it's paired with default_agent and
-	// may be incompatible with the override. If canonical names match,
-	// the agent is effectively unchanged and generic model should apply.
-	configAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
-	cliAgentChanged := opts.agentName != "" &&
-		agent.CanonicalName(opts.agentName) != agent.CanonicalName(configAgent)
-	var modelStr string
-	if cliAgentChanged && opts.model == "" {
-		modelStr = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
-	} else {
-		modelStr = config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "fix", reasoning)
-	}
+	modelStr := resolveFixModel(opts.agentName, opts.model, repoPath, cfg, reasoning)
 
 	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {
@@ -382,6 +388,11 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			}
 			if err != nil {
 				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
+				// Mark as seen even on error to prevent infinite
+				// retries in the runFixOpen re-query loop.
+				if seen != nil {
+					seen[jobID] = true
+				}
 				continue
 			}
 		}

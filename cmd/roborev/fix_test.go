@@ -1606,19 +1606,11 @@ func TestResolveFixAgentSkipsDefaultModel(t *testing.T) {
 	// When --agent is passed on CLI, the global default_model should
 	// NOT be applied. The default_model is paired with default_agent
 	// and likely doesn't apply to the overridden agent.
-	//
-	// This is tested at the config resolution level since the test agent
-	// ignores WithModel calls.
 
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
-	// Write global config with default_model
-	cfgDir := filepath.Join(tmpDir)
-	if err := os.MkdirAll(cfgDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := filepath.Join(cfgDir, "config.toml")
+	cfgPath := filepath.Join(tmpDir, "config.toml")
 	if err := os.WriteFile(cfgPath, []byte(`
 default_agent = "codex"
 default_model = "gpt-5.4"
@@ -1665,24 +1657,9 @@ default_model = "gpt-5.4"
 				t.Fatalf("LoadGlobal: %v", err)
 			}
 
-			reasoning := "fast"
-
-			agentName := config.ResolveAgentForWorkflow(
-				tt.agentName, tmpDir, cfg, "fix", reasoning,
+			modelStr := resolveFixModel(
+				tt.agentName, tt.model, tmpDir, cfg, "fast",
 			)
-			_ = agentName
-
-			// Simulate the same branching logic as resolveFixAgent
-			var modelStr string
-			if tt.agentName != "" && tt.model == "" {
-				modelStr = config.ResolveWorkflowModel(
-					tmpDir, cfg, "fix", reasoning,
-				)
-			} else {
-				modelStr = config.ResolveModelForWorkflow(
-					tt.model, tmpDir, cfg, "fix", reasoning,
-				)
-			}
 
 			if tt.wantModel && modelStr == "" {
 				t.Errorf("expected model to be set, got empty")
@@ -1844,25 +1821,10 @@ func TestResolveFixAgentSameAsDefault(t *testing.T) {
 				t.Fatalf("LoadGlobal: %v", err)
 			}
 
-			reasoning := "fast"
-
-			// Simulate the canonical comparison from resolveFixAgent
-			configAgent := config.ResolveAgentForWorkflow(
-				"", tmpDir, cfg, "fix", reasoning,
+			// Call the production resolveFixModel function directly
+			modelStr := resolveFixModel(
+				tt.cliAgent, "", tmpDir, cfg, "fast",
 			)
-			cliAgentChanged := tt.cliAgent != "" &&
-				agent.CanonicalName(tt.cliAgent) != agent.CanonicalName(configAgent)
-
-			var modelStr string
-			if cliAgentChanged {
-				modelStr = config.ResolveWorkflowModel(
-					tmpDir, cfg, "fix", reasoning,
-				)
-			} else {
-				modelStr = config.ResolveModelForWorkflow(
-					"", tmpDir, cfg, "fix", reasoning,
-				)
-			}
 
 			if modelStr != tt.wantModel {
 				t.Errorf("model = %q, want %q", modelStr, tt.wantModel)
