@@ -1011,6 +1011,31 @@ func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, 
 	return getWorkflowValue(repoCfg, globalCfg, workflow, level, false)
 }
 
+// ResolveWorkflowModel resolves a model from workflow-specific config only,
+// skipping generic defaults (repo model, global default_model). Use this
+// when the agent was overridden from a different source (e.g., CLI --agent)
+// and the generic model is likely paired with a different default agent.
+func ResolveWorkflowModel(repoPath string, globalCfg *Config, workflow, level string) string {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	if repoCfg != nil {
+		if s := repoWorkflowField(repoCfg, workflow, level, false); s != "" {
+			return s
+		}
+		if s := repoWorkflowField(repoCfg, workflow, "", false); s != "" {
+			return s
+		}
+	}
+	if globalCfg != nil {
+		if s := globalWorkflowField(globalCfg, workflow, level, false); s != "" {
+			return s
+		}
+		if s := globalWorkflowField(globalCfg, workflow, "", false); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // ResolveBackupAgentForWorkflow returns the backup agent for a workflow,
 // or empty string if none is configured.
 // Priority:

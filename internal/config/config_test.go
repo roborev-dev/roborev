@@ -1097,6 +1097,97 @@ func TestResolveModelForWorkflow(t *testing.T) {
 	}
 }
 
+func TestResolveWorkflowModel(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     map[string]string
+		global   *Config
+		workflow string
+		level    string
+		expect   string
+	}{
+		// Empty config returns empty
+		{
+			"empty config",
+			nil, nil,
+			"fix", "fast", "",
+		},
+		// Skips generic global default_model
+		{
+			"skips global default_model",
+			nil, &Config{DefaultModel: "gpt-5.4"},
+			"fix", "fast", "",
+		},
+		// Skips generic repo model
+		{
+			"skips repo generic model",
+			M{"model": "gpt-5.4"}, nil,
+			"fix", "fast", "",
+		},
+		// Uses workflow-specific model from global config
+		{
+			"global fix_model",
+			nil, &Config{DefaultModel: "gpt-5.4", FixModel: "gemini-2.5-pro"},
+			"fix", "fast", "gemini-2.5-pro",
+		},
+		// Uses level-specific model from global config
+		{
+			"global fix_model_fast",
+			nil, &Config{DefaultModel: "gpt-5.4", FixModelFast: "gemini-2.5-flash"},
+			"fix", "fast", "gemini-2.5-flash",
+		},
+		// Level-specific beats workflow-level in global
+		{
+			"global level > global workflow",
+			nil, &Config{FixModel: "gpt-4", FixModelFast: "claude-3"},
+			"fix", "fast", "claude-3",
+		},
+		// Uses workflow-specific model from repo config
+		{
+			"repo fix_model",
+			M{"model": "gpt-5.4", "fix_model": "gemini-2.5-pro"}, nil,
+			"fix", "fast", "gemini-2.5-pro",
+		},
+		// Uses level-specific model from repo config
+		{
+			"repo fix_model_fast",
+			M{"fix_model_fast": "claude-3"}, nil,
+			"fix", "fast", "claude-3",
+		},
+		// Repo beats global for workflow-specific
+		{
+			"repo workflow > global workflow",
+			M{"fix_model": "repo-model"},
+			&Config{FixModel: "global-model"},
+			"fix", "fast", "repo-model",
+		},
+		// Review workflow isolation
+		{
+			"review workflow uses review_model",
+			M{"fix_model": "fix-only", "review_model": "review-only"}, nil,
+			"review", "standard", "review-only",
+		},
+		// Skips both global default_model and repo generic model
+		{
+			"skips both generic defaults",
+			M{"model": "repo-generic"},
+			&Config{DefaultModel: "global-generic"},
+			"fix", "fast", "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeRepoConfig(t, tmpDir, tt.repo)
+			got := ResolveWorkflowModel(tmpDir, tt.global, tt.workflow, tt.level)
+			if got != tt.expect {
+				t.Errorf("got %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
 func TestResolveBackupAgentForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string

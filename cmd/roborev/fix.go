@@ -307,7 +307,17 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	}
 
 	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	modelStr := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "fix", reasoning)
+
+	// When --agent is passed on CLI but --model is not, only use
+	// workflow-specific model config. The generic default_model is
+	// paired with default_agent and likely doesn't apply to the
+	// overridden agent.
+	var modelStr string
+	if opts.agentName != "" && opts.model == "" {
+		modelStr = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
+	} else {
+		modelStr = config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "fix", reasoning)
+	}
 
 	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {
@@ -368,12 +378,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 				}
 			}
 			if err != nil {
-				if len(jobIDs) == 1 {
-					return err
-				}
-				if !opts.quiet {
-					cmd.Printf("Error fixing job %d: %v\n", jobID, err)
-				}
+				return fmt.Errorf("error fixing job %d: %w", jobID, err)
 			}
 		}
 		// Mark as seen so the re-query loop doesn't retry this job.
@@ -894,10 +899,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			fmtr.Flush()
 		}
 		if err != nil {
-			if !opts.quiet {
-				cmd.Printf("Error in batch %d: %v\n", i+1, err)
-			}
-			continue
+			return fmt.Errorf("error in batch %d: %w", i+1, err)
 		}
 
 		if !opts.quiet {

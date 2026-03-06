@@ -798,9 +798,16 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		return fmt.Errorf("resolve fix reasoning: %w", reasonErr)
 	}
 
-	// Resolve agent and model via fix workflow config
+	// Resolve agent and model via fix workflow config.
+	// When the agent is explicitly overridden but the model is not,
+	// skip generic default_model (it's paired with default_agent).
+	cliAgent := agentName
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
-	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
+	if cliAgent != "" && model == "" {
+		model = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
+	} else {
+		model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
+	}
 
 	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {

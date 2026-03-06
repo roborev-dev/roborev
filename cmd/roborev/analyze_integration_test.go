@@ -4,9 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -17,111 +15,73 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-type jobResponse struct {
-	status   string
-	review   string
-	errMsg   string
-	notFound bool
-}
-
-const testJobID = 42
-
-type jobMockServer struct {
-	responses []jobResponse
-	pollCount int32
-}
-
-func (m *jobMockServer) handleJobs(w http.ResponseWriter, r *http.Request) {
-	if len(m.responses) == 0 {
-		http.Error(w, "no mock responses configured", http.StatusInternalServerError)
-		return
-	}
-	idx := int(atomic.AddInt32(&m.pollCount, 1)) - 1
-	if idx >= len(m.responses) {
-		idx = len(m.responses) - 1
-	}
-	resp := m.responses[idx]
-
-	if resp.notFound {
-		if err := json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}}); err != nil {
-			http.Error(w, "mock encoding error", http.StatusInternalServerError)
-		}
-		return
-	}
-	job := storage.ReviewJob{
-		ID:     testJobID,
-		Status: storage.JobStatus(resp.status),
-		Error:  resp.errMsg,
-	}
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}}); err != nil {
-		http.Error(w, "mock encoding error", http.StatusInternalServerError)
-	}
-}
-
-func (m *jobMockServer) handleReview(w http.ResponseWriter, r *http.Request) {
-	if len(m.responses) == 0 {
-		http.Error(w, "no mock responses configured", http.StatusInternalServerError)
-		return
-	}
-	// Return the final review state without incrementing the poll count
-	resp := m.responses[len(m.responses)-1]
-
-	if err := json.NewEncoder(w).Encode(storage.Review{
-		JobID:  testJobID,
-		Output: resp.review,
-	}); err != nil {
-		http.Error(w, "mock encoding error", http.StatusInternalServerError)
-	}
-}
-
 func TestWaitForAnalysisJob(t *testing.T) {
+	const testJobID = 42
 	tests := []struct {
 		name       string
-		responses  []jobResponse // sequence of responses
+		setupOpts  MockServerOpts
 		wantErr    bool
 		wantErrMsg string
+		wantReview string
 	}{
 		{
 			name: "immediate success",
-			responses: []jobResponse{
-				{status: "done", review: "Analysis complete: found 3 issues"},
+			setupOpts: MockServerOpts{
+				JobIDStart:        testJobID + 1,
+				JobStatusSequence: []storage.JobStatus{storage.JobStatusDone},
+				ReviewOutput:      "Analysis complete: found 3 issues",
 			},
+			wantReview: "Analysis complete: found 3 issues",
 		},
 		{
 			name: "queued then done",
-			responses: []jobResponse{
-				{status: "queued"},
-				{status: "running"},
-				{status: "done", review: "All good"},
+			setupOpts: MockServerOpts{
+				JobIDStart: testJobID + 1,
+				JobStatusSequence: []storage.JobStatus{
+					storage.JobStatusQueued,
+					storage.JobStatusRunning,
+					storage.JobStatusDone,
+				},
+				ReviewOutput: "All good",
 			},
+			wantReview: "All good",
 		},
 		{
 			name: "job failed",
-			responses: []jobResponse{
-				{status: "failed", errMsg: "agent crashed"},
+			setupOpts: MockServerOpts{
+				JobIDStart:        testJobID + 1,
+				JobStatusSequence: []storage.JobStatus{storage.JobStatusFailed},
+				JobError:          "agent crashed",
 			},
 			wantErr:    true,
 			wantErrMsg: "agent crashed",
 		},
 		{
 			name: "job canceled",
-			responses: []jobResponse{
-				{status: "canceled"},
+			setupOpts: MockServerOpts{
+				JobIDStart:        testJobID + 1,
+				JobStatusSequence: []storage.JobStatus{storage.JobStatusCanceled},
 			},
 			wantErr:    true,
 			wantErrMsg: "canceled",
 		},
 		{
 			name: "job not found",
-			responses: []jobResponse{
-				{notFound: true},
+			setupOpts: MockServerOpts{
+				JobIDStart:  testJobID + 1,
+				JobNotFound: true,
 			},
 			wantErr:    true,
 			wantErrMsg: "not found",
 		},
 		{
-			name:       "empty responses",
-			responses:  []jobResponse{},
+			name: "empty responses",
+			setupOpts: MockServerOpts{
+				JobIDStart: testJobID + 1,
+				OnJobs: func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "no mock responses configured", http.StatusInternalServerError)
+				},
+			},
 			wantErr:    true,
 			wantErrMsg: "no mock responses configured",
 		},
@@ -129,12 +89,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &jobMockServer{responses: tt.responses}
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/jobs", mock.handleJobs)
-			mux.HandleFunc("/api/review", mock.handleReview)
-			ts := httptest.NewServer(mux)
-			defer ts.Close()
+			ts, _ := newMockServer(t, tt.setupOpts)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -157,8 +112,8 @@ func TestWaitForAnalysisJob(t *testing.T) {
 			if review == nil {
 				t.Fatal("expected review, got nil")
 			}
-			if review.Output != tt.responses[len(tt.responses)-1].review {
-				t.Errorf("got review %q, want %q", review.Output, tt.responses[len(tt.responses)-1].review)
+			if review.Output != tt.wantReview {
+				t.Errorf("got review %q, want %q", review.Output, tt.wantReview)
 			}
 		})
 	}

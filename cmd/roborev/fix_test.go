@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -1514,5 +1515,275 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	mu.Unlock()
 	if !slices.Contains(ids, int64(10)) {
 		t.Errorf("expected job 10 to be closed, got IDs: %v", ids)
+	}
+}
+
+func TestRunFixWithSeenAbortsOnError(t *testing.T) {
+	// When processing multiple jobs and one fails, runFixWithSeen should
+	// abort instead of continuing to the next job. This prevents wasting
+	// time on subsequent jobs when the agent is broken (e.g., wrong model).
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+
+	var processedJobs []int64
+	var mu sync.Mutex
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			jobIDStr := q.Get("id")
+			if jobIDStr == "" {
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+			var id int64
+			fmt.Sscanf(jobIDStr, "%d", &id)
+			mu.Lock()
+			processedJobs = append(processedJobs, id)
+			mu.Unlock()
+
+			// Job 20 is "running" (not complete), which causes fixSingleJob
+			// to return an error.
+			status := storage.JobStatusDone
+			if id == 20 {
+				status = storage.JobStatusRunning
+			}
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{
+					{ID: id, Status: status, Agent: "test"},
+				},
+				"has_more": false,
+			})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
+			agentName: "test",
+			reasoning: "fast",
+		}, nil)
+	})
+
+	// Should return an error (job 20 is not complete)
+	if err == nil {
+		t.Fatal("expected error when job fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "error fixing job 20") {
+		t.Errorf("error should mention job 20, got: %v", err)
+	}
+
+	// Job 30 should NOT be processed (abort after job 20 fails)
+	mu.Lock()
+	jobs := processedJobs
+	mu.Unlock()
+	if slices.Contains(jobs, int64(30)) {
+		t.Errorf("job 30 should not be processed after job 20 fails, got: %v", jobs)
+	}
+}
+
+func TestResolveFixAgentSkipsDefaultModel(t *testing.T) {
+	// When --agent is passed on CLI, the global default_model should
+	// NOT be applied. The default_model is paired with default_agent
+	// and likely doesn't apply to the overridden agent.
+	//
+	// This is tested at the config resolution level since the test agent
+	// ignores WithModel calls.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write global config with default_model
+	cfgDir := filepath.Join(tmpDir)
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		agentName string // CLI --agent value
+		model     string // CLI --model value
+		wantModel bool   // whether default_model should be applied
+	}{
+		{
+			name:      "no CLI agent uses default_model",
+			agentName: "",
+			model:     "",
+			wantModel: true,
+		},
+		{
+			name:      "CLI agent skips default_model",
+			agentName: "test",
+			model:     "",
+			wantModel: false,
+		},
+		{
+			name:      "CLI agent with CLI model uses CLI model",
+			agentName: "test",
+			model:     "my-model",
+			wantModel: true,
+		},
+		{
+			name:      "no CLI agent with CLI model uses CLI model",
+			agentName: "",
+			model:     "my-model",
+			wantModel: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadGlobal()
+			if err != nil {
+				t.Fatalf("LoadGlobal: %v", err)
+			}
+
+			reasoning := "fast"
+
+			agentName := config.ResolveAgentForWorkflow(
+				tt.agentName, tmpDir, cfg, "fix", reasoning,
+			)
+			_ = agentName
+
+			// Simulate the same branching logic as resolveFixAgent
+			var modelStr string
+			if tt.agentName != "" && tt.model == "" {
+				modelStr = config.ResolveWorkflowModel(
+					tmpDir, cfg, "fix", reasoning,
+				)
+			} else {
+				modelStr = config.ResolveModelForWorkflow(
+					tt.model, tmpDir, cfg, "fix", reasoning,
+				)
+			}
+
+			if tt.wantModel && modelStr == "" {
+				t.Errorf("expected model to be set, got empty")
+			}
+			if !tt.wantModel && modelStr != "" {
+				t.Errorf("expected model to be empty, got %q", modelStr)
+			}
+			if tt.model != "" && modelStr != tt.model {
+				t.Errorf("expected model %q, got %q", tt.model, modelStr)
+			}
+		})
+	}
+}
+
+func TestResolveFixAgentUsesWorkflowModel(t *testing.T) {
+	// When --agent is passed on CLI, workflow-specific models (e.g.,
+	// fix_model) should still be used. Only generic defaults are skipped.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write global config with both default_model and fix_model
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+fix_model = "gemini-2.5-pro"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+
+	// With CLI --agent override, fix_model should still apply
+	modelStr := config.ResolveWorkflowModel(tmpDir, cfg, "fix", "fast")
+	if modelStr != "gemini-2.5-pro" {
+		t.Errorf(
+			"expected workflow-specific model 'gemini-2.5-pro', got %q",
+			modelStr,
+		)
+	}
+
+	// Without CLI --agent, ResolveModelForWorkflow should return
+	// fix_model (higher priority than default_model)
+	modelStr = config.ResolveModelForWorkflow("", tmpDir, cfg, "fix", "fast")
+	if modelStr != "gemini-2.5-pro" {
+		t.Errorf(
+			"expected workflow-specific model 'gemini-2.5-pro', got %q",
+			modelStr,
+		)
+	}
+}
+
+func TestResolveFixAgentUsesRepoWorkflowModel(t *testing.T) {
+	// Repo-level workflow-specific models should be used even when
+	// --agent is overridden on CLI.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write global config with default_model only
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write repo config with fix_model_fast
+	repoDir := t.TempDir()
+	repoConfigPath := filepath.Join(repoDir, ".roborev.toml")
+	if err := os.WriteFile(repoConfigPath, []byte(`
+fix_model_fast = "claude-sonnet"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+
+	// With CLI --agent override, repo fix_model_fast should apply
+	modelStr := config.ResolveWorkflowModel(repoDir, cfg, "fix", "fast")
+	if modelStr != "claude-sonnet" {
+		t.Errorf(
+			"expected repo workflow model 'claude-sonnet', got %q",
+			modelStr,
+		)
+	}
+
+	// Repo generic model should NOT be used
+	repoConfigPath2 := filepath.Join(repoDir, ".roborev.toml")
+	if err := os.WriteFile(repoConfigPath2, []byte(`
+model = "repo-default"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	modelStr = config.ResolveWorkflowModel(repoDir, cfg, "fix", "fast")
+	if modelStr != "" {
+		t.Errorf(
+			"expected empty model (repo generic should be skipped), got %q",
+			modelStr,
+		)
 	}
 }

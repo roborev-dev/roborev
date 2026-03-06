@@ -229,9 +229,16 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	agentName := config.ResolveAgentForWorkflow(
 		opts.agentName, repoRoot, cfg, "fix", reasoning,
 	)
-	model := config.ResolveModelForWorkflow(
-		opts.model, repoRoot, cfg, "fix", reasoning,
-	)
+	// When the agent is explicitly overridden but the model is not,
+	// skip generic default_model (it's paired with default_agent).
+	var model string
+	if opts.agentName != "" && opts.model == "" {
+		model = config.ResolveWorkflowModel(repoRoot, cfg, "fix", reasoning)
+	} else {
+		model = config.ResolveModelForWorkflow(
+			opts.model, repoRoot, cfg, "fix", reasoning,
+		)
+	}
 
 	if !opts.quiet {
 		cmd.Printf("\nRunning verification agent (%s) to check findings against current codebase...\n\n", agentName)
