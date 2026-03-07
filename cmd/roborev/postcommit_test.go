@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func executePostCommitCmd(
@@ -148,6 +151,68 @@ func TestEnqueueRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executeEnqueueAliasCmd("abc123")
 	if err == nil {
 		t.Fatal("expected error for positional args")
+	}
+}
+
+// stallingRoundTripper blocks until the request context is
+// cancelled, then returns an error. This simulates a daemon
+// that accepts connections but never responds, without needing
+// a real httptest server or a long sleep.
+type stallingRoundTripper struct {
+	hit chan struct{}
+}
+
+func (s *stallingRoundTripper) RoundTrip(
+	req *http.Request,
+) (*http.Response, error) {
+	select {
+	case s.hit <- struct{}{}:
+	default:
+	}
+	<-req.Context().Done()
+	return nil, fmt.Errorf("request cancelled: %w", req.Context().Err())
+}
+
+func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	// Register a handler so ensureDaemon succeeds, but the
+	// actual POST will go through the stalling RoundTripper.
+	mux.HandleFunc("/api/enqueue", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		t.Error("real handler should not be reached")
+	})
+
+	repo.CommitFile("file.txt", "content", "initial")
+
+	rt := &stallingRoundTripper{hit: make(chan struct{}, 1)}
+	orig := hookHTTPClient
+	hookHTTPClient = &http.Client{
+		Timeout:   50 * time.Millisecond,
+		Transport: rt,
+	}
+	t.Cleanup(func() { hookHTTPClient = orig })
+
+	start := time.Now()
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("expected nil (fail open), got: %v", err)
+	}
+
+	select {
+	case <-rt.hit:
+		// RoundTrip was called — timeout path was exercised
+	default:
+		t.Fatal("RoundTrip was never called; timeout not exercised")
+	}
+
+	if elapsed > time.Second {
+		t.Errorf(
+			"command took %v; should return promptly via timeout",
+			elapsed,
+		)
 	}
 }
 
