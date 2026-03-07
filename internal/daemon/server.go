@@ -182,7 +182,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 
-	ready, err := waitForServerReady(ctx, addr, 2*time.Second)
+	ready, err := waitForServerReady(ctx, addr, 2*time.Second, serveErrCh)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -235,13 +235,24 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-func waitForServerReady(ctx context.Context, addr string, timeout time.Duration) (bool, error) {
+func waitForServerReady(ctx context.Context, addr string, timeout time.Duration, serveErrCh <-chan error) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return false, nil
+		}
+		select {
+		case err := <-serveErrCh:
+			if err == http.ErrServerClosed && ctx.Err() != nil {
+				return false, nil
+			}
+			if err == nil {
+				return false, fmt.Errorf("daemon server exited before ready")
+			}
+			return false, err
+		default:
 		}
 		if _, err := ProbeDaemon(addr, 200*time.Millisecond); err == nil {
 			return true, nil
@@ -253,6 +264,17 @@ func waitForServerReady(ctx context.Context, addr string, timeout time.Duration)
 
 	if ctx.Err() != nil {
 		return false, nil
+	}
+	select {
+	case err := <-serveErrCh:
+		if err == http.ErrServerClosed && ctx.Err() != nil {
+			return false, nil
+		}
+		if err == nil {
+			return false, fmt.Errorf("daemon server exited before ready")
+		}
+		return false, err
+	default:
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("server did not respond before timeout")

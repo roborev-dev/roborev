@@ -320,9 +320,9 @@ func validateDaemonBindAddr(addr string) error {
 		return nil
 	}
 
-	host, _, err := net.SplitHostPort(addr)
+	host, _, err := parseDaemonBindAddr(addr)
 	if err != nil {
-		return fmt.Errorf("invalid daemon server address %q: %w", addr, err)
+		return err
 	}
 	if host == "" {
 		return fmt.Errorf(
@@ -338,6 +338,24 @@ func validateDaemonBindAddr(addr string) error {
 	}
 
 	return nil
+}
+
+func parseDaemonBindAddr(addr string) (string, int, error) {
+	if addr == "" {
+		return "127.0.0.1", 7373, nil
+	}
+
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid daemon server address %q: %w", addr, err)
+	}
+
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid daemon server port %q: %w", portText, err)
+	}
+
+	return host, port, nil
 }
 
 // isLoopbackAddr checks if an address is a loopback address.
@@ -471,28 +489,19 @@ func CleanupZombieDaemons() int {
 // After zombie cleanup, this should usually succeed on the first try.
 // Falls back to searching if the port is still in use (e.g., by another service).
 func FindAvailablePort(startAddr string) (string, int, error) {
-	// Parse the address
-	host := "127.0.0.1"
-	port := 7373
-
-	if startAddr != "" {
-		parts := strings.Split(startAddr, ":")
-		if len(parts) == 2 {
-			host = parts[0]
-			if p, err := strconv.Atoi(parts[1]); err == nil {
-				port = p
-			}
-		}
+	host, port, err := parseDaemonBindAddr(startAddr)
+	if err != nil {
+		return "", 0, err
 	}
 
 	// Try ports starting from the configured one
 	for i := range 100 {
-		addr := fmt.Sprintf("%s:%d", host, port+i)
+		addr := net.JoinHostPort(host, strconv.Itoa(port+i))
 		ln, err := net.Listen("tcp", addr)
 		if err == nil {
 			actualPort := ln.Addr().(*net.TCPAddr).Port
 			ln.Close()
-			return fmt.Sprintf("%s:%d", host, actualPort), actualPort, nil
+			return net.JoinHostPort(host, strconv.Itoa(actualPort)), actualPort, nil
 		}
 	}
 

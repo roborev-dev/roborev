@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
@@ -173,6 +176,76 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWaitForServerReadySurfacesServeError(t *testing.T) {
+	serveErrCh := make(chan error, 1)
+	wantErr := errors.New("serve failed")
+	serveErrCh <- wantErr
+
+	ready, err := waitForServerReady(context.Background(), "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
+	if ready {
+		t.Fatal("expected ready=false when serve exits early")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected error %v, got %v", wantErr, err)
+	}
+}
+
+func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback not available: %v", err)
+	}
+	ln.Close()
+
+	testenv.SetDataDir(t)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "[::1]:0"
+	server := NewServer(db, cfg, "")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Start(context.Background())
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			t.Fatalf("server exited before becoming ready: %v", err)
+		default:
+		}
+
+		info, err := ReadRuntime()
+		if err == nil {
+			host, _, splitErr := net.SplitHostPort(info.Addr)
+			if splitErr != nil {
+				t.Fatalf("runtime addr %q is invalid: %v", info.Addr, splitErr)
+			}
+			if host != "::1" {
+				t.Fatalf("expected IPv6 loopback host, got %q", host)
+			}
+			if stopErr := server.Stop(); stopErr != nil {
+				t.Fatalf("server.Stop() error: %v", stopErr)
+			}
+			select {
+			case err := <-errCh:
+				if err != nil {
+					t.Fatalf("server.Start() returned error after stop: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for server to stop")
+			}
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("timed out waiting for IPv6 daemon runtime")
 }
 
 func TestNewServerAllowUnsafeAgents(t *testing.T) {

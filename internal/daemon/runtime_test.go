@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,6 +102,30 @@ func TestFindAvailablePort_Ephemeral(t *testing.T) {
 	expectedAddr := fmt.Sprintf("127.0.0.1:%d", port)
 	if addr != expectedAddr {
 		t.Errorf("Expected address %q, got %q", expectedAddr, addr)
+	}
+}
+
+func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback not available: %v", err)
+	}
+	ln.Close()
+
+	addr, port, err := FindAvailablePort("[::1]:0")
+	if err != nil {
+		t.Fatalf("FindAvailablePort failed for IPv6 loopback: %v", err)
+	}
+
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("returned address %q is invalid: %v", addr, err)
+	}
+	if host != "::1" {
+		t.Fatalf("expected host ::1, got %q", host)
+	}
+	if portText == "0" || port == 0 {
+		t.Fatalf("expected an assigned port, got addr=%q port=%d", addr, port)
 	}
 }
 
