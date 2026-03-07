@@ -417,6 +417,13 @@ var benignPhrasesTests = []verdictTestCase{
 		name:   "markdown legend header with severity label not a finding",
 		output: "No issues found.\n\n**Severity levels:**\nSeverity: High - immediate action required.\nSeverity: Low - minor concern.",
 	},
+	{
+		name: "historical broken path after pass is benign",
+		output: "Review #8609 roborev (codex: gpt-5.4)\n" +
+			"Verdict: Fail\n\n" +
+			"No issues found. The guard on cmd.Flags().Changed(\"sha\") matches the intended behavior, and the added test exercises the previously broken quiet-mode path. " +
+			"I also ran go test ./cmd/roborev -run 'TestQuietBranchReviewIntegration|TestEnqueueCmdPositionalArg', which passed.",
+	},
 }
 
 var failImperativeTests = []verdictTestCase{
@@ -706,6 +713,14 @@ var failCaveatsTests = []verdictTestCase{
 	{
 		name:   "exclamation then error",
 		output: "No issues found! Error in tests.",
+	},
+	{
+		name:   "present tense broken state",
+		output: "No issues found. The quiet-mode path is broken.",
+	},
+	{
+		name:   "broken at start of clause",
+		output: "No issues found. Broken quiet-mode path when --sha is set.",
 	},
 }
 

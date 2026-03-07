@@ -39,6 +39,10 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	}
 	cfg := config.DefaultConfig()
 	cfg.CI.Enabled = true
+	// Keep CI poller tests hermetic. Any test that exercises synthesis without
+	// an explicit override should use the in-process test agent, not probe real
+	// agent binaries from the developer environment.
+	cfg.CI.SynthesisAgent = "test"
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 	return &ciPollerHarness{DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
 }

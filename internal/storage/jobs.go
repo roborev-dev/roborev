@@ -43,33 +43,43 @@ func ParseVerdict(output string) string {
 	}
 
 	for line := range strings.SplitSeq(output, "\n") {
-		trimmed := strings.TrimSpace(strings.ToLower(line))
-		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
-		trimmed = strings.ReplaceAll(trimmed, "\u2018", "'") // left single quote
-		trimmed = strings.ReplaceAll(trimmed, "\u2019", "'") // right single quote
-		// Strip markdown formatting (bold, italic, headers)
-		trimmed = stripMarkdown(trimmed)
-		// Strip leading list markers (bullets, numbers, etc.)
-		trimmed = stripListMarker(trimmed)
-		// Strip leading field label (e.g., "Review Findings: " or "Verdict: ")
-		trimmed = stripFieldLabel(trimmed)
-
-		// Check for pass indicators at start of line
-		isPass := strings.HasPrefix(trimmed, "no issues") ||
-			strings.HasPrefix(trimmed, "no findings") ||
-			strings.HasPrefix(trimmed, "i didn't find any issues") ||
-			strings.HasPrefix(trimmed, "i did not find any issues") ||
-			strings.HasPrefix(trimmed, "i found no issues")
-
-		if isPass {
-			// Reject if line contains caveats (check for word boundaries)
-			if hasCaveat(trimmed) {
-				continue
-			}
-			return "P"
+		normalized := normalizeVerdictLine(line)
+		if !hasPassPrefix(normalized) {
+			continue
 		}
+		// Reject if line contains caveats (check for word boundaries)
+		if hasCaveat(normalized) {
+			continue
+		}
+		return "P"
 	}
 	return "F"
+}
+
+func normalizeVerdictLine(line string) string {
+	normalized := strings.TrimSpace(strings.ToLower(line))
+	// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
+	normalized = strings.ReplaceAll(normalized, "\u2018", "'") // left single quote
+	normalized = strings.ReplaceAll(normalized, "\u2019", "'") // right single quote
+	normalized = stripMarkdown(normalized)
+	normalized = stripListMarker(normalized)
+	return stripFieldLabel(normalized)
+}
+
+func hasPassPrefix(line string) bool {
+	passPrefixes := []string{
+		"no issues",
+		"no findings",
+		"i didn't find any issues",
+		"i did not find any issues",
+		"i found no issues",
+	}
+	for _, prefix := range passPrefixes {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // stripMarkdown removes common markdown formatting from a line
@@ -358,6 +368,10 @@ func checkClauseForCaveat(clause string) bool {
 	}
 	lc = strings.TrimSpace(lc)
 
+	if hasBrokenFinding(lc) {
+		return true
+	}
+
 	// Check for "found <issue>" pattern - handle both mid-clause and start-of-clause
 	issueKeywords := []string{
 		"issue", "issues", "bug", "bugs", "error", "errors",
@@ -514,7 +528,7 @@ func checkClauseForCaveat(clause string) bool {
 		// matching (e.g., "problem statement", "issue tracker", "vulnerability disclosure").
 		// They're handled in check-phrase context and contrast detection instead.
 		if w == "fail" || w == "fails" || w == "failed" || w == "failing" ||
-			w == "break" || w == "breaks" || w == "broken" ||
+			w == "break" || w == "breaks" ||
 			w == "crash" || w == "crashes" || w == "panic" || w == "panics" ||
 			w == "error" || w == "errors" || w == "bug" || w == "bugs" {
 			// Check if preceded by negation within this clause
@@ -524,6 +538,38 @@ func checkClauseForCaveat(clause string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// hasBrokenFinding treats "broken" as a finding only in present-tense/problem
+// contexts. This avoids false positives for historical descriptions like
+// "the previously broken quiet-mode path" while still catching active failures.
+func hasBrokenFinding(clause string) bool {
+	if clause == "" {
+		return false
+	}
+
+	if strings.HasPrefix(clause, "broken ") {
+		return true
+	}
+
+	patterns := []string{
+		" is broken",
+		" are broken",
+		" remains broken",
+		" remain broken",
+		" still broken",
+		" looks broken",
+		" seem broken",
+		" seems broken",
+		" broken after ",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(clause, pattern) {
+			return true
+		}
+	}
+
 	return false
 }
 
