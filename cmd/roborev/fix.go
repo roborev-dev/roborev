@@ -1045,7 +1045,7 @@ func formatJobIDs(ids []int64) string {
 
 // fetchJob retrieves a job from the daemon
 func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.ReviewJob, error) {
-	return withFixDaemonRetry(serverAddr, func(addr string) (*storage.ReviewJob, error) {
+	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.ReviewJob, error) {
 		client := &http.Client{Timeout: 30 * time.Second}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID), nil)
@@ -1081,7 +1081,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 
 // fetchReview retrieves the review output for a job
 func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
-	return withFixDaemonRetry(serverAddr, func(addr string) (*storage.Review, error) {
+	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.Review, error) {
 		client := &http.Client{Timeout: 30 * time.Second}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID), nil)
@@ -1165,7 +1165,7 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 			return err
 		}
 
-		currentAddr = recoverFixDaemonAddr()
+		currentAddr = recoverFixDaemonAddr(context.Background())
 		applied, verifyErr := hasJobResponse(currentAddr, jobID, commenter, response)
 		if verifyErr != nil {
 			return fmt.Errorf("verify response after retryable failure: %w", verifyErr)
@@ -1222,7 +1222,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 			return err
 		}
 
-		currentAddr = recoverFixDaemonAddr()
+		currentAddr = recoverFixDaemonAddr(context.Background())
 		exists, verifyErr := hasJobForSHA(currentAddr, sha)
 		if verifyErr != nil {
 			return fmt.Errorf("verify enqueue after retryable failure: %w", verifyErr)
@@ -1279,6 +1279,10 @@ func hasJobResponse(serverAddr string, jobID int64, commenter, response string) 
 }
 
 func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error)) (T, error) {
+	return withFixDaemonRetryContext(context.Background(), addr, fn)
+}
+
+func withFixDaemonRetryContext[T any](ctx context.Context, addr string, fn func(serverAddr string) (T, error)) (T, error) {
 	currentAddr := addr
 	var zero T
 
@@ -1287,27 +1291,39 @@ func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error
 		if err == nil {
 			return value, nil
 		}
-		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
+		if shouldStopFixDaemonRetry(ctx, err) || !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
 			return zero, err
 		}
 
-		waitForFixDaemonRecovery()
-		currentAddr = serverAddr
+		currentAddr = recoverFixDaemonAddr(ctx)
 	}
 }
 
-func recoverFixDaemonAddr() string {
-	waitForFixDaemonRecovery()
+func shouldStopFixDaemonRetry(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return ctx != nil && (errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded))
+}
+
+func recoverFixDaemonAddr(ctx context.Context) string {
+	waitForFixDaemonRecovery(ctx)
 	return serverAddr
 }
 
-func waitForFixDaemonRecovery() {
+func waitForFixDaemonRecovery(ctx context.Context) {
 	deadline := time.Now().Add(fixDaemonRecoveryWait)
 	for {
+		if ctx != nil && ctx.Err() != nil {
+			return
+		}
 		if err := fixDaemonEnsure(); err == nil {
 			return
 		}
 		if time.Now().After(deadline) {
+			return
+		}
+		if ctx != nil && ctx.Err() != nil {
 			return
 		}
 		fixDaemonSleep(fixDaemonRecoveryPoll)

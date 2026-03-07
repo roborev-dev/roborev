@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -178,6 +179,21 @@ func TestFetchJob(t *testing.T) {
 	}
 }
 
+func TestFetchJobCanceledContextDoesNotRetryRecovery(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("fetchJob should not attempt daemon recovery after context cancellation")
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := fetchJob(ctx, "http://127.0.0.1:1", 42)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got: %v", err)
+	}
+}
+
 func TestFetchReview(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -240,6 +256,26 @@ func TestFetchReview(t *testing.T) {
 				t.Errorf("review.Output = %q, want %q", review.Output, tt.review.Output)
 			}
 		})
+	}
+}
+
+func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("fetchReview should not attempt daemon recovery after deadline exceeded")
+		return nil
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, err := fetchReview(ctx, ts.URL, 42)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got: %v", err)
 	}
 }
 
