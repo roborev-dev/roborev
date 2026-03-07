@@ -549,6 +549,219 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 	}
 }
 
+func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
+	t.Helper()
+	if err := os.WriteFile(
+		filepath.Join(repo.Dir, ".roborev.toml"),
+		[]byte(content), 0644,
+	); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+}
+
+func TestTryBranchReview(t *testing.T) {
+	t.Run("returns false when no config", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+
+		_, ok := tryBranchReview(repo.Dir, "")
+		if ok {
+			t.Error("expected false with no config")
+		}
+	})
+
+	t.Run("returns false when config is commit", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
+
+		_, ok := tryBranchReview(repo.Dir, "")
+		if ok {
+			t.Error("expected false with explicit commit config")
+		}
+	})
+
+	t.Run("returns merge-base range when config is branch", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		if !ok {
+			t.Fatal("expected true with branch config")
+		}
+		if !strings.Contains(ref, mainSHA) {
+			t.Errorf("expected ref to contain merge-base %s, got %q", mainSHA, ref)
+		}
+		if !strings.HasSuffix(ref, "..HEAD") {
+			t.Errorf("expected ref ending with ..HEAD, got %q", ref)
+		}
+	})
+
+	t.Run("covers multiple commits on feature branch", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("a.txt", "a", "first feature commit")
+		repo.CommitFile("b.txt", "b", "second feature commit")
+		repo.CommitFile("c.txt", "c", "third feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		if !ok {
+			t.Fatal("expected true")
+		}
+		// Range should start from merge-base (main HEAD) and cover all 3 commits
+		want := mainSHA + "..HEAD"
+		if ref != want {
+			t.Errorf("expected %q, got %q", want, ref)
+		}
+	})
+
+	t.Run("returns false on base branch", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, ok := tryBranchReview(repo.Dir, "")
+		if ok {
+			t.Error("expected false when on base branch")
+		}
+	})
+
+	t.Run("uses baseBranch override", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/develop")
+		repo.CommitFile("file.txt", "content", "initial")
+		developSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "develop")
+		if !ok {
+			t.Fatal("expected true with baseBranch override")
+		}
+		want := developSHA + "..HEAD"
+		if ref != want {
+			t.Errorf("expected %q, got %q", want, ref)
+		}
+	})
+
+	t.Run("returns false on detached HEAD", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		sha := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", sha) // detach HEAD
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		// GetCurrentBranch returns "HEAD" for detached state, which != "main",
+		// so merge-base lookup proceeds. But the range has 0 commits since
+		// HEAD == merge-base, so it falls back gracefully.
+		_, ok := tryBranchReview(repo.Dir, "")
+		if ok {
+			t.Error("expected false on detached HEAD (no commits beyond base)")
+		}
+	})
+}
+
+func TestQuietBranchReviewIntegration(t *testing.T) {
+	t.Run("quiet mode submits branch range when configured", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := <-reqCh
+		want := mainSHA + "..HEAD"
+		if req.GitRef != want {
+			t.Errorf("expected git_ref %q, got %q", want, req.GitRef)
+		}
+	})
+
+	t.Run("quiet mode falls back to HEAD on base branch", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := <-reqCh
+		if req.GitRef != "HEAD" {
+			t.Errorf("expected HEAD fallback on base branch, got %q", req.GitRef)
+		}
+	})
+
+	t.Run("quiet mode uses HEAD when no config", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.CommitFile("file.txt", "content", "initial")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := <-reqCh
+		if req.GitRef != "HEAD" {
+			t.Errorf("expected HEAD, got %q", req.GitRef)
+		}
+	})
+
+	t.Run("non-quiet mode ignores branch config", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		// Without --quiet, config should be ignored — user must use --branch explicitly
+		_, _, err := executeReviewCmd("--repo", repo.Dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := <-reqCh
+		if req.GitRef != "HEAD" {
+			t.Errorf("expected HEAD in non-quiet mode (config should not apply), got %q", req.GitRef)
+		}
+	})
+}
+
 func TestFindChildGitRepos(t *testing.T) {
 	parent := t.TempDir()
 

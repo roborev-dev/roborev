@@ -2330,6 +2330,35 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 	})
 }
 
+func TestResolvePostCommitReview(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{"no config file", "", "commit"},
+		{"field not set", `agent = "claude-code"`, "commit"},
+		{"explicit commit", `post_commit_review = "commit"`, "commit"},
+		{"branch", `post_commit_review = "branch"`, "branch"},
+		{"unknown value falls back to commit", `post_commit_review = "auto"`, "commit"},
+		{"empty string falls back to commit", `post_commit_review = ""`, "commit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var dir string
+			if tt.config == "" {
+				dir = t.TempDir()
+			} else {
+				dir = newTempRepo(t, tt.config)
+			}
+			got := ResolvePostCommitReview(dir)
+			if got != tt.want {
+				t.Errorf("ResolvePostCommitReview() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolvedThrottleInterval(t *testing.T) {
 	tests := []struct {
 		name  string

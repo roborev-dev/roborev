@@ -252,8 +252,17 @@ Examples:
 				// Single commit
 				gitRef = args[0]
 			} else {
-				// Default to HEAD
-				gitRef = sha
+				// Default to HEAD — but in quiet mode (post-commit hook),
+				// check repo config for branch review preference.
+				if quiet {
+					if ref, ok := tryBranchReview(root, baseBranch); ok {
+						gitRef = ref
+					} else {
+						gitRef = sha
+					}
+				} else {
+					gitRef = sha
+				}
 			}
 
 			// Get branch name for tracking. When --branch=<name> targets
@@ -456,4 +465,42 @@ func findChildGitRepos(dir string) []string {
 		}
 	}
 	return repos
+}
+
+// tryBranchReview checks the repo config for post_commit_review = "branch".
+// When set, it returns a merge-base..HEAD range ref for the current branch.
+// Returns ("", false) silently on any error — hooks must never block commits.
+func tryBranchReview(root, baseBranchOverride string) (string, bool) {
+	mode := config.ResolvePostCommitReview(root)
+	if mode != "branch" {
+		return "", false
+	}
+
+	base := baseBranchOverride
+	if base == "" {
+		var err error
+		base, err = git.GetDefaultBranch(root)
+		if err != nil {
+			return "", false
+		}
+	}
+
+	// Don't branch-review when on the base branch itself
+	current := git.GetCurrentBranch(root)
+	if current == git.LocalBranchName(base) {
+		return "", false
+	}
+
+	mergeBase, err := git.GetMergeBase(root, base, "HEAD")
+	if err != nil {
+		return "", false
+	}
+
+	rangeRef := mergeBase + "..HEAD"
+	commits, err := git.GetRangeCommits(root, rangeRef)
+	if err != nil || len(commits) == 0 {
+		return "", false
+	}
+
+	return rangeRef, true
 }

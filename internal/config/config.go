@@ -559,6 +559,7 @@ type RepoConfig struct {
 	ReviewReasoning        string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
 	RefineReasoning        string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
 	FixReasoning           string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
+	PostCommitReview       string   `toml:"post_commit_review"` // "commit" (default) or "branch"
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
@@ -727,6 +728,19 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+// ResolvePostCommitReview returns the post-commit review mode for a repo.
+// Returns "branch" when configured, otherwise "commit" (the default).
+func ResolvePostCommitReview(repoPath string) string {
+	cfg, err := LoadRepoConfig(repoPath)
+	if err != nil || cfg == nil {
+		return "commit"
+	}
+	if cfg.PostCommitReview == "branch" {
+		return "branch"
+	}
+	return "commit"
 }
 
 // LoadRepoConfigFromRef loads per-repo config from .roborev.toml at a

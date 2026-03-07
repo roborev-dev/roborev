@@ -1,4 +1,5 @@
 review_agent = ""
+post_commit_review = "branch"
 review_guidelines = """
 The daemon and client evolve in lockstep; the daemon is restarted after
 updates. API changes do not require backward compatibility shims.
