@@ -28,6 +28,24 @@ func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
 	m.flashMessage = msg
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
+	m.flashWarning = false
+}
+
+func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
+	m.flashMessage = msg
+	m.flashExpiresAt = time.Now().Add(d)
+	m.flashView = v
+	m.flashWarning = true
+}
+
+func (m model) renderFlash(view viewKind) string {
+	if m.flashMessage == "" || !time.Now().Before(m.flashExpiresAt) || m.flashView != view {
+		return ""
+	}
+	if m.flashWarning {
+		return warningFlashStyle.Render(m.flashMessage)
+	}
+	return flashStyle.Render(m.flashMessage)
 }
 
 // selectedJob returns a pointer to the currently selected job,
@@ -38,6 +56,18 @@ func (m *model) selectedJob() (*storage.ReviewJob, bool) {
 		return nil, false
 	}
 	return &m.jobs[m.selectedIdx], true
+}
+
+// selectJobByID restores selection to a specific job if it is still loaded.
+func (m *model) selectJobByID(jobID int64) bool {
+	for i := range m.jobs {
+		if m.jobs[i].ID == jobID {
+			m.selectedIdx = i
+			m.selectedJobID = jobID
+			return true
+		}
+	}
+	return false
 }
 
 // mutateJob finds a job by ID and applies the mutation function.

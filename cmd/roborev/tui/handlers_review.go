@@ -68,6 +68,7 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 			newState := !oldState
 			m.closedSeq++
 			seq := m.closedSeq
+			restoreSelection := false
 			*job.Closed = newState
 			m.pendingClosed[job.ID] = pendingState{newState: newState, seq: seq}
 			m.applyStatsDelta(newState)
@@ -82,9 +83,10 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 				if idx >= 0 {
 					m.selectedIdx = idx
 					m.updateSelectedJobID()
+					restoreSelection = true
 				}
 			}
-			return m, m.closeReviewInBackground(job.ID, newState, oldState, seq)
+			return m, m.closeReviewInBackground(job.ID, newState, oldState, seq, restoreSelection)
 		}
 	}
 	return m, nil

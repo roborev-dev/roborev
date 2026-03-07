@@ -400,8 +400,8 @@ func (m model) renderTasksView() string {
 	}
 
 	// Flash message
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewTasks {
-		b.WriteString(flashStyle.Render(m.flashMessage))
+	if flash := m.renderFlash(viewTasks); flash != "" {
+		b.WriteString(flash)
 	}
 	b.WriteString("\x1b[K\n")
 

@@ -67,6 +67,9 @@ var (
 	flashStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 
+	warningFlashStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
+
 	updateStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
 )
@@ -326,6 +329,7 @@ type model struct {
 	flashMessage   string
 	flashExpiresAt time.Time
 	flashView      viewKind // View where flash was triggered (only show in same view)
+	flashWarning   bool
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status

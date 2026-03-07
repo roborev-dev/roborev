@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
@@ -240,8 +239,8 @@ func (m model) renderReviewView() string {
 	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
 	if m.versionMismatch {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewReview {
-		b.WriteString(flashStyle.Render(m.flashMessage))
+	} else if flash := m.renderFlash(viewReview); flash != "" {
+		b.WriteString(flash)
 	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(statusStyle.Render(scrollInfo))

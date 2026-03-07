@@ -135,13 +135,14 @@ type promptMsg struct {
 }
 type closedMsg bool
 type closedResultMsg struct {
-	jobID      int64 // job ID for queue view rollback
-	reviewID   int64 // review ID for review view rollback
-	reviewView bool  // true if from review view (rollback currentReview)
-	oldState   bool
-	newState   bool   // the requested state (for pendingClosed validation)
-	seq        uint64 // request sequence number (for distinguishing same-state rapid toggles)
-	err        error
+	jobID            int64 // job ID for queue view rollback
+	reviewID         int64 // review ID for review view rollback
+	reviewView       bool  // true if from review view (rollback currentReview)
+	restoreSelection bool
+	oldState         bool
+	newState         bool   // the requested state (for pendingClosed validation)
+	seq              uint64 // request sequence number (for distinguishing same-state rapid toggles)
+	err              error
 }
 type cancelResultMsg struct {
 	jobID         int64
