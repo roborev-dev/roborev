@@ -191,4 +191,6 @@ When reviewing or fixing issues:
 - For API changes, preserve HTTP/JSON conventions.
 - For daemon changes, preserve the rule that background jobs must not edit the checked-out working tree.
 - When addressing review feedback, update tests if behavior changes.
+- If the user pastes review findings or review text directly into the prompt, treat that as direct fix input and work from the pasted content.
+- Do not invoke `roborev:address` or other review-fetching skills for pasted review text unless the user explicitly asks for that skill or provides only a review/job ID that must be fetched first.
 - If diffs are large or truncated, inspect with `git show <sha>`.
