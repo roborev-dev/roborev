@@ -485,6 +485,42 @@ func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
 	assertSelection(t, m, 1, 2)
 }
 
+func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	// User leaves the queue before the async close result arrives.
+	m.currentView = viewReview
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	if m.currentView != viewReview {
+		t.Fatalf("Expected to remain in review view, got %v", m.currentView)
+	}
+	assertSelection(t, m, 1, 2)
+}
+
 func TestTUISetJobClosedHelper(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 

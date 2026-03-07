@@ -570,7 +570,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 			if msg.jobID > 0 {
 				m.setJobClosed(msg.jobID, msg.oldState)
 				delete(m.pendingClosed, msg.jobID)
-				if msg.restoreSelection && m.currentView == viewQueue {
+				if msg.restoreSelection {
 					m.selectJobByID(msg.jobID)
 				}
 				// Reverse the optimistic stats delta
