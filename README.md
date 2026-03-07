@@ -6,66 +6,18 @@
 
 **[Documentation](https://roborev.io)** | **[Quick Start](https://roborev.io/quickstart/)** | **[Installation](https://roborev.io/installation/)**
 
-Continuous code review for coding agents. roborev reviews every commit
-as you work, catches issues before they reach a pull request, and can
-automatically fix what it finds.
+Continuous code review for AI coding agents. roborev runs in the
+background, reviews every commit as agents write code, and surfaces
+issues in seconds -- before they compound. When it finds problems,
+it can fix them automatically.
 
-https://github.com/user-attachments/assets/0ea4453d-d156-4502-a30a-45ddfe300574
+![roborev TUI](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-hero.svg)
 
-## Why roborev?
+## How It Works
 
-AI coding agents write code fast, but they make mistakes. Most people
-still operate in a "commit when it's ready" mindset, which means review
-feedback comes too late to be useful. The agent has moved on and
-context is lost. roborev changes this by giving your agents continuous
-review feedback while they are working on your prompts:
-
-1. **Agents commit often** - ideally every turn of work
-2. **roborev reviews** each commit in the background
-3. **Feed findings** into your agent sessions, or fix them autonomously with `roborev fix`
-
-Every commit gets reviewed. Issues surface in seconds, not hours.
-You catch problems while context is fresh instead of waiting for PR review.
-
-## Features
-
-- **Background Reviews** - Every commit is reviewed automatically via
-  git hooks. No workflow changes required.
-- **Auto-Fix** - `roborev fix` feeds review findings to an agent that
-  applies fixes and commits. `roborev refine` iterates until reviews pass.
-- **Code Analysis** - Built-in analysis types (duplication, complexity,
-  refactoring, test fixtures, dead code) that agents can fix automatically.
-- **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, and Droid.
-- **Runs Locally** - No hosted service or additional infrastructure.
-  Reviews are orchestrated on your machine using the coding agents
-  you already have configured.
-- **Interactive TUI** - Real-time review queue with vim-style navigation.
-- **Extensible Hooks** - Run shell commands on review events. Built-in
-  [beads](https://github.com/steveyegge/beads) integration creates trackable issues from
-  review failures automatically.
-
-## Installation
-
-**Shell Script (macOS / Linux):**
-```bash
-curl -fsSL https://roborev.io/install.sh | bash
-```
-
-**Homebrew (macOS / Linux):**
-```bash
-brew install roborev-dev/tap/roborev
-```
-
-**Windows (PowerShell):**
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
-```
-
-**With Go:**
-```bash
-go install github.com/roborev-dev/roborev/cmd/roborev@latest
-```
+1. Run `roborev init` to install a post-commit hook
+2. Every commit triggers a background review -- agents write, roborev reads
+3. View findings in the TUI, feed them to your agent, or let `roborev fix` handle it
 
 ## Quick Start
 
@@ -76,7 +28,28 @@ git commit -m "..."   # Reviews happen automatically
 roborev tui           # View reviews in interactive UI
 ```
 
-https://github.com/user-attachments/assets/c72d7189-9a31-4c1a-a43f-c788cbd97182
+![roborev review](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-review.svg)
+
+## Features
+
+- **Background Reviews** - Every commit is reviewed automatically via
+  git hooks. No workflow changes required.
+- **Auto-Fix** - `roborev fix` feeds review findings to an agent that
+  applies fixes and commits. `roborev refine` iterates until reviews pass.
+- **Code Analysis** - Built-in analysis types (duplication, complexity,
+  refactoring, test fixtures, dead code) that agents can fix automatically.
+- **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
+  OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
+- **Runs Locally** - No hosted service or additional infrastructure.
+  Reviews are orchestrated on your machine using the coding agents
+  you already have configured.
+- **Interactive TUI** - Real-time review queue with vim-style navigation.
+- **Review Verification** - `roborev compact` verifies findings against
+  current code, filters false positives, and consolidates related issues
+  into a single review.
+- **Extensible Hooks** - Run shell commands on review events. Built-in
+  [beads](https://github.com/steveyegge/beads) integration creates trackable issues from
+  review failures automatically.
 
 ## The Fix Loop
 
@@ -116,19 +89,27 @@ Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
 Analysis jobs appear in the review queue. Use `roborev fix <id>` to
 apply findings later, or pass `--fix` to apply immediately.
 
-## Review Verification
+## Installation
 
-When committing frequently, reviews can accumulate open findings - some valid, some false positives due to limited context. `compact` automates verification and consolidation:
-
+**Shell Script (macOS / Linux):**
 ```bash
-roborev compact                      # Verify and consolidate findings (background)
-roborev compact --wait               # Wait for completion
-roborev compact --branch main        # Compact jobs on main branch
+curl -fsSL https://roborev.io/install.sh | bash
 ```
 
-`compact` uses an agent to verify each finding against the current codebase. The agent searches code, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. roborev automatically closes original jobs when consolidation succeeds.
+**Homebrew (macOS / Linux):**
+```bash
+brew install roborev-dev/tap/roborev
+```
 
-This adds a quality layer between `review` and `fix`, reducing noise and making human review easier. Check progress with `roborev status` or `roborev tui`.
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
+```
+
+**With Go:**
+```bash
+go install github.com/roborev-dev/roborev/cmd/roborev@latest
+```
 
 ## Commands
 
@@ -176,8 +157,7 @@ command = "notify-send 'Review done for {repo_name} ({sha})'"
 
 Template variables: `{job_id}`, `{repo}`, `{repo_name}`, `{sha}`, `{verdict}`, `{error}`.
 
-For generic JSON webhook endpoints, use the built-in `webhook` hook type to
-POST the review event directly:
+For webhook endpoints, use the `webhook` hook type:
 
 ```toml
 [[hooks]]
@@ -186,20 +166,14 @@ type = "webhook"
 url = "https://example.com/roborev-webhook"
 ```
 
-### Beads Integration
-
-The built-in `beads` hook type creates [beads](https://github.com/steveyegge/beads) issues
-from review failures, giving your agents a task queue of findings to fix:
+The built-in `beads` hook type creates [beads](https://github.com/steveyegge/beads)
+issues from review failures, giving your agents a task queue of findings to fix:
 
 ```toml
 [[hooks]]
 event = "review.*"
 type = "beads"
 ```
-
-When a review fails or finds issues, a beads issue is created with the
-job ID and a `roborev fix` command, so agents can pick it up and resolve
-it autonomously.
 
 See [hooks guide](https://roborev.io/guides/hooks/) for details.
 
@@ -211,9 +185,12 @@ See [hooks guide](https://roborev.io/guides/hooks/) for details.
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Gemini | `npm install -g @google/gemini-cli` |
 | Copilot | `npm install -g @github/copilot` |
-| OpenCode | `npm install -g opencode-ai` |
+| OpenCode | `go install github.com/opencode-ai/opencode@latest` |
 | Cursor | [cursor.com](https://www.cursor.com/) |
+| Kiro | [kiro.dev](https://kiro.dev/) |
+| Kilo | `npm install -g @kilocode/cli` |
 | Droid | [factory.ai](https://factory.ai/) |
+| Pi | [pi.dev](https://pi.dev/) |
 
 roborev auto-detects installed agents.
 
