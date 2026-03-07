@@ -102,9 +102,9 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 	runInitCmd(t)
 
 	contentStr := readHookContent(t, repo.HookPath)
-	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgraded hook should contain v3 marker")
+	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgraded hook should contain current version marker")
 	assertNotContains(t, contentStr, "hook v2", "upgraded hook should not contain old v2 marker")
-	assertContains(t, contentStr, "enqueue --quiet", "upgraded hook should have enqueue line")
+	assertContains(t, contentStr, "post-commit", "upgraded hook should call post-commit")
 }
 
 func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
@@ -121,7 +121,7 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 	contentStr := readHookContent(t, repo.HookPath)
 
 	assertContains(t, contentStr, "echo 'my custom hook'", "upgrade should preserve non-roborev lines")
-	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgrade should contain v3 marker")
+	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgrade should contain current version marker")
 	assertNotContains(t, contentStr, "hook v2", "upgrade should remove old v2 marker")
 }
 

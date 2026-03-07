@@ -83,7 +83,7 @@ func TestUninstallHookCmd(t *testing.T) {
 					t.Fatalf("Failed to read hook: %v", err)
 				}
 				contentStr := string(content)
-				if strings.Contains(contentStr, "enqueue --quiet") {
+				if strings.Contains(contentStr, "roborev") {
 					t.Error("Hook should not contain generated roborev snippet")
 				}
 				if !strings.Contains(contentStr, "echo 'before'") {
