@@ -315,6 +315,31 @@ func probeLegacyDaemonStatus(client *http.Client, addr string) (*PingInfo, error
 	}, nil
 }
 
+func validateDaemonBindAddr(addr string) error {
+	if addr == "" {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid daemon server address %q: %w", addr, err)
+	}
+	if host == "" {
+		return fmt.Errorf(
+			"daemon server address %q must use an explicit loopback host (127.0.0.1, localhost, or [::1])",
+			addr,
+		)
+	}
+	if !isLoopbackAddr(addr) {
+		return fmt.Errorf(
+			"daemon server address %q must use a loopback host (127.0.0.1, localhost, or [::1])",
+			addr,
+		)
+	}
+
+	return nil
+}
+
 // isLoopbackAddr checks if an address is a loopback address.
 // Supports IPv4 (127.x.x.x), IPv6 (::1), and localhost.
 // Uses strict parsing to prevent bypass via userinfo or hostname tricks.

@@ -119,6 +119,11 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
+	cfg := s.configWatcher.Config()
+	if err := validateDaemonBindAddr(cfg.ServerAddr); err != nil {
+		return err
+	}
+
 	// Clean up any zombie daemons first (there can be only one)
 	if cleaned := CleanupZombieDaemons(); cleaned > 0 {
 		log.Printf("Cleaned up %d zombie daemon(s)", cleaned)
@@ -148,7 +153,6 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Find available port
-	cfg := s.configWatcher.Config()
 	addr, port, err := FindAvailablePort(cfg.ServerAddr)
 	if err != nil {
 		s.configWatcher.Stop()

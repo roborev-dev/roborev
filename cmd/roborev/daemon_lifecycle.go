@@ -33,6 +33,7 @@ var (
 	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
 	listAllRuntimes           = daemon.ListAllRuntimes
 	isPIDAliveForUpdate       = isPIDAliveForUpdateDefault
+	restartDaemonForEnsure    = restartDaemon
 	stopDaemonForUpdate       = stopDaemon
 	killAllDaemonsForUpdate   = killAllDaemons
 	startUpdatedDaemon        = func(binDir string) error {
@@ -130,7 +131,7 @@ func ensureDaemon() error {
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
 	// First check runtime files for any running daemon
-	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
+	if info, err := getAnyRunningDaemon(); err == nil {
 		daemonVersion := info.Version
 		if daemonVersion == "" {
 			if probe, err := daemon.ProbeDaemon(info.Addr, 2*time.Second); err == nil {
@@ -138,11 +139,19 @@ func ensureDaemon() error {
 			}
 		}
 
-		if !skipVersionCheck && daemonVersion != "" && daemonVersion != version.Version {
-			if verbose {
-				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
+		if !skipVersionCheck {
+			if daemonVersion == "" {
+				if verbose {
+					fmt.Printf("Daemon version unknown, restarting...\n")
+				}
+				return restartDaemonForEnsure()
 			}
-			return restartDaemon()
+			if daemonVersion != version.Version {
+				if verbose {
+					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
+				}
+				return restartDaemonForEnsure()
+			}
 		}
 
 		serverAddr = fmt.Sprintf("http://%s", info.Addr)
@@ -152,11 +161,19 @@ func ensureDaemon() error {
 	// Try the configured default address for manual/legacy daemon runs that do
 	// not have a runtime file yet.
 	if probe, err := probeDaemonServerURL(serverAddr, 2*time.Second); err == nil {
-		if !skipVersionCheck && probe.Version != "" && probe.Version != version.Version {
-			if verbose {
-				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
+		if !skipVersionCheck {
+			if probe.Version == "" {
+				if verbose {
+					fmt.Printf("Daemon version unknown, restarting...\n")
+				}
+				return restartDaemonForEnsure()
 			}
-			return restartDaemon()
+			if probe.Version != version.Version {
+				if verbose {
+					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
+				}
+				return restartDaemonForEnsure()
+			}
 		}
 		return nil
 	}

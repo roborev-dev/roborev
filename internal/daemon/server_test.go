@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -145,6 +146,33 @@ func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
 	return server, db, tmpDir
+}
+
+func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+	}{
+		{name: "all interfaces", addr: "0.0.0.0:0"},
+		{name: "unspecified host", addr: ":7373"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _ := testutil.OpenTestDBWithDir(t)
+			cfg := config.DefaultConfig()
+			cfg.ServerAddr = tt.addr
+
+			server := NewServer(db, cfg, "")
+			err := server.Start(context.Background())
+			if err == nil {
+				t.Fatalf("expected start error for %q", tt.addr)
+			}
+			if !strings.Contains(err.Error(), "loopback host") {
+				t.Fatalf("unexpected error for %q: %v", tt.addr, err)
+			}
+		})
+	}
 }
 
 func TestNewServerAllowUnsafeAgents(t *testing.T) {
