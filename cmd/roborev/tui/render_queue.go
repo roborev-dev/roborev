@@ -138,7 +138,7 @@ func (m model) renderQueueView() string {
 	// In compact mode, show version mismatch inline since the status area is hidden
 	if compact && m.versionMismatch {
 		b.WriteString(" ")
-		b.WriteString(errorStyle.Render(fmt.Sprintf("MISMATCH: TUI %s != Daemon %s", version.Version, m.daemonVersion)))
+		b.WriteString(m.renderDaemonStatus())
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
@@ -172,12 +172,12 @@ func (m model) renderQueueView() string {
 			closed = m.jobStats.Closed
 			open = m.jobStats.Open
 		}
+		b.WriteString(m.renderDaemonStatus())
 		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-			statusLine = fmt.Sprintf("Daemon: %s | Completed: %d | Closed: %d | Open: %d",
-				m.daemonVersion, done, closed, open)
+			statusLine = fmt.Sprintf(" | Completed: %d | Closed: %d | Open: %d",
+				done, closed, open)
 		} else {
-			statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Completed: %d | Closed: %d | Open: %d",
-				m.daemonVersion,
+			statusLine = fmt.Sprintf(" | Workers: %d/%d | Completed: %d | Closed: %d | Open: %d",
 				m.status.ActiveWorkers, m.status.MaxWorkers,
 				done, closed, open)
 		}
@@ -566,10 +566,7 @@ func (m model) renderQueueView() string {
 		b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 		// Status line: flash message (temporary)
-		// Version mismatch takes priority over flash messages (it's persistent and important)
-		if m.versionMismatch {
-			b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		} else if flash := m.renderFlash(viewQueue); flash != "" {
+		if flash := m.renderFlash(viewQueue); flash != "" {
 			b.WriteString(flash)
 		}
 		b.WriteString("\x1b[K\n") // Clear to end of line

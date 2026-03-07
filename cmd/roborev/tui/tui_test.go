@@ -594,15 +594,18 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 		output := m.View()
 
-		if !strings.Contains(output, "VERSION MISMATCH") {
-			t.Error("Expected queue view to show VERSION MISMATCH error")
+		if !strings.Contains(output, "Daemon: old-version") {
+			t.Error("Expected queue view to show daemon version")
 		}
-		if !strings.Contains(output, "old-version") {
-			t.Error("Expected error to show daemon version")
+		if !strings.Contains(output, "[MISMATCH]") {
+			t.Error("Expected queue view to show mismatch badge")
+		}
+		if strings.Contains(output, "VERSION MISMATCH") {
+			t.Error("Expected queue view to move mismatch warning out of footer")
 		}
 	})
 
-	t.Run("displays error banner in review view when mismatched", func(t *testing.T) {
+	t.Run("displays mismatch badge in review header when mismatched", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
@@ -622,8 +625,43 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 		output := m.View()
 
-		if !strings.Contains(output, "VERSION MISMATCH") {
-			t.Error("Expected review view to show VERSION MISMATCH error")
+		if !strings.Contains(output, "Daemon: old-version") {
+			t.Error("Expected review view to show daemon version")
+		}
+		if !strings.Contains(output, "[MISMATCH]") {
+			t.Error("Expected review view to show mismatch badge")
+		}
+		if strings.Contains(output, "VERSION MISMATCH") {
+			t.Error("Expected review view to move mismatch warning out of footer")
+		}
+	})
+
+	t.Run("review flash still renders when mismatch is present", func(t *testing.T) {
+		m := newModel(testServerAddr, withExternalIODisabled())
+		m.width = 100
+		m.height = 30
+		m.currentView = viewReview
+		m.versionMismatch = true
+		m.daemonVersion = "old-version"
+		m.currentReview = &storage.Review{
+			ID:     1,
+			Output: "Test review",
+			Job: &storage.ReviewJob{
+				ID:       1,
+				GitRef:   "abc123",
+				RepoName: "test",
+				Agent:    "test",
+			},
+		}
+		m.setFlash("Saved", time.Minute, viewReview)
+
+		output := m.View()
+
+		if !strings.Contains(output, "Saved") {
+			t.Error("Expected review flash message to remain visible with mismatch badge")
+		}
+		if !strings.Contains(output, "[MISMATCH]") {
+			t.Error("Expected mismatch badge to still render alongside review header")
 		}
 	})
 }

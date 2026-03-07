@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
-	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func (m model) renderReviewView() string {
@@ -79,11 +78,15 @@ func (m model) renderReviewView() string {
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
 		b.WriteString("\n")
+		b.WriteString(m.renderDaemonStatus())
+		b.WriteString("\x1b[K\n")
 	} else {
 		title = "Review"
 		titleLen = len(title)
 		b.WriteString(titleStyle.Render(title))
 		b.WriteString("\x1b[K\n") // Clear to end of line
+		b.WriteString(m.renderDaemonStatus())
+		b.WriteString("\x1b[K\n")
 	}
 
 	// Build content: review output + responses
@@ -138,8 +141,8 @@ func (m model) renderReviewView() string {
 		}
 	}
 
-	// headerHeight = title + location line + status line (1) + help + verdict/closed (0|1)
-	headerHeight := titleLines + locationLines + 1 + helpLines
+	// Reserve title, location, daemon status, footer status, help, and optional verdict.
+	headerHeight := titleLines + locationLines + 2 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
 	if hasVerdict || review.Closed {
 		headerHeight++ // Add 1 for verdict/closed line
@@ -236,10 +239,8 @@ func (m model) renderReviewView() string {
 		}
 	}
 
-	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
-	if m.versionMismatch {
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-	} else if flash := m.renderFlash(viewReview); flash != "" {
+	// Status line: flash message takes priority, then scroll indicator.
+	if flash := m.renderFlash(viewReview); flash != "" {
 		b.WriteString(flash)
 	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))

@@ -299,7 +299,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:                   "abc1234",
 			jobAgent:                 "codex",
 			jobVerdict:               nil,
-			wantVisibleLines:         5, // height 10 - 5 non-content = 5
+			wantVisibleLines:         4, // height 10 - 6 non-content = 4
 			checkVisibleContentCount: true,
 		},
 		{
@@ -309,7 +309,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       &verdictPass,
-			wantVisibleLines: 4, // height 10 - 6 non-content = 4
+			wantVisibleLines: 3, // height 10 - 7 non-content = 3
 		},
 		{
 			name:             "narrow terminal",
@@ -318,7 +318,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       nil,
-			wantVisibleLines: 4, // height 10 - 6 non-content = 4
+			wantVisibleLines: 3, // height 10 - 7 non-content = 3
 		},
 		{
 			name:             "narrow terminal with verdict",
@@ -327,7 +327,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       &verdictFail,
-			wantVisibleLines: 3, // height 10 - 7 non-content = 3
+			wantVisibleLines: 2, // height 10 - 8 non-content = 2
 			wantContains:     []string{"Verdict"},
 		},
 		{
@@ -341,7 +341,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobAgent:         "claude-code",
 			jobVerdict:       nil,
 			closed:           true,
-			wantVisibleLines: 3, // height 12 - 9 non-content = 3
+			wantVisibleLines: 2, // height 12 - 10 non-content = 2
 			wantContains:     []string{"very-long-repository-name-here", "feature/very-long-branch-name", "[CLOSED]"},
 		},
 	}
