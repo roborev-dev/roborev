@@ -351,6 +351,7 @@ func TestAddJobResponse(t *testing.T) {
 func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	var firstPostCount atomic.Int32
 	var recoveryPostCount atomic.Int32
+	var responsesMu sync.Mutex
 	var responses []storage.Response
 
 	startServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,12 +362,14 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode request body: %v", err)
 			}
+			responsesMu.Lock()
 			responses = append(responses, storage.Response{
 				ID:        int64(len(responses) + 1),
 				JobID:     ptrInt64(123),
 				Responder: req["commenter"].(string),
 				Response:  req["comment"].(string),
 			})
+			responsesMu.Unlock()
 			closeConnNoResponse(t, w)
 		default:
 			http.NotFound(w, r)
@@ -377,7 +380,10 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/comments":
-			writeJSON(w, map[string]any{"responses": responses})
+			responsesMu.Lock()
+			responsesCopy := append([]storage.Response(nil), responses...)
+			responsesMu.Unlock()
+			writeJSON(w, map[string]any{"responses": responsesCopy})
 		case "/api/comment":
 			recoveryPostCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
