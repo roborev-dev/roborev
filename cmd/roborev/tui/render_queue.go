@@ -569,8 +569,8 @@ func (m model) renderQueueView() string {
 		// Version mismatch takes priority over flash messages (it's persistent and important)
 		if m.versionMismatch {
 			b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewQueue {
-			b.WriteString(flashStyle.Render(m.flashMessage))
+		} else if flash := m.renderFlash(viewQueue); flash != "" {
+			b.WriteString(flash)
 		}
 		b.WriteString("\x1b[K\n") // Clear to end of line
 

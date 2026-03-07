@@ -570,11 +570,19 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 			if msg.jobID > 0 {
 				m.setJobClosed(msg.jobID, msg.oldState)
 				delete(m.pendingClosed, msg.jobID)
+				if msg.restoreSelection && m.currentView == viewQueue {
+					m.selectJobByID(msg.jobID)
+				}
 				// Reverse the optimistic stats delta
 				m.applyStatsDelta(msg.oldState)
 			} else if msg.reviewID > 0 {
 				delete(m.pendingReviewClosed, msg.reviewID)
 			}
+			flashView := viewQueue
+			if msg.reviewView {
+				flashView = viewReview
+			}
+			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
 			m.err = msg.err
 		}
 	} else {

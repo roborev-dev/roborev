@@ -172,7 +172,7 @@ type closeRequest struct {
 
 func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 42, Closed: true}, map[string]bool{"success": true}))
-	cmd := m.closeReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
+	cmd := m.closeReviewInBackground(42, true, false, 1, false) // jobID=42, newState=true, oldState=false
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
@@ -199,7 +199,7 @@ func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.closeReviewInBackground(42, true, false, 1)
+	cmd := m.closeReviewInBackground(42, true, false, 1, false)
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
@@ -223,7 +223,7 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	cmd := m.closeReviewInBackground(42, true, false, 1)
+	cmd := m.closeReviewInBackground(42, true, false, 1, false)
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
@@ -254,11 +254,12 @@ func TestTUIClosedRollbackOnError(t *testing.T) {
 	// Simulate error result from background update
 	// This would happen if server returned error after optimistic update
 	errMsg := closedResultMsg{
-		jobID:    42,
-		oldState: false, // Was false before optimistic update
-		newState: true,  // The requested state (matches pendingClosed)
-		seq:      1,     // Must match pending seq to be treated as current
-		err:      fmt.Errorf("server error"),
+		jobID:            42,
+		restoreSelection: false,
+		oldState:         false, // Was false before optimistic update
+		newState:         true,  // The requested state (matches pendingClosed)
+		seq:              1,     // Must match pending seq to be treated as current
+		err:              fmt.Errorf("server error"),
 	}
 
 	// Now handle the error result - should rollback
@@ -305,11 +306,12 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 
 	// Step 3: error arrives → rollback
 	errMsg := closedResultMsg{
-		jobID:    42,
-		oldState: false,
-		newState: true,
-		seq:      1,
-		err:      fmt.Errorf("server error"),
+		jobID:            42,
+		restoreSelection: false,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
 	}
 	m, _ = updateModel(t, m, errMsg)
 	assertJobStats(t, m, 0, 1)
@@ -354,10 +356,11 @@ func TestTUIClosedSuccessNoRollback(t *testing.T) {
 
 	// Success result (err is nil)
 	successMsg := closedResultMsg{
-		jobID:    42,
-		oldState: false,
-		seq:      1, // Not strictly needed for success (no rollback) but included for consistency
-		err:      nil,
+		jobID:            42,
+		restoreSelection: false,
+		oldState:         false,
+		seq:              1, // Not strictly needed for success (no rollback) but included for consistency
+		err:              nil,
 	}
 
 	m, _ = updateModel(t, m, successMsg)
@@ -398,6 +401,88 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 	if prevIdx != 2 {
 		t.Errorf("Expected prev visible job at index 2, got %d", prevIdx)
 	}
+}
+
+func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	assertSelection(t, m, 1, 2)
+	if m.jobs[1].Closed == nil || *m.jobs[1].Closed {
+		t.Fatalf("Expected job 2 to be rolled back to open, got %v", m.jobs[1].Closed)
+	}
+	if m.flashMessage != "server error" {
+		t.Fatalf("Expected warning flash for rollback, got %q", m.flashMessage)
+	}
+	if m.flashView != viewQueue {
+		t.Fatalf("Expected queue flash view, got %v", m.flashView)
+	}
+	if !m.flashWarning {
+		t.Fatal("Expected rollback flash to use warning styling")
+	}
+}
+
+func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+		stats: storage.JobStats{Done: 3, Closed: 0, Open: 3},
+	})
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	assertSelection(t, m, 1, 2)
 }
 
 func TestTUISetJobClosedHelper(t *testing.T) {
