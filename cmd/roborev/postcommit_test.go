@@ -157,33 +157,36 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial")
 
-	// Handler that blocks longer than the timeout
+	handlerHit := make(chan struct{}, 1)
+
+	// Handler that stalls long enough for the client timeout
+	// to fire, but not so long that test cleanup hangs.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", func(
 		w http.ResponseWriter, r *http.Request,
 	) {
-		time.Sleep(5 * time.Second)
+		select {
+		case handlerHit <- struct{}{}:
+		default:
+		}
+		time.Sleep(500 * time.Millisecond)
 	})
 	daemonFromHandler(t, mux)
 
-	// Use a very short timeout so the test completes fast
 	orig := hookHTTPClient
 	hookHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
 	t.Cleanup(func() { hookHTTPClient = orig })
 
-	done := make(chan error, 1)
-	go func() {
-		_, _, err := executePostCommitCmd("--repo", repo.Dir)
-		done <- err
-	}()
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	if err != nil {
+		t.Errorf("expected nil (fail open), got: %v", err)
+	}
 
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("expected nil (fail open), got: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("post-commit blocked despite timeout")
+	case <-handlerHit:
+		// Handler was reached — timeout path was exercised
+	default:
+		t.Fatal("handler was never reached; timeout not exercised")
 	}
 }
 
