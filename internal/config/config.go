@@ -556,9 +556,9 @@ type RepoConfig struct {
 	ExcludedBranches       []string `toml:"excluded_branches"`
 	ExcludedCommitPatterns []string `toml:"excluded_commit_patterns"`
 	DisplayName            string   `toml:"display_name"`
-	ReviewReasoning        string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning        string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
-	FixReasoning           string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
+	ReviewReasoning        string   `toml:"review_reasoning"`   // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning        string   `toml:"refine_reasoning"`   // Reasoning level for refine: thorough, standard, fast
+	FixReasoning           string   `toml:"fix_reasoning"`      // Reasoning level for fix: thorough, standard, fast
 	PostCommitReview       string   `toml:"post_commit_review"` // "commit" (default) or "branch"
 
 	// CI-specific overrides (used by CI poller for this repo)

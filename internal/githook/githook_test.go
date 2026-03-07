@@ -50,20 +50,20 @@ func TestGeneratePostCommit(t *testing.T) {
 		}
 	})
 
-	t.Run("enqueue line without background", func(t *testing.T) {
-		if !strings.Contains(content, "enqueue --quiet") || !strings.Contains(content, "2>/dev/null") {
-			t.Error("hook should have enqueue with --quiet and 2>/dev/null")
+	t.Run("post-commit line without background", func(t *testing.T) {
+		if !strings.Contains(content, "post-commit") || !strings.Contains(content, "2>/dev/null") {
+			t.Error("hook should call post-commit with 2>/dev/null")
 		}
 
-		enqueueIdx := strings.Index(content, "enqueue --quiet")
-		if enqueueIdx != -1 {
-			lineEnd := strings.Index(content[enqueueIdx:], "\n")
+		idx := strings.Index(content, "\" post-commit")
+		if idx != -1 {
+			lineEnd := strings.Index(content[idx:], "\n")
 			if lineEnd == -1 {
-				lineEnd = len(content[enqueueIdx:])
+				lineEnd = len(content[idx:])
 			}
-			enqueueLine := strings.TrimSpace(content[enqueueIdx : enqueueIdx+lineEnd])
-			if strings.HasSuffix(enqueueLine, "&") {
-				t.Error("enqueue line should not have trailing &")
+			line := strings.TrimSpace(content[idx : idx+lineEnd])
+			if strings.HasSuffix(line, "&") {
+				t.Error("post-commit line should not have trailing &")
 			}
 		}
 	})
@@ -875,6 +875,43 @@ func TestHasRealErrors(t *testing.T) {
 			t.Error("joined real errors should return true")
 		}
 	})
+}
+
+func TestIsRoborevSnippetLine(t *testing.T) {
+	positives := []string{
+		`ROBOREV="/usr/local/bin/roborev"`,
+		`ROBOREV=$(command -v roborev 2>/dev/null)`,
+		`"$ROBOREV" post-commit 2>/dev/null`,
+		`"$ROBOREV" enqueue --quiet 2>/dev/null`,
+		`"$ROBOREV" remap --quiet 2>/dev/null`,
+		`roborev post-commit`,
+		`roborev enqueue --quiet`,
+		`roborev remap --quiet`,
+		`if [ ! -x "$ROBOREV" ]; then`,
+		`[ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0`,
+		`return 0`,
+		`_roborev_hook() {`,
+		`_roborev_hook`,
+		`_roborev_remap() {`,
+		`_roborev_remap`,
+	}
+	for _, line := range positives {
+		if !isRoborevSnippetLine(line) {
+			t.Errorf("expected true for %q", line)
+		}
+	}
+
+	negatives := []string{
+		"echo hello",
+		"",
+		"#!/bin/sh",
+		"npm test",
+	}
+	for _, line := range negatives {
+		if isRoborevSnippetLine(line) {
+			t.Errorf("expected false for %q", line)
+		}
+	}
 }
 
 // Helpers

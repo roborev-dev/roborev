@@ -43,9 +43,8 @@ func reviewCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "review [commit] or review [start] [end]",
-		Aliases: []string{"enqueue"}, // Backwards compatibility
-		Short:   "Review a commit, commit range, or uncommitted changes",
+		Use:   "review [commit] or review [start] [end]",
+		Short: "Review a commit, commit range, or uncommitted changes",
 		Long: `Review a commit, commit range, or uncommitted changes.
 
 Examples:

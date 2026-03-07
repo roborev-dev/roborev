@@ -42,7 +42,7 @@ func HasRealErrors(err error) bool {
 // Version markers identify the current hook template version.
 // Bump these when the hook template changes to trigger
 // upgrade warnings and auto-upgrades.
-const PostCommitVersionMarker = "post-commit hook v3"
+const PostCommitVersionMarker = "post-commit hook v4"
 const PostRewriteVersionMarker = "post-rewrite hook v2"
 
 // VersionMarker returns the current version marker for a hook.
@@ -150,7 +150,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
-"$ROBOREV" enqueue --quiet 2>/dev/null
+"$ROBOREV" post-commit 2>/dev/null
 `, PostCommitVersionMarker, resolveRoborevPath())
 }
 
@@ -180,7 +180,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
 fi
-"$ROBOREV" enqueue --quiet 2>/dev/null
+"$ROBOREV" post-commit 2>/dev/null
 }
 _roborev_hook
 `, PostCommitVersionMarker, resolveRoborevPath())
@@ -485,11 +485,15 @@ func isRoborevSnippetLine(line string) bool {
 	return strings.HasPrefix(trimmed, "ROBOREV=") ||
 		strings.HasPrefix(trimmed, "ROBOREV=$(") ||
 		hasCommandPrefix(
+			trimmed, "\"$ROBOREV\" post-commit",
+		) ||
+		hasCommandPrefix(
 			trimmed, "\"$ROBOREV\" enqueue --quiet",
 		) ||
 		hasCommandPrefix(
 			trimmed, "\"$ROBOREV\" remap --quiet",
 		) ||
+		hasCommandPrefix(trimmed, "roborev post-commit") ||
 		hasCommandPrefix(trimmed, "roborev enqueue") ||
 		hasCommandPrefix(trimmed, "roborev remap") ||
 		strings.HasPrefix(
