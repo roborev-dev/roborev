@@ -646,9 +646,15 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		return recoveryServer.URL, nil
 	})
 
-	var primaryServer *httptest.Server
 	ts := newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("git_ref") != "" {
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
 			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     99,
@@ -659,12 +665,17 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
-			// Close primary server after serving the review so
-			// post-fix calls trigger connection errors and recovery.
-			go primaryServer.Close()
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			closeConnNoResponse(t, w)
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			closeConnNoResponse(t, w)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			closeConnNoResponse(t, w)
 		}).
 		Build()
-	primaryServer = ts
 
 	cmd, output := newTestCmd(t, ts.URL)
 
