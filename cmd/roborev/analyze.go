@@ -643,14 +643,14 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 	// Ensure the fix commit gets a review enqueued
 	if commitCreated {
 		if head, err := git.ResolveSHA(repoRoot, "HEAD"); err == nil {
-			if err := enqueueIfNeeded(serverAddr, repoRoot, head); err != nil && !opts.quiet {
+			if err := enqueueIfNeeded(ctx, serverAddr, repoRoot, head); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 			}
 		}
 	}
 
 	// Close the analysis job
-	if err := markJobClosed(serverAddr, jobID); err != nil {
+	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
 		// Non-fatal - the fixes were applied, just couldn't update status
 		if !opts.quiet {
 			cmd.Printf("\nWarning: could not close job: %v\n", err)
@@ -865,13 +865,13 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 }
 
 // markJobClosed closes a job via the API
-func markJobClosed(serverAddr string, jobID int64) error {
+func markJobClosed(ctx context.Context, serverAddr string, jobID int64) error {
 	reqBody, _ := json.Marshal(map[string]any{
 		"job_id": jobID,
 		"closed": true,
 	})
 
-	_, err := withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
+	_, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (struct{}, error) {
 		resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
 			return struct{}{}, err

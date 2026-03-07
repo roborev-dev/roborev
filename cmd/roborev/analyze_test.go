@@ -317,7 +317,7 @@ func TestMarkJobClosed(t *testing.T) {
 			ts := mockCloseServer(t, 123, tt.statusCode)
 			defer ts.Close()
 
-			err := markJobClosed(ts.URL, 123)
+			err := markJobClosed(context.Background(), ts.URL, 123)
 
 			if tt.wantErr {
 				if err == nil {

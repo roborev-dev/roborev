@@ -693,7 +693,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
-		if err := markJobClosed(serverAddr, jobID); err != nil && !opts.quiet {
+		if err := markJobClosed(ctx, serverAddr, jobID); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 		return nil
@@ -759,7 +759,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	// Enqueue review for fix commit
 	if result.CommitCreated {
-		if err := enqueueIfNeeded(serverAddr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
+		if err := enqueueIfNeeded(ctx, serverAddr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 		}
 	}
@@ -770,13 +770,13 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 	}
 
-	if err := addJobResponse(serverAddr, jobID, "roborev-fix", responseText); err != nil {
+	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not add response to job: %v\n", err)
 		}
 	}
 
-	if err := markJobClosed(serverAddr, jobID); err != nil {
+	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not close job: %v\n", err)
 		}
@@ -867,7 +867,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			if err := markJobClosed(serverAddr, id); err != nil && !opts.quiet {
+			if err := markJobClosed(ctx, serverAddr, id); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
 			}
 			continue
@@ -951,7 +951,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 		// Enqueue review for fix commit
 		if result.CommitCreated {
-			if enqErr := enqueueIfNeeded(serverAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
+			if enqErr := enqueueIfNeeded(ctx, serverAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}
 		}
@@ -962,10 +962,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
-			if addErr := addJobResponse(serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
+			if addErr := addJobResponse(ctx, serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
 			}
-			if markErr := markJobClosed(serverAddr, e.jobID); markErr != nil {
+			if markErr := markJobClosed(ctx, serverAddr, e.jobID); markErr != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
 				}
@@ -1143,7 +1143,7 @@ func buildGenericCommitPrompt() string {
 }
 
 // addJobResponse adds a response/comment to a job
-func addJobResponse(serverAddr string, jobID int64, commenter, response string) error {
+func addJobResponse(ctx context.Context, serverAddr string, jobID int64, commenter, response string) error {
 	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"commenter": commenter,
@@ -1164,8 +1164,14 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
 			return err
 		}
+		if shouldStopFixDaemonRetry(ctx) {
+			return err
+		}
 
-		currentAddr = recoverFixDaemonAddr(context.Background())
+		currentAddr = recoverFixDaemonAddr(ctx)
+		if shouldStopFixDaemonRetry(ctx) {
+			return err
+		}
 		applied, verifyErr := hasJobResponse(currentAddr, jobID, commenter, response)
 		if verifyErr != nil {
 			return fmt.Errorf("verify response after retryable failure: %w", verifyErr)
@@ -1179,18 +1185,27 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 // enqueueIfNeeded enqueues a review for a commit via the daemon API.
 // This ensures fix commits get reviewed even if the post-commit hook
 // didn't fire (e.g., agent subprocesses may not trigger hooks reliably).
-func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
+func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) error {
 	// Check if a review job already exists for this commit (e.g., from the
 	// post-commit hook). If so, skip enqueuing to avoid duplicates.
 	// The post-commit hook normally completes before control returns here,
 	// but under heavy load it may take longer. Poll with short intervals
 	// up to a max wait to avoid both unnecessary delays and duplicates.
 	for range enqueueIfNeededProbeAttempts {
+		if shouldStopFixDaemonRetry(ctx) {
+			return ctx.Err()
+		}
 		found, err := hasJobForSHA(serverAddr, sha)
 		if err == nil && found {
 			return nil
 		}
+		if shouldStopFixDaemonRetry(ctx) {
+			return ctx.Err()
+		}
 		fixDaemonSleep(enqueueIfNeededProbeDelay)
+	}
+	if shouldStopFixDaemonRetry(ctx) {
+		return ctx.Err()
 	}
 	found, err := hasJobForSHA(serverAddr, sha)
 	if err == nil && found {
@@ -1221,9 +1236,15 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
 			return err
 		}
+		if shouldStopFixDaemonRetry(ctx) {
+			return err
+		}
 
-		currentAddr = recoverFixDaemonAddr(context.Background())
-		exists, verifyErr := hasJobForSHA(currentAddr, sha)
+		currentAddr = recoverFixDaemonAddr(ctx)
+		if shouldStopFixDaemonRetry(ctx) {
+			return err
+		}
+		exists, verifyErr := verifyJobForSHA(currentAddr, sha)
 		if verifyErr != nil {
 			return fmt.Errorf("verify enqueue after retryable failure: %w", verifyErr)
 		}
@@ -1249,6 +1270,26 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return false, nil
+	}
+	return len(result.Jobs) > 0, nil
+}
+
+func verifyJobForSHA(serverAddr, sha string) (bool, error) {
+	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
+	resp, err := http.Get(checkURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("fetch jobs failed (%d): %s", resp.StatusCode, body)
+	}
+	var result struct {
+		Jobs []struct{ ID int64 } `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
 	}
 	return len(result.Jobs) > 0, nil
 }

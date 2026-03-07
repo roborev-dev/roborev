@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,7 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			ts := httptest.NewServer(handler)
 			defer ts.Close()
 
-			err := enqueueIfNeeded(ts.URL, tmpDir, sha)
+			err := enqueueIfNeeded(context.Background(), ts.URL, tmpDir, sha)
 			if err != nil {
 				t.Fatalf("enqueueIfNeeded: %v", err)
 			}

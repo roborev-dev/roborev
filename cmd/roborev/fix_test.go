@@ -332,7 +332,7 @@ func TestAddJobResponse(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := addJobResponse(ts.URL, 123, "roborev-fix", "Fix applied")
+	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
 	if err != nil {
 		t.Fatalf("addJobResponse: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 		return nil
 	})
 
-	err := addJobResponse(startServer.URL, 123, "roborev-fix", "Fix applied")
+	err := addJobResponse(context.Background(), startServer.URL, 123, "roborev-fix", "Fix applied")
 	if err != nil {
 		t.Fatalf("addJobResponse: %v", err)
 	}
@@ -407,6 +407,29 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}
 	if recoveryPostCount.Load() != 0 {
 		t.Fatalf("expected no duplicate comment post after recovery, got %d", recoveryPostCount.Load())
+	}
+}
+
+func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("addJobResponse should not attempt daemon recovery after context cancellation")
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/comment" {
+			http.NotFound(w, r)
+			return
+		}
+		closeConnNoResponse(t, w)
+	}))
+	defer ts.Close()
+
+	if err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied"); err == nil {
+		t.Fatal("expected connection error")
 	}
 }
 
@@ -1424,7 +1447,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := enqueueIfNeeded(ts.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
 	if err != nil {
 		t.Fatalf("enqueueIfNeeded: %v", err)
 	}
@@ -1477,7 +1500,7 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 		return nil
 	})
 
-	err := enqueueIfNeeded(startServer.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
 	if err != nil {
 		t.Fatalf("enqueueIfNeeded: %v", err)
 	}
@@ -1524,7 +1547,7 @@ func TestEnqueueIfNeededSkipsEnqueueAfterTransientProbeFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := enqueueIfNeeded(ts.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
 	if err != nil {
 		t.Fatalf("enqueueIfNeeded: %v", err)
 	}
@@ -1533,6 +1556,59 @@ func TestEnqueueIfNeededSkipsEnqueueAfterTransientProbeFailure(t *testing.T) {
 	}
 	if jobsCalls.Load() < 2 {
 		t.Fatalf("expected a retrying probe sequence, got %d job checks", jobsCalls.Load())
+	}
+}
+
+func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	sha := repo.Run("rev-parse", "HEAD")
+
+	var firstPostCount atomic.Int32
+	var recoveryPostCount atomic.Int32
+
+	startServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
+		case "/api/enqueue":
+			firstPostCount.Add(1)
+			closeConnNoResponse(t, w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer startServer.Close()
+
+	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case "/api/enqueue":
+			recoveryPostCount.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer recoveryServer.Close()
+
+	patchFixDaemonRetryForTest(t, func() error {
+		serverAddr = recoveryServer.URL
+		return nil
+	})
+
+	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
+	if err == nil {
+		t.Fatal("expected verification error")
+	}
+	if !strings.Contains(err.Error(), "verify enqueue after retryable failure") {
+		t.Fatalf("expected verification error, got %v", err)
+	}
+	if firstPostCount.Load() != 1 {
+		t.Fatalf("expected one initial enqueue post, got %d", firstPostCount.Load())
+	}
+	if recoveryPostCount.Load() != 0 {
+		t.Fatalf("expected no duplicate enqueue post after verification failure, got %d", recoveryPostCount.Load())
 	}
 }
 
