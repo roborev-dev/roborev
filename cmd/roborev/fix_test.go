@@ -1418,6 +1418,53 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}
 }
 
+func TestEnqueueIfNeededSkipsEnqueueAfterTransientProbeFailure(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	sha := repo.Run("rev-parse", "HEAD")
+
+	patchFixDaemonRetryForTest(t, nil)
+	oldProbeAttempts := enqueueIfNeededProbeAttempts
+	oldProbeDelay := enqueueIfNeededProbeDelay
+	enqueueIfNeededProbeAttempts = 2
+	enqueueIfNeededProbeDelay = time.Millisecond
+	t.Cleanup(func() {
+		enqueueIfNeededProbeAttempts = oldProbeAttempts
+		enqueueIfNeededProbeDelay = oldProbeDelay
+	})
+
+	var jobsCalls atomic.Int32
+	var enqueueCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			if jobsCalls.Add(1) == 1 {
+				closeConnNoResponse(t, w)
+				return
+			}
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{ID: 42, GitRef: sha}},
+			})
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	err := enqueueIfNeeded(ts.URL, repo.Dir, sha)
+	if err != nil {
+		t.Fatalf("enqueueIfNeeded: %v", err)
+	}
+	if enqueueCalls.Load() != 0 {
+		t.Fatalf("expected no fallback enqueue after transient probe failure, got %d", enqueueCalls.Load())
+	}
+	if jobsCalls.Load() < 2 {
+		t.Fatalf("expected a retrying probe sequence, got %d job checks", jobsCalls.Load())
+	}
+}
+
 func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
 	patchFixDaemonRetryForTest(t, func() error {
 		t.Fatal("hasJobForSHA should not attempt daemon recovery")

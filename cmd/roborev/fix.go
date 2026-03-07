@@ -1187,10 +1187,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	// up to a max wait to avoid both unnecessary delays and duplicates.
 	for range enqueueIfNeededProbeAttempts {
 		found, err := hasJobForSHA(serverAddr, sha)
-		if err != nil {
-			break
-		}
-		if found {
+		if err == nil && found {
 			return nil
 		}
 		fixDaemonSleep(enqueueIfNeededProbeDelay)
