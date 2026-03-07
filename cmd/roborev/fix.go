@@ -26,10 +26,10 @@ var (
 	// Retry up to 3 times after the initial daemon request. Each retry waits
 	// for the daemon to come back for up to a minute so `roborev fix --open`
 	// can survive daemon restarts without immediately aborting.
-	fixDaemonMaxRetries          = 3
-	fixDaemonRecoveryWait        = 1 * time.Minute
-	fixDaemonRecoveryPoll        = 1 * time.Second
-	fixDaemonEnsure              = func() (string, error) {
+	fixDaemonMaxRetries   = 3
+	fixDaemonRecoveryWait = 1 * time.Minute
+	fixDaemonRecoveryPoll = 1 * time.Second
+	fixDaemonEnsure       = func() (string, error) {
 		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 			return fmt.Sprintf("http://%s", info.Addr), nil
 		}

@@ -816,7 +816,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	usingBackup := backupAgent != "" &&
 		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
 		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredForAnalyze)
-	
+
 	if usingBackup && model == "" {
 		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
 	} else if model == "" {

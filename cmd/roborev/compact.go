@@ -241,7 +241,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, serverAddr st
 	} else {
 		workflowAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, "fix", reasoning)
 		fallbackAgent := config.ResolveGenericFallbackAgent(repoRoot, cfg)
-		
+
 		if agent.CanonicalName(opts.agentName) == agent.CanonicalName(workflowAgent) {
 			model = config.ResolveModelForWorkflow("", repoRoot, cfg, "fix", reasoning)
 		} else if agent.CanonicalName(opts.agentName) == agent.CanonicalName(fallbackAgent) {

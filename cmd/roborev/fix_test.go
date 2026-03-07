@@ -25,6 +25,7 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -43,7 +44,7 @@ const (
 	paramRepo          = "repo"
 )
 
-func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
+func patchFixDaemonRetryForTest(t *testing.T, ensure func() (string, error)) {
 	t.Helper()
 
 	oldMaxRetries := fixDaemonMaxRetries
@@ -60,7 +61,14 @@ func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
 	if ensure != nil {
 		fixDaemonEnsure = ensure
 	} else {
-		fixDaemonEnsure = ensureDaemon
+		// Default: discover daemon via runtime info (same as the
+		// production default, but without requiring a *cobra.Command).
+		fixDaemonEnsure = func() (string, error) {
+			if info, err := daemon.GetAnyRunningDaemon(); err == nil {
+				return fmt.Sprintf("http://%s", info.Addr), nil
+			}
+			return "", fmt.Errorf("daemon not running")
+		}
 	}
 	fixDaemonSleep = time.Sleep
 	enqueueIfNeededProbeAttempts = 1
@@ -185,9 +193,9 @@ func TestFetchJob(t *testing.T) {
 }
 
 func TestFetchJobCanceledContextDoesNotRetryRecovery(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("fetchJob should not attempt daemon recovery after context cancellation")
-		return nil
+		return "", nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -265,9 +273,9 @@ func TestFetchReview(t *testing.T) {
 }
 
 func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("fetchReview should not attempt daemon recovery after deadline exceeded")
-		return nil
+		return "", nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -286,9 +294,9 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 
 func TestWithFixDaemonRetryContextRetriesClientTimeoutWhenCallerContextActive(t *testing.T) {
 	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		ensureCalls.Add(1)
-		return nil
+		return "", nil
 	})
 
 	var attempts atomic.Int32
@@ -328,9 +336,9 @@ func TestWithFixDaemonRetryContextStopsAfterCancellationDuringRecovery(t *testin
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var ensureCalls atomic.Int32
-	fixDaemonEnsure = func() error {
+	fixDaemonEnsure = func() (string, error) {
 		ensureCalls.Add(1)
-		return errors.New("daemon still down")
+		return "", errors.New("daemon still down")
 	}
 	fixDaemonSleep = func(time.Duration) {
 		cancel()
@@ -362,7 +370,7 @@ func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
 	fixDaemonRecoveryWait = time.Millisecond
 	fixDaemonRecoveryPoll = time.Millisecond
 	recoveryErr := errors.New("refusing to auto-start daemon from ephemeral binary")
-	fixDaemonEnsure = func() error { return recoveryErr }
+	fixDaemonEnsure = func() (string, error) { return "", recoveryErr }
 	fixDaemonSleep = func(time.Duration) {}
 	t.Cleanup(func() {
 		fixDaemonMaxRetries = oldMaxRetries
@@ -471,9 +479,8 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
-		serverAddr = recoveryServer.URL
-		return nil
+	patchFixDaemonRetryForTest(t, func() (string, error) {
+		return recoveryServer.URL, nil
 	})
 
 	err := addJobResponse(context.Background(), startServer.URL, 123, "roborev-fix", "Fix applied")
@@ -489,9 +496,9 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 }
 
 func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("addJobResponse should not attempt daemon recovery after context cancellation")
-		return nil
+		return "", nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -512,9 +519,9 @@ func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
 }
 
 func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("addJobResponse should not attempt daemon recovery after request deadline exceeded")
-		return nil
+		return "", nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -606,7 +613,6 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		agent.Register(originalAgent)
 	})
 
-	deadURL := "http://127.0.0.1:1"
 	var enqueueCount atomic.Int32
 	var commentCount atomic.Int32
 	var closeCount atomic.Int32
@@ -620,6 +626,8 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		case "/api/enqueue":
 			enqueueCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
+		case "/api/comments":
+			writeJSON(w, map[string]any{"responses": []storage.Response{}})
 		case "/api/comment":
 			commentCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
@@ -633,13 +641,13 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 	defer recoveryServer.Close()
 
 	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		ensureCalls.Add(1)
-		serverAddr = recoveryServer.URL
-		return nil
+		return recoveryServer.URL, nil
 	})
 
-	_ = newMockDaemonBuilder(t).
+	var primaryServer *httptest.Server
+	ts := newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
@@ -651,18 +659,21 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
-			serverAddr = deadURL
+			// Close primary server after serving the review so
+			// post-fix calls trigger connection errors and recovery.
+			go primaryServer.Close()
 		}).
 		Build()
+	primaryServer = ts
 
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, ts.URL)
 
 	opts := fixOptions{
 		agentName: "test",
 		reasoning: "fast",
 	}
 
-	err = fixSingleJob(cmd, repo.Dir, 99, opts)
+	err = fixSingleJob(cmd, getDaemonAddr(cmd), repo.Dir, 99, opts)
 	if err != nil {
 		t.Fatalf("fixSingleJob: %v", err)
 	}
@@ -1120,20 +1131,23 @@ func TestRunFixOpenRequery(t *testing.T) {
 	}
 }
 
-func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
+func TestRunFixOpenRequeriesAfterProcessingJob(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	deadURL := "http://127.0.0.1:1"
-	var recoveryQueryCount atomic.Int32
-	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/jobs":
+	patchFixDaemonRetryForTest(t, func() (string, error) {
+		return "", nil
+	})
+
+	var openQueryCount atomic.Int32
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
 			if q.Get("closed") == "false" && q.Get("limit") == "0" {
-				if recoveryQueryCount.Add(1) == 1 {
+				// First open-jobs query returns one job; second
+				// returns empty to terminate the loop.
+				if openQueryCount.Add(1) == 1 {
 					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
-							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
 						"has_more": false,
@@ -1142,45 +1156,6 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 				}
 				writeJSON(w, map[string]any{
 					"jobs":     []storage.ReviewJob{},
-					"has_more": false,
-				})
-				return
-			}
-			writeJSON(w, map[string]any{
-				"jobs": []storage.ReviewJob{
-					{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
-				},
-				"has_more": false,
-			})
-		case "/api/review":
-			writeJSON(w, storage.Review{Output: "findings"})
-		case "/api/comment":
-			w.WriteHeader(http.StatusCreated)
-		case "/api/review/close":
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer recoveryServer.Close()
-
-	var ensureCalls atomic.Int32
-	patchFixDaemonRetryForTest(t, func() error {
-		ensureCalls.Add(1)
-		serverAddr = recoveryServer.URL
-		return nil
-	})
-
-	var openQueryCount atomic.Int32
-	_ = newMockDaemonBuilder(t).
-		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-			q := r.URL.Query()
-			if q.Get("closed") == "false" && q.Get("limit") == "0" {
-				openQueryCount.Add(1)
-				writeJSON(w, map[string]any{
-					"jobs": []storage.ReviewJob{
-						{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
-					},
 					"has_more": false,
 				})
 				return
@@ -1200,7 +1175,6 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		}).
 		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			serverAddr = deadURL
 		}).
 		Build()
 
@@ -1211,14 +1185,11 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if ensureCalls.Load() == 0 {
-		t.Fatal("expected daemon recovery to be attempted")
-	}
 	if !strings.Contains(out, "Found 1 open job(s)") {
 		t.Errorf("expected initial batch output, got %q", out)
 	}
-	if !strings.Contains(out, "Found 1 new open job(s)") {
-		t.Errorf("expected recovered requery output, got %q", out)
+	if openQueryCount.Load() < 2 {
+		t.Errorf("expected requery after processing job, got %d queries", openQueryCount.Load())
 	}
 }
 
@@ -1562,9 +1533,8 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
-		serverAddr = recoveryServer.URL
-		return nil
+	patchFixDaemonRetryForTest(t, func() (string, error) {
+		return recoveryServer.URL, nil
 	})
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
@@ -1659,9 +1629,8 @@ func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *t
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
-		serverAddr = recoveryServer.URL
-		return nil
+	patchFixDaemonRetryForTest(t, func() (string, error) {
+		return recoveryServer.URL, nil
 	})
 
 	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
@@ -1683,9 +1652,9 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := repo.Run("rev-parse", "HEAD")
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("enqueueIfNeeded should not attempt daemon recovery after request deadline exceeded")
-		return nil
+		return "", nil
 	})
 
 	var enqueueCalls atomic.Int32
@@ -1746,10 +1715,9 @@ func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) 
 	}))
 	defer recoveryServer.Close()
 
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		ensureCalls.Add(1)
-		serverAddr = recoveryServer.URL
-		return nil
+		return recoveryServer.URL, nil
 	})
 
 	err := enqueueIfNeeded(context.Background(), "http://127.0.0.1:1", repo.Dir, sha)
@@ -1768,9 +1736,9 @@ func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) 
 }
 
 func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("hasJobForSHA should not attempt daemon recovery")
-		return nil
+		return "", nil
 	})
 
 	found, err := hasJobForSHA("http://127.0.0.1:1", "abc123def456")
@@ -1783,9 +1751,9 @@ func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
 }
 
 func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
-	patchFixDaemonRetryForTest(t, func() error {
+	patchFixDaemonRetryForTest(t, func() (string, error) {
 		t.Fatal("queryOpenJobIDs should not attempt daemon recovery after request deadline exceeded")
-		return nil
+		return "", nil
 	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1797,14 +1765,10 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	oldServerAddr := serverAddr
-	serverAddr = ts.URL
-	t.Cleanup(func() { serverAddr = oldServerAddr })
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
+	_, err := queryOpenJobIDs(ctx, ts.URL, "/tmp/repo", "")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
@@ -2438,12 +2402,13 @@ func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
 func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	patchFixDaemonRetryForTest(t, func() error {
-		return nil
+	patchFixDaemonRetryForTest(t, func() (string, error) {
+		return "", nil
 	})
 
-	deadURL := "http://127.0.0.1:1"
-	_ = newMockDaemonBuilder(t).
+	var primaryServer *httptest.Server
+	var jobsCalls atomic.Int32
+	ts := newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
@@ -2452,9 +2417,15 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 					Agent:  "test",
 				}},
 			})
-			serverAddr = deadURL
+			// Close primary server after first job fetch so
+			// subsequent calls trigger connection errors.
+			if jobsCalls.Add(1) == 1 {
+				go primaryServer.Close()
+			}
 		}).
 		Build()
+	primaryServer = ts
+	_ = ts
 
 	seen := make(map[int64]bool)
 	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {

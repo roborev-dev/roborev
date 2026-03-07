@@ -762,7 +762,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	} else {
 		workflowAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, workflow, reasoning)
 		fallbackAgent := config.ResolveGenericFallbackAgent(repoRoot, cfg)
-		
+
 		if agent.CanonicalName(req.Agent) == agent.CanonicalName(workflowAgent) {
 			model = config.ResolveModelForWorkflow("", repoRoot, cfg, workflow, reasoning)
 		} else if agent.CanonicalName(req.Agent) == agent.CanonicalName(fallbackAgent) {
