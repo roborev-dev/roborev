@@ -662,6 +662,10 @@ func runRefineList(
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -693,7 +697,7 @@ func runRefineList(
 		queryBranch = ""
 	}
 
-	jobs, err := queryOpenJobs(apiRoot, queryBranch)
+	jobs, err := queryOpenJobs(ctx, apiRoot, queryBranch)
 	if err != nil {
 		return err
 	}
@@ -716,11 +720,6 @@ func runRefineList(
 	if len(failed) == 0 {
 		cmd.Println("No failed reviews to refine.")
 		return nil
-	}
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	cmd.Printf("Found %d failed review(s) to refine:\n\n", len(failed))
@@ -795,6 +794,10 @@ func runRefineAllBranches(
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// Use main repo root for API queries
 	apiRepoRoot := repoPath
@@ -819,7 +822,7 @@ func runRefineAllBranches(
 	}
 
 	// Query all open jobs (no branch filter)
-	jobs, err := queryOpenJobs(apiRepoRoot, "")
+	jobs, err := queryOpenJobs(ctx, apiRepoRoot, "")
 	if err != nil {
 		return err
 	}

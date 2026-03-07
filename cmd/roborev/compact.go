@@ -305,6 +305,10 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -322,7 +326,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	// Query and limit jobs, excluding non-review types (compact, task)
 	// to prevent recursive self-compaction loops
-	allJobs, err := queryOpenJobs(repoRoot, branchFilter)
+	allJobs, err := queryOpenJobs(ctx, repoRoot, branchFilter)
 	if err != nil {
 		return err
 	}
@@ -368,11 +372,6 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Printf("Would close %d jobs\n\n", len(jobIDs))
 		cmd.Println("Run without --dry-run to execute.")
 		return nil
-	}
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	// Fetch review outputs

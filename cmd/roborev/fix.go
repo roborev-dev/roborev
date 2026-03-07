@@ -424,6 +424,10 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -438,7 +442,7 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 	seen := make(map[int64]bool)
 
 	for {
-		jobIDs, err := queryOpenJobIDs(repoRoot, branch)
+		jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -480,9 +484,10 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 }
 
 func queryOpenJobs(
+	ctx context.Context,
 	repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
-	jobs, err := withFixDaemonRetry(serverAddr, func(addr string) ([]storage.ReviewJob, error) {
+	jobs, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.ReviewJob, error) {
 		queryURL := fmt.Sprintf(
 			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
 			addr, url.QueryEscape(repoRoot),
@@ -492,7 +497,7 @@ func queryOpenJobs(
 				"&branch_include_empty=true"
 		}
 
-		resp, err := http.Get(queryURL)
+		resp, err := doFixDaemonRequest(ctx, http.MethodGet, queryURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -521,9 +526,10 @@ func queryOpenJobs(
 }
 
 func queryOpenJobIDs(
+	ctx context.Context,
 	repoRoot, branch string,
 ) ([]int64, error) {
-	jobs, err := queryOpenJobs(repoRoot, branch)
+	jobs, err := queryOpenJobs(ctx, repoRoot, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -539,6 +545,10 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -549,7 +559,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		repoRoot = root
 	}
 
-	jobIDs, err := queryOpenJobIDs(repoRoot, branch)
+	jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
 	if err != nil {
 		return err
 	}
@@ -563,11 +573,6 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	if len(jobIDs) == 0 {
 		cmd.Println("No open jobs found.")
 		return nil
-	}
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	cmd.Printf("Found %d open job(s):\n\n", len(jobIDs))
@@ -800,6 +805,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -817,7 +826,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryOpenJobIDs(apiRepoRoot, branch)
+		jobIDs, err = queryOpenJobIDs(ctx, apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -833,11 +842,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			cmd.Println("No open jobs found.")
 		}
 		return nil
-	}
-
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	// Fetch all jobs and reviews
@@ -1194,13 +1198,21 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	// The post-commit hook normally completes before control returns here,
 	// but under heavy load it may take longer. Poll with short intervals
 	// up to a max wait to avoid both unnecessary delays and duplicates.
+	currentAddr := serverAddr
 	for range enqueueIfNeededProbeAttempts {
 		if shouldStopFixDaemonRetry(ctx) {
 			return ctx.Err()
 		}
-		found, err := hasJobForSHAContext(ctx, serverAddr, sha)
+		found, err := hasJobForSHAContext(ctx, currentAddr, sha)
 		if err == nil && found {
 			return nil
+		}
+		if isConnectionError(err) {
+			if refreshedAddr, refreshErr := refreshFixDaemonAddr(ctx); refreshErr == nil {
+				currentAddr = refreshedAddr
+			} else if shouldStopFixDaemonRetry(ctx) {
+				return refreshErr
+			}
 		}
 		if shouldStopFixDaemonRetry(ctx) {
 			return ctx.Err()
@@ -1210,7 +1222,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	if shouldStopFixDaemonRetry(ctx) {
 		return ctx.Err()
 	}
-	found, err := hasJobForSHAContext(ctx, serverAddr, sha)
+	found, err := hasJobForSHAContext(ctx, currentAddr, sha)
 	if err == nil && found {
 		return nil
 	}
@@ -1223,7 +1235,6 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 		Branch:   branchName,
 	})
 
-	currentAddr := serverAddr
 	for attempt := 0; ; attempt++ {
 		resp, err := doFixDaemonRequest(ctx, http.MethodPost, currentAddr+"/api/enqueue", reqBody)
 		if err == nil {
@@ -1258,6 +1269,19 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 			return nil
 		}
 	}
+}
+
+func refreshFixDaemonAddr(ctx context.Context) (string, error) {
+	if shouldStopFixDaemonRetry(ctx) {
+		return serverAddr, ctx.Err()
+	}
+	if err := fixDaemonEnsure(); err != nil {
+		return serverAddr, err
+	}
+	if shouldStopFixDaemonRetry(ctx) {
+		return serverAddr, ctx.Err()
+	}
+	return serverAddr, nil
 }
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
@@ -1327,10 +1351,6 @@ func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, 
 		}
 	}
 	return false, nil
-}
-
-func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error)) (T, error) {
-	return withFixDaemonRetryContext(context.Background(), addr, fn)
 }
 
 func withFixDaemonRetryContext[T any](ctx context.Context, addr string, fn func(serverAddr string) (T, error)) (T, error) {

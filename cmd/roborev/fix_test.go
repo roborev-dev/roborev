@@ -1745,6 +1745,59 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	}
 }
 
+func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	sha := repo.Run("rev-parse", "HEAD")
+
+	oldProbeAttempts := enqueueIfNeededProbeAttempts
+	oldProbeDelay := enqueueIfNeededProbeDelay
+	enqueueIfNeededProbeAttempts = 2
+	enqueueIfNeededProbeDelay = time.Millisecond
+	t.Cleanup(func() {
+		enqueueIfNeededProbeAttempts = oldProbeAttempts
+		enqueueIfNeededProbeDelay = oldProbeDelay
+	})
+
+	var ensureCalls atomic.Int32
+	var jobsCalls atomic.Int32
+	var enqueueCalls atomic.Int32
+	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			jobsCalls.Add(1)
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{ID: 42, GitRef: sha}},
+			})
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer recoveryServer.Close()
+
+	patchFixDaemonRetryForTest(t, func() error {
+		ensureCalls.Add(1)
+		serverAddr = recoveryServer.URL
+		return nil
+	})
+
+	err := enqueueIfNeeded(context.Background(), "http://127.0.0.1:1", repo.Dir, sha)
+	if err != nil {
+		t.Fatalf("enqueueIfNeeded: %v", err)
+	}
+	if ensureCalls.Load() == 0 {
+		t.Fatal("expected probe to refresh daemon address after connection error")
+	}
+	if jobsCalls.Load() == 0 {
+		t.Fatal("expected probe to hit refreshed daemon address")
+	}
+	if enqueueCalls.Load() != 0 {
+		t.Fatalf("expected no enqueue when refreshed probe found existing job, got %d", enqueueCalls.Load())
+	}
+}
+
 func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
 	patchFixDaemonRetryForTest(t, func() error {
 		t.Fatal("hasJobForSHA should not attempt daemon recovery")
@@ -1757,6 +1810,34 @@ func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
 	}
 	if found {
 		t.Fatal("expected no job match on connection failure")
+	}
+}
+
+func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("queryOpenJobIDs should not attempt daemon recovery after request deadline exceeded")
+		return nil
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/jobs" {
+			http.NotFound(w, r)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer ts.Close()
+
+	oldServerAddr := serverAddr
+	serverAddr = ts.URL
+	t.Cleanup(func() { serverAddr = oldServerAddr })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 }
 
