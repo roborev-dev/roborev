@@ -23,6 +23,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	// Retry up to 3 times after the initial daemon request. Each retry waits
+	// for the daemon to come back for up to a minute so `roborev fix --open`
+	// can survive daemon restarts without immediately aborting.
+	fixDaemonMaxRetries          = 3
+	fixDaemonRecoveryWait        = 1 * time.Minute
+	fixDaemonRecoveryPoll        = 1 * time.Second
+	fixDaemonEnsure              = ensureDaemon
+	fixDaemonSleep               = time.Sleep
+	enqueueIfNeededProbeAttempts = 10
+	enqueueIfNeededProbeDelay    = 1 * time.Second
+)
+
 func fixCmd() *cobra.Command {
 	var (
 		agentName   string
@@ -383,37 +396,18 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 
 		err := fixSingleJob(cmd, repoRoot, jobID, opts)
 		if err != nil {
-			if isConnectionError(err) {
-				if !opts.quiet {
-					cmd.Printf("Daemon connection lost, attempting recovery...\n")
-				}
-				if recoverErr := ensureDaemon(); recoverErr != nil {
-					return fmt.Errorf("daemon connection lost and recovery failed: %w", recoverErr)
-				}
-				// Retry this job once after recovery
-				err = fixSingleJob(cmd, repoRoot, jobID, opts)
-				if err != nil {
-					if isConnectionError(err) {
-						return fmt.Errorf("daemon connection lost after recovery: %w", err)
-					}
-					// Non-connection error on retry: fall through to normal error handling
-				}
+			// In discovery mode (seen != nil), log a warning and
+			// continue best-effort. For explicit job IDs (seen ==
+			// nil), return the error so the CLI exits non-zero.
+			if seen != nil {
+				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
+				seen[jobID] = true
+				continue
 			}
-			if err != nil {
-				// In discovery mode (seen != nil), log a warning and
-				// continue best-effort. For explicit job IDs (seen ==
-				// nil), return the error so the CLI exits non-zero.
-				if seen != nil {
-					cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
-					seen[jobID] = true
-					continue
-				}
-				return fmt.Errorf("error fixing job %d: %w", jobID, err)
-			}
+			return fmt.Errorf("error fixing job %d: %w", jobID, err)
 		}
 		// Mark as seen so the re-query loop doesn't retry this job.
-		// Connection errors bail early (fatal return above), so only
-		// successfully attempted jobs reach here.
+		// Only successfully attempted jobs reach here.
 		if seen != nil {
 			seen[jobID] = true
 		}
@@ -485,36 +479,42 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 func queryOpenJobs(
 	repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
-	queryURL := fmt.Sprintf(
-		"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
-		serverAddr, url.QueryEscape(repoRoot),
-	)
-	if branch != "" {
-		queryURL += "&branch=" + url.QueryEscape(branch) +
-			"&branch_include_empty=true"
-	}
+	jobs, err := withFixDaemonRetry(serverAddr, func(addr string) ([]storage.ReviewJob, error) {
+		queryURL := fmt.Sprintf(
+			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
+			addr, url.QueryEscape(repoRoot),
+		)
+		if branch != "" {
+			queryURL += "&branch=" + url.QueryEscape(branch) +
+				"&branch_include_empty=true"
+		}
 
-	resp, err := http.Get(queryURL)
+		resp, err := http.Get(queryURL)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf(
+				"server error (%d): %s", resp.StatusCode, body,
+			)
+		}
+
+		var jobsResp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+
+		return jobsResp.Jobs, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query jobs: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf(
-			"server error (%d): %s", resp.StatusCode, body,
-		)
-	}
-
-	var jobsResp struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	return jobsResp.Jobs, nil
+	return jobs, nil
 }
 
 func queryOpenJobIDs(
@@ -1042,64 +1042,68 @@ func formatJobIDs(ids []int64) string {
 
 // fetchJob retrieves a job from the daemon
 func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.ReviewJob, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	return withFixDaemonRetry(serverAddr, func(addr string) (*storage.ReviewJob, error) {
+		client := &http.Client{Timeout: 30 * time.Second}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID), nil)
-	if err != nil {
-		return nil, err
-	}
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID), nil)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
-	}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		}
 
-	var jobsResp struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-		return nil, err
-	}
+		var jobsResp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			return nil, err
+		}
 
-	if len(jobsResp.Jobs) == 0 {
-		return nil, fmt.Errorf("job %d not found", jobID)
-	}
+		if len(jobsResp.Jobs) == 0 {
+			return nil, fmt.Errorf("job %d not found", jobID)
+		}
 
-	return &jobsResp.Jobs[0], nil
+		return &jobsResp.Jobs[0], nil
+	})
 }
 
 // fetchReview retrieves the review output for a job
 func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	return withFixDaemonRetry(serverAddr, func(addr string) (*storage.Review, error) {
+		client := &http.Client{Timeout: 30 * time.Second}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
-	if err != nil {
-		return nil, err
-	}
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID), nil)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
-	}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		}
 
-	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-		return nil, err
-	}
+		var review storage.Review
+		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+			return nil, err
+		}
 
-	return &review, nil
+		return &review, nil
+	})
 }
 
 // buildGenericFixPrompt creates a fix prompt without knowing the analysis type
@@ -1143,17 +1147,20 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 		"comment":   response,
 	})
 
-	resp, err := http.Post(serverAddr+"/api/comment", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	_, err := withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
+		resp, err := http.Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			return struct{}{}, err
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("add response failed: %s", body)
-	}
-	return nil
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			return struct{}{}, fmt.Errorf("add response failed: %s", body)
+		}
+		return struct{}{}, nil
+	})
+	return err
 }
 
 // enqueueIfNeeded enqueues a review for a commit via the daemon API.
@@ -1165,13 +1172,15 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	// The post-commit hook normally completes before control returns here,
 	// but under heavy load it may take longer. Poll with short intervals
 	// up to a max wait to avoid both unnecessary delays and duplicates.
-	for range 10 {
-		if hasJobForSHA(serverAddr, sha) {
+	for range enqueueIfNeededProbeAttempts {
+		found, err := hasJobForSHA(serverAddr, sha)
+		if err == nil && found {
 			return nil
 		}
-		time.Sleep(1 * time.Second)
+		fixDaemonSleep(enqueueIfNeededProbeDelay)
 	}
-	if hasJobForSHA(serverAddr, sha) {
+	found, err := hasJobForSHA(serverAddr, sha)
+	if err == nil && found {
 		return nil
 	}
 
@@ -1183,36 +1192,72 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 		Branch:   branchName,
 	})
 
-	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	_, err = withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
+		resp, err := http.Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			return struct{}{}, err
+		}
+		defer resp.Body.Close()
 
-	// 200 (skipped) and 201 (enqueued) are both fine
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("enqueue failed: %s", body)
-	}
-	return nil
+		// 200 (skipped) and 201 (enqueued) are both fine
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			return struct{}{}, fmt.Errorf("enqueue failed: %s", body)
+		}
+		return struct{}{}, nil
+	})
+	return err
 }
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
-func hasJobForSHA(serverAddr, sha string) bool {
-	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
-	resp, err := http.Get(checkURL)
-	if err != nil {
-		return false
+func hasJobForSHA(serverAddr, sha string) (bool, error) {
+	return withFixDaemonRetry(serverAddr, func(addr string) (bool, error) {
+		checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha))
+		resp, err := http.Get(checkURL)
+		if err != nil {
+			return false, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false, nil
+		}
+		var result struct {
+			Jobs []struct{ ID int64 } `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return false, nil
+		}
+		return len(result.Jobs) > 0, nil
+	})
+}
+
+func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error)) (T, error) {
+	currentAddr := addr
+	var zero T
+
+	for attempt := 0; ; attempt++ {
+		value, err := fn(currentAddr)
+		if err == nil {
+			return value, nil
+		}
+		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
+			return zero, err
+		}
+
+		waitForFixDaemonRecovery()
+		currentAddr = serverAddr
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
+}
+
+func waitForFixDaemonRecovery() {
+	deadline := time.Now().Add(fixDaemonRecoveryWait)
+	for {
+		if err := fixDaemonEnsure(); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		fixDaemonSleep(fixDaemonRecoveryPoll)
 	}
-	var result struct {
-		Jobs []struct{ ID int64 } `json:"jobs"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&result) != nil {
-		return false
-	}
-	return len(result.Jobs) > 0
 }

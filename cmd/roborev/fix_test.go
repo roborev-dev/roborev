@@ -25,6 +25,40 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
+	t.Helper()
+
+	oldMaxRetries := fixDaemonMaxRetries
+	oldRecoveryWait := fixDaemonRecoveryWait
+	oldRecoveryPoll := fixDaemonRecoveryPoll
+	oldEnsure := fixDaemonEnsure
+	oldSleep := fixDaemonSleep
+	oldProbeAttempts := enqueueIfNeededProbeAttempts
+	oldProbeDelay := enqueueIfNeededProbeDelay
+
+	fixDaemonMaxRetries = 1
+	fixDaemonRecoveryWait = 25 * time.Millisecond
+	fixDaemonRecoveryPoll = 5 * time.Millisecond
+	if ensure != nil {
+		fixDaemonEnsure = ensure
+	} else {
+		fixDaemonEnsure = ensureDaemon
+	}
+	fixDaemonSleep = time.Sleep
+	enqueueIfNeededProbeAttempts = 1
+	enqueueIfNeededProbeDelay = 5 * time.Millisecond
+
+	t.Cleanup(func() {
+		fixDaemonMaxRetries = oldMaxRetries
+		fixDaemonRecoveryWait = oldRecoveryWait
+		fixDaemonRecoveryPoll = oldRecoveryPoll
+		fixDaemonEnsure = oldEnsure
+		fixDaemonSleep = oldSleep
+		enqueueIfNeededProbeAttempts = oldProbeAttempts
+		enqueueIfNeededProbeDelay = oldProbeDelay
+	})
+}
+
 func TestBuildGenericFixPrompt(t *testing.T) {
 	analysisOutput := `## Issues Found
 - Long function in main.go:50
@@ -269,6 +303,124 @@ func TestFixSingleJob(t *testing.T) {
 	}
 	if !strings.Contains(outputStr, "closed") {
 		t.Error("output should confirm job closed")
+	}
+}
+
+func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{
+		"main.go": "package main\n",
+	})
+
+	originalAgent, err := agent.Get("test")
+	if err != nil {
+		t.Fatalf("get test agent: %v", err)
+	}
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			fixPath := filepath.Join(repoPath, "fix.txt")
+			if err := os.WriteFile(fixPath, []byte("fixed\n"), 0644); err != nil {
+				return "", fmt.Errorf("write fix: %w", err)
+			}
+			cmd := exec.Command("git", "add", "fix.txt")
+			cmd.Dir = repoPath
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("git add: %v (%s)", err, out)
+			}
+			cmd = exec.Command("git", "commit", "-m", "fix: apply retry test")
+			cmd.Dir = repoPath
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return "", fmt.Errorf("git commit: %v (%s)", err, out)
+			}
+			return "applied fix", nil
+		},
+	})
+	t.Cleanup(func() {
+		agent.Register(originalAgent)
+	})
+
+	deadURL := "http://127.0.0.1:1"
+	var enqueueCount atomic.Int32
+	var commentCount atomic.Int32
+	var closeCount atomic.Int32
+	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			writeJSON(w, map[string]any{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+		case "/api/enqueue":
+			enqueueCount.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		case "/api/comment":
+			commentCount.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		case "/api/review/close":
+			closeCount.Add(1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer recoveryServer.Close()
+
+	var ensureCalls atomic.Int32
+	patchFixDaemonRetryForTest(t, func() error {
+		ensureCalls.Add(1)
+		serverAddr = recoveryServer.URL
+		return nil
+	})
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{
+					ID:     99,
+					Status: storage.JobStatusDone,
+					Agent:  "test",
+				}},
+			})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
+			serverAddr = deadURL
+		}).
+		Build()
+
+	cmd, output := newTestCmd(t)
+
+	opts := fixOptions{
+		agentName: "test",
+		reasoning: "fast",
+	}
+
+	err = fixSingleJob(cmd, repo.Dir, 99, opts)
+	if err != nil {
+		t.Fatalf("fixSingleJob: %v", err)
+	}
+
+	outputStr := output.String()
+	if ensureCalls.Load() == 0 {
+		t.Fatal("expected daemon recovery to be attempted")
+	}
+	if strings.Contains(outputStr, "Warning: could not enqueue review for fix commit") {
+		t.Fatalf("unexpected enqueue warning after recovery:\n%s", outputStr)
+	}
+	if strings.Contains(outputStr, "Warning: could not add response to job") {
+		t.Fatalf("unexpected comment warning after recovery:\n%s", outputStr)
+	}
+	if strings.Contains(outputStr, "Warning: could not close job") {
+		t.Fatalf("unexpected close warning after recovery:\n%s", outputStr)
+	}
+	if enqueueCount.Load() != 1 {
+		t.Fatalf("expected one recovered enqueue, got %d", enqueueCount.Load())
+	}
+	if commentCount.Load() != 1 {
+		t.Fatalf("expected one recovered comment, got %d", commentCount.Load())
+	}
+	if closeCount.Load() != 1 {
+		t.Fatalf("expected one recovered close, got %d", closeCount.Load())
 	}
 }
 
@@ -713,6 +865,108 @@ func TestRunFixOpenRequery(t *testing.T) {
 	}
 	if int(queryCount.Load()) != 3 {
 		t.Errorf("expected 3 queries, got %d", queryCount.Load())
+	}
+}
+
+func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+
+	deadURL := "http://127.0.0.1:1"
+	var recoveryQueryCount atomic.Int32
+	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			q := r.URL.Query()
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
+				if recoveryQueryCount.Add(1) == 1 {
+					writeJSON(w, map[string]any{
+						"jobs": []storage.ReviewJob{
+							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+					return
+				}
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{
+					{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
+				},
+				"has_more": false,
+			})
+		case "/api/review":
+			writeJSON(w, storage.Review{Output: "findings"})
+		case "/api/comment":
+			w.WriteHeader(http.StatusCreated)
+		case "/api/review/close":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer recoveryServer.Close()
+
+	var ensureCalls atomic.Int32
+	patchFixDaemonRetryForTest(t, func() error {
+		ensureCalls.Add(1)
+		serverAddr = recoveryServer.URL
+		return nil
+	})
+
+	var openQueryCount atomic.Int32
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
+				openQueryCount.Add(1)
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{
+						{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+					},
+					"has_more": false,
+				})
+				return
+			}
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{
+					{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+				},
+				"has_more": false,
+			})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			serverAddr = deadURL
+		}).
+		Build()
+
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ensureCalls.Load() == 0 {
+		t.Fatal("expected daemon recovery to be attempted")
+	}
+	if !strings.Contains(out, "Found 1 open job(s)") {
+		t.Errorf("expected initial batch output, got %q", out)
+	}
+	if !strings.Contains(out, "Found 1 new open job(s)") {
+		t.Errorf("expected recovered requery output, got %q", out)
 	}
 }
 

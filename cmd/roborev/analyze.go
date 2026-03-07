@@ -871,17 +871,20 @@ func markJobClosed(serverAddr string, jobID int64) error {
 		"closed": true,
 	})
 
-	resp, err := http.Post(serverAddr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	_, err := withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
+		resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			return struct{}{}, err
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("close job failed: %s", body)
-	}
-	return nil
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return struct{}{}, fmt.Errorf("close job failed: %s", body)
+		}
+		return struct{}{}, nil
+	})
+	return err
 }
 
 // expandAndReadFiles expands glob patterns and reads file contents.
