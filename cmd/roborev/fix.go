@@ -1150,20 +1150,30 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 		"comment":   response,
 	})
 
-	_, err := withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
-		resp, err := http.Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			return struct{}{}, err
+	currentAddr := serverAddr
+	for attempt := 0; ; attempt++ {
+		resp, err := http.Post(currentAddr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("add response failed: %s", body)
+			}
+			return nil
 		}
-		defer resp.Body.Close()
+		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
+			return err
+		}
 
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			return struct{}{}, fmt.Errorf("add response failed: %s", body)
+		currentAddr = recoverFixDaemonAddr()
+		applied, verifyErr := hasJobResponse(currentAddr, jobID, commenter, response)
+		if verifyErr != nil {
+			return fmt.Errorf("verify response after retryable failure: %w", verifyErr)
 		}
-		return struct{}{}, nil
-	})
-	return err
+		if applied {
+			return nil
+		}
+	}
 }
 
 // enqueueIfNeeded enqueues a review for a commit via the daemon API.
@@ -1198,21 +1208,32 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 		Branch:   branchName,
 	})
 
-	_, err = withFixDaemonRetry(serverAddr, func(addr string) (struct{}, error) {
-		resp, err := http.Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			return struct{}{}, err
-		}
-		defer resp.Body.Close()
+	currentAddr := serverAddr
+	for attempt := 0; ; attempt++ {
+		resp, err := http.Post(currentAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+		if err == nil {
+			defer resp.Body.Close()
 
-		// 200 (skipped) and 201 (enqueued) are both fine
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			return struct{}{}, fmt.Errorf("enqueue failed: %s", body)
+			// 200 (skipped) and 201 (enqueued) are both fine
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("enqueue failed: %s", body)
+			}
+			return nil
 		}
-		return struct{}{}, nil
-	})
-	return err
+		if !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
+			return err
+		}
+
+		currentAddr = recoverFixDaemonAddr()
+		exists, verifyErr := hasJobForSHA(currentAddr, sha)
+		if verifyErr != nil {
+			return fmt.Errorf("verify enqueue after retryable failure: %w", verifyErr)
+		}
+		if exists {
+			return nil
+		}
+	}
 }
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
@@ -1235,6 +1256,31 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 	return len(result.Jobs) > 0, nil
 }
 
+func hasJobResponse(serverAddr string, jobID int64, commenter, response string) (bool, error) {
+	checkURL := fmt.Sprintf("%s/api/comments?job_id=%d", serverAddr, jobID)
+	resp, err := http.Get(checkURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("fetch comments failed (%d): %s", resp.StatusCode, body)
+	}
+	var result struct {
+		Responses []storage.Response `json:"responses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
+	for _, existing := range result.Responses {
+		if existing.Responder == commenter && existing.Response == response {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error)) (T, error) {
 	currentAddr := addr
 	var zero T
@@ -1251,6 +1297,11 @@ func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error
 		waitForFixDaemonRecovery()
 		currentAddr = serverAddr
 	}
+}
+
+func recoverFixDaemonAddr() string {
+	waitForFixDaemonRecovery()
+	return serverAddr
 }
 
 func waitForFixDaemonRecovery() {
