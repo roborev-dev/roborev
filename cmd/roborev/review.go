@@ -474,9 +474,9 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 		}
 	}
 
-	// Don't branch-review when on the base branch itself
+	// Don't branch-review in detached HEAD or on the base branch
 	current := git.GetCurrentBranch(root)
-	if current == git.LocalBranchName(base) {
+	if current == "" || current == git.LocalBranchName(base) {
 		return "", false
 	}
 
