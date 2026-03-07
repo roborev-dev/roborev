@@ -666,11 +666,16 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 
 	// This test corrupts a git object, so it must run last
 	// since the repo becomes unusable afterward.
-	t.Run("range with unreadable commit enqueues normally",
+	t.Run("range with corrupt mid-commit enqueues normally",
 		func(t *testing.T) {
-			// When GetCommitInfo fails for any commit in the
-			// range, the server must not skip — it can't prove
-			// all commits are excluded.
+			// Removing a mid-range commit object makes
+			// GetRangeCommits fail, so the exclusion block
+			// is skipped entirely and the job is enqueued.
+			// (The allRead guard is additional defense for
+			// transient I/O failures where GetRangeCommits
+			// succeeds but individual GetCommitInfo calls
+			// fail — git object corruption can't isolate
+			// those two calls.)
 			branchCmd := exec.Command("git", "-C", repoDir,
 				"checkout", "-b", "corrupt-range")
 			if out, err := branchCmd.CombinedOutput(); err != nil {
@@ -678,8 +683,8 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			}
 			base := testutil.GetHeadSHA(t, repoDir)
 
-			// Two excluded commits
-			for i := range 2 {
+			// Three excluded commits; corrupt the middle one.
+			for i := range 3 {
 				cmd := exec.Command("git", "-C", repoDir,
 					"commit", "--allow-empty",
 					"-m", fmt.Sprintf("[wip] corrupt %d", i))
@@ -687,21 +692,31 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 					t.Fatalf("commit failed: %v\n%s", err, out)
 				}
 			}
+			tip := testutil.GetHeadSHA(t, repoDir)
 
-			// Corrupt the HEAD commit object so GetCommitInfo
-			// fails for it. Removing the loose object file
-			// makes git unable to read this commit's metadata.
-			headSHA := testutil.GetHeadSHA(t, repoDir)
-			objDir := filepath.Join(
+			// Walk back to the middle commit (parent of tip).
+			midCmd := exec.Command("git", "-C", repoDir,
+				"rev-parse", "HEAD~1")
+			midOut, err := midCmd.Output()
+			if err != nil {
+				t.Fatalf("rev-parse HEAD~1: %v", err)
+			}
+			mid := strings.TrimSpace(string(midOut))
+
+			objFile := filepath.Join(
 				repoDir, ".git", "objects",
-				headSHA[:2],
+				mid[:2], mid[2:],
 			)
-			objFile := filepath.Join(objDir, headSHA[2:])
 			if err := os.Remove(objFile); err != nil {
 				t.Fatalf("remove object: %v", err)
 			}
 
-			ref := base + ".." + headSHA
+			// ResolveSHA succeeds for both endpoints (base
+			// and tip are intact), but GetRangeCommits fails
+			// because git can't walk through the missing
+			// middle commit. The exclusion block is skipped
+			// and the job is enqueued normally.
+			ref := base + ".." + tip
 			reqData := EnqueueRequest{
 				RepoPath: repoDir, GitRef: ref, Agent: "test",
 			}
@@ -711,15 +726,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			w := httptest.NewRecorder()
 			server.handleEnqueue(w, req)
 
-			// Should not skip — can't verify all are excluded.
-			if w.Code == http.StatusOK {
-				var resp struct {
-					Skipped bool `json:"skipped"`
-				}
-				testutil.DecodeJSON(t, w, &resp)
-				if resp.Skipped {
-					t.Error("should not skip when commit is unreadable")
-				}
+			if w.Code != http.StatusCreated {
+				t.Errorf("expected 201, got %d: %s",
+					w.Code, w.Body.String())
 			}
 		})
 }
