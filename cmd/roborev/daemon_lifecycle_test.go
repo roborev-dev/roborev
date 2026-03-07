@@ -159,3 +159,33 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 		t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
 	}
 }
+
+func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	origRestartDaemon := restartDaemonForEnsure
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{
+			PID:     1234,
+			Addr:    "127.0.0.1:1",
+			Version: version.Version,
+		}, nil
+	}
+	restartCalls := 0
+	restartDaemonForEnsure = func() error {
+		restartCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+		restartDaemonForEnsure = origRestartDaemon
+	})
+
+	if err := ensureDaemon(); err != nil {
+		t.Fatalf("ensureDaemon returned error: %v", err)
+	}
+	if restartCalls != 1 {
+		t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
+	}
+}

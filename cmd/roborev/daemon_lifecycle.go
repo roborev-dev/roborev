@@ -132,12 +132,15 @@ func ensureDaemon() error {
 
 	// First check runtime files for any running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
-		daemonVersion := info.Version
-
 		if !skipVersionCheck {
-			if probe, err := daemon.ProbeDaemon(info.Addr, 2*time.Second); err == nil {
-				daemonVersion = probe.Version
+			probe, err := daemon.ProbeDaemon(info.Addr, 2*time.Second)
+			if err != nil {
+				if verbose {
+					fmt.Printf("Daemon probe failed, restarting...\n")
+				}
+				return restartDaemonForEnsure()
 			}
+			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
 					fmt.Printf("Daemon version unknown, restarting...\n")
