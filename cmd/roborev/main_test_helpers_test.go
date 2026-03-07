@@ -137,6 +137,16 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 		}
 		state.handleStatus(w, r)
 	})
+	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			mockMethodNotAllowed(w)
+			return
+		}
+		if hooks.OnPing != nil && hooks.OnPing(w, r, state) {
+			return
+		}
+		state.handlePing(w, r)
+	})
 
 	mux.HandleFunc("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 		if hooks.OnComment != nil && hooks.OnComment(w, r, state) {
@@ -230,6 +240,7 @@ type MockRefineHooks struct {
 	OnEnqueue     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnReview      func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnComments    func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnPing        func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnStatus      func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnComment     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnReviewClose func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
@@ -277,6 +288,18 @@ func (state *mockRefineState) handleStatus(w http.ResponseWriter, r *http.Reques
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"version": version.Version,
+	})
+}
+
+func (state *mockRefineState) handlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		mockMethodNotAllowed(w)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(daemon.PingInfo{
+		Service: "roborev",
+		Version: version.Version,
+		PID:     os.Getpid(),
 	})
 }
 
@@ -440,6 +463,7 @@ func (state *mockRefineState) handleJobs(w http.ResponseWriter, r *http.Request)
 // createMockRefineHandler creates an HTTP handler that simulates daemon behavior
 func createMockRefineHandler(state *mockRefineState) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ping", state.handlePing)
 	mux.HandleFunc("/api/status", state.handleStatus)
 	mux.HandleFunc("/api/review", state.handleReview)
 	mux.HandleFunc("/api/comments", state.handleComments)

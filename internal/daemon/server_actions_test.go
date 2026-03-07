@@ -78,6 +78,44 @@ func TestHandleStatus(t *testing.T) {
 	})
 }
 
+func TestHandlePing(t *testing.T) {
+	server, _, _ := newTestServer(t)
+
+	t.Run("returns daemon identity", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+		w := httptest.NewRecorder()
+
+		server.handlePing(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var ping PingInfo
+		testutil.DecodeJSON(t, w, &ping)
+		if ping.Service != daemonServiceName {
+			t.Fatalf("Expected service %q, got %q", daemonServiceName, ping.Service)
+		}
+		if ping.Version == "" {
+			t.Fatal("Expected ping version to be set")
+		}
+		if ping.PID == 0 {
+			t.Fatal("Expected ping PID to be set")
+		}
+	})
+
+	t.Run("wrong method fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/ping", nil)
+		w := httptest.NewRecorder()
+
+		server.handlePing(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("Expected status 405, got %d", w.Code)
+		}
+	})
+}
+
 func TestHandleCancelJob(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

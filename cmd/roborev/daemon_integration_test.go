@@ -76,9 +76,7 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		// Daemon is still running - good
 	}
 
-	// Wait for daemon to be fully started and responsive
-	// The runtime file is written before ListenAndServe, so we need to verify
-	// the HTTP server is actually accepting connections.
+	// Wait for daemon to be fully started and responsive.
 	// Use longer timeout for race detector which adds significant overhead.
 	myPID := os.Getpid()
 

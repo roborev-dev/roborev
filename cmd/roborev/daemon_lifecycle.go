@@ -128,61 +128,33 @@ func registerRepo(repoPath string) error {
 // restarting (useful for development with go run).
 func ensureDaemon() error {
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
-	client := &http.Client{Timeout: 500 * time.Millisecond}
 
 	// First check runtime files for any running daemon
 	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
-		addr := fmt.Sprintf("http://%s/api/status", info.Addr)
-		resp, err := client.Get(addr)
-		if err == nil {
-			defer resp.Body.Close()
-
-			// Parse response to get actual daemon version
-			var status struct {
-				Version string `json:"version"`
+		daemonVersion := info.Version
+		if daemonVersion == "" {
+			if probe, err := daemon.ProbeDaemon(info.Addr, 2*time.Second); err == nil {
+				daemonVersion = probe.Version
 			}
-			decodeErr := json.NewDecoder(resp.Body).Decode(&status)
-
-			// Always fail on decode errors (response is not a valid daemon)
-			if decodeErr != nil {
-				if verbose {
-					fmt.Printf("Daemon response unreadable, restarting...\n")
-				}
-				return restartDaemon()
-			}
-			// Skip version mismatch check when env var is set
-			if !skipVersionCheck && (status.Version == "" || status.Version != version.Version) {
-				if verbose {
-					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
-				}
-				return restartDaemon()
-			}
-
-			serverAddr = fmt.Sprintf("http://%s", info.Addr)
-			return nil
 		}
-	}
 
-	// Try default address - also check version from response
-	resp, err := client.Get(serverAddr + "/api/status")
-	if err == nil {
-		defer resp.Body.Close()
-		var status struct {
-			Version string `json:"version"`
-		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
-
-		// Always fail on decode errors (response is not a valid daemon)
-		if decodeErr != nil {
+		if !skipVersionCheck && daemonVersion != "" && daemonVersion != version.Version {
 			if verbose {
-				fmt.Printf("Daemon response unreadable, restarting...\n")
+				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
 			}
 			return restartDaemon()
 		}
-		// Skip version mismatch check when env var is set
-		if !skipVersionCheck && (status.Version == "" || status.Version != version.Version) {
+
+		serverAddr = fmt.Sprintf("http://%s", info.Addr)
+		return nil
+	}
+
+	// Try the configured default address for manual/legacy daemon runs that do
+	// not have a runtime file yet.
+	if probe, err := probeDaemonServerURL(serverAddr, 2*time.Second); err == nil {
+		if !skipVersionCheck && probe.Version != "" && probe.Version != version.Version {
 			if verbose {
-				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
+				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
 			}
 			return restartDaemon()
 		}
@@ -219,22 +191,27 @@ func startDaemon() error {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
-	// Wait for daemon to be ready and update serverAddr from runtime file
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	// Wait for daemon to publish a responsive runtime entry.
 	for range 30 {
 		time.Sleep(100 * time.Millisecond)
 		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
-			addr := fmt.Sprintf("http://%s", info.Addr)
-			resp, err := client.Get(addr + "/api/status")
-			if err == nil {
-				resp.Body.Close()
-				serverAddr = addr
-				return nil
-			}
+			serverAddr = fmt.Sprintf("http://%s", info.Addr)
+			return nil
 		}
 	}
 
 	return fmt.Errorf("daemon failed to start")
+}
+
+func probeDaemonServerURL(serverURL string, timeout time.Duration) (*daemon.PingInfo, error) {
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("invalid daemon server address %q", serverURL)
+	}
+	return daemon.ProbeDaemon(parsed.Host, timeout)
 }
 
 // stopDaemon stops any running daemons.

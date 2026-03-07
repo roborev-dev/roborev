@@ -15,6 +15,8 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
+const daemonServiceName = "roborev"
+
 // RuntimeInfo stores daemon runtime state
 type RuntimeInfo struct {
 	PID        int    `json:"pid"`
@@ -22,6 +24,13 @@ type RuntimeInfo struct {
 	Port       int    `json:"port"`
 	Version    string `json:"version"`
 	SourcePath string `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
+}
+
+// PingInfo is the minimal daemon identity payload used for liveness probes.
+type PingInfo struct {
+	Service string `json:"service"`
+	Version string `json:"version"`
+	PID     int    `json:"pid,omitempty"`
 }
 
 // RuntimePath returns the path to the runtime info file for the current process
@@ -208,6 +217,26 @@ func GetAnyRunningDaemon() (*RuntimeInfo, error) {
 	return nil, os.ErrNotExist
 }
 
+// ProbeDaemon validates that a loopback address is serving the roborev daemon.
+// It prefers the lightweight /api/ping endpoint and falls back to /api/status
+// for older daemon versions that do not implement /api/ping yet.
+func ProbeDaemon(addr string, timeout time.Duration) (*PingInfo, error) {
+	if addr == "" {
+		return nil, fmt.Errorf("empty daemon address")
+	}
+
+	if !isLoopbackAddr(addr) {
+		return nil, fmt.Errorf("non-loopback daemon address: %s", addr)
+	}
+
+	client := &http.Client{Timeout: timeout}
+	if info, shouldFallback, err := probeDaemonPing(client, addr); !shouldFallback {
+		return info, err
+	}
+
+	return probeLegacyDaemonStatus(client, addr)
+}
+
 // IsDaemonAlive checks if a daemon at the given address is actually responding.
 // This is more reliable than checking PID and works cross-platform.
 // Only allows loopback addresses to prevent SSRF via malicious runtime files.
@@ -217,34 +246,73 @@ func IsDaemonAlive(addr string) bool {
 		return false
 	}
 
-	// Validate address is loopback to prevent SSRF
-	if !isLoopbackAddr(addr) {
-		return false
-	}
-
-	// Use longer timeout and retry to avoid false negatives on slow/busy daemons
-	client := &http.Client{Timeout: 1 * time.Second}
-	url := fmt.Sprintf("http://%s/api/status", addr)
-
 	// Try up to 2 times with a short delay between attempts
 	for attempt := range 2 {
 		if attempt > 0 {
 			time.Sleep(200 * time.Millisecond)
 		}
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
-		}
-		resp.Body.Close()
-		// Accept only 2xx (success) or 5xx (server error, daemon having issues).
-		// Reject 3xx/4xx - likely a different service (auth proxy, unrelated API, etc.).
-		// Status code validation for version mismatch happens in ensureDaemon.
-		if (resp.StatusCode >= 200 && resp.StatusCode < 300) || (resp.StatusCode >= 500 && resp.StatusCode < 600) {
+		if _, err := ProbeDaemon(addr, 1*time.Second); err == nil {
 			return true
 		}
-		return false
 	}
 	return false
+}
+
+func probeDaemonPing(client *http.Client, addr string) (*PingInfo, bool, error) {
+	resp, err := client.Get(fmt.Sprintf("http://%s/api/ping", addr))
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var info PingInfo
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			return nil, false, fmt.Errorf("decode daemon ping: %w", err)
+		}
+		if info.Service != daemonServiceName {
+			return nil, false, fmt.Errorf("unexpected daemon service %q", info.Service)
+		}
+		return &info, false, nil
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return nil, true, nil
+	default:
+		return nil, false, fmt.Errorf("daemon ping returned %d", resp.StatusCode)
+	}
+}
+
+func probeLegacyDaemonStatus(client *http.Client, addr string) (*PingInfo, error) {
+	resp, err := client.Get(fmt.Sprintf("http://%s/api/status", addr))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+		return &PingInfo{Service: daemonServiceName}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("daemon status returned %d", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusNoContent {
+		return &PingInfo{Service: daemonServiceName}, nil
+	}
+
+	var status struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decode daemon status: %w", err)
+	}
+	if status.Version == "" {
+		return nil, fmt.Errorf("daemon status missing version")
+	}
+
+	return &PingInfo{
+		Service: daemonServiceName,
+		Version: status.Version,
+	}, nil
 }
 
 // isLoopbackAddr checks if an address is a loopback address.

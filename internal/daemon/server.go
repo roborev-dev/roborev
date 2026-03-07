@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,6 +83,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", s.handleEnqueue)
 	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/ping", s.handlePing)
 	mux.HandleFunc("/api/jobs", s.handleListJobs)
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
 	mux.HandleFunc("/api/job/output", s.handleJobOutput)
@@ -154,12 +156,50 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.httpServer.Addr = addr
 
-	// Write runtime info so CLI can find us
+	// Bind the listener before publishing runtime metadata so concurrent CLI
+	// invocations cannot race a half-started daemon and kill it as a zombie.
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.configWatcher.Stop()
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	addr = listener.Addr().String()
+	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
+		port = tcpAddr.Port
+	}
+	s.httpServer.Addr = addr
+
+	serveErrCh := make(chan error, 1)
+	log.Printf("Starting HTTP server on %s", addr)
+	go func() {
+		serveErrCh <- s.httpServer.Serve(listener)
+	}()
+
+	// Start worker pool before advertising availability.
+	s.workerPool.Start()
+
+	ready, err := waitForServerReady(ctx, addr, 2*time.Second)
+	if err != nil {
+		_ = listener.Close()
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
+		return err
+	}
+	if !ready {
+		if err := <-serveErrCh; err != http.ErrServerClosed {
+			s.configWatcher.Stop()
+			s.workerPool.Stop()
+			return err
+		}
+		return nil
+	}
+
+	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(addr, port, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 
-	// Log daemon start
+	// Log daemon start after runtime publication.
 	if s.activityLog != nil {
 		binary, _ := os.Executable()
 		s.activityLog.Log(
@@ -175,33 +215,57 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
-	// Start worker pool
-	s.workerPool.Start()
-
 	// Check for outdated hooks in registered repos (skip in CI mode
 	// where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
 		if repos, err := s.db.ListRepos(); err == nil {
-			for _, repo := range repos {
-				if githook.NeedsUpgrade(repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
-					log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
-				}
-				if githook.NeedsUpgrade(repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
-					githook.Missing(repo.RootPath, "post-rewrite") {
-					log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
-				}
-			}
+			go logHookWarnings(repos)
 		}
 	}
 
-	// Start HTTP server
-	log.Printf("Starting HTTP server on %s", addr)
-	if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
+	if err := <-serveErrCh; err != http.ErrServerClosed {
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
 		return err
 	}
 	return nil
+}
+
+func waitForServerReady(ctx context.Context, addr string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return false, nil
+		}
+		if _, err := ProbeDaemon(addr, 200*time.Millisecond); err == nil {
+			return true, nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("server did not respond before timeout")
+	}
+	return false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", addr, timeout, lastErr)
+}
+
+func logHookWarnings(repos []storage.Repo) {
+	for _, repo := range repos {
+		if githook.NeedsUpgrade(repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
+			log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
+		}
+		if githook.NeedsUpgrade(repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
+			githook.Missing(repo.RootPath, "post-rewrite") {
+			log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
+		}
+	}
 }
 
 // Stop gracefully shuts down the server
@@ -1692,6 +1756,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, status)
+}
+
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	writeJSON(w, PingInfo{
+		Service: daemonServiceName,
+		Version: version.Version,
+		PID:     os.Getpid(),
+	})
 }
 
 type CloseReviewRequest struct {
