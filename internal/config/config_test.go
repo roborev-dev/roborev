@@ -115,6 +115,43 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := DefaultConfig()
+	cfg.AutoFilterBranch = true
+
+	if err := SaveGlobal(cfg); err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+
+	if !loaded.AutoFilterBranch {
+		t.Error("AutoFilterBranch should be true after round-trip")
+	}
+}
+
+func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadGlobalFrom(path)
+	if err != nil {
+		t.Fatalf("LoadGlobalFrom failed: %v", err)
+	}
+
+	if !cfg.AutoFilterBranch {
+		t.Error("AutoFilterBranch should be true when loaded from TOML")
+	}
+}
+
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "claude-code"
