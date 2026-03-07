@@ -15,12 +15,15 @@ import (
 const MaxPromptSize = 250 * 1024
 
 // noSkillsInstruction tells agents not to delegate the review to external
-// tools or skills. Codex and Claude Code discover roborev skills in the
-// user's environment and will try to invoke them instead of performing the
-// review directly (see #306).
+// tools or skills, and to return only the final review content. Verdict
+// parsing intentionally does not try to decode narrative process updates or
+// caveats in free-form prose; those output-shaping issues are better handled
+// in the prompt than in deterministic parsing heuristics.
 const noSkillsInstruction = `
 
-IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.`
+IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.
+
+Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".`
 
 // SystemPromptSingle is the base instruction for single commit reviews
 const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:

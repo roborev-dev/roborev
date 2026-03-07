@@ -52,4 +52,17 @@ default branch has no config (no remote, config not yet committed). The
 daemon never checks out PR branches — the working tree is always the
 operator's own checkout. Do not flag filesystem fallback as a trust-boundary
 issue or claim that PR authors can influence config via the working tree.
+
+## Verdict parsing and review output shape
+
+Verdict parsing is intentionally simple and deterministic. Prefer explicit
+structured signals such as severity labels, findings sections, and clear pass
+phrases. Do not ask for elaborate natural-language contradiction parsing of
+free-form prose after "No issues found." or similar pass text.
+
+If agent review output is too chatty, includes process narration, or mixes
+findings with summary/front matter in a way that makes verdict detection less
+reliable, the fix should be to tighten the review prompts/templates and output
+contract. Do not ask for increasingly broad deterministic heuristics to parse
+arbitrary narrative text.
 """

@@ -419,313 +419,32 @@ var benignPhrasesTests = []verdictTestCase{
 	},
 }
 
-var failImperativeTests = []verdictTestCase{
+// These cases are intentionally PASS. Once an agent emits a clear pass phrase,
+// verdict parsing does not try to interpret the rest of the prose for caveats
+// or contradictory narrative. That output-shaping problem belongs in the review
+// prompt, not in a brittle natural-language verdict parser.
+var passPhraseWinsTests = []verdictTestCase{
 	{
-		name:   "imperative fix is fail",
-		output: "No issues found. Fix failing tests.",
+		name:   "historical broken path after pass is benign",
+		output: "Review #8609 roborev (codex: gpt-5.4)\nVerdict: Fail\n\nNo issues found. The guard on cmd.Flags().Changed(\"sha\") matches the intended behavior, and the added test exercises the previously broken quiet-mode path.",
 	},
 	{
-		name:   "imperative avoid is fail",
-		output: "No issues found. Avoid panics in slice operations.",
-	},
-	{
-		name:   "imperative prevent is fail",
-		output: "No issues found. Prevent errors by adding validation.",
-	},
-	{
-		name:   "imperative after colon is fail",
-		output: "No issues found: Fix failing tests.",
-	},
-	{
-		name:   "imperative after comma is fail",
-		output: "No issues found, Fix failing tests.",
-	},
-	{
-		name:   "imperative in bullet list is fail",
-		output: "No issues found. - Fix failing tests.",
-	},
-	{
-		name:   "imperative in asterisk list is fail",
-		output: "No issues found. * Avoid panics.",
-	},
-	{
-		name:   "imperative in numbered list is fail",
-		output: "No issues found. 1. Fix the failing tests.",
-	},
-}
-
-var failCaveatsTests = []verdictTestCase{
-	{
-		name:   "review findings with caveat is fail",
-		output: "2. **Review Findings**: No issues found, but consider refactoring.",
-	},
-	{
-		name:   "errors after comma boundary is fail",
-		output: "No issues found, errors remain.",
-	},
-	{
-		name:   "errors after colon boundary is fail",
-		output: "No issues found: errors remain.",
-	},
-	{
-		name:   "bug after comma is fail",
-		output: "No issues found, but there is a bug.",
-	},
-	{
-		name:   "errors after period-quote boundary is fail",
-		output: `No issues found." errors remain.`,
-	},
-	{
-		name:   "errors after period-paren boundary is fail",
-		output: "No issues found.) errors remain.",
-	},
-	{
-		name:   "error handling is missing is fail",
-		output: "No issues found. Error handling is missing in the auth module.",
-	},
-	{
-		name:   "error codes are wrong is fail",
-		output: "No issues found. Error codes are wrong in the API response.",
-	},
-	{
-		name:   "error message needs improvement is fail",
-		output: "No issues found. The error message needs to be more descriptive.",
-	},
-	{
-		name:   "error handling is broken is fail",
-		output: "No issues found. Error handling is broken after refactor.",
-	},
-	{
-		name:   "mixed polarity error handling - positive then negative is fail",
-		output: "No issues found. Error handling improved, but error handling is missing in auth.",
-	},
-	{
-		name:   "mixed polarity error handling - negative then positive is fail",
-		output: "No issues found. Error handling is broken, though error handling in utils is good.",
-	},
-	{
-		name:   "found colon with spaces normalized",
-		output: "No issues found. Found:   a bug.",
-	},
-	{
-		name:   "found issues without article",
-		output: "No issues found. I checked for bugs and found issues.",
-	},
-	{
-		name:   "found errors without article",
-		output: "No issues found. I looked for problems and found errors.",
-	},
-	{
-		name:   "still crashes pattern",
-		output: "No issues found. I checked for bugs and it still crashes.",
-	},
-	{
-		name:   "still fails pattern",
-		output: "No issues found. Checked for regressions but test still fails.",
-	},
-	{
-		name:   "negation then positive finding",
-		output: "No issues found. I checked for bugs, found no issues, but found a crash.",
-	},
-	{
-		name:   "found nothing then found error",
-		output: "No issues found. I looked for bugs and found nothing, but found an error later.",
-	},
-	{
-		name:   "multiple negations then finding",
-		output: "No issues found. Found no bugs, found nothing wrong, but found a race condition.",
-	},
-	{
-		name:   "found multiple issues",
-		output: "No issues found. I checked for bugs and found multiple issues.",
-	},
-	{
-		name:   "found several bugs",
-		output: "No issues found. I looked for problems and found several bugs.",
-	},
-	{
-		name:   "found many errors",
-		output: "No issues found. Checked for regressions and found many errors.",
-	},
-	{
-		name:   "found a few bugs",
-		output: "No issues found. I checked for problems and found a few bugs.",
-	},
-	{
-		name:   "found two issues",
-		output: "No issues found. I looked for regressions and found two issues.",
-	},
-	{
-		name:   "found various problems",
-		output: "No issues found. Checked for bugs and found various problems.",
-	},
-	{
-		name:   "found multiple critical issues",
-		output: "No issues found. I checked and found multiple critical issues.",
-	},
-	{
-		name:   "found several severe bugs",
-		output: "No issues found. Review found several severe bugs in the code.",
-	},
-	{
-		name:   "found a potential vulnerability",
-		output: "No issues found. I checked for security issues and found a potential vulnerability.",
-	},
-	{
-		name:   "found multiple vulnerabilities plural",
-		output: "No issues found. Security scan found multiple vulnerabilities.",
-	},
-	{
-		name:   "found at start of clause",
-		output: "No issues found. Found issues in the auth module.",
-	},
-	{
-		name:   "found colon issues",
-		output: "No issues found. Review result: found multiple bugs.",
-	},
-	{
-		name:   "there are issues",
-		output: "No issues found. There are issues with the implementation.",
-	},
-	{
-		name:   "problems remain",
-		output: "No issues found. Problems remain in the codebase.",
-	},
-	{
-		name:   "has issues",
-		output: "No issues found. The code has issues.",
-	},
-	{
-		name:   "has vulnerabilities",
-		output: "No issues found. The system has vulnerabilities.",
-	},
-	{
-		name:   "have vulnerabilities",
-		output: "No issues found. These modules have vulnerabilities.",
-	},
-	{
-		name:   "many issues remain not negated by any substring",
-		output: "No issues found. Many issues remain.",
-	},
-	{
-		name:   "no doubt issues remain not negated by distant no",
-		output: "No issues found. No doubt, issues remain.",
-	},
-	{
-		name:   "no changes issues exist not negated",
-		output: "No issues found. No changes; issues exist.",
-	},
-	{
-		name:   "found issues with is caveat",
-		output: "No issues found. We found issues with logging.",
-	},
-	{
-		name:   "not only issues with is caveat",
-		output: "No issues found. Not only issues with X but also Y.",
-	},
-	{
-		name:   "distant negation does not negate later issues with",
-		output: "No issues found. I did not find issues in the first run and there are issues with logging.",
-	},
-	{
-		name:   "no issues mid-sentence should fail",
-		output: "I found no issues with the formatting, but there are bugs.",
-	},
-	{
-		name:   "no issues as part of larger phrase should fail",
-		output: "There are no issues with X, but Y needs fixing.",
-	},
-	{
-		name:   "findings before no issues mention",
-		output: "Medium - Security issue\nOtherwise no issues found.",
-	},
-	{
-		name:   "no issues found but caveat",
-		output: "No issues found in module X, but Y needs fixing.",
-	},
-	{
-		name:   "no issues found however caveat",
-		output: "No issues found, however consider refactoring.",
-	},
-	{
-		name:   "no issues found except caveat",
-		output: "No issues found except for minor style issues.",
-	},
-	{
-		name:   "no issues found beyond caveat",
-		output: "No issues found beyond the two notes above.",
-	},
-	{
-		name:   "no issues found but with period",
-		output: "No issues found but.",
-	},
-	{
-		name:   "no issues with em dash caveat",
-		output: "No issues found—but there is a bug.",
-	},
-	{
-		name:   "no issues with comma caveat",
+		name:   "caveat prose after pass phrase is still pass",
 		output: "No issues found, but consider refactoring.",
 	},
 	{
-		name:   "no issues with semicolon then failure",
-		output: "No issues with this change; tests failed.",
+		name:   "review findings label with caveat prose is still pass",
+		output: "2. **Review Findings**: No issues found, but consider refactoring.",
 	},
 	{
-		name:   "no issues then second sentence with break",
-		output: "No issues with this change. It breaks X.",
-	},
-	{
-		name:   "no issues then crash",
-		output: "No issues with this change—panic on start.",
-	},
-	{
-		name:   "no issues then error",
-		output: "No issues with lint. Error in tests.",
-	},
-	{
-		name:   "no issues then bug mention",
-		output: "No issues found. Bug in production.",
-	},
-	{
-		name:   "parenthesized but caveat",
-		output: "No issues found (but needs review).",
-	},
-	{
-		name:   "quoted caveat",
-		output: "No issues found \"but\" consider refactoring.",
-	},
-	{
-		name:   "double negation not without",
-		output: "No issues found. Not without errors.",
-	},
-	{
-		name:   "question then error",
-		output: "No issues found? Errors occurred.",
-	},
-	{
-		name:   "exclamation then error",
-		output: "No issues found! Error in tests.",
+		name:   "process narration after explicit pass phrase is still pass",
+		output: "No issues found. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
 	},
 }
 
-var failExplicitTests = []verdictTestCase{
-	{
-		name:   "checked for but found issue",
-		output: "No issues found. I checked for bugs but found a race condition.",
-	},
-	{
-		name:   "looked for and found crash",
-		output: "No issues found. I looked for crashes and found a panic.",
-	},
-	{
-		name:   "checked for however found problem",
-		output: "No issues found. I checked for errors however there is a crash.",
-	},
-	{
-		name:   "has findings with severity",
-		output: "Medium - Bug in line 42\nThe code has issues.",
-	},
+// Failures should come from clear structured findings or from the absence of a
+// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
+var failFallbackTests = []verdictTestCase{
 	{
 		name:   "empty output",
 		output: "",
@@ -733,6 +452,21 @@ var failExplicitTests = []verdictTestCase{
 	{
 		name:   "ambiguous language",
 		output: "The commit looks mostly fine but could use some cleanup.",
+	},
+	{
+		name:   "narrative front matter without final verdict defaults to fail",
+		output: "Reviewing the diff in context first. I'm opening the touched storage parsing code and adjacent tests to check for regressions.",
+	},
+	{
+		name:   "unstructured issue statement defaults to fail",
+		output: "The code has issues.",
+	},
+}
+
+var structuredFailTests = []verdictTestCase{
+	{
+		name:   "findings before no issues mention",
+		output: "Medium - Security issue\nOtherwise no issues found.",
 	},
 	{
 		name:   "severity label medium em dash",
@@ -801,15 +535,15 @@ func TestParseVerdict(t *testing.T) {
 		runVerdictTests(t, VerdictPass, benignPhrasesTests)
 	})
 
-	t.Run("FailImperative", func(t *testing.T) {
-		runVerdictTests(t, VerdictFail, failImperativeTests)
+	t.Run("PassPhraseWins", func(t *testing.T) {
+		runVerdictTests(t, VerdictPass, passPhraseWinsTests)
 	})
 
-	t.Run("FailCaveats", func(t *testing.T) {
-		runVerdictTests(t, VerdictFail, failCaveatsTests)
+	t.Run("FailFallback", func(t *testing.T) {
+		runVerdictTests(t, VerdictFail, failFallbackTests)
 	})
 
-	t.Run("FailExplicit", func(t *testing.T) {
-		runVerdictTests(t, VerdictFail, failExplicitTests)
+	t.Run("StructuredFail", func(t *testing.T) {
+		runVerdictTests(t, VerdictFail, structuredFailTests)
 	})
 }
