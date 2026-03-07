@@ -252,8 +252,9 @@ Examples:
 				gitRef = args[0]
 			} else {
 				// Default to HEAD — but in quiet mode (post-commit hook),
-				// check repo config for branch review preference.
-				if quiet {
+				// check repo config for branch review preference
+				// unless --sha was explicitly provided.
+				if quiet && !cmd.Flags().Changed("sha") {
 					if ref, ok := tryBranchReview(root, baseBranch); ok {
 						gitRef = ref
 					} else {

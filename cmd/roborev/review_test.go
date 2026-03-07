@@ -739,6 +739,33 @@ func TestQuietBranchReviewIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("quiet mode with explicit --sha ignores branch config", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		targetSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, _, err := executeReviewCmd(
+			"--repo", repo.Dir, "--quiet", "--sha", targetSHA,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := <-reqCh
+		if req.GitRef != targetSHA {
+			t.Errorf(
+				"explicit --sha should win over branch config, got %q",
+				req.GitRef,
+			)
+		}
+	})
+
 	t.Run("non-quiet mode ignores branch config", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
