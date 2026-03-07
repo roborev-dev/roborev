@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/spf13/cobra"
 )
+
+// hookHTTPClient is used for hook HTTP requests. Short timeout
+// ensures hooks never block commits if the daemon stalls.
+var hookHTTPClient = &http.Client{Timeout: 3 * time.Second}
 
 func postCommitCmd() *cobra.Command {
 	var (
@@ -56,7 +61,7 @@ func postCommitCmd() *cobra.Command {
 				Branch:   branchName,
 			})
 
-			resp, err := http.Post(
+			resp, err := hookHTTPClient.Post(
 				serverAddr+"/api/enqueue",
 				"application/json",
 				bytes.NewReader(reqBody),
