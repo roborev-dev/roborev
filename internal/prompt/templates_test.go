@@ -69,13 +69,43 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 
 	// Get the review prompt to verify fallbacks match exactly
 	geminiReviewPrompt := getSystemPrompt("gemini", "review", mockNow)
+	codexReviewPrompt := getSystemPrompt("codex", "review", mockNow)
+	claudeReviewPrompt := getSystemPrompt("claude-code", "review", mockNow)
 
 	tests := []systemPromptTestCase{
+		{
+			name:           "Codex Review",
+			agent:          "codex",
+			command:        "review",
+			wantContains:   []string{"## Review Findings", "Do not include any front matter"},
+			wantNotDefault: true,
+		},
+		{
+			name:           "Claude Review",
+			agent:          "claude-code",
+			command:        "review",
+			wantContains:   []string{"## Review Findings", "Do not include any front matter"},
+			wantNotDefault: true,
+		},
 		{
 			name:           "Gemini Review",
 			agent:          "gemini",
 			command:        "review",
 			wantContains:   []string{"Do NOT explain your process"},
+			wantNotDefault: true,
+		},
+		{
+			name:           "Codex Range (Review Fallback)",
+			agent:          "codex",
+			command:        "range",
+			wantExact:      codexReviewPrompt,
+			wantNotDefault: true,
+		},
+		{
+			name:           "Claude Dirty (Review Fallback)",
+			agent:          "claude-code",
+			command:        "dirty",
+			wantExact:      claudeReviewPrompt,
 			wantNotDefault: true,
 		},
 		{
@@ -166,19 +196,25 @@ func TestGetSystemPrompt_Instructions(t *testing.T) {
 			name:         "Review includes no-skills instruction",
 			agent:        "claude-code",
 			command:      "review",
-			wantContains: []string{"Do NOT use any external skills"},
+			wantContains: []string{"Do NOT use any external skills", "Do NOT include process narration"},
 		},
 		{
 			name:         "Security includes no-skills instruction",
 			agent:        "claude-code",
 			command:      "security",
-			wantContains: []string{"Do NOT use any external skills"},
+			wantContains: []string{"Do NOT use any external skills", "Do NOT include process narration"},
 		},
 		{
 			name:         "Address includes no-skills instruction",
 			agent:        "claude-code",
 			command:      "address",
-			wantContains: []string{"Do NOT use any external skills"},
+			wantContains: []string{"Do NOT use any external skills", "Do NOT include process narration"},
+		},
+		{
+			name:         "Fallback review includes no process narration instruction",
+			agent:        "unknown-agent",
+			command:      "review",
+			wantContains: []string{"Do NOT include process narration"},
 		},
 		{
 			name:            "Gemini run excludes no-skills instruction",
