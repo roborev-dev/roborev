@@ -1291,7 +1291,7 @@ func withFixDaemonRetryContext[T any](ctx context.Context, addr string, fn func(
 		if err == nil {
 			return value, nil
 		}
-		if shouldStopFixDaemonRetry(ctx, err) || !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
+		if shouldStopFixDaemonRetry(ctx) || !isConnectionError(err) || attempt >= fixDaemonMaxRetries {
 			return zero, err
 		}
 
@@ -1299,11 +1299,8 @@ func withFixDaemonRetryContext[T any](ctx context.Context, addr string, fn func(
 	}
 }
 
-func shouldStopFixDaemonRetry(ctx context.Context, err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	return ctx != nil && (errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded))
+func shouldStopFixDaemonRetry(ctx context.Context) bool {
+	return ctx != nil && ctx.Err() != nil
 }
 
 func recoverFixDaemonAddr(ctx context.Context) string {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -276,6 +277,34 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 	_, err := fetchReview(ctx, ts.URL, 42)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context deadline exceeded, got: %v", err)
+	}
+}
+
+func TestWithFixDaemonRetryContextRetriesClientTimeoutWhenCallerContextActive(t *testing.T) {
+	var ensureCalls atomic.Int32
+	patchFixDaemonRetryForTest(t, func() error {
+		ensureCalls.Add(1)
+		return nil
+	})
+
+	var attempts atomic.Int32
+	value, err := withFixDaemonRetryContext(context.Background(), "http://127.0.0.1:1", func(addr string) (string, error) {
+		if attempts.Add(1) == 1 {
+			return "", &neturl.Error{Op: "Get", URL: addr, Err: context.DeadlineExceeded}
+		}
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("withFixDaemonRetryContext: %v", err)
+	}
+	if value != "ok" {
+		t.Fatalf("expected successful retry result, got %q", value)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts.Load())
+	}
+	if ensureCalls.Load() != 1 {
+		t.Fatalf("expected one recovery attempt, got %d", ensureCalls.Load())
 	}
 }
 
