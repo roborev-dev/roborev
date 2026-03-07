@@ -346,25 +346,7 @@ func (m model) handleWorktreeConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleTasksKey handles key input in the tasks view.
 func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "ctrl+d", "q":
-		return m, tea.Quit
-	case "esc", "T":
-		m.currentView = viewQueue
-		return m, nil
-	case "o":
-		return m.handleColumnOptionsKey()
-	case "up", "k":
-		if m.fixSelectedIdx > 0 {
-			m.fixSelectedIdx--
-		}
-		return m, nil
-	case "down", "j":
-		if m.fixSelectedIdx < len(m.fixJobs)-1 {
-			m.fixSelectedIdx++
-		}
-		return m, nil
-	case "enter":
+	if isSubmitKey(msg) {
 		// View task: prompt for running, review for done/applied, log for failed
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
@@ -391,6 +373,26 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case job.Status == storage.JobStatusFailed:
 				return m.openLogView(job.ID, job.Status, viewTasks)
 			}
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "ctrl+c", "ctrl+d", "q":
+		return m, tea.Quit
+	case "esc", "T":
+		m.currentView = viewQueue
+		return m, nil
+	case "o":
+		return m.handleColumnOptionsKey()
+	case "up", "k":
+		if m.fixSelectedIdx > 0 {
+			m.fixSelectedIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if m.fixSelectedIdx < len(m.fixJobs)-1 {
+			m.fixSelectedIdx++
 		}
 		return m, nil
 	case "l", "t":

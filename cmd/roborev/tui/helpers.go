@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	gansi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
@@ -22,6 +23,19 @@ const (
 
 // branchNone is the sentinel value for jobs with no branch information.
 const branchNone = "(none)"
+
+// Some embedded terminals forward Enter as LF (ctrl+j) instead of CR.
+// Only use this in non-text-entry flows where ctrl+j is not meaningful input.
+func isSubmitKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyEnter, tea.KeyCtrlJ:
+		return true
+	}
+	if len(msg.Runes) == 1 {
+		return msg.Runes[0] == '\r' || msg.Runes[0] == '\n'
+	}
+	return false
+}
 
 // setFlash sets a flash message with the given duration and view.
 func (m *model) setFlash(msg string, d time.Duration, v viewKind) {

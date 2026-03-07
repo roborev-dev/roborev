@@ -235,6 +235,25 @@ func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
 	}
 }
 
+func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+
+	if m2.reviewFromView != tuiViewQueue {
+		t.Fatalf("expected reviewFromView=%v, got %v", tuiViewQueue, m2.reviewFromView)
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchReview command for ctrl+j activation")
+	}
+}
+
 func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
@@ -475,6 +494,27 @@ func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
 	}
 	if m2.flashView != tuiViewTasks {
 		t.Fatalf("expected flashView=tuiViewTasks, got %v", m2.flashView)
+	}
+}
+
+func TestTUITasksCtrlJFetchesReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone},
+	}
+	m.fixSelectedIdx = 0
+
+	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+
+	if m2.selectedJobID != 101 {
+		t.Fatalf("expected selectedJobID=101, got %d", m2.selectedJobID)
+	}
+	if m2.reviewFromView != tuiViewTasks {
+		t.Fatalf("expected reviewFromView=tuiViewTasks, got %v", m2.reviewFromView)
+	}
+	if cmd == nil {
+		t.Fatal("expected fetchReview command for ctrl+j activation")
 	}
 }
 

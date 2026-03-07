@@ -74,6 +74,9 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleGlobalKey handles keys shared across queue, review, prompt, commit msg, and help views.
 func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if isSubmitKey(msg) {
+		return m.handleEnterKey()
+	}
 	switch msg.String() {
 	case "ctrl+c", "ctrl+d", "q":
 		return m.handleQuitKey()
@@ -91,8 +94,6 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePageUpKey()
 	case "pgdown":
 		return m.handlePageDownKey()
-	case "enter":
-		return m.handleEnterKey()
 	case "p":
 		return m.handlePromptKey()
 	case "a":
