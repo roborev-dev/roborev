@@ -750,22 +750,27 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if all commits in the range are excluded
+		// Check if all commits in the range are excluded.
+		// Only skip when every commit was successfully read
+		// and every message matches — any GetCommitInfo failure
+		// means we can't prove all are excluded.
 		fullRef := startSHA + ".." + endSHA
 		if rangeCommits, rcErr := git.GetRangeCommits(
 			gitCwd, fullRef,
 		); rcErr == nil && len(rangeCommits) > 0 {
 			messages := make([]string, 0, len(rangeCommits))
+			allRead := true
 			for _, rc := range rangeCommits {
-				if ci, ciErr := git.GetCommitInfo(
-					repoRoot, rc,
-				); ciErr == nil {
-					messages = append(
-						messages, ci.Subject+"\n"+ci.Body,
-					)
+				ci, ciErr := git.GetCommitInfo(repoRoot, rc)
+				if ciErr != nil {
+					allRead = false
+					break
 				}
+				messages = append(
+					messages, ci.Subject+"\n"+ci.Body,
+				)
 			}
-			if config.AllCommitMessagesExcluded(
+			if allRead && config.AllCommitMessagesExcluded(
 				repoRoot, messages,
 			) {
 				writeJSON(w, map[string]any{

@@ -663,6 +663,65 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 					w.Code, w.Body.String())
 			}
 		})
+
+	// This test corrupts a git object, so it must run last
+	// since the repo becomes unusable afterward.
+	t.Run("range with unreadable commit enqueues normally",
+		func(t *testing.T) {
+			// When GetCommitInfo fails for any commit in the
+			// range, the server must not skip — it can't prove
+			// all commits are excluded.
+			branchCmd := exec.Command("git", "-C", repoDir,
+				"checkout", "-b", "corrupt-range")
+			if out, err := branchCmd.CombinedOutput(); err != nil {
+				t.Fatalf("checkout failed: %v\n%s", err, out)
+			}
+			base := testutil.GetHeadSHA(t, repoDir)
+
+			// Two excluded commits
+			for i := range 2 {
+				cmd := exec.Command("git", "-C", repoDir,
+					"commit", "--allow-empty",
+					"-m", fmt.Sprintf("[wip] corrupt %d", i))
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("commit failed: %v\n%s", err, out)
+				}
+			}
+
+			// Corrupt the HEAD commit object so GetCommitInfo
+			// fails for it. Removing the loose object file
+			// makes git unable to read this commit's metadata.
+			headSHA := testutil.GetHeadSHA(t, repoDir)
+			objDir := filepath.Join(
+				repoDir, ".git", "objects",
+				headSHA[:2],
+			)
+			objFile := filepath.Join(objDir, headSHA[2:])
+			if err := os.Remove(objFile); err != nil {
+				t.Fatalf("remove object: %v", err)
+			}
+
+			ref := base + ".." + headSHA
+			reqData := EnqueueRequest{
+				RepoPath: repoDir, GitRef: ref, Agent: "test",
+			}
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/enqueue", reqData,
+			)
+			w := httptest.NewRecorder()
+			server.handleEnqueue(w, req)
+
+			// Should not skip — can't verify all are excluded.
+			if w.Code == http.StatusOK {
+				var resp struct {
+					Skipped bool `json:"skipped"`
+				}
+				testutil.DecodeJSON(t, w, &resp)
+				if resp.Skipped {
+					t.Error("should not skip when commit is unreadable")
+				}
+			}
+		})
 }
 
 func TestHandleEnqueueBranchFallback(t *testing.T) {
