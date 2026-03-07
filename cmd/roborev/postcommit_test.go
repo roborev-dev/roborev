@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func executePostCommitCmd(
@@ -148,6 +150,40 @@ func TestEnqueueRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executeEnqueueAliasCmd("abc123")
 	if err == nil {
 		t.Fatal("expected error for positional args")
+	}
+}
+
+func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+
+	// Handler that blocks longer than the timeout
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/enqueue", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		time.Sleep(5 * time.Second)
+	})
+	daemonFromHandler(t, mux)
+
+	// Use a very short timeout so the test completes fast
+	orig := hookHTTPClient
+	hookHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
+	t.Cleanup(func() { hookHTTPClient = orig })
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := executePostCommitCmd("--repo", repo.Dir)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("expected nil (fail open), got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("post-commit blocked despite timeout")
 	}
 }
 

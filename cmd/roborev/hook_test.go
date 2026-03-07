@@ -83,8 +83,11 @@ func TestUninstallHookCmd(t *testing.T) {
 					t.Fatalf("Failed to read hook: %v", err)
 				}
 				contentStr := string(content)
-				if strings.Contains(contentStr, "_roborev_hook") {
-					t.Error("Hook should not contain generated roborev snippet")
+				if strings.Contains(contentStr, githook.PostCommitVersionMarker) {
+					t.Error("Hook should not contain version marker after uninstall")
+				}
+				if strings.Contains(contentStr, `"$ROBOREV" post-commit`) {
+					t.Error("Hook should not contain generated command after uninstall")
 				}
 				if !strings.Contains(contentStr, "echo 'before'") {
 					t.Error("Hook should still contain 'echo before'")
