@@ -679,114 +679,51 @@ func TestTryBranchReview(t *testing.T) {
 	})
 }
 
-func TestQuietBranchReviewIntegration(t *testing.T) {
-	t.Run("quiet mode submits branch range when configured", func(t *testing.T) {
-		repo, mux := setupTestEnvironment(t)
-		reqCh := mockEnqueue(t, mux)
+// TestReviewIgnoresBranchConfig verifies that reviewCmd always reviews
+// individual commits, even with post_commit_review = "branch" configured.
+// Branch review logic only applies in the post-commit command.
+func TestReviewIgnoresBranchConfig(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueue(t, mux)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
-		repo.CommitFile("feature.txt", "feature", "feature commit")
-		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+	repo.CommitFile("file.txt", "content", "initial")
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
+	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	_, _, err := executeReviewCmd("--repo", repo.Dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-		req := <-reqCh
-		want := mainSHA + "..HEAD"
-		if req.GitRef != want {
-			t.Errorf("expected git_ref %q, got %q", want, req.GitRef)
-		}
-	})
+	req := <-reqCh
+	if req.GitRef != "HEAD" {
+		t.Errorf("review should always use HEAD, got %q", req.GitRef)
+	}
+}
 
-	t.Run("quiet mode falls back to HEAD on base branch", func(t *testing.T) {
-		repo, mux := setupTestEnvironment(t)
-		reqCh := mockEnqueue(t, mux)
+// TestReviewQuietIgnoresBranchConfig verifies that even --quiet mode
+// does not trigger branch review logic in reviewCmd.
+func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueue(t, mux)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+	repo.CommitFile("file.txt", "content", "initial")
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
+	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-		req := <-reqCh
-		if req.GitRef != "HEAD" {
-			t.Errorf("expected HEAD fallback on base branch, got %q", req.GitRef)
-		}
-	})
-
-	t.Run("quiet mode uses HEAD when no config", func(t *testing.T) {
-		repo, mux := setupTestEnvironment(t)
-		reqCh := mockEnqueue(t, mux)
-
-		repo.CommitFile("file.txt", "content", "initial")
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		req := <-reqCh
-		if req.GitRef != "HEAD" {
-			t.Errorf("expected HEAD, got %q", req.GitRef)
-		}
-	})
-
-	t.Run("quiet mode with explicit --sha ignores branch config", func(t *testing.T) {
-		repo, mux := setupTestEnvironment(t)
-		reqCh := mockEnqueue(t, mux)
-
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		targetSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
-		repo.CommitFile("feature.txt", "feature", "feature commit")
-		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
-
-		_, _, err := executeReviewCmd(
-			"--repo", repo.Dir, "--quiet", "--sha", targetSHA,
-		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		req := <-reqCh
-		if req.GitRef != targetSHA {
-			t.Errorf(
-				"explicit --sha should win over branch config, got %q",
-				req.GitRef,
-			)
-		}
-	})
-
-	t.Run("non-quiet mode ignores branch config", func(t *testing.T) {
-		repo, mux := setupTestEnvironment(t)
-		reqCh := mockEnqueue(t, mux)
-
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
-		repo.CommitFile("feature.txt", "feature", "feature commit")
-		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
-
-		// Without --quiet, config should be ignored — user must use --branch explicitly
-		_, _, err := executeReviewCmd("--repo", repo.Dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		req := <-reqCh
-		if req.GitRef != "HEAD" {
-			t.Errorf("expected HEAD in non-quiet mode (config should not apply), got %q", req.GitRef)
-		}
-	})
+	req := <-reqCh
+	if req.GitRef != "HEAD" {
+		t.Errorf("review --quiet should use HEAD, got %q", req.GitRef)
+	}
 }
 
 func TestFindChildGitRepos(t *testing.T) {
