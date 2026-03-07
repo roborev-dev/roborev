@@ -10,9 +10,9 @@ import (
 	"syscall"
 )
 
-// isPIDAliveForUpdateDefault returns true when pid exists.
+// isPIDAliveDefault returns true when pid exists.
 // Uses signal 0 so no signal is delivered.
-func isPIDAliveForUpdateDefault(pid int) bool {
+func isPIDAliveDefault(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -25,7 +25,7 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 	}
 	// PID exists. If it's clearly not a roborev daemon anymore, treat as exited
 	// (covers PID reuse after daemon shutdown).
-	switch identifyPIDForUpdate(pid) {
+	switch identifyPID(pid) {
 	case updatePIDNotRoborev:
 		return false
 	case updatePIDRoborev:
@@ -36,14 +36,14 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 	}
 }
 
-func identifyPIDForUpdate(pid int) updatePIDIdentity {
+func identifyPID(pid int) updatePIDIdentity {
 	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
 	if err == nil {
-		cmdStr := normalizeCommandLineForUpdate(string(cmdline))
+		cmdStr := normalizeCommandLine(string(cmdline))
 		if cmdStr == "" {
 			return updatePIDUnknown
 		}
-		if isRoborevDaemonCommandForUpdate(cmdStr) {
+		if isRoborevDaemonCommand(cmdStr) {
 			return updatePIDRoborev
 		}
 		return updatePIDNotRoborev
@@ -55,11 +55,11 @@ func identifyPIDForUpdate(pid int) updatePIDIdentity {
 	if err != nil {
 		return updatePIDUnknown
 	}
-	cmdStr := normalizeCommandLineForUpdate(string(output))
+	cmdStr := normalizeCommandLine(string(output))
 	if cmdStr == "" {
 		return updatePIDUnknown
 	}
-	if isRoborevDaemonCommandForUpdate(cmdStr) {
+	if isRoborevDaemonCommand(cmdStr) {
 		return updatePIDRoborev
 	}
 	return updatePIDNotRoborev

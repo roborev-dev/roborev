@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -42,9 +43,11 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := ensureDaemon(); err != nil {
+			info, daemonErr := daemon.GetAnyRunningDaemon()
+			if daemonErr != nil {
 				return nil // Can't reach daemon — don't block commit
 			}
+			daemonAddr := fmt.Sprintf("http://%s", info.Addr)
 
 			var gitRef string
 			if ref, ok := tryBranchReview(root, baseBranch); ok {
@@ -62,7 +65,7 @@ func postCommitCmd() *cobra.Command {
 			})
 
 			resp, err := hookHTTPClient.Post(
-				serverAddr+"/api/enqueue",
+				daemonAddr+"/api/enqueue",
 				"application/json",
 				bytes.NewReader(reqBody),
 			)

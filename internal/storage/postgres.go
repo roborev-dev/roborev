@@ -25,26 +25,76 @@ var pgSchemaSQL string
 // pgSchemaStatements returns the individual DDL statements for schema creation.
 // Parsed from the embedded SQL file.
 func pgSchemaStatements() []string {
+	return parseSQLStatements(pgSchemaSQL)
+}
+
+func parseSQLStatements(sql string) []string {
 	var stmts []string
-	for stmt := range strings.SplitSeq(pgSchemaSQL, ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
+	var currentStmt strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+	inBlockComment := false
+	inLineComment := false
+
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+
+		if inLineComment {
+			if c == '\n' {
+				inLineComment = false
+				currentStmt.WriteByte('\n')
+			}
 			continue
 		}
-		// Skip pure comment lines
-		lines := strings.Split(stmt, "\n")
-		hasCode := false
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "--") {
-				hasCode = true
-				break
+
+		if inBlockComment {
+			if c == '*' && i+1 < len(sql) && sql[i+1] == '/' {
+				inBlockComment = false
+				i++ // Skip the '/'
+				currentStmt.WriteByte(' ')
+			}
+			continue
+		}
+
+		// Check for comment starts
+		if !inSingleQuote && !inDoubleQuote {
+			if c == '-' && i+1 < len(sql) && sql[i+1] == '-' {
+				inLineComment = true
+				i++ // Skip the second '-'
+				continue
+			}
+			if c == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+				inBlockComment = true
+				i++ // Skip the '*'
+				continue
 			}
 		}
-		if hasCode {
-			stmts = append(stmts, stmt)
+
+		// Handle string literals
+		if c == '\'' && !inDoubleQuote {
+			// Basic handling, doesn't handle escaping like '' inside single quotes
+			inSingleQuote = !inSingleQuote
+		} else if c == '"' && !inSingleQuote {
+			inDoubleQuote = !inDoubleQuote
+		}
+
+		if c == ';' && !inSingleQuote && !inDoubleQuote {
+			stmt := strings.TrimSpace(currentStmt.String())
+			if stmt != "" {
+				stmts = append(stmts, stmt)
+			}
+			currentStmt.Reset()
+		} else {
+			currentStmt.WriteByte(c)
 		}
 	}
+
+	// Add any remaining statement
+	stmt := strings.TrimSpace(currentStmt.String())
+	if stmt != "" {
+		stmts = append(stmts, stmt)
+	}
+
 	return stmts
 }
 

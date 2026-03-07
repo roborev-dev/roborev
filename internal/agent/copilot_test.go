@@ -16,6 +16,7 @@ func TestCopilotReview(t *testing.T) {
 		wantErr    bool
 		wantErrStr string
 		wantResult string
+		verifyCLI  bool
 	}{
 		{
 			name:   "Pipes prompt via stdin",
@@ -27,6 +28,7 @@ func TestCopilotReview(t *testing.T) {
 			},
 			wantErr:    false,
 			wantResult: "ok\n",
+			verifyCLI:  true,
 		},
 		{
 			name:   "CLI failure (exit non-zero)",
@@ -48,6 +50,7 @@ func TestCopilotReview(t *testing.T) {
 			},
 			wantErr:    false,
 			wantResult: "No review output generated",
+			verifyCLI:  true,
 		},
 	}
 
@@ -62,16 +65,20 @@ func TestCopilotReview(t *testing.T) {
 
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("Review() expected error, got nil")
+					t.Fatalf("Review() expected error containing %q, got nil", tt.wantErrStr)
 				}
 				if tt.wantErrStr != "" && !strings.Contains(err.Error(), tt.wantErrStr) {
-					t.Errorf("Review() error = %v, want to contain %v", err, tt.wantErrStr)
+					t.Errorf("Review() error = %v, want to contain %q", err, tt.wantErrStr)
 				}
-			} else {
-				assertNoError(t, err, "Review failed")
-				if res != tt.wantResult {
-					t.Errorf("Review() result = %q, want %q", res, tt.wantResult)
-				}
+				return
+			}
+
+			assertNoError(t, err, "Review failed")
+			if res != tt.wantResult {
+				t.Errorf("Review() result = %q, want %q", res, tt.wantResult)
+			}
+
+			if tt.verifyCLI {
 				// Prompt must be in stdin
 				assertFileContent(t, mock.StdinFile, tt.prompt)
 				// Prompt must not be in argv

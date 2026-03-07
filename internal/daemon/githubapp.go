@@ -33,6 +33,8 @@ type GitHubAppTokenProvider struct {
 	// Empty string means https://api.github.com.
 	baseURL string
 
+	now func() time.Time
+
 	mu     sync.Mutex
 	tokens map[int64]*cachedToken // installation_id → cached token
 }
@@ -47,6 +49,7 @@ func NewGitHubAppTokenProvider(appID int64, pemData string) (*GitHubAppTokenProv
 	return &GitHubAppTokenProvider{
 		appID:  appID,
 		key:    key,
+		now:    time.Now,
 		tokens: make(map[int64]*cachedToken),
 	}, nil
 }
@@ -59,7 +62,7 @@ func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (str
 
 	// Return cached token if still valid (with 5 minute buffer)
 	if ct, ok := p.tokens[installationID]; ok {
-		if time.Now().Before(ct.expires.Add(-5 * time.Minute)) {
+		if p.getNow().Before(ct.expires.Add(-5 * time.Minute)) {
 			return ct.token, nil
 		}
 	}
@@ -78,9 +81,16 @@ func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (str
 	return token, nil
 }
 
+func (p *GitHubAppTokenProvider) getNow() time.Time {
+	if p.now == nil {
+		return time.Now()
+	}
+	return p.now()
+}
+
 // signJWT creates an RS256-signed JWT for GitHub App authentication.
 func (p *GitHubAppTokenProvider) signJWT() (string, error) {
-	now := time.Now()
+	now := p.getNow()
 	header := base64URLEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	payload := base64URLEncode(fmt.Appendf(nil,
 		`{"iss":%d,"iat":%d,"exp":%d}`,

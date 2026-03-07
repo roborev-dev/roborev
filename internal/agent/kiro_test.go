@@ -9,116 +9,96 @@ import (
 )
 
 func TestStripKiroOutput(t *testing.T) {
-	// Simulated kiro-cli stdout with ANSI codes, logo, tip box, model line, and timing footer.
-	raw := "\x1b[38;5;141m⠀⠀logo⠀⠀\x1b[0m\n" +
-		"\x1b[38;5;244m╭─── Did you know? ───╮\x1b[0m\n" +
-		"\x1b[38;5;244m│ tip text            │\x1b[0m\n" +
-		"\x1b[38;5;244m╰─────────────────────╯\x1b[0m\n" +
-		"\x1b[38;5;244mModel: auto\x1b[0m\n" +
-		"\n" +
-		"\x1b[38;5;141m> \x1b[0m\x1b[1m## Summary\x1b[0m\n" +
-		"This commit does something.\n" +
-		"\n" +
-		"## Issues Found\n" +
-		"\n" +
-		" \u25b8 Time: 21s\n"
+	tests := []struct {
+		name         string
+		raw          string
+		wantContains []string
+		wantMissing  []string
+		exactMatch   string
+	}{
+		{
+			name: "standard kiro output",
+			raw: "\x1b[38;5;141m⠀⠀logo⠀⠀\x1b[0m\n" +
+				"\x1b[38;5;244m╭─── Did you know? ───╮\x1b[0m\n" +
+				"\x1b[38;5;244m│ tip text            │\x1b[0m\n" +
+				"\x1b[38;5;244m╰─────────────────────╯\x1b[0m\n" +
+				"\x1b[38;5;244mModel: auto\x1b[0m\n" +
+				"\n" +
+				"\x1b[38;5;141m> \x1b[0m\x1b[1m## Summary\x1b[0m\n" +
+				"This commit does something.\n" +
+				"\n" +
+				"## Issues Found\n" +
+				"\n" +
+				" \u25b8 Time: 21s\n",
+			wantContains: []string{"## Summary", "## Issues Found"},
+			wantMissing:  []string{"\x1b[", "Did you know", "Model:", "Time:"},
+		},
+		{
+			name:       "no marker",
+			raw:        "\x1b[1msome output without marker\x1b[0m\n",
+			exactMatch: "some output without marker",
+		},
+		{
+			name:         "bare marker",
+			raw:          "chrome\n>\nreview content here\n",
+			wantContains: []string{"review content here"},
+			wantMissing:  []string{"chrome"},
+		},
+		{
+			name: "footer in content",
+			raw: func() string {
+				var lines []string
+				lines = append(lines, "> ## Review", "some content", "▸ Time: 10s")
+				for range 10 {
+					lines = append(lines, "more content")
+				}
+				return strings.Join(lines, "\n")
+			}(),
+			wantContains: []string{"▸ Time: 10s"},
+		},
+		{
+			name:         "footer with trailing blanks",
+			raw:          "> ## Review\ncontent\n ▸ Time: 12s\n\n\n\n\n\n\n\n",
+			wantContains: []string{"content"},
+			wantMissing:  []string{"Time:"},
+		},
+		{
+			name: "blockquote not stripped",
+			raw: func() string {
+				var lines []string
+				for range 31 {
+					lines = append(lines, "chrome line")
+				}
+				lines = append(lines, "> this is a blockquote in review content", "more content")
+				return strings.Join(lines, "\n")
+			}(),
+			wantContains: []string{"> this is a blockquote"},
+		},
+	}
 
-	got := stripKiroOutput(raw)
-
-	if strings.Contains(got, "\x1b[") {
-		t.Error("result still contains ANSI escape codes")
-	}
-	if !strings.Contains(got, "## Summary") {
-		t.Errorf("expected '## Summary' in result, got: %q", got)
-	}
-	if !strings.Contains(got, "## Issues Found") {
-		t.Errorf("expected '## Issues Found' in result, got: %q", got)
-	}
-	if strings.Contains(got, "Did you know") {
-		t.Error("result should not contain tip box text")
-	}
-	if strings.Contains(got, "Model:") {
-		t.Error("result should not contain model line")
-	}
-	if strings.Contains(got, "Time:") {
-		t.Error("result should not contain timing footer")
-	}
-	if strings.HasPrefix(got, "> ") {
-		t.Error("result should not have leading '> ' prefix")
-	}
-}
-
-func TestStripKiroOutputNoMarker(t *testing.T) {
-	// If there's no "> " marker in the first 30 lines, return ANSI-stripped text as-is.
-	raw := "\x1b[1msome output without marker\x1b[0m\n"
-	got := stripKiroOutput(raw)
-	if got != "some output without marker" {
-		t.Errorf("unexpected result: %q", got)
-	}
-}
-
-func TestStripKiroOutputBareMarker(t *testing.T) {
-	// A bare ">" (no trailing space) followed by content on the next line.
-	raw := "chrome\n>\nreview content here\n"
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "review content here") {
-		t.Errorf("expected review content, got: %q", got)
-	}
-	if strings.Contains(got, "chrome") {
-		t.Error("chrome should be stripped before the bare > marker")
-	}
-	if strings.HasPrefix(got, ">") {
-		t.Error("bare > marker should not appear in output")
-	}
-}
-
-func TestStripKiroOutputFooterInContent(t *testing.T) {
-	// "▸ Time:" appearing in review content (not in the last 5 lines)
-	// should not be treated as a footer.
-	var lines []string
-	lines = append(lines, "> ## Review")
-	lines = append(lines, "some content")
-	lines = append(lines, "▸ Time: 10s") // looks like footer but is in content
-	for range 10 {
-		lines = append(lines, "more content")
-	}
-	raw := strings.Join(lines, "\n")
-
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "▸ Time: 10s") {
-		t.Errorf(
-			"'▸ Time:' in content body should be preserved, got: %q",
-			got,
-		)
-	}
-}
-
-func TestStripKiroOutputFooterWithTrailingBlanks(t *testing.T) {
-	// Footer followed by trailing blank lines should still be stripped.
-	raw := "> ## Review\ncontent\n ▸ Time: 12s\n\n\n\n\n\n\n\n"
-	got := stripKiroOutput(raw)
-	if strings.Contains(got, "Time:") {
-		t.Errorf("footer should be stripped despite trailing blanks, got: %q", got)
-	}
-	if !strings.Contains(got, "content") {
-		t.Errorf("review content should be preserved, got: %q", got)
-	}
-}
-
-func TestStripKiroOutputBlockquoteNotStripped(t *testing.T) {
-	// A "> " blockquote deep in review content should not be treated as the start marker.
-	// Build output where "> " only appears after line 30.
-	var lines []string
-	for range 31 {
-		lines = append(lines, "chrome line")
-	}
-	lines = append(lines, "> this is a blockquote in review content")
-	lines = append(lines, "more content")
-	raw := strings.Join(lines, "\n")
-
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "> this is a blockquote") {
-		t.Errorf("blockquote should be preserved in output, got: %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripKiroOutput(tt.raw)
+			if tt.exactMatch != "" && got != tt.exactMatch {
+				t.Errorf("got %q, want %q", got, tt.exactMatch)
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("expected %q to contain %q", got, want)
+				}
+			}
+			for _, missing := range tt.wantMissing {
+				if strings.Contains(got, missing) {
+					t.Errorf("expected %q to not contain %q", got, missing)
+				}
+			}
+			if tt.name == "standard kiro output" && strings.HasPrefix(got, "> ") {
+				t.Error("result should not have leading '> ' prefix")
+			}
+			if tt.name == "bare marker" && strings.HasPrefix(got, ">") {
+				t.Error("bare > marker should not appear in output")
+			}
+		})
 	}
 }
 
@@ -255,22 +235,6 @@ func TestKiroReviewFailure(t *testing.T) {
 	}
 }
 
-func TestKiroReviewEmptyOutput(t *testing.T) {
-	skipIfWindows(t)
-
-	script := NewScriptBuilder().AddRaw("exit 0").Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review this commit", nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if result != "No review output generated" {
-		t.Fatalf("expected 'No review output generated', got %q", result)
-	}
-}
-
 func TestKiroPassesPromptAsArg(t *testing.T) {
 	skipIfWindows(t)
 
@@ -350,146 +314,94 @@ func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
 	}
 }
 
-func TestKiroReviewStderrFallback(t *testing.T) {
-	skipIfWindows(t)
-
-	// kiro-cli exits 0 with Kiro chrome + review text on stderr,
-	// nothing on stdout. Validates that stripKiroOutput (not just
-	// stripTerminalControls) is applied to stderr.
-	script := NewScriptBuilder().
-		AddRaw(`echo "Model: auto" >&2`).
-		AddRaw(`echo "> review on stderr" >&2`).
-		AddRaw(`echo " ▸ Time: 5s" >&2`).
-		Build()
+func runMockKiroReview(t *testing.T, script string) (string, error) {
+	t.Helper()
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "review on stderr") {
-		t.Fatalf("expected stderr fallback, got: %q", result)
-	}
-	if strings.Contains(result, "Model:") {
-		t.Error("Kiro chrome should be stripped from stderr")
-	}
-	if strings.Contains(result, "Time:") {
-		t.Error("timing footer should be stripped from stderr")
-	}
+	return a.Review(context.Background(), t.TempDir(), "deadbeef", "review", nil)
 }
 
-func TestKiroReviewStderrFallbackMarkerOnlyStdout(t *testing.T) {
+func TestKiroReviewFallbackScenarios(t *testing.T) {
 	skipIfWindows(t)
-
-	// stdout has only a bare ">" marker with no review body;
-	// stderr has the actual review. stderr should be used.
-	script := NewScriptBuilder().
-		AddRaw(`echo ">"`).
-		AddRaw(`echo "> review from stderr" >&2`).
-		Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"deadbeef", "review", nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name         string
+		script       string
+		wantErr      bool
+		exactContent string
+		wantContains []string
+		wantMissing  []string
+	}{
+		{
+			name:         "empty output",
+			script:       NewScriptBuilder().AddRaw("exit 0").Build(),
+			exactContent: "No review output generated",
+		},
+		{
+			name: "stderr fallback",
+			script: NewScriptBuilder().
+				AddRaw(`echo "Model: auto" >&2`).
+				AddRaw(`echo "> review on stderr" >&2`).
+				AddRaw(`echo " ▸ Time: 5s" >&2`).
+				Build(),
+			wantContains: []string{"review on stderr"},
+			wantMissing:  []string{"Model:", "Time:"},
+		},
+		{
+			name: "stderr fallback marker only stdout",
+			script: NewScriptBuilder().
+				AddRaw(`echo ">"`).
+				AddRaw(`echo "> review from stderr" >&2`).
+				Build(),
+			wantContains: []string{"review from stderr"},
+		},
+		{
+			name: "stderr preferred over stdout noise",
+			script: NewScriptBuilder().
+				AddRaw(`echo "Model: auto"`).
+				AddRaw(`echo "Loading..."`).
+				AddRaw(`echo "> actual review content" >&2`).
+				Build(),
+			wantContains: []string{"actual review content"},
+			wantMissing:  []string{"Loading"},
+		},
+		{
+			name: "stderr fallback no marker",
+			script: NewScriptBuilder().
+				AddRaw(`echo "review text without marker" >&2`).
+				Build(),
+			wantContains: []string{"review text without marker"},
+		},
+		{
+			name: "stdout preserved over stderr noise",
+			script: NewScriptBuilder().
+				AddRaw(`echo "plain review on stdout"`).
+				AddRaw(`echo "warning: something" >&2`).
+				Build(),
+			wantContains: []string{"plain review on stdout"},
+			wantMissing:  []string{"warning"},
+		},
 	}
-	if !strings.Contains(result, "review from stderr") {
-		t.Fatalf(
-			"expected stderr when stdout is marker-only, got: %q",
-			result,
-		)
-	}
-}
 
-func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
-	skipIfWindows(t)
-
-	// stdout has status noise without a "> " marker;
-	// stderr has the actual review with a marker.
-	// The fallback should prefer stderr.
-	script := NewScriptBuilder().
-		AddRaw(`echo "Model: auto"`).
-		AddRaw(`echo "Loading..."`).
-		AddRaw(`echo "> actual review content" >&2`).
-		Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"deadbeef", "review", nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "actual review content") {
-		t.Fatalf(
-			"expected stderr review over stdout noise, got: %q",
-			result,
-		)
-	}
-	if strings.Contains(result, "Loading") {
-		t.Error("stdout noise should not appear in result")
-	}
-}
-
-func TestKiroReviewStderrFallbackNoMarker(t *testing.T) {
-	skipIfWindows(t)
-
-	// stdout is empty; stderr has plain review text without
-	// a marker. stderr should be used as fallback.
-	script := NewScriptBuilder().
-		AddRaw(`echo "review text without marker" >&2`).
-		Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"deadbeef", "review", nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "review text without marker") {
-		t.Fatalf(
-			"expected stderr fallback even without marker, got: %q",
-			result,
-		)
-	}
-}
-
-func TestKiroReviewStdoutPreservedOverStderrNoise(t *testing.T) {
-	skipIfWindows(t)
-
-	// Both streams have content, neither has a marker.
-	// Stdout (primary stream) should be kept.
-	script := NewScriptBuilder().
-		AddRaw(`echo "plain review on stdout"`).
-		AddRaw(`echo "warning: something" >&2`).
-		Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewKiroAgent(cmdPath)
-
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"deadbeef", "review", nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "plain review on stdout") {
-		t.Fatalf(
-			"expected stdout to be kept, got: %q", result,
-		)
-	}
-	if strings.Contains(result, "warning") {
-		t.Error("stderr noise should not replace stdout content")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := runMockKiroReview(t, tt.script)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("wantErr %v, got err %v", tt.wantErr, err)
+			}
+			if tt.exactContent != "" && got != tt.exactContent {
+				t.Errorf("got %q, want %q", got, tt.exactContent)
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("got %q, want it to contain %q", got, want)
+				}
+			}
+			for _, missing := range tt.wantMissing {
+				if strings.Contains(got, missing) {
+					t.Errorf("got %q, want it to not contain %q", got, missing)
+				}
+			}
+		})
 	}
 }
 

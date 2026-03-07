@@ -40,14 +40,23 @@ func assertStrictPerms(t *testing.T, path string) {
 	}
 }
 
+func requireOpenJobLog(t *testing.T, id int64) *os.File {
+	t.Helper()
+	f, err := openJobLog(id)
+	if err != nil {
+		t.Fatalf("openJobLog(%d): %v", id, err)
+	}
+	if f == nil {
+		t.Fatalf("openJobLog(%d) returned nil without error", id)
+	}
+	return f
+}
+
 func TestOpenJobLog(t *testing.T) {
 	t.Run("creates_and_writes", func(t *testing.T) {
 		setupTestEnv(t)
 
-		f := openJobLog(99)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		f := requireOpenJobLog(t, 99)
 		defer f.Close()
 
 		// Write some data and verify it lands on disk
@@ -68,14 +77,32 @@ func TestOpenJobLog(t *testing.T) {
 
 	t.Run("strict_permissions", func(t *testing.T) {
 		setupTestEnv(t)
-		f := openJobLog(99)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		f := requireOpenJobLog(t, 99)
 		f.Close()
 
 		assertStrictPerms(t, JobLogPath(99))
 		assertStrictPerms(t, JobLogDir())
+	})
+
+	t.Run("error_on_creation_failure", func(t *testing.T) {
+		setupTestEnv(t)
+
+		// Force JobLogDir to collide with a file
+		dir := JobLogDir()
+		if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dir, []byte("collision"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := openJobLog(100)
+		if err == nil {
+			if f != nil {
+				f.Close()
+			}
+			t.Fatal("openJobLog succeeded, expected error due to dir collision")
+		}
 	})
 }
 
@@ -96,10 +123,7 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f := openJobLog(500)
-	if f == nil {
-		t.Fatal("openJobLog returned nil")
-	}
+	f := requireOpenJobLog(t, 500)
 	f.Close()
 
 	assertStrictPerms(t, dir)
@@ -113,6 +137,23 @@ func createLogFile(t *testing.T, path, content string, mtime time.Time) {
 	}
 	if err := os.Chtimes(path, mtime, mtime); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertPathExists(t *testing.T, path string, want bool) {
+	t.Helper()
+	_, err := os.Stat(path)
+	var exists bool
+	if err == nil {
+		exists = true
+	} else if os.IsNotExist(err) {
+		exists = false
+	} else {
+		t.Fatalf("stat %q: %v", path, err)
+	}
+
+	if exists != want {
+		t.Errorf("path %q existence = %v, want %v", path, exists, want)
 	}
 }
 
@@ -143,19 +184,13 @@ func TestCleanJobLogs(t *testing.T) {
 		}
 
 		// Old file should be gone
-		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-			t.Error("old log file should be removed")
-		}
+		assertPathExists(t, oldPath, false)
 
 		// New file should remain
-		if _, err := os.Stat(newPath); err != nil {
-			t.Error("new log file should still exist")
-		}
+		assertPathExists(t, newPath, true)
 
 		// Non-log file should remain
-		if _, err := os.Stat(txtPath); err != nil {
-			t.Error("non-log file should still exist")
-		}
+		assertPathExists(t, txtPath, true)
 	})
 
 	t.Run("no_dir", func(t *testing.T) {
@@ -171,28 +206,17 @@ func TestCleanJobLogs(t *testing.T) {
 func TestSafeWriter(t *testing.T) {
 	t.Run("normal_writes", func(t *testing.T) {
 		setupTestEnv(t)
-		f := openJobLog(200)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		f := requireOpenJobLog(t, 200)
 		defer f.Close()
 
 		sw := &safeWriter{w: f}
 
-		n, err := sw.Write([]byte("line 1\n"))
-		if err != nil {
-			t.Fatalf("Write error: %v", err)
-		}
-		if n != 7 {
-			t.Errorf("Write returned %d, want 7", n)
-		}
-
-		n, err = sw.Write([]byte("line 2\n"))
-		if err != nil {
-			t.Fatalf("Write error: %v", err)
-		}
-		if n != 7 {
-			t.Errorf("Write returned %d, want 7", n)
+		writes := []string{"line 1\n", "line 2\n"}
+		for _, w := range writes {
+			n, err := sw.Write([]byte(w))
+			if err != nil || n != len(w) {
+				t.Fatalf("Write(%q) = %d, %v; want %d, <nil>", w, n, err, len(w))
+			}
 		}
 
 		f.Close()
@@ -204,10 +228,7 @@ func TestSafeWriter(t *testing.T) {
 
 	t.Run("swallows_errors", func(t *testing.T) {
 		setupTestEnv(t)
-		f := openJobLog(201)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		f := requireOpenJobLog(t, 201)
 
 		// Close the file to force write errors
 		f.Close()
@@ -238,10 +259,7 @@ func TestReadJobLog(t *testing.T) {
 	setupTestEnv(t)
 
 	t.Run("existing", func(t *testing.T) {
-		f := openJobLog(300)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		f := requireOpenJobLog(t, 300)
 		_, _ = f.WriteString("log content")
 		f.Close()
 
@@ -269,10 +287,7 @@ func TestJobLogExists(t *testing.T) {
 		t.Error("should not exist before creation")
 	}
 
-	f := openJobLog(400)
-	if f == nil {
-		t.Fatal("openJobLog returned nil")
-	}
+	f := requireOpenJobLog(t, 400)
 	f.Close()
 
 	if !JobLogExists(400) {

@@ -6,6 +6,54 @@ import (
 	"time"
 )
 
+func setJobTimestamps(t *testing.T, db *DB, jobID int64, tstamp time.Time) {
+	t.Helper()
+	ts := tstamp.UTC().Format(time.RFC3339)
+	_, err := db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, ts, ts, jobID)
+	if err != nil {
+		t.Fatalf("setJobTimestamps: %v", err)
+	}
+}
+
+func syncableToPulledJob(s *SyncableJob) PulledJob {
+	return PulledJob{
+		UUID:            s.UUID,
+		RepoIdentity:    s.RepoIdentity,
+		GitRef:          s.GitRef,
+		Agent:           s.Agent,
+		Model:           s.Model,
+		Reasoning:       s.Reasoning,
+		JobType:         s.JobType,
+		ReviewType:      s.ReviewType,
+		PatchID:         s.PatchID,
+		Status:          s.Status,
+		Agentic:         s.Agentic,
+		EnqueuedAt:      s.EnqueuedAt,
+		StartedAt:       s.StartedAt,
+		FinishedAt:      s.FinishedAt,
+		Prompt:          s.Prompt,
+		DiffContent:     s.DiffContent,
+		Error:           s.Error,
+		SourceMachineID: s.SourceMachineID,
+		UpdatedAt:       s.UpdatedAt,
+	}
+}
+
+func enqueueTestJob(t *testing.T, db *DB, repoID, commitID int64, gitRef, patchID string) *ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:   repoID,
+		CommitID: commitID,
+		GitRef:   gitRef,
+		Agent:    "test",
+		PatchID:  patchID,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	return job
+}
+
 func TestPatchIDSyncRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -15,28 +63,11 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 		t.Fatalf("GetMachineID: %v", err)
 	}
 
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(
-		repo.ID, "patchid-sync-sha", "Author", "Subject", time.Now(),
-	)
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
+	repo := createRepo(t, db, t.TempDir())
+	commit := createCommit(t, db, repo.ID, "patchid-sync-sha")
 
 	// Enqueue a job with a patch_id
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID:   repo.ID,
-		CommitID: commit.ID,
-		GitRef:   "patchid-sync-sha",
-		Agent:    "test",
-		PatchID:  "deadbeef9999",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
+	job := enqueueTestJob(t, db, repo.ID, commit.ID, "patchid-sync-sha", "deadbeef9999")
 
 	// Complete the job so it becomes sync-eligible
 	_, err = db.ClaimJob("worker-sync")
@@ -72,10 +103,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 	db2 := openTestDB(t)
 	defer db2.Close()
 
-	repo2, err := db2.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("db2 GetOrCreateRepo: %v", err)
-	}
+	repo2 := createRepo(t, db2, t.TempDir())
 	commitID2 := int64(0)
 	if found.CommitSHA != "" {
 		c, err := db2.GetOrCreateCommit(
@@ -88,27 +116,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 		commitID2 = c.ID
 	}
 
-	pulledJob := PulledJob{
-		UUID:            found.UUID,
-		RepoIdentity:    found.RepoIdentity,
-		GitRef:          found.GitRef,
-		Agent:           found.Agent,
-		Model:           found.Model,
-		Reasoning:       found.Reasoning,
-		JobType:         found.JobType,
-		ReviewType:      found.ReviewType,
-		PatchID:         found.PatchID,
-		Status:          found.Status,
-		Agentic:         found.Agentic,
-		EnqueuedAt:      found.EnqueuedAt,
-		StartedAt:       found.StartedAt,
-		FinishedAt:      found.FinishedAt,
-		Prompt:          found.Prompt,
-		DiffContent:     found.DiffContent,
-		Error:           found.Error,
-		SourceMachineID: found.SourceMachineID,
-		UpdatedAt:       found.UpdatedAt,
-	}
+	pulledJob := syncableToPulledJob(found)
 
 	cid := &commitID2
 	err = db2.UpsertPulledJob(pulledJob, repo2.ID, cid)
@@ -140,16 +148,7 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-remap-running")
 	commit := createCommit(t, db, repo.ID, "running-oldsha")
 
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID:   repo.ID,
-		CommitID: commit.ID,
-		GitRef:   "running-oldsha",
-		Agent:    "test",
-		PatchID:  "patchRUN",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
+	job := enqueueTestJob(t, db, repo.ID, commit.ID, "running-oldsha", "patchRUN")
 
 	// Set job to running
 	setJobStatus(t, db, job.ID, JobStatusRunning)
@@ -189,16 +188,7 @@ func TestRemapJob_RunningJob(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-remap-job-running")
 	commit := createCommit(t, db, repo.ID, "rjrun-oldsha")
 
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID:   repo.ID,
-		CommitID: commit.ID,
-		GitRef:   "rjrun-oldsha",
-		Agent:    "test",
-		PatchID:  "patchRJRUN",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
+	job := enqueueTestJob(t, db, repo.ID, commit.ID, "rjrun-oldsha", "patchRJRUN")
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 
 	n, err := db.RemapJob(
@@ -235,27 +225,10 @@ func TestRemapTriggersResync(t *testing.T) {
 		t.Fatalf("GetMachineID: %v", err)
 	}
 
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(
-		repo.ID, "resync-oldsha", "Author", "Subject", time.Now(),
-	)
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
+	repo := createRepo(t, db, t.TempDir())
+	commit := createCommit(t, db, repo.ID, "resync-oldsha")
 
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID:   repo.ID,
-		CommitID: commit.ID,
-		GitRef:   "resync-oldsha",
-		Agent:    "test",
-		PatchID:  "patchRESYNC",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
+	job := enqueueTestJob(t, db, repo.ID, commit.ID, "resync-oldsha", "patchRESYNC")
 
 	// Complete and mark synced
 	_, err = db.ClaimJob("worker-resync")
@@ -267,14 +240,7 @@ func TestRemapTriggersResync(t *testing.T) {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 	// Set synced_at to a past time so remap's updated_at is guaranteed later
-	pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	_, err = db.Exec(
-		`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`,
-		pastTime, pastTime, job.ID,
-	)
-	if err != nil {
-		t.Fatalf("set synced_at: %v", err)
-	}
+	setJobTimestamps(t, db, job.ID, time.Now().Add(-time.Hour))
 
 	// Verify job is NOT returned by GetJobsToSync (updated_at == synced_at)
 	preJobs, err := db.GetJobsToSync(machineID, 100)

@@ -3,6 +3,7 @@
 package worktree_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +13,50 @@ import (
 	"github.com/roborev-dev/roborev/internal/worktree"
 )
 
-func TestWorktreeCleanupBetweenIterations(t *testing.T) {
+func requireGit(t *testing.T) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+}
+
+func assertPathNotExists(t *testing.T, path string, msg string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("%s: path %s still exists", msg, path)
+	}
+}
+
+func assertPathExists(t *testing.T, path string, msg string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("%s: path %s should exist: %v", msg, path, err)
+	}
+}
+
+func setupRepoWithSubmodule(t *testing.T) *testutil.TestRepo {
+	t.Helper()
+	subRepo := testutil.NewTestRepo(t)
+	subRepo.RunGit("init")
+	subRepo.SymbolicRef("HEAD", "refs/heads/main")
+	subRepo.Config("user.email", testutil.GitUserEmail)
+	subRepo.Config("user.name", testutil.GitUserName)
+	subRepo.CommitFile("sub.txt", "sub", "submodule commit")
+
+	mainRepo := testutil.NewTestRepo(t)
+	mainRepo.RunGit("init")
+	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
+	mainRepo.Config("user.email", testutil.GitUserEmail)
+	mainRepo.Config("user.name", testutil.GitUserName)
+	mainRepo.Config("protocol.file.allow", "always")
+	mainRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Root, "deps/sub")
+	mainRepo.RunGit("commit", "-m", "add submodule")
+
+	return mainRepo
+}
+
+func TestWorktreeCleanupBetweenIterations(t *testing.T) {
+	requireGit(t)
 
 	repo := testutil.InitTestRepo(t)
 
@@ -30,15 +71,11 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 
 		// Verify previous worktree was cleaned up
 		if prevPath != "" {
-			if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-				t.Fatalf("iteration %d: previous worktree %s still exists after cleanup", i, prevPath)
-			}
+			assertPathNotExists(t, prevPath, fmt.Sprintf("iteration %d: previous worktree cleanup", i))
 		}
 
 		// Verify current worktree exists
-		if _, err := os.Stat(wt.Dir); err != nil {
-			t.Fatalf("iteration %d: worktree %s should exist: %v", i, wt.Dir, err)
-		}
+		assertPathExists(t, wt.Dir, fmt.Sprintf("iteration %d: current worktree", i))
 
 		// Simulate the explicit cleanup call (as done on error/no-change paths)
 		wt.Close()
@@ -46,15 +83,11 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	}
 
 	// Verify the last worktree was also cleaned up
-	if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-		t.Fatalf("last worktree %s still exists after cleanup", prevPath)
-	}
+	assertPathNotExists(t, prevPath, "last worktree cleanup")
 }
 
 func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	requireGit(t)
 
 	repo := testutil.InitTestRepo(t)
 
@@ -79,9 +112,7 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 	defer wt.Close()
 
 	// Verify the worktree directory exists and has the file from the repo
-	if _, err := os.Stat(wt.Dir); err != nil {
-		t.Fatalf("worktree directory should exist: %v", err)
-	}
+	assertPathExists(t, wt.Dir, "worktree directory")
 
 	baseFile := filepath.Join(wt.Dir, "base.txt")
 	content, err := os.ReadFile(baseFile)
@@ -94,21 +125,8 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 }
 
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
-	subRepo := testutil.NewTestRepo(t)
-	subRepo.RunGit("init")
-	subRepo.SymbolicRef("HEAD", "refs/heads/main")
-	subRepo.Config("user.email", testutil.GitUserEmail)
-	subRepo.Config("user.name", testutil.GitUserName)
-	subRepo.CommitFile("sub.txt", "sub", "submodule commit")
-
-	mainRepo := testutil.NewTestRepo(t)
-	mainRepo.RunGit("init")
-	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
-	mainRepo.Config("user.email", testutil.GitUserEmail)
-	mainRepo.Config("user.name", testutil.GitUserName)
-	mainRepo.Config("protocol.file.allow", "always")
-	mainRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Root, "deps/sub")
-	mainRepo.RunGit("commit", "-m", "add submodule")
+	requireGit(t)
+	mainRepo := setupRepoWithSubmodule(t)
 
 	wt, err := worktree.Create(mainRepo.Root, "HEAD")
 	if err != nil {
@@ -116,7 +134,5 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	}
 	defer wt.Close()
 
-	if _, err := os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt")); err != nil {
-		t.Fatalf("expected submodule file in worktree: %v", err)
-	}
+	assertPathExists(t, filepath.Join(wt.Dir, "deps", "sub", "sub.txt"), "submodule file")
 }

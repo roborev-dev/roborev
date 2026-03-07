@@ -22,6 +22,47 @@ const (
 	acpIntegrationModelEnv       = "ROBOREV_ACP_TEST_MODEL"
 )
 
+func envBool(key string) bool {
+	val := strings.TrimSpace(os.Getenv(key))
+	return strings.EqualFold(val, "1") || strings.EqualFold(val, "true")
+}
+
+func envString(key string) string {
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+func setupDummyGitRepo(t *testing.T) (repoPath string, commitSHA string) {
+	t.Helper()
+	repoPath = t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("# ACP Integration Test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	gitRun := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoPath
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	gitRun("init")
+	disabledHooksDir := filepath.Join(repoPath, ".git", "hooks-disabled")
+	if err := os.MkdirAll(disabledHooksDir, 0o755); err != nil {
+		t.Fatalf("failed to create disabled hooks dir: %v", err)
+	}
+
+	gitRun("config", "user.email", "acp-integration@example.com")
+	gitRun("config", "user.name", "ACP Integration")
+	gitRun("add", "README.md")
+	gitRun("-c", "commit.gpgsign=false", "-c", "core.hooksPath="+disabledHooksDir, "commit", "--no-verify", "-m", "seed")
+
+	return repoPath, gitRun("rev-parse", "HEAD")
+}
+
 // TestACPReviewViaExternalAdapter exercises ACP end-to-end against a real wrapper command.
 //
 // Example:
@@ -40,11 +81,11 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 		t.Skipf("set %s=1 to run ACP integration tests", acpIntegrationEnableEnv)
 	}
 
-	command := strings.TrimSpace(os.Getenv(acpIntegrationCommandEnv))
+	command := envString(acpIntegrationCommandEnv)
 	if command == "" {
 		command = defaultACPCommand
 	}
-	args := strings.Fields(strings.TrimSpace(os.Getenv(acpIntegrationArgsEnv)))
+	args := strings.Fields(envString(acpIntegrationArgsEnv))
 
 	if _, err := exec.LookPath(command); err != nil {
 		t.Fatalf("ACP command %q not found in PATH: %v", command, err)
@@ -53,32 +94,7 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 		t.Skip("git is required for ACP integration smoke test")
 	}
 
-	repoPath := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("# ACP Integration Test\n"), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
-	gitRun := func(arguments ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", arguments...)
-		cmd.Dir = repoPath
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s failed: %v\n%s", strings.Join(arguments, " "), err, string(out))
-		}
-		return string(out)
-	}
-
-	gitRun("init")
-	disabledHooksDir := filepath.Join(repoPath, ".git", "hooks-disabled")
-	if err := os.MkdirAll(disabledHooksDir, 0o755); err != nil {
-		t.Fatalf("failed to create disabled hooks dir: %v", err)
-	}
-	gitRun("config", "user.email", "acp-integration@example.com")
-	gitRun("config", "user.name", "ACP Integration")
-	gitRun("add", "README.md")
-	gitRun("-c", "commit.gpgsign=false", "-c", "core.hooksPath="+disabledHooksDir, "commit", "--no-verify", "-m", "seed")
-	commitSHA := strings.TrimSpace(gitRun("rev-parse", "HEAD"))
+	repoPath, commitSHA := setupDummyGitRepo(t)
 	if commitSHA == "" {
 		t.Fatal("failed to resolve HEAD commit SHA for integration test")
 	}
@@ -86,14 +102,13 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 	agent := NewACPAgent(command)
 	agent.Args = args
 	agent.Timeout = 2 * time.Minute
-	if strings.EqualFold(strings.TrimSpace(os.Getenv(acpIntegrationDisableModeEnv)), "1") ||
-		strings.EqualFold(strings.TrimSpace(os.Getenv(acpIntegrationDisableModeEnv)), "true") {
+	if envBool(acpIntegrationDisableModeEnv) {
 		agent.Mode = ""
 	}
-	if mode := strings.TrimSpace(os.Getenv(acpIntegrationModeEnv)); mode != "" {
+	if mode := envString(acpIntegrationModeEnv); mode != "" {
 		agent.Mode = mode
 	}
-	if model := strings.TrimSpace(os.Getenv(acpIntegrationModelEnv)); model != "" {
+	if model := envString(acpIntegrationModelEnv); model != "" {
 		agent.Model = model
 	}
 

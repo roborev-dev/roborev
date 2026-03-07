@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 // TestRepo wraps a temporary git repository for testing.
@@ -28,8 +30,9 @@ func NewTestRepoWithAuthor(t *testing.T, author string) *TestRepo {
 	dir := t.TempDir()
 	r := &TestRepo{T: t, Dir: dir}
 	r.Run("init")
-	r.Run("config", "user.email", "test@test.com")
-	r.Run("config", "user.name", author)
+	r.SetConfig("core.hooksPath", filepath.Join(dir, ".git", "hooks"))
+	r.SetConfig("user.email", "test@test.com")
+	r.SetConfig("user.name", author)
 	return r
 }
 
@@ -75,6 +78,28 @@ func (r *TestRepo) WriteFile(filename, content string) {
 	}
 }
 
+// RemoveFile removes a file in the repo.
+func (r *TestRepo) RemoveFile(filename string) {
+	r.T.Helper()
+	if err := os.Remove(filepath.Join(r.Dir, filename)); err != nil {
+		r.T.Fatal(err)
+	}
+}
+
+// MkdirAll creates a directory in the repo.
+func (r *TestRepo) MkdirAll(path string) {
+	r.T.Helper()
+	if err := os.MkdirAll(filepath.Join(r.Dir, path), 0755); err != nil {
+		r.T.Fatal(err)
+	}
+}
+
+// SetConfig sets a git config value.
+func (r *TestRepo) SetConfig(key, value string) {
+	r.T.Helper()
+	r.Run("config", key, value)
+}
+
 // HeadSHA returns the SHA of HEAD.
 func (r *TestRepo) HeadSHA() string {
 	r.T.Helper()
@@ -98,7 +123,10 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 // (e.g. "pre-commit") and makes it executable.
 func (r *TestRepo) InstallHook(name, script string) {
 	r.T.Helper()
-	hooksDir := filepath.Join(r.Dir, ".git", "hooks")
+	hooksDir := r.Run("rev-parse", "--git-path", "hooks")
+	if !filepath.IsAbs(hooksDir) {
+		hooksDir = filepath.Join(r.Dir, hooksDir)
+	}
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		r.T.Fatal(err)
 	}
@@ -112,11 +140,26 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = testenv.BuildIsolatedGitEnv(os.Environ(), dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func assertNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func assertContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Errorf("expected %q to contain %q", s, substr)
+	}
 }
 
 func TestIsUnbornHead(t *testing.T) {
@@ -199,12 +242,18 @@ func TestNormalizeMSYSPath(t *testing.T) {
 
 func TestGetHooksPath(t *testing.T) {
 	t.Run("default hooks path", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+		t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		t.Setenv("XDG_CONFIG_HOME", "/dev/null")
+		t.Setenv("HOME", "/dev/null")
+
 		repo := NewTestRepo(t)
+		// Unset the hooks suppression so we can test the real default.
+		repo.Run("config", "--unset", "core.hooksPath")
 
 		hooksPath, err := GetHooksPath(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetHooksPath failed: %v", err)
-		}
+		assertNoError(t, err)
 
 		if !filepath.IsAbs(hooksPath) {
 			t.Errorf("hooks path should be absolute, got: %s", hooksPath)
@@ -225,16 +274,12 @@ func TestGetHooksPath(t *testing.T) {
 	t.Run("custom core.hooksPath absolute", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		customHooksDir := filepath.Join(repo.Dir, "my-hooks")
-		if err := os.MkdirAll(customHooksDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		repo.MkdirAll("my-hooks")
 
-		repo.Run("config", "core.hooksPath", customHooksDir)
+		repo.SetConfig("core.hooksPath", customHooksDir)
 
 		hooksPath, err := GetHooksPath(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetHooksPath failed: %v", err)
-		}
+		assertNoError(t, err)
 
 		if hooksPath != customHooksDir {
 			t.Errorf("expected %s, got %s", customHooksDir, hooksPath)
@@ -243,12 +288,10 @@ func TestGetHooksPath(t *testing.T) {
 
 	t.Run("custom core.hooksPath relative", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("config", "core.hooksPath", "custom-hooks")
+		repo.SetConfig("core.hooksPath", "custom-hooks")
 
 		hooksPath, err := GetHooksPath(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetHooksPath failed: %v", err)
-		}
+		assertNoError(t, err)
 
 		if !filepath.IsAbs(hooksPath) {
 			t.Errorf("hooks path should be absolute, got: %s", hooksPath)
@@ -271,10 +314,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 
 	t.Run("rebase-merge directory", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		rebaseMerge := filepath.Join(repo.Dir, ".git", "rebase-merge")
-		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
-			t.Fatal(err)
-		}
+		repo.MkdirAll(filepath.Join(".git", "rebase-merge"))
 		// No defer needed; t.TempDir() handles cleanup automatically
 
 		if !IsRebaseInProgress(repo.Dir) {
@@ -284,10 +324,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 
 	t.Run("rebase-apply directory", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		rebaseApply := filepath.Join(repo.Dir, ".git", "rebase-apply")
-		if err := os.MkdirAll(rebaseApply, 0755); err != nil {
-			t.Fatal(err)
-		}
+		repo.MkdirAll(filepath.Join(".git", "rebase-apply"))
 
 		if !IsRebaseInProgress(repo.Dir) {
 			t.Error("expected rebase in progress with rebase-apply")
@@ -310,9 +347,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		// Verify worktree has .git file (not directory)
 		gitPath := filepath.Join(wt.Dir, ".git")
 		info, err := os.Stat(gitPath)
-		if err != nil {
-			t.Fatalf("worktree .git not found: %v", err)
-		}
+		assertNoError(t, err)
 		if info.IsDir() {
 			t.Skip("worktree has .git directory instead of file - older git version")
 		}
@@ -349,9 +384,7 @@ func TestGetCommitInfo(t *testing.T) {
 		commitSHA := repo.HeadSHA()
 
 		info, err := GetCommitInfo(repo.Dir, commitSHA)
-		if err != nil {
-			t.Fatalf("GetCommitInfo failed: %v", err)
-		}
+		assertNoError(t, err)
 
 		if info.Subject != "Simple subject" {
 			t.Errorf("expected subject 'Simple subject', got '%s'", info.Subject)
@@ -375,19 +408,13 @@ func TestGetCommitInfo(t *testing.T) {
 		commitSHA := repo.HeadSHA()
 
 		info, err := GetCommitInfo(repo.Dir, commitSHA)
-		if err != nil {
-			t.Fatalf("GetCommitInfo failed: %v", err)
-		}
+		assertNoError(t, err)
 
 		if info.Subject != "Subject line" {
 			t.Errorf("expected subject 'Subject line', got '%s'", info.Subject)
 		}
-		if !strings.Contains(info.Body, "This is the body") {
-			t.Errorf("expected body to contain 'This is the body', got '%s'", info.Body)
-		}
-		if !strings.Contains(info.Body, "multiple lines") {
-			t.Errorf("expected body to contain 'multiple lines', got '%s'", info.Body)
-		}
+		assertContains(t, info.Body, "This is the body")
+		assertContains(t, info.Body, "multiple lines")
 	})
 
 	t.Run("commit with pipe in message", func(t *testing.T) {
@@ -401,16 +428,10 @@ func TestGetCommitInfo(t *testing.T) {
 		commitSHA := repo.HeadSHA()
 
 		info, err := GetCommitInfo(repo.Dir, commitSHA)
-		if err != nil {
-			t.Fatalf("GetCommitInfo failed: %v", err)
-		}
+		assertNoError(t, err)
 
-		if !strings.Contains(info.Subject, "|") {
-			t.Errorf("expected subject to contain pipe, got '%s'", info.Subject)
-		}
-		if !strings.Contains(info.Body, "foo | bar") {
-			t.Errorf("expected body to contain 'foo | bar', got '%s'", info.Body)
-		}
+		assertContains(t, info.Subject, "|")
+		assertContains(t, info.Body, "foo | bar")
 	})
 }
 
@@ -519,9 +540,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 		repo.CommitFile("file.txt", "initial", "initial")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
-		if err != nil {
-			t.Fatalf("HasUncommittedChanges failed: %v", err)
-		}
+		assertNoError(t, err)
 		if hasChanges {
 			t.Error("expected no uncommitted changes")
 		}
@@ -535,9 +554,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 		repo.Run("add", ".")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
-		if err != nil {
-			t.Fatalf("HasUncommittedChanges failed: %v", err)
-		}
+		assertNoError(t, err)
 		if !hasChanges {
 			t.Error("expected uncommitted changes for staged file")
 		}
@@ -550,9 +567,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 		repo.WriteFile("file.txt", "unstaged")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
-		if err != nil {
-			t.Fatalf("HasUncommittedChanges failed: %v", err)
-		}
+		assertNoError(t, err)
 		if !hasChanges {
 			t.Error("expected uncommitted changes for unstaged file")
 		}
@@ -565,9 +580,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 		repo.WriteFile("untracked.txt", "new")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
-		if err != nil {
-			t.Fatalf("HasUncommittedChanges failed: %v", err)
-		}
+		assertNoError(t, err)
 		if !hasChanges {
 			t.Error("expected uncommitted changes for untracked file")
 		}
@@ -582,15 +595,9 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo.WriteFile("file.txt", "modified\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetDirtyDiff failed: %v", err)
-		}
-		if !strings.Contains(diff, "file.txt") {
-			t.Error("expected diff to contain file.txt")
-		}
-		if !strings.Contains(diff, "+modified") {
-			t.Error("expected diff to contain +modified")
-		}
+		assertNoError(t, err)
+		assertContains(t, diff, "file.txt")
+		assertContains(t, diff, "+modified")
 	})
 
 	t.Run("includes untracked files", func(t *testing.T) {
@@ -600,18 +607,10 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo.WriteFile("newfile.txt", "new content\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetDirtyDiff failed: %v", err)
-		}
-		if !strings.Contains(diff, "newfile.txt") {
-			t.Error("expected diff to contain newfile.txt")
-		}
-		if !strings.Contains(diff, "+new content") {
-			t.Error("expected diff to contain +new content")
-		}
-		if !strings.Contains(diff, "new file mode") {
-			t.Error("expected diff to contain 'new file mode' header")
-		}
+		assertNoError(t, err)
+		assertContains(t, diff, "newfile.txt")
+		assertContains(t, diff, "+new content")
+		assertContains(t, diff, "new file mode")
 	})
 
 	t.Run("includes both tracked and untracked", func(t *testing.T) {
@@ -622,15 +621,9 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo.WriteFile("another.txt", "another\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetDirtyDiff failed: %v", err)
-		}
-		if !strings.Contains(diff, "file.txt") {
-			t.Error("expected diff to contain file.txt")
-		}
-		if !strings.Contains(diff, "another.txt") {
-			t.Error("expected diff to contain another.txt")
-		}
+		assertNoError(t, err)
+		assertContains(t, diff, "file.txt")
+		assertContains(t, diff, "another.txt")
 	})
 
 	t.Run("handles binary files", func(t *testing.T) {
@@ -640,15 +633,9 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo.WriteFile("binary.bin", "hello\x00world")
 
 		diff, err := GetDirtyDiff(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetDirtyDiff failed: %v", err)
-		}
-		if !strings.Contains(diff, "binary.bin") {
-			t.Error("expected diff to contain binary.bin")
-		}
-		if !strings.Contains(diff, "Binary file") {
-			t.Error("expected diff to indicate binary file")
-		}
+		assertNoError(t, err)
+		assertContains(t, diff, "binary.bin")
+		assertContains(t, diff, "Binary file")
 	})
 }
 
@@ -663,17 +650,11 @@ func TestGetDirtyDiffNoCommits(t *testing.T) {
 	repo.WriteFile("untracked.txt", "untracked\n")
 
 	diff, err := GetDirtyDiff(repo.Dir)
-	if err != nil {
-		t.Fatalf("GetDirtyDiff failed on repo with no commits: %v", err)
-	}
+	assertNoError(t, err)
 
-	if !strings.Contains(diff, "newfile.txt") {
-		t.Error("expected diff to contain newfile.txt (staged)")
-	}
+	assertContains(t, diff, "newfile.txt")
 
-	if !strings.Contains(diff, "untracked.txt") {
-		t.Error("expected diff to contain untracked.txt")
-	}
+	assertContains(t, diff, "untracked.txt")
 }
 
 func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
@@ -684,21 +665,13 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 	repo.Run("add", "staged.txt")
 
 	// Delete the file from the working tree (but keep it staged)
-	if err := os.Remove(filepath.Join(repo.Dir, "staged.txt")); err != nil {
-		t.Fatal(err)
-	}
+	repo.RemoveFile("staged.txt")
 
 	diff, err := GetDirtyDiff(repo.Dir)
-	if err != nil {
-		t.Fatalf("GetDirtyDiff failed: %v", err)
-	}
+	assertNoError(t, err)
 
-	if !strings.Contains(diff, "staged.txt") {
-		t.Error("expected diff to contain staged.txt (staged but deleted from working tree)")
-	}
-	if !strings.Contains(diff, "staged content") {
-		t.Error("expected diff to contain staged file content")
-	}
+	assertContains(t, diff, "staged.txt")
+	assertContains(t, diff, "staged content")
 }
 
 func TestIsExcludedFile(t *testing.T) {
@@ -770,9 +743,7 @@ func setupDiffExcludesGeneratedFilesTest(t *testing.T) (*TestRepo, string) {
 func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 	assertExcluded := func(t *testing.T, diff string) {
 		t.Helper()
-		if !strings.Contains(diff, "keep.txt") {
-			t.Error("expected diff to contain keep.txt")
-		}
+		assertContains(t, diff, "keep.txt")
 		if strings.Contains(diff, "uv.lock") {
 			t.Error("expected diff to exclude uv.lock")
 		}
@@ -787,18 +758,14 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 	t.Run("GetDiff", func(t *testing.T) {
 		repo, sha := setupDiffExcludesGeneratedFilesTest(t)
 		diff, err := GetDiff(repo.Dir, sha)
-		if err != nil {
-			t.Fatalf("GetDiff failed: %v", err)
-		}
+		assertNoError(t, err)
 		assertExcluded(t, diff)
 	})
 
 	t.Run("GetRangeDiff", func(t *testing.T) {
 		repo, _ := setupDiffExcludesGeneratedFilesTest(t)
 		diff, err := GetRangeDiff(repo.Dir, "HEAD~1..HEAD")
-		if err != nil {
-			t.Fatalf("GetRangeDiff failed: %v", err)
-		}
+		assertNoError(t, err)
 		assertExcluded(t, diff)
 	})
 }
@@ -856,9 +823,7 @@ func TestResetWorkingTree(t *testing.T) {
 		}
 
 		content, err := os.ReadFile(filepath.Join(repo.Dir, "initial.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		assertNoError(t, err)
 		if string(content) != "initial content" {
 			t.Errorf("expected file content 'initial content', got %q", string(content))
 		}
@@ -908,9 +873,7 @@ func TestResetWorkingTree(t *testing.T) {
 		}
 
 		content, err := os.ReadFile(filepath.Join(repo.Dir, "initial.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		assertNoError(t, err)
 		if string(content) != "initial content" {
 			t.Errorf("expected file content 'initial content', got %q", string(content))
 		}
@@ -959,9 +922,7 @@ func TestGetRangeFilesChanged(t *testing.T) {
 	t.Run("returns changed files in range", func(t *testing.T) {
 		repo, baseSHA := setupRangeFilesChangedTest(t)
 		files, err := GetRangeFilesChanged(repo.Dir, baseSHA+"..HEAD")
-		if err != nil {
-			t.Fatalf("GetRangeFilesChanged failed: %v", err)
-		}
+		assertNoError(t, err)
 		if len(files) != 3 {
 			t.Fatalf("expected 3 files, got %d: %v", len(files), files)
 		}
@@ -979,9 +940,7 @@ func TestGetRangeFilesChanged(t *testing.T) {
 	t.Run("empty range returns nil", func(t *testing.T) {
 		repo, _ := setupRangeFilesChangedTest(t)
 		files, err := GetRangeFilesChanged(repo.Dir, "HEAD..HEAD")
-		if err != nil {
-			t.Fatalf("GetRangeFilesChanged failed: %v", err)
-		}
+		assertNoError(t, err)
 		if len(files) != 0 {
 			t.Errorf("expected 0 files for empty range, got %d: %v", len(files), files)
 		}
@@ -1084,7 +1043,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 	repo.CommitFile("initial.txt", "initial", "initial commit")
 
 	// Force GPG signing with a non-existent key
-	repo.Run("config", "commit.gpgsign", "true")
+	repo.SetConfig("commit.gpgsign", "true")
 
 	// Create a dummy GPG script that always fails
 	// Windows and Unix need different scripts
@@ -1099,8 +1058,8 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 		}
 	}
 
-	repo.Run("config", "gpg.program", dummyGPG) // Force failure deterministically
-	repo.Run("config", "user.signingkey", "DEADBEEF00000000")
+	repo.SetConfig("gpg.program", dummyGPG) // Force failure deterministically
+	repo.SetConfig("user.signingkey", "DEADBEEF00000000")
 
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
@@ -1142,9 +1101,7 @@ func TestHasCommitHooksIgnoresDirectories(t *testing.T) {
 
 	// Create a directory named like a hook — should not count.
 	hooksDir, err := GetHooksPath(repo.Dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assertNoError(t, err)
 	if err := os.MkdirAll(filepath.Join(hooksDir, "pre-commit"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1178,9 +1135,7 @@ func TestIsAncestor(t *testing.T) {
 	t.Run("base is ancestor of second", func(t *testing.T) {
 		repo, baseSHA, secondSHA, _ := setupAncestorTest(t)
 		isAnc, err := IsAncestor(repo.Dir, baseSHA, secondSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if !isAnc {
 			t.Error("expected base to be ancestor of second")
 		}
@@ -1189,9 +1144,7 @@ func TestIsAncestor(t *testing.T) {
 	t.Run("second is not ancestor of base", func(t *testing.T) {
 		repo, baseSHA, secondSHA, _ := setupAncestorTest(t)
 		isAnc, err := IsAncestor(repo.Dir, secondSHA, baseSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if isAnc {
 			t.Error("expected second to NOT be ancestor of base")
 		}
@@ -1200,9 +1153,7 @@ func TestIsAncestor(t *testing.T) {
 	t.Run("divergent is not ancestor of second", func(t *testing.T) {
 		repo, _, secondSHA, divergentSHA := setupAncestorTest(t)
 		isAnc, err := IsAncestor(repo.Dir, divergentSHA, secondSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if isAnc {
 			t.Error("expected divergent to NOT be ancestor of second (different branches)")
 		}
@@ -1211,9 +1162,7 @@ func TestIsAncestor(t *testing.T) {
 	t.Run("base is ancestor of divergent", func(t *testing.T) {
 		repo, baseSHA, _, divergentSHA := setupAncestorTest(t)
 		isAnc, err := IsAncestor(repo.Dir, baseSHA, divergentSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if !isAnc {
 			t.Error("expected base to be ancestor of divergent")
 		}
@@ -1222,9 +1171,7 @@ func TestIsAncestor(t *testing.T) {
 	t.Run("commit is ancestor of itself", func(t *testing.T) {
 		repo, baseSHA, _, _ := setupAncestorTest(t)
 		isAnc, err := IsAncestor(repo.Dir, baseSHA, baseSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if !isAnc {
 			t.Error("expected commit to be ancestor of itself")
 		}
@@ -1379,9 +1326,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		wt := repo.AddWorktree("feature-x")
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "feature-x")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		got = evalSymlinks(t, got)
 		want := evalSymlinks(t, wt.Dir)
 		if got != want {
@@ -1398,9 +1343,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.Run("branch", "other-branch")
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "other-branch")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if got != repo.Dir {
 			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
 		}
@@ -1414,9 +1357,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.CommitFile("f.txt", "init", "init")
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		if got != repo.Dir {
 			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
 		}
@@ -1431,9 +1372,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		branch := GetCurrentBranch(repo.Dir)
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, branch)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		got = evalSymlinks(t, got)
 		want := evalSymlinks(t, repo.Dir)
 		if got != want {
@@ -1485,9 +1424,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		os.RemoveAll(wtDir)
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "stale-branch")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertNoError(t, err)
 		// The stale worktree path should not be returned as checked out.
 		// If checkedOut is true but the directory doesn't exist, that's a bug.
 		if checkedOut {

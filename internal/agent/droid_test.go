@@ -1,9 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,7 +12,7 @@ func TestDroidBuildArgs(t *testing.T) {
 	tests := []struct {
 		name     string
 		agentic  bool
-		setup    func(*DroidAgent) *DroidAgent
+		setup    func(*testing.T, *DroidAgent) *DroidAgent
 		wantArgs []string
 		dontWant []string
 	}{
@@ -28,18 +28,36 @@ func TestDroidBuildArgs(t *testing.T) {
 			wantArgs: []string{"--auto", "medium"},
 		},
 		{
-			name:     "Reasoning Thorough",
-			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningThorough).(*DroidAgent) },
+			name: "Reasoning Thorough",
+			setup: func(t *testing.T, a *DroidAgent) *DroidAgent {
+				a2, ok := a.WithReasoning(ReasoningThorough).(*DroidAgent)
+				if !ok {
+					t.Fatalf("expected *DroidAgent, got %T", a.WithReasoning(ReasoningThorough))
+				}
+				return a2
+			},
 			wantArgs: []string{"--reasoning-effort", "high"},
 		},
 		{
-			name:     "Reasoning Fast",
-			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningFast).(*DroidAgent) },
+			name: "Reasoning Fast",
+			setup: func(t *testing.T, a *DroidAgent) *DroidAgent {
+				a2, ok := a.WithReasoning(ReasoningFast).(*DroidAgent)
+				if !ok {
+					t.Fatalf("expected *DroidAgent, got %T", a.WithReasoning(ReasoningFast))
+				}
+				return a2
+			},
 			wantArgs: []string{"--reasoning-effort", "low"},
 		},
 		{
-			name:     "Reasoning Standard",
-			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningStandard).(*DroidAgent) },
+			name: "Reasoning Standard",
+			setup: func(t *testing.T, a *DroidAgent) *DroidAgent {
+				a2, ok := a.WithReasoning(ReasoningStandard).(*DroidAgent)
+				if !ok {
+					t.Fatalf("expected *DroidAgent, got %T", a.WithReasoning(ReasoningStandard))
+				}
+				return a2
+			},
 			dontWant: []string{"--reasoning-effort"},
 		},
 	}
@@ -48,7 +66,7 @@ func TestDroidBuildArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := NewDroidAgent("droid")
 			if tt.setup != nil {
-				a = tt.setup(a)
+				a = tt.setup(t, a)
 			}
 
 			args := a.buildArgs(tt.agentic)
@@ -74,34 +92,41 @@ func TestDroidName(t *testing.T) {
 }
 
 func TestDroidWithAgentic(t *testing.T) {
+	withUnsafeAgents(t, false)
+
 	a := NewDroidAgent("droid")
-	if a.Agentic {
+	if a.Agentic || strings.Contains(a.CommandLine(), "--auto medium") {
 		t.Fatal("expected non-agentic by default")
 	}
 
-	a2 := a.WithAgentic(true).(*DroidAgent)
-	if !a2.Agentic {
+	a2, ok := a.WithAgentic(true).(*DroidAgent)
+	if !ok {
+		t.Fatalf("expected *DroidAgent, got %T", a.WithAgentic(true))
+	}
+	if !a2.Agentic || !strings.Contains(a2.CommandLine(), "--auto medium") {
 		t.Fatal("expected agentic after WithAgentic(true)")
 	}
-	if a.Agentic {
+	if a.Agentic || strings.Contains(a.CommandLine(), "--auto medium") {
 		t.Fatal("original should be unchanged")
 	}
 }
 
 func TestDroidReviewOutcomes(t *testing.T) {
 	tests := []struct {
-		name        string
-		mockOpts    MockCLIOpts
-		wantError   bool
-		errContains string
-		wantResult  string
-		exactMatch  bool
+		name         string
+		mockOpts     MockCLIOpts
+		wantError    bool
+		errContains  string
+		assertResult func(t *testing.T, result string)
 	}{
 		{
-			name:       "Success",
-			mockOpts:   MockCLIOpts{StdoutLines: []string{"Review feedback from Droid"}},
-			wantResult: "Review feedback from Droid\n",
-			exactMatch: true,
+			name:     "Success",
+			mockOpts: MockCLIOpts{StdoutLines: []string{"Review feedback from Droid"}},
+			assertResult: func(t *testing.T, result string) {
+				if result != "Review feedback from Droid\n" {
+					t.Fatalf("expected exact result %q, got %q", "Review feedback from Droid\n", result)
+				}
+			},
 		},
 		{
 			name:        "Failure",
@@ -110,10 +135,13 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			errContains: "droid failed",
 		},
 		{
-			name:       "Empty Output",
-			mockOpts:   MockCLIOpts{},
-			wantResult: "No review output generated",
-			exactMatch: true,
+			name:     "Empty Output",
+			mockOpts: MockCLIOpts{},
+			assertResult: func(t *testing.T, result string) {
+				if result != "No review output generated" {
+					t.Fatalf("expected exact result %q, got %q", "No review output generated", result)
+				}
+			},
 		},
 	}
 
@@ -136,12 +164,8 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
-			if tt.exactMatch {
-				if result != tt.wantResult {
-					t.Fatalf("expected exact result %q, got %q", tt.wantResult, result)
-				}
-			} else if !strings.Contains(result, tt.wantResult) {
-				t.Fatalf("expected result to contain %q, got %q", tt.wantResult, result)
+			if tt.assertResult != nil {
+				tt.assertResult(t, result)
 			}
 		})
 	}
@@ -150,7 +174,6 @@ func TestDroidReviewOutcomes(t *testing.T) {
 func TestDroidReviewWithProgress(t *testing.T) {
 	skipIfWindows(t)
 	tmpDir := t.TempDir()
-	progressFile := filepath.Join(tmpDir, "progress.txt")
 
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StderrLines: []string{"Processing..."},
@@ -158,20 +181,14 @@ func TestDroidReviewWithProgress(t *testing.T) {
 	})
 	a := NewDroidAgent(mock.CmdPath)
 
-	f, err := os.Create(progressFile)
-	if err != nil {
-		t.Fatalf("create progress file: %v", err)
-	}
-	defer f.Close()
-
-	_, err = a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", f)
+	var progress bytes.Buffer
+	_, err := a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", &progress)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	progress, _ := os.ReadFile(progressFile)
-	if !strings.Contains(string(progress), "Processing") {
-		t.Fatalf("expected progress output, got %q", string(progress))
+	if !strings.Contains(progress.String(), "Processing") {
+		t.Fatalf("expected progress output, got %q", progress.String())
 	}
 }
 

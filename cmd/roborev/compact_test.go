@@ -21,9 +21,13 @@ func TestIsValidConsolidatedReview(t *testing.T) {
 		want   bool
 	}{
 		{
-			name:   "valid_with_findings",
-			output: "# Review Summary\n\n## Critical Issues\n\n1. SQL injection in main.go:42",
-			want:   true,
+			name: "valid_with_findings",
+			output: `# Review Summary
+
+## Critical Issues
+
+1. SQL injection in main.go:42`,
+			want: true,
 		},
 		{
 			name:   "valid_all_addressed",
@@ -51,54 +55,77 @@ func TestIsValidConsolidatedReview(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "valid_error_in_content",
-			output: "## Findings\n\nFixed the error: Cannot reproduce issue. High severity in main.go:10",
-			want:   true,
+			name: "valid_error_in_content",
+			output: `## Findings
+
+Fixed the error: Cannot reproduce issue. High severity in main.go:10`,
+			want: true,
 		},
 		{
-			name:   "valid_cannot_in_content",
-			output: "## Issues\n\nThe code cannot handle null values. Medium severity. See utils.go:42",
-			want:   true,
+			name: "valid_cannot_in_content",
+			output: `## Issues
+
+The code cannot handle null values. Medium severity. See utils.go:42`,
+			want: true,
 		},
 		{
-			name:   "valid_with_severity_and_structure",
-			output: "## High Severity Issues\n\nBuffer overflow found in authentication",
-			want:   true,
+			name: "valid_with_severity_and_structure",
+			output: `## High Severity Issues
+
+Buffer overflow found in authentication`,
+			want: true,
 		},
 		{
-			name:   "valid_consolidated_review",
-			output: "## VERIFIED FINDINGS\n\n### **High Severity**\n\n#### 1. SQL Injection\n**Files:** main.go:42\n**Issue:** User input not sanitized",
-			want:   true,
+			name: "valid_consolidated_review",
+			output: `## VERIFIED FINDINGS
+
+### **High Severity**
+
+#### 1. SQL Injection
+**Files:** main.go:42
+**Issue:** User input not sanitized`,
+			want: true,
 		},
 		{
-			name:   "valid_with_critical",
-			output: "## Critical Issues\n\nBuffer overflow detected in authentication",
-			want:   true,
+			name: "valid_with_critical",
+			output: `## Critical Issues
+
+Buffer overflow detected in authentication`,
+			want: true,
 		},
 		{
-			name:   "valid_with_medium",
-			output: "## Medium Severity\n\nImprove error handling in parser",
-			want:   true,
+			name: "valid_with_medium",
+			output: `## Medium Severity
+
+Improve error handling in parser`,
+			want: true,
 		},
 		{
-			name:   "valid_with_low",
-			output: "## Low Priority Issues\n\nConsider adding documentation",
-			want:   true,
+			name: "valid_with_low",
+			output: `## Low Priority Issues
+
+Consider adding documentation`,
+			want: true,
 		},
 		{
-			name:   "valid_with_go_file_reference",
-			output: "## Issues\n\nMemory leak in main.go:123",
-			want:   true,
+			name: "valid_with_go_file_reference",
+			output: `## Issues
+
+Memory leak in main.go:123`,
+			want: true,
 		},
 		{
-			name:   "valid_with_py_file_reference",
-			output: "## Findings\n\nLogic error in script.py:45",
-			want:   true,
+			name: "valid_with_py_file_reference",
+			output: `## Findings
+
+Logic error in script.py:45`,
+			want: true,
 		},
 		{
-			name:   "invalid_traceback",
-			output: "Traceback (most recent call last):\n  File main.py",
-			want:   false,
+			name: "invalid_traceback",
+			output: `Traceback (most recent call last):
+  File main.py`,
+			want: false,
 		},
 		{
 			name:   "valid_plain_text_no_structure",
@@ -176,13 +203,10 @@ func TestFilterReviewJobs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := filterReviewJobs(tt.jobs)
 
-			var gotIDs []int64
-			for _, j := range got {
-				gotIDs = append(gotIDs, j.ID)
-			}
-
-			if !slices.Equal(gotIDs, tt.wantIDs) {
-				t.Errorf("filterReviewJobs() = %v, want %v", gotIDs, tt.wantIDs)
+			if !slices.EqualFunc(got, tt.wantIDs, func(job storage.ReviewJob, id int64) bool {
+				return job.ID == id
+			}) {
+				t.Errorf("filterReviewJobs() IDs mismatch, want %v", tt.wantIDs)
 			}
 		})
 	}
@@ -197,9 +221,9 @@ func TestExtractJobIDs(t *testing.T) {
 		{
 			name: "three_jobs",
 			reviews: []jobReview{
-				{jobID: 123},
-				{jobID: 456},
-				{jobID: 789},
+				mockJobReview(123, "", ""),
+				mockJobReview(456, "", ""),
+				mockJobReview(789, "", ""),
 			},
 			want: []int64{123, 456, 789},
 		},
@@ -211,7 +235,7 @@ func TestExtractJobIDs(t *testing.T) {
 		{
 			name: "single_job",
 			reviews: []jobReview{
-				{jobID: 999},
+				mockJobReview(999, "", ""),
 			},
 			want: []int64{999},
 		},
@@ -361,9 +385,6 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 }
 
 func TestWriteCompactMetadata(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
-
 	tests := []struct {
 		name           string
 		consolidatedID int64
@@ -392,6 +413,9 @@ func TestWriteCompactMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
 			err := writeCompactMetadata(tt.consolidatedID, tt.sourceIDs)
 			if err != nil {
 				t.Fatalf("writeCompactMetadata failed: %v", err)

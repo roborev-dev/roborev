@@ -12,32 +12,22 @@ const (
 	uniqueIterations = 10000
 )
 
-func assertUUIDFormat(t *testing.T, uuid string) {
-	t.Helper()
-	if !uuidV4Pattern.MatchString(uuid) {
-		t.Errorf("UUID %q does not match expected v4 format", uuid)
+func TestGenerateUUID_Format(t *testing.T) {
+	for range formatIterations {
+		uuid := GenerateUUID()
+		if !uuidV4Pattern.MatchString(uuid) {
+			t.Fatalf("UUID %q does not match expected v4 format", uuid)
+		}
 	}
 }
 
-func checkUniqueness(t *testing.T, generator func() string, iterations int) {
-	t.Helper()
-	seen := make(map[string]struct{}, iterations)
-	for i := range iterations {
-		uuid := generator()
+func TestGenerateUUID_Uniqueness(t *testing.T) {
+	seen := make(map[string]struct{}, uniqueIterations)
+	for i := range uniqueIterations {
+		uuid := GenerateUUID()
 		if _, exists := seen[uuid]; exists {
 			t.Fatalf("Collision detected at iteration %d: %s", i, uuid)
 		}
 		seen[uuid] = struct{}{}
 	}
-}
-
-func TestGenerateUUID_Format(t *testing.T) {
-	for range formatIterations {
-		uuid := GenerateUUID()
-		assertUUIDFormat(t, uuid)
-	}
-}
-
-func TestGenerateUUID_Uniqueness(t *testing.T) {
-	checkUniqueness(t, GenerateUUID, uniqueIterations)
 }

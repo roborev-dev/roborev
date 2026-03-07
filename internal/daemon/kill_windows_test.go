@@ -10,117 +10,92 @@ const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
 
 func TestClassifyCommandLine(t *testing.T) {
 	tests := []struct {
-		group string
-		cases []struct {
-			name    string
-			cmdLine string
-			want    processIdentity
-		}
+		name    string
+		cmdLine string
+		want    processIdentity
 	}{
 		{
-			group: "Standard Matching",
-			cases: []struct {
-				name    string
-				cmdLine string
-				want    processIdentity
-			}{
-				{
-					name:    "empty string returns unknown",
-					cmdLine: "",
-					want:    processUnknown,
-				},
-				{
-					name:    "whitespace only returns unknown",
-					cmdLine: "   \t\n  ",
-					want:    processUnknown,
-				},
-				{
-					name:    "roborev daemon run returns isRoborev",
-					cmdLine: testRoborevExe + ` daemon run`,
-					want:    processIsRoborev,
-				},
-				{
-					name:    "roborev daemon run with flags after returns isRoborev",
-					cmdLine: testRoborevExe + ` daemon run --port 7373`,
-					want:    processIsRoborev,
-				},
-				{
-					name:    "roborev daemon run with flags between returns isRoborev",
-					cmdLine: testRoborevExe + ` daemon --verbose run`,
-					want:    processIsRoborev,
-				},
-				{
-					name:    "roborev daemon run with multiple flags between returns isRoborev",
-					cmdLine: testRoborevExe + ` daemon -v --config C:\roborev.toml run`,
-					want:    processIsRoborev,
-				},
-				{
-					name:    "roborev daemon status returns notRoborev",
-					cmdLine: testRoborevExe + ` daemon status`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "roborev daemon stop returns notRoborev",
-					cmdLine: testRoborevExe + ` daemon stop`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "roborev without daemon returns notRoborev",
-					cmdLine: testRoborevExe + ` review`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "unrelated process returns notRoborev",
-					cmdLine: `C:\Windows\System32\notepad.exe`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "case insensitive match",
-					cmdLine: `C:\ROBOREV\ROBOREV.EXE DAEMON RUN`,
-					want:    processIsRoborev,
-				},
-			},
+			name:    "Standard Matching/empty string returns unknown",
+			cmdLine: "",
+			want:    processUnknown,
 		},
 		{
-			group: "False Positive Prevention",
-			cases: []struct {
-				name    string
-				cmdLine string
-				want    processIdentity
-			}{
-				{
-					name:    "dry-run flag with daemon status",
-					cmdLine: testRoborevExe + ` daemon status --dry-run`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "run-once flag with daemon stop",
-					cmdLine: testRoborevExe + ` daemon stop --run-once`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "run as flag value after status",
-					cmdLine: testRoborevExe + ` daemon status --output run`,
-					want:    processNotRoborev,
-				},
-				{
-					name:    "run as positional arg after status",
-					cmdLine: testRoborevExe + ` daemon status run`,
-					want:    processNotRoborev,
-				},
-			},
+			name:    "Standard Matching/whitespace only returns unknown",
+			cmdLine: "   \t\n  ",
+			want:    processUnknown,
+		},
+		{
+			name:    "Standard Matching/roborev daemon run returns isRoborev",
+			cmdLine: testRoborevExe + ` daemon run`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev daemon run with flags after returns isRoborev",
+			cmdLine: testRoborevExe + ` daemon run --port 7373`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev daemon run with flags between returns isRoborev",
+			cmdLine: testRoborevExe + ` daemon --verbose run`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev daemon run with multiple flags between returns isRoborev",
+			cmdLine: testRoborevExe + ` daemon -v --config C:\roborev.toml run`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev daemon status returns notRoborev",
+			cmdLine: testRoborevExe + ` daemon status`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev daemon stop returns notRoborev",
+			cmdLine: testRoborevExe + ` daemon stop`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "Standard Matching/roborev without daemon returns notRoborev",
+			cmdLine: testRoborevExe + ` review`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "Standard Matching/unrelated process returns notRoborev",
+			cmdLine: `C:\Windows\System32\notepad.exe`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "Standard Matching/case insensitive match",
+			cmdLine: `C:\ROBOREV\ROBOREV.EXE DAEMON RUN`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "False Positive Prevention/dry-run flag with daemon status",
+			cmdLine: testRoborevExe + ` daemon status --dry-run`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "False Positive Prevention/run-once flag with daemon stop",
+			cmdLine: testRoborevExe + ` daemon stop --run-once`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "False Positive Prevention/run as flag value after status",
+			cmdLine: testRoborevExe + ` daemon status --output run`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "False Positive Prevention/run as positional arg after status",
+			cmdLine: testRoborevExe + ` daemon status run`,
+			want:    processNotRoborev,
 		},
 	}
 
-	for _, g := range tests {
-		t.Run(g.group, func(t *testing.T) {
-			for _, tt := range g.cases {
-				t.Run(tt.name, func(t *testing.T) {
-					got := classifyCommandLine(tt.cmdLine)
-					if got != tt.want {
-						t.Errorf("classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
-					}
-				})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyCommandLine(tt.cmdLine)
+			if got != tt.want {
+				t.Errorf("classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
 			}
 		})
 	}

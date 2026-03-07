@@ -45,6 +45,36 @@ func (h *syncTestHelper) createPendingJob(sha string) *ReviewJob {
 	return job
 }
 
+func (h *syncTestHelper) getRepoIdentity(id int64) string {
+	var identity sql.NullString
+	err := h.db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, id).Scan(&identity)
+	if err != nil {
+		h.t.Fatalf("Query identity failed: %v", err)
+	}
+	return identity.String
+}
+
+func (h *syncTestHelper) getSourceMachineID(jobID int64) *string {
+	var sourceMachineID *string
+	err := h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID).Scan(&sourceMachineID)
+	if err != nil {
+		h.t.Fatalf("Query failed: %v", err)
+	}
+	return sourceMachineID
+}
+
+func (h *syncTestHelper) getJobModel(uuid string) *string {
+	var model sql.NullString
+	err := h.db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, uuid).Scan(&model)
+	if err != nil {
+		h.t.Fatalf("Failed to query model: %v", err)
+	}
+	if !model.Valid {
+		return nil
+	}
+	return &model.String
+}
+
 func (h *syncTestHelper) clearSourceMachineID(jobID int64) {
 	_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, jobID)
 	if err != nil {
@@ -59,16 +89,32 @@ func (h *syncTestHelper) clearRepoIdentity(repoID int64) {
 	}
 }
 
+func (h *syncTestHelper) insertLegacyRepo(path, name string) int64 {
+	_, err := h.db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`, path, name)
+	if err != nil {
+		h.t.Fatalf("Insert repo failed: %v", err)
+	}
+	var repoID int64
+	err = h.db.QueryRow(`SELECT id FROM repos WHERE root_path = ?`, path).Scan(&repoID)
+	if err != nil {
+		h.t.Fatalf("Get repo ID failed: %v", err)
+	}
+	return repoID
+}
+
+func (h *syncTestHelper) insertJobWithNullModel(uuid string, repoID int64) {
+	_, err := h.db.Exec(`
+		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, enqueued_at)
+		VALUES (?, ?, 'HEAD', 'test-agent', 'done', datetime('now'))
+	`, uuid, repoID)
+	if err != nil {
+		h.t.Fatalf("Failed to insert job with NULL model: %v", err)
+	}
+}
+
 // createCompletedJob creates a job, marks it done, and creates a review.
 func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
-	commit, err := h.db.GetOrCreateCommit(h.repo.ID, sha, "Author", "Subject", time.Now())
-	if err != nil {
-		h.t.Fatalf("Failed to create commit: %v", err)
-	}
-	job, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		h.t.Fatalf("Failed to enqueue job: %v", err)
-	}
+	job := h.createPendingJob(sha)
 	claimed, err := h.db.ClaimJob("worker")
 	if err != nil {
 		h.t.Fatalf("Failed to claim job: %v", err)
@@ -87,24 +133,14 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 }
 
 func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
-	var err error
-	if syncedAt.Valid {
-		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
-	} else {
-		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
-	}
+	_, err := h.db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt, updatedAt, id)
 	if err != nil {
 		h.t.Fatalf("Failed to set job timestamps: %v", err)
 	}
 }
 
 func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
-	var err error
-	if syncedAt.Valid {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
-	} else {
-		_, err = h.db.Exec(`UPDATE reviews SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
-	}
+	_, err := h.db.Exec(`UPDATE reviews SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt, updatedAt, id)
 	if err != nil {
 		h.t.Fatalf("Failed to set review timestamps: %v", err)
 	}
@@ -222,7 +258,6 @@ func createLegacyCommonTables(t *testing.T, db *sql.DB) {
 func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
 	_, err := db.Exec(ddl)
 	if err != nil {
-		db.Close()
 		t.Fatalf("Failed to create old schema: %v", err)
 	}
 	createLegacyCommonTables(t, db)

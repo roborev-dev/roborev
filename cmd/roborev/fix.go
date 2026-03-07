@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -30,7 +29,12 @@ var (
 	fixDaemonMaxRetries          = 3
 	fixDaemonRecoveryWait        = 1 * time.Minute
 	fixDaemonRecoveryPoll        = 1 * time.Second
-	fixDaemonEnsure              = ensureDaemon
+	fixDaemonEnsure              = func() (string, error) {
+		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
+			return fmt.Sprintf("http://%s", info.Addr), nil
+		}
+		return "", fmt.Errorf("daemon not running")
+	}
 	fixDaemonSleep               = time.Sleep
 	enqueueIfNeededProbeAttempts = 10
 	enqueueIfNeededProbeDelay    = 1 * time.Second
@@ -114,7 +118,7 @@ Examples:
 				// queryOpenJobs omits the branch filter.
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
-					workDir, err := os.Getwd()
+					workDir, err := getWorkDir(cmd)
 					if err != nil {
 						return fmt.Errorf("get working directory: %w", err)
 					}
@@ -149,7 +153,7 @@ Examples:
 				if len(jobIDs) == 0 {
 					effectiveBranch := branch
 					if !allBranches && effectiveBranch == "" {
-						workDir, err := os.Getwd()
+						workDir, err := getWorkDir(cmd)
 						if err != nil {
 							return fmt.Errorf("get working directory: %w", err)
 						}
@@ -168,7 +172,7 @@ Examples:
 				// Default to current branch unless --branch or --all-branches is set
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
-					workDir, err := os.Getwd()
+					workDir, err := getWorkDir(cmd)
 					if err != nil {
 						return fmt.Errorf("get working directory: %w", err)
 					}
@@ -313,17 +317,24 @@ func resolveFixModel(
 	cliAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) string {
-	configAgent := config.ResolveAgentForWorkflow(
-		"", repoPath, cfg, "fix", reasoning,
-	)
-	cliAgentChanged := cliAgent != "" &&
-		agent.CanonicalName(cliAgent) != agent.CanonicalName(configAgent)
-	if cliAgentChanged && cliModel == "" {
-		return config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
+	if cliModel != "" {
+		return config.ResolveModelForWorkflow(cliModel, repoPath, cfg, "fix", reasoning)
 	}
-	return config.ResolveModelForWorkflow(
-		cliModel, repoPath, cfg, "fix", reasoning,
-	)
+	if cliAgent == "" {
+		return config.ResolveModelForWorkflow("", repoPath, cfg, "fix", reasoning)
+	}
+
+	workflowAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
+	if agent.CanonicalName(cliAgent) == agent.CanonicalName(workflowAgent) {
+		return config.ResolveModelForWorkflow("", repoPath, cfg, "fix", reasoning)
+	}
+
+	fallbackAgent := config.ResolveGenericFallbackAgent(repoPath, cfg)
+	if agent.CanonicalName(cliAgent) == agent.CanonicalName(fallbackAgent) {
+		return config.ResolveGenericFallbackModel(repoPath, cfg)
+	}
+
+	return ""
 }
 
 // resolveFixAgent resolves and configures the agent for fix operations.
@@ -373,12 +384,13 @@ func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions) error {
 
 func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen map[int64]bool) error {
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 
 	// Get working directory and repo root
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -394,20 +406,26 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
 		}
 
-		err := fixSingleJob(cmd, repoRoot, jobID, opts)
+		err := fixSingleJob(cmd, serverAddr, repoRoot, jobID, opts)
 		if err != nil {
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
 			}
-			// In discovery mode (seen != nil), log a warning and
-			// continue best-effort. For explicit job IDs (seen ==
-			// nil), return the error so the CLI exits non-zero.
-			if seen != nil {
-				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
-				seen[jobID] = true
-				continue
+			var eligErr *jobEligibilityError
+			isEligErr := errors.As(err, &eligErr)
+
+			// For explicit job IDs (seen == nil)
+			if seen == nil {
+				return fmt.Errorf("error fixing job %d: %w", jobID, err)
 			}
-			return fmt.Errorf("error fixing job %d: %w", jobID, err)
+
+			// In discovery mode (seen != nil)
+			if !isEligErr {
+				return fmt.Errorf("error fixing job %d: %w", jobID, err)
+			}
+			cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
+			seen[jobID] = true
+			continue
 		}
 		// Mark as seen so the re-query loop doesn't retry this job.
 		// Only successfully attempted jobs reach here.
@@ -421,7 +439,8 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 
 func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOptions) error {
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -429,7 +448,7 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -442,7 +461,7 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 	seen := make(map[int64]bool)
 
 	for {
-		jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
+		jobIDs, err := queryOpenJobIDs(ctx, serverAddr, repoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -485,7 +504,7 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 
 func queryOpenJobs(
 	ctx context.Context,
-	repoRoot, branch string,
+	serverAddr, repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
 	jobs, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.ReviewJob, error) {
 		queryURL := fmt.Sprintf(
@@ -527,9 +546,9 @@ func queryOpenJobs(
 
 func queryOpenJobIDs(
 	ctx context.Context,
-	repoRoot, branch string,
+	serverAddr, repoRoot, branch string,
 ) ([]int64, error) {
-	jobs, err := queryOpenJobs(ctx, repoRoot, branch)
+	jobs, err := queryOpenJobs(ctx, serverAddr, repoRoot, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +561,8 @@ func queryOpenJobIDs(
 
 // runFixList prints open jobs with detailed information without running any agent.
 func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -550,7 +570,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -559,7 +579,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		repoRoot = root
 	}
 
-	jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
+	jobIDs, err := queryOpenJobIDs(ctx, serverAddr, repoRoot, branch)
 	if err != nil {
 		return err
 	}
@@ -671,7 +691,7 @@ func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
 	return storage.ParseVerdict(review.Output)
 }
 
-func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {
+func fixSingleJob(cmd *cobra.Command, serverAddr string, repoRoot string, jobID int64, opts fixOptions) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -684,7 +704,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	if job.Status != storage.JobStatusDone {
-		return fmt.Errorf("job %d is not complete (status: %s)", jobID, job.Status)
+		return &jobEligibilityError{fmt.Errorf("job %d is not complete (status: %s)", jobID, job.Status)}
 	}
 
 	// Fetch the review/analysis output
@@ -715,7 +735,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Resolve agent
 	fixAgent, err := resolveFixAgent(repoRoot, opts)
 	if err != nil {
-		return err
+		return &agentExecutionError{fmt.Errorf("resolve agent: %w", err)}
 	}
 
 	if !opts.quiet {
@@ -741,7 +761,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		fmtr.Flush()
 	}
 	if err != nil {
-		return err
+		return &agentExecutionError{err}
 	}
 
 	if !opts.quiet {
@@ -799,10 +819,29 @@ type batchEntry struct {
 	review *storage.Review
 }
 
+// agentExecutionError wraps errors that indicate a fundamental failure in
+// agent resolution or execution, which should abort multi-job operations.
+type agentExecutionError struct {
+	err error
+}
+
+func (e *agentExecutionError) Error() string { return e.err.Error() }
+func (e *agentExecutionError) Unwrap() error { return e.err }
+
+// jobEligibilityError wraps errors indicating a job is not in a valid state
+// to be fixed, which should be skipped in multi-job operations instead of failing.
+type jobEligibilityError struct {
+	err error
+}
+
+func (e *jobEligibilityError) Error() string { return e.err.Error() }
+func (e *jobEligibilityError) Unwrap() error { return e.err }
+
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
 func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst bool, opts fixOptions) error {
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 	ctx := cmd.Context()
@@ -810,7 +849,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -826,7 +865,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryOpenJobIDs(ctx, apiRepoRoot, branch)
+		jobIDs, err = queryOpenJobIDs(ctx, serverAddr, apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -849,10 +888,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	for _, id := range jobIDs {
 		job, err := fetchJob(ctx, serverAddr, id)
 		if err != nil {
-			if !opts.quiet {
-				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
-			}
-			continue
+			return fmt.Errorf("fetch job %d: %w", id, err)
 		}
 		if job.Status != storage.JobStatusDone {
 			if !opts.quiet {
@@ -862,10 +898,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		}
 		review, err := fetchReview(ctx, serverAddr, id)
 		if err != nil {
-			if !opts.quiet {
-				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
-			}
-			continue
+			return fmt.Errorf("fetch review for job %d: %w", id, err)
 		}
 		if jobVerdict(job, review) == "P" {
 			if !opts.quiet {
@@ -894,7 +927,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	// Resolve agent once
 	fixAgent, err := resolveFixAgent(repoRoot, opts)
 	if err != nil {
-		return err
+		return &agentExecutionError{fmt.Errorf("resolve agent: %w", err)}
 	}
 
 	for i, batch := range batches {
@@ -936,7 +969,13 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			fmtr.Flush()
 		}
 		if err != nil {
-			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
+			var agentErr *agentExecutionError
+			if errors.As(err, &agentErr) {
+				return fmt.Errorf("error in batch %d: %w", i+1, err)
+			}
+			if !opts.quiet {
+				cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
+			}
 			continue
 		}
 
@@ -1273,15 +1312,16 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 
 func refreshFixDaemonAddr(ctx context.Context) (string, error) {
 	if shouldStopFixDaemonRetry(ctx) {
-		return serverAddr, ctx.Err()
+		return "", ctx.Err()
 	}
-	if err := fixDaemonEnsure(); err != nil {
-		return serverAddr, err
+	addr, err := fixDaemonEnsure()
+	if err != nil {
+		return "", err
 	}
 	if shouldStopFixDaemonRetry(ctx) {
-		return serverAddr, ctx.Err()
+		return "", ctx.Err()
 	}
-	return serverAddr, nil
+	return addr, nil
 }
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
@@ -1389,21 +1429,18 @@ func waitForFixDaemonRecovery(ctx context.Context) (string, error) {
 	var lastErr error
 	for {
 		if ctx != nil && ctx.Err() != nil {
-			return serverAddr, ctx.Err()
+			return "", ctx.Err()
 		}
-		if err := fixDaemonEnsure(); err == nil {
-			return serverAddr, nil
-		} else {
-			lastErr = err
+		addr, err := fixDaemonEnsure()
+		if err == nil {
+			return addr, nil
 		}
+		lastErr = err
 		if time.Now().After(deadline) {
-			if lastErr != nil {
-				return serverAddr, lastErr
-			}
-			return serverAddr, fmt.Errorf("daemon recovery timed out")
+			return "", lastErr
 		}
 		if ctx != nil && ctx.Err() != nil {
-			return serverAddr, ctx.Err()
+			return "", ctx.Err()
 		}
 		fixDaemonSleep(fixDaemonRecoveryPoll)
 	}

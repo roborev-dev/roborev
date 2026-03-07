@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -121,7 +122,11 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			var body io.Reader
+			if tt.method == http.MethodPost {
+				body = strings.NewReader(`{}`)
+			}
+			req := httptest.NewRequest(tt.method, tt.path, body)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
 
@@ -190,7 +195,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 		path       string
 		wantCalled bool
 		wantStatus int
-		makeHooks  func(called *bool) MockRefineHooks
+		hookToMock string
 	}{
 		{
 			name:       "OnStatus hook invoked on GET",
@@ -198,20 +203,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/status",
 			wantCalled: true,
 			wantStatus: http.StatusOK,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnStatus: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						_ = json.NewEncoder(w).Encode(map[string]any{
-							"version": version.Version,
-						})
-						return true
-					},
-				}
-			},
+			hookToMock: "OnStatus",
 		},
 		{
 			name:       "OnReview hook invoked on GET",
@@ -219,18 +211,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/review",
 			wantCalled: true,
 			wantStatus: http.StatusOK,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnReview: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						w.WriteHeader(http.StatusOK)
-						return true
-					},
-				}
-			},
+			hookToMock: "OnReview",
 		},
 		{
 			name:       "OnComments hook invoked on GET",
@@ -238,18 +219,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/comments",
 			wantCalled: true,
 			wantStatus: http.StatusOK,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnComments: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						w.WriteHeader(http.StatusOK)
-						return true
-					},
-				}
-			},
+			hookToMock: "OnComments",
 		},
 		{
 			name:       "OnGetJobs hook invoked on GET",
@@ -257,18 +227,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/jobs",
 			wantCalled: true,
 			wantStatus: http.StatusOK,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnGetJobs: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						w.WriteHeader(http.StatusOK)
-						return true
-					},
-				}
-			},
+			hookToMock: "OnGetJobs",
 		},
 		{
 			name:       "OnEnqueue hook invoked on POST",
@@ -276,18 +235,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/enqueue",
 			wantCalled: true,
 			wantStatus: http.StatusCreated,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnEnqueue: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						w.WriteHeader(http.StatusCreated)
-						return true
-					},
-				}
-			},
+			hookToMock: "OnEnqueue",
 		},
 		{
 			name:       "OnStatus hook not invoked on POST",
@@ -295,17 +243,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/status",
 			wantCalled: false,
 			wantStatus: http.StatusMethodNotAllowed,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnStatus: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						return true
-					},
-				}
-			},
+			hookToMock: "OnStatus",
 		},
 		{
 			name:       "OnReview hook not invoked on POST",
@@ -313,17 +251,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/review",
 			wantCalled: false,
 			wantStatus: http.StatusMethodNotAllowed,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnReview: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						return true
-					},
-				}
-			},
+			hookToMock: "OnReview",
 		},
 		{
 			name:       "OnComments hook not invoked on POST",
@@ -331,17 +259,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/comments",
 			wantCalled: false,
 			wantStatus: http.StatusMethodNotAllowed,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnComments: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						return true
-					},
-				}
-			},
+			hookToMock: "OnComments",
 		},
 		{
 			name:       "OnGetJobs hook not invoked on POST",
@@ -349,17 +267,7 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/jobs",
 			wantCalled: false,
 			wantStatus: http.StatusMethodNotAllowed,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnGetJobs: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						return true
-					},
-				}
-			},
+			hookToMock: "OnGetJobs",
 		},
 		{
 			name:       "OnEnqueue hook not invoked on GET",
@@ -367,24 +275,45 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			path:       "/api/enqueue",
 			wantCalled: false,
 			wantStatus: http.StatusMethodNotAllowed,
-			makeHooks: func(called *bool) MockRefineHooks {
-				return MockRefineHooks{
-					OnEnqueue: func(
-						w http.ResponseWriter, r *http.Request,
-						_ *mockRefineState,
-					) bool {
-						*called = true
-						return true
-					},
-				}
-			},
+			hookToMock: "OnEnqueue",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var hookCalled bool
-			md := NewMockDaemon(t, tt.makeHooks(&hookCalled))
+			makeHooks := func(hookName string, called *bool) MockRefineHooks {
+				hooks := MockRefineHooks{}
+				genericHook := func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					*called = true
+					switch hookName {
+					case "OnStatus":
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"version": version.Version,
+						})
+					case "OnEnqueue":
+						w.WriteHeader(http.StatusCreated)
+					default:
+						w.WriteHeader(http.StatusOK)
+					}
+					return true
+				}
+				switch hookName {
+				case "OnStatus":
+					hooks.OnStatus = genericHook
+				case "OnReview":
+					hooks.OnReview = genericHook
+				case "OnComments":
+					hooks.OnComments = genericHook
+				case "OnGetJobs":
+					hooks.OnGetJobs = genericHook
+				case "OnEnqueue":
+					hooks.OnEnqueue = genericHook
+				}
+				return hooks
+			}
+
+			md := NewMockDaemon(t, makeHooks(tt.hookToMock, &hookCalled))
 			defer md.Close()
 
 			resp, err := http.DefaultClient.Do(
@@ -424,11 +353,36 @@ type MockDaemonBuilder struct {
 }
 
 func newMockDaemonBuilder(t *testing.T) *MockDaemonBuilder {
-	return &MockDaemonBuilder{
+	b := &MockDaemonBuilder{
 		t:        t,
 		handlers: make(map[string]http.HandlerFunc),
 		reviews:  make(map[int64]storage.Review),
 	}
+	b.handlers["/api/comment"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusCreated) }
+	b.handlers["/api/review/close"] = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
+	return b
+}
+
+func (b *MockDaemonBuilder) registerReviewHandlerIfMissing() {
+	if _, ok := b.handlers["/api/review"]; ok || len(b.reviews) == 0 {
+		return
+	}
+	b.handlers["/api/review"] = b.handleReviewRequest
+}
+
+func (b *MockDaemonBuilder) handleReviewRequest(w http.ResponseWriter, r *http.Request) {
+	jobIDStr := r.URL.Query().Get("job_id")
+	jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid job_id", http.StatusBadRequest)
+		return
+	}
+
+	if review, ok := b.reviews[jobID]; ok {
+		json.NewEncoder(w).Encode(review)
+		return
+	}
+	http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
 }
 
 func (b *MockDaemonBuilder) WithHandler(path string, handler http.HandlerFunc) *MockDaemonBuilder {
@@ -454,43 +408,15 @@ func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilde
 }
 
 func (b *MockDaemonBuilder) Build() *httptest.Server {
-	// Register default review handler if not already overridden
-	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
-		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
-			jobIDStr := r.URL.Query().Get("job_id")
-			jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
-			if err != nil {
-				http.Error(w, "invalid job_id", http.StatusBadRequest)
-				return
-			}
-
-			if review, ok := b.reviews[jobID]; ok {
-				json.NewEncoder(w).Encode(review)
-			} else {
-				// Fallback: if there is only one review and no job_id was requested
-				// (or even if it was), some tests might rely on "any review".
-				// But strictly, we should require job_id match.
-				// However, existing tests might be loose.
-				// For now, return 404 if not found to be strict.
-				http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
-			}
-		}
-	}
+	b.registerReviewHandlerIfMissing()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h, ok := b.handlers[r.URL.Path]; ok {
 			h(w, r)
 			return
 		}
-		// Default handlers
-		switch r.URL.Path {
-		case "/api/comment":
-			w.WriteHeader(http.StatusCreated)
-		case "/api/review/close":
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+		w.WriteHeader(http.StatusNotFound)
 	})
-	return daemonFromHandler(b.t, handler).Server
+	md := daemonFromHandler(b.t, handler)
+	return md.Server
 }

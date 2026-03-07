@@ -12,21 +12,48 @@ import (
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
+const (
+	testAgent    = "claude"
+	defaultAgent = "codex"
+	testModel    = "gpt-4"
+)
+
+type workflowTestCase struct {
+	name     string
+	cli      string
+	repo     map[string]string
+	global   *Config
+	workflow string
+	level    string
+	expect   string
+}
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.ServerAddr != "127.0.0.1:7373" {
-		t.Errorf("Expected ServerAddr '127.0.0.1:7373', got '%s'", cfg.ServerAddr)
-	}
-	if cfg.MaxWorkers != 4 {
-		t.Errorf("Expected MaxWorkers 4, got %d", cfg.MaxWorkers)
-	}
-	if cfg.DefaultAgent != "codex" {
-		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
-	}
-	if !cfg.MouseEnabled {
-		t.Error("Expected MouseEnabled to default to true")
-	}
+	t.Run("ServerAddr", func(t *testing.T) {
+		if cfg.ServerAddr != "127.0.0.1:7373" {
+			t.Errorf("Expected ServerAddr '127.0.0.1:7373', got '%s'", cfg.ServerAddr)
+		}
+	})
+
+	t.Run("MaxWorkers", func(t *testing.T) {
+		if cfg.MaxWorkers != 4 {
+			t.Errorf("Expected MaxWorkers 4, got %d", cfg.MaxWorkers)
+		}
+	})
+
+	t.Run("DefaultAgent", func(t *testing.T) {
+		if cfg.DefaultAgent != "codex" {
+			t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
+		}
+	})
+
+	t.Run("MouseEnabled", func(t *testing.T) {
+		if !cfg.MouseEnabled {
+			t.Error("Expected MouseEnabled to default to true")
+		}
+	})
 }
 
 func TestDataDir(t *testing.T) {
@@ -64,32 +91,26 @@ func TestDataDir(t *testing.T) {
 
 func TestResolveAgent(t *testing.T) {
 	cfg := DefaultConfig()
-	tmpDir := t.TempDir()
 
-	// Test explicit agent takes precedence
-	agent := ResolveAgent("claude-code", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code', got '%s'", agent)
+	tests := []struct {
+		name       string
+		explicit   string
+		repoConfig string
+		want       string
+	}{
+		{"explicit takes precedence", "claude-code", "", "claude-code"},
+		{"empty explicit falls back to global", "", "", "codex"},
+		{"per-repo config", "", `agent = "claude-code"`, "claude-code"},
+		{"explicit overrides repo", "codex", `agent = "claude-code"`, "codex"},
 	}
 
-	// Test empty explicit falls back to global config
-	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (from global), got '%s'", agent)
-	}
-
-	// Test per-repo config
-	writeRepoConfigStr(t, tmpDir, `agent = "claude-code"`)
-
-	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code' (from repo config), got '%s'", agent)
-	}
-
-	// Explicit still takes precedence over repo config
-	agent = ResolveAgent("codex", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (explicit), got '%s'", agent)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			if got := ResolveAgent(tt.explicit, tmpDir, cfg); got != tt.want {
+				t.Errorf("ResolveAgent() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -110,12 +131,17 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 		t.Fatalf("LoadGlobal failed: %v", err)
 	}
 
-	if loaded.DefaultAgent != "claude-code" {
-		t.Errorf("Expected DefaultAgent 'claude-code', got '%s'", loaded.DefaultAgent)
-	}
-	if loaded.MaxWorkers != 8 {
-		t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
-	}
+	t.Run("DefaultAgent", func(t *testing.T) {
+		if loaded.DefaultAgent != "claude-code" {
+			t.Errorf("Expected DefaultAgent 'claude-code', got '%s'", loaded.DefaultAgent)
+		}
+	})
+
+	t.Run("MaxWorkers", func(t *testing.T) {
+		if loaded.MaxWorkers != 8 {
+			t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
+		}
+	})
 }
 
 func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
@@ -370,7 +396,7 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeRepoConfig(t, tmpDir, M{
 		"fix_agent":          "codex",
-		"fix_agent_standard": "claude",
+		"fix_agent_standard": testAgent,
 		"fix_agent_fast":     "gemini",
 	})
 
@@ -383,7 +409,7 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 	}
 
 	agent := ResolveAgentForWorkflow("", tmpDir, nil, "fix", reasoning)
-	if agent != "claude" {
+	if agent != testAgent {
 		t.Errorf("expected fix_agent_standard 'claude', got %q", agent)
 	}
 
@@ -729,7 +755,7 @@ func TestSyncConfigValidate(t *testing.T) {
 func TestLoadGlobalWithSyncConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	writeTestFile(t, tmpDir, "config.toml", `
 default_agent = "codex"
 
 [sync]
@@ -738,9 +764,7 @@ postgres_url = "postgres://roborev:pass@localhost:5432/roborev"
 interval = "10m"
 machine_name = "test-machine"
 connect_timeout = "10s"
-`), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
-	}
+`)
 
 	cfg, err := LoadGlobalFrom(configPath)
 	if err != nil {
@@ -852,9 +876,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("valid file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, "my-project\n")
 		id, err := ReadRoborevID(tmpDir)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
@@ -866,9 +888,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("valid file with whitespace", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, "  my-project  \n\n")
 		id, err := ReadRoborevID(tmpDir)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
@@ -880,9 +900,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("invalid file content", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, ".invalid-start")
 		id, err := ReadRoborevID(tmpDir)
 		if err == nil {
 			t.Error("Expected error for invalid content")
@@ -894,9 +912,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, "")
 		id, err := ReadRoborevID(tmpDir)
 		if err == nil {
 			t.Error("Expected error for empty file")
@@ -910,9 +926,7 @@ func TestReadRoborevID(t *testing.T) {
 func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("uses roborev-id when present", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, "my-custom-id")
 
 		mockRemote := func(repoPath, remoteName string) string {
 			return "https://github.com/user/repo.git"
@@ -979,9 +993,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("skips invalid roborev-id and uses remote", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		// Write invalid content (starts with dot)
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeIDFile(t, tmpDir, ".invalid")
 
 		mockRemote := func(repoPath, remoteName string) string {
 			return "https://github.com/user/repo.git"
@@ -1162,71 +1174,63 @@ func TestResolveMaxPromptSize(t *testing.T) {
 }
 
 func TestResolveAgentForWorkflow(t *testing.T) {
-	tests := []struct {
-		name     string
-		cli      string
-		repo     map[string]string
-		global   *Config
-		workflow string
-		level    string
-		expect   string
-	}{
+	tests := []workflowTestCase{
 		// Defaults
 		{"empty config", "", nil, nil, "review", "fast", "codex"},
-		{"global default only", "", nil, &Config{DefaultAgent: "claude"}, "review", "fast", "claude"},
+		{"global default only", "", nil, &Config{DefaultAgent: testAgent}, "review", "fast", testAgent},
 
 		// Global specificity ladder
-		{"global workflow > global default", "", nil, &Config{DefaultAgent: "codex", ReviewAgent: "claude"}, "review", "fast", "claude"},
-		{"global level > global workflow", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "fast", "claude"},
-		{"global level ignored for wrong level", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "thorough", "codex"},
+		{"global workflow > global default", "", nil, &Config{DefaultAgent: "codex", ReviewAgent: testAgent}, "review", "fast", testAgent},
+		{"global level > global workflow", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: testAgent}, "review", "fast", testAgent},
+		{"global level ignored for wrong level", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: testAgent}, "review", "thorough", "codex"},
 
 		// Repo specificity ladder
-		{"repo generic only", "", M{"agent": "claude"}, nil, "review", "fast", "claude"},
-		{"repo workflow > repo generic", "", M{"agent": "codex", "review_agent": "claude"}, nil, "review", "fast", "claude"},
-		{"repo level > repo workflow", "", M{"review_agent": "codex", "review_agent_fast": "claude"}, nil, "review", "fast", "claude"},
+		{"repo generic only", "", M{"agent": testAgent}, nil, "review", "fast", testAgent},
+		{"repo workflow > repo generic", "", M{"agent": "codex", "review_agent": testAgent}, nil, "review", "fast", testAgent},
+		{"repo level > repo workflow", "", M{"review_agent": "codex", "review_agent_fast": testAgent}, nil, "review", "fast", testAgent},
 
 		// Layer beats specificity (Option A)
-		{"repo generic > global level-specific", "", M{"agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
-		{"repo generic > global workflow-specific", "", M{"agent": "claude"}, &Config{ReviewAgent: "gemini"}, "review", "fast", "claude"},
-		{"repo workflow > global level-specific", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
+		{"repo generic > global level-specific", "", M{"agent": testAgent}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", testAgent},
+		{"repo generic > global workflow-specific", "", M{"agent": testAgent}, &Config{ReviewAgent: "gemini"}, "review", "fast", testAgent},
+		{"repo workflow > global level-specific", "", M{"review_agent": testAgent}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", testAgent},
 
 		// CLI wins all
-		{"cli > repo level-specific", "droid", M{"review_agent_fast": "claude"}, nil, "review", "fast", "droid"},
-		{"cli > everything", "droid", M{"review_agent_fast": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "droid"},
+		{"cli > repo level-specific", "droid", M{"review_agent_fast": testAgent}, nil, "review", "fast", "droid"},
+		{"cli > everything", "droid", M{"review_agent_fast": testAgent}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "droid"},
 
 		// Refine workflow isolation
-		{"refine uses refine_agent not review_agent", "", M{"review_agent": "claude", "refine_agent": "gemini"}, nil, "refine", "fast", "gemini"},
-		{"refine level-specific", "", M{"refine_agent": "codex", "refine_agent_fast": "claude"}, nil, "refine", "fast", "claude"},
-		{"review config ignored for refine", "", M{"review_agent_fast": "claude"}, &Config{DefaultAgent: "codex"}, "refine", "fast", "codex"},
+		{"refine uses refine_agent not review_agent", "", M{"review_agent": testAgent, "refine_agent": "gemini"}, nil, "refine", "fast", "gemini"},
+		{"refine level-specific", "", M{"refine_agent": "codex", "refine_agent_fast": testAgent}, nil, "refine", "fast", testAgent},
+		{"review config ignored for refine", "", M{"review_agent_fast": testAgent}, &Config{DefaultAgent: "codex"}, "refine", "fast", "codex"},
 
 		// Level isolation
-		{"fast config ignored for standard", "", M{"review_agent_fast": "claude", "review_agent": "codex"}, nil, "review", "standard", "codex"},
-		{"standard config used for standard", "", M{"review_agent_standard": "claude"}, nil, "review", "standard", "claude"},
-		{"thorough config used for thorough", "", M{"review_agent_thorough": "claude"}, nil, "review", "thorough", "claude"},
+		{"fast config ignored for standard", "", M{"review_agent_fast": testAgent, "review_agent": "codex"}, nil, "review", "standard", "codex"},
+		{"standard config used for standard", "", M{"review_agent_standard": testAgent}, nil, "review", "standard", testAgent},
+		{"thorough config used for thorough", "", M{"review_agent_thorough": testAgent}, nil, "review", "thorough", testAgent},
 
 		// Mixed layers
-		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini", ReviewAgentThorough: "droid"}, "review", "fast", "claude"},
-		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, &Config{ReviewAgentFast: "claude"}, "review", "standard", "codex"},
+		{"repo workflow + global level (repo wins)", "", M{"review_agent": testAgent}, &Config{ReviewAgentFast: "gemini", ReviewAgentThorough: "droid"}, "review", "fast", testAgent},
+		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, &Config{ReviewAgentFast: testAgent}, "review", "standard", "codex"},
 
 		// Fix workflow
-		{"fix uses fix_agent", "", M{"fix_agent": "claude"}, nil, "fix", "fast", "claude"},
-		{"fix level-specific", "", M{"fix_agent": "codex", "fix_agent_fast": "claude"}, nil, "fix", "fast", "claude"},
-		{"fix falls back to generic agent", "", M{"agent": "claude"}, nil, "fix", "fast", "claude"},
-		{"fix falls back to global fix_agent", "", nil, &Config{FixAgent: "claude"}, "fix", "fast", "claude"},
-		{"fix global level-specific", "", nil, &Config{FixAgent: "codex", FixAgentFast: "claude"}, "fix", "fast", "claude"},
-		{"fix standard level selects fix_agent_standard", "", M{"fix_agent_standard": "claude", "fix_agent": "codex"}, nil, "fix", "standard", "claude"},
-		{"fix default reasoning (standard) selects level-specific", "", nil, &Config{FixAgentStandard: "claude", FixAgent: "codex"}, "fix", "standard", "claude"},
-		{"fix isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
-		{"fix isolated from refine", "", M{"refine_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
+		{"fix uses fix_agent", "", M{"fix_agent": testAgent}, nil, "fix", "fast", testAgent},
+		{"fix level-specific", "", M{"fix_agent": "codex", "fix_agent_fast": testAgent}, nil, "fix", "fast", testAgent},
+		{"fix falls back to generic agent", "", M{"agent": testAgent}, nil, "fix", "fast", testAgent},
+		{"fix falls back to global fix_agent", "", nil, &Config{FixAgent: testAgent}, "fix", "fast", testAgent},
+		{"fix global level-specific", "", nil, &Config{FixAgent: "codex", FixAgentFast: testAgent}, "fix", "fast", testAgent},
+		{"fix standard level selects fix_agent_standard", "", M{"fix_agent_standard": testAgent, "fix_agent": "codex"}, nil, "fix", "standard", testAgent},
+		{"fix default reasoning (standard) selects level-specific", "", nil, &Config{FixAgentStandard: testAgent, FixAgent: "codex"}, "fix", "standard", testAgent},
+		{"fix isolated from review", "", M{"review_agent": testAgent}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
+		{"fix isolated from refine", "", M{"refine_agent": testAgent}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
 
 		// Design workflow
-		{"design uses design_agent", "", M{"design_agent": "claude"}, nil, "design", "fast", "claude"},
-		{"design level-specific", "", M{"design_agent": "codex", "design_agent_fast": "claude"}, nil, "design", "fast", "claude"},
-		{"design falls back to generic agent", "", M{"agent": "claude"}, nil, "design", "fast", "claude"},
-		{"design falls back to global design_agent", "", nil, &Config{DesignAgent: "claude"}, "design", "fast", "claude"},
-		{"design global level-specific", "", nil, &Config{DesignAgent: "codex", DesignAgentThorough: "claude"}, "design", "thorough", "claude"},
-		{"design isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
-		{"design isolated from security", "", M{"security_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
+		{"design uses design_agent", "", M{"design_agent": testAgent}, nil, "design", "fast", testAgent},
+		{"design level-specific", "", M{"design_agent": "codex", "design_agent_fast": testAgent}, nil, "design", "fast", testAgent},
+		{"design falls back to generic agent", "", M{"agent": testAgent}, nil, "design", "fast", testAgent},
+		{"design falls back to global design_agent", "", nil, &Config{DesignAgent: testAgent}, "design", "fast", testAgent},
+		{"design global level-specific", "", nil, &Config{DesignAgent: "codex", DesignAgentThorough: testAgent}, "design", "thorough", testAgent},
+		{"design isolated from review", "", M{"review_agent": testAgent}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
+		{"design isolated from security", "", M{"security_agent": testAgent}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
 	}
 
 	for _, tt := range tests {
@@ -1242,15 +1246,7 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 }
 
 func TestResolveModelForWorkflow(t *testing.T) {
-	tests := []struct {
-		name     string
-		cli      string
-		repo     map[string]string
-		global   *Config
-		workflow string
-		level    string
-		expect   string
-	}{
+	tests := []workflowTestCase{
 		// Defaults (model defaults to empty, not "codex")
 		{"empty config", "", nil, nil, "review", "fast", ""},
 		{"global default only", "", nil, &Config{DefaultModel: "gpt-4"}, "review", "fast", "gpt-4"},
@@ -1299,78 +1295,71 @@ func TestResolveModelForWorkflow(t *testing.T) {
 }
 
 func TestResolveWorkflowModel(t *testing.T) {
-	tests := []struct {
-		name     string
-		repo     map[string]string
-		global   *Config
-		workflow string
-		level    string
-		expect   string
-	}{
+	tests := []workflowTestCase{
 		// Empty config returns empty
 		{
-			"empty config",
+			"empty config", "",
 			nil, nil,
 			"fix", "fast", "",
 		},
 		// Skips generic global default_model
 		{
-			"skips global default_model",
+			"skips global default_model", "",
 			nil, &Config{DefaultModel: "gpt-5.4"},
 			"fix", "fast", "",
 		},
 		// Skips generic repo model
 		{
-			"skips repo generic model",
+			"skips repo generic model", "",
 			M{"model": "gpt-5.4"}, nil,
 			"fix", "fast", "",
 		},
 		// Uses workflow-specific model from global config
 		{
-			"global fix_model",
+			"global fix_model", "",
 			nil, &Config{DefaultModel: "gpt-5.4", FixModel: "gemini-2.5-pro"},
 			"fix", "fast", "gemini-2.5-pro",
 		},
 		// Uses level-specific model from global config
 		{
-			"global fix_model_fast",
+			"global fix_model_fast", "",
 			nil, &Config{DefaultModel: "gpt-5.4", FixModelFast: "gemini-2.5-flash"},
 			"fix", "fast", "gemini-2.5-flash",
 		},
 		// Level-specific beats workflow-level in global
 		{
-			"global level > global workflow",
+			"global level > global workflow", "",
 			nil, &Config{FixModel: "gpt-4", FixModelFast: "claude-3"},
 			"fix", "fast", "claude-3",
 		},
 		// Uses workflow-specific model from repo config
 		{
-			"repo fix_model",
+			"repo fix_model", "",
 			M{"model": "gpt-5.4", "fix_model": "gemini-2.5-pro"}, nil,
 			"fix", "fast", "gemini-2.5-pro",
 		},
 		// Uses level-specific model from repo config
 		{
-			"repo fix_model_fast",
+			"repo fix_model_fast", "",
 			M{"fix_model_fast": "claude-3"}, nil,
 			"fix", "fast", "claude-3",
 		},
 		// Repo beats global for workflow-specific
 		{
-			"repo workflow > global workflow",
+			"repo workflow > global workflow", "",
 			M{"fix_model": "repo-model"},
 			&Config{FixModel: "global-model"},
 			"fix", "fast", "repo-model",
 		},
 		// Review workflow isolation
 		{
-			"review workflow uses review_model",
+			"review workflow uses review_model", "",
 			M{"fix_model": "fix-only", "review_model": "review-only"}, nil,
 			"review", "standard", "review-only",
 		},
 		// Skips both global default_model and repo generic model
 		{
-			"skips both generic defaults",
+			"skips both generic defaults", "",
 			M{"model": "repo-generic"},
 			&Config{DefaultModel: "global-generic"},
 			"fix", "fast", "",
@@ -1390,50 +1379,44 @@ func TestResolveWorkflowModel(t *testing.T) {
 }
 
 func TestResolveBackupAgentForWorkflow(t *testing.T) {
-	tests := []struct {
-		name     string
-		repo     map[string]string
-		global   *Config
-		workflow string
-		expect   string
-	}{
+	tests := []workflowTestCase{
 		// No backup configured
-		{"empty config", nil, nil, "review", ""},
-		{"only primary agent configured", M{"review_agent": "claude"}, nil, "review", ""},
+		{"empty config", "", nil, nil, "review", "", ""},
+		{"only primary agent configured", "", M{"review_agent": testAgent}, nil, "review", "", ""},
 
 		// Global backup agent
-		{"global backup only", nil, &Config{ReviewBackupAgent: "test"}, "review", "test"},
-		{"global backup for refine", nil, &Config{RefineBackupAgent: "claude"}, "refine", "claude"},
-		{"global backup for fix", nil, &Config{FixBackupAgent: "codex"}, "fix", "codex"},
-		{"global backup for security", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "gemini"},
-		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
+		{"global backup only", "", nil, &Config{ReviewBackupAgent: "test"}, "review", "", "test"},
+		{"global backup for refine", "", nil, &Config{RefineBackupAgent: testAgent}, "refine", "", testAgent},
+		{"global backup for fix", "", nil, &Config{FixBackupAgent: "codex"}, "fix", "", "codex"},
+		{"global backup for security", "", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "", "gemini"},
+		{"global backup for design", "", nil, &Config{DesignBackupAgent: "droid"}, "design", "", "droid"},
 
 		// Repo backup agent overrides global
-		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
-		{"repo backup only", M{"review_backup_agent": "test"}, nil, "review", "test"},
+		{"repo overrides global", "", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "", "repo-test"},
+		{"repo backup only", "", M{"review_backup_agent": "test"}, nil, "review", "", "test"},
 
 		// Different workflows resolve independently
-		{"review backup doesn't affect refine", M{"review_backup_agent": "claude"}, nil, "refine", ""},
-		{"each workflow has own backup", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "review", "claude"},
-		{"each workflow has own backup - refine", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "refine", "codex"},
+		{"review backup doesn't affect refine", "", M{"review_backup_agent": testAgent}, nil, "refine", "", ""},
+		{"each workflow has own backup", "", M{"review_backup_agent": testAgent, "refine_backup_agent": "codex"}, nil, "review", "", testAgent},
+		{"each workflow has own backup - refine", "", M{"review_backup_agent": testAgent, "refine_backup_agent": "codex"}, nil, "refine", "", "codex"},
 
 		// Unknown workflow returns empty
-		{"unknown workflow", M{"review_backup_agent": "test"}, nil, "unknown", ""},
+		{"unknown workflow", "", M{"review_backup_agent": "test"}, nil, "unknown", "", ""},
 
 		// No reasoning level support for backup agents
-		{"no level variants recognized", M{"review_backup_agent_fast": "claude"}, nil, "review", ""},
-		{"backup agent doesn't use levels", M{"review_backup_agent": "claude"}, nil, "review", "claude"},
+		{"no level variants recognized", "", M{"review_backup_agent_fast": testAgent}, nil, "review", "", ""},
+		{"backup agent doesn't use levels", "", M{"review_backup_agent": testAgent}, nil, "review", "", testAgent},
 
 		// Default/generic backup agent fallback
-		{"global default_backup_agent", nil, &Config{DefaultBackupAgent: "test"}, "review", "test"},
-		{"global default_backup_agent for any workflow", nil, &Config{DefaultBackupAgent: "test"}, "fix", "test"},
-		{"global workflow-specific overrides default", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "review", "claude"},
-		{"global default used when workflow not set", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "fix", "test"},
-		{"repo backup_agent generic", M{"backup_agent": "repo-fallback"}, nil, "review", "repo-fallback"},
-		{"repo backup_agent generic for any workflow", M{"backup_agent": "repo-fallback"}, nil, "refine", "repo-fallback"},
-		{"repo workflow-specific overrides repo generic", M{"backup_agent": "generic", "review_backup_agent": "specific"}, nil, "review", "specific"},
-		{"repo generic overrides global workflow-specific", M{"backup_agent": "repo"}, &Config{ReviewBackupAgent: "global"}, "review", "repo"},
-		{"repo generic overrides global default", M{"backup_agent": "repo"}, &Config{DefaultBackupAgent: "global"}, "review", "repo"},
+		{"global default_backup_agent", "", nil, &Config{DefaultBackupAgent: "test"}, "review", "", "test"},
+		{"global default_backup_agent for any workflow", "", nil, &Config{DefaultBackupAgent: "test"}, "fix", "", "test"},
+		{"global workflow-specific overrides default", "", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: testAgent}, "review", "", testAgent},
+		{"global default used when workflow not set", "", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: testAgent}, "fix", "", "test"},
+		{"repo backup_agent generic", "", M{"backup_agent": "repo-fallback"}, nil, "review", "", "repo-fallback"},
+		{"repo backup_agent generic for any workflow", "", M{"backup_agent": "repo-fallback"}, nil, "refine", "", "repo-fallback"},
+		{"repo workflow-specific overrides repo generic", "", M{"backup_agent": "generic", "review_backup_agent": "specific"}, nil, "review", "", "specific"},
+		{"repo generic overrides global workflow-specific", "", M{"backup_agent": "repo"}, &Config{ReviewBackupAgent: "global"}, "review", "", "repo"},
+		{"repo generic overrides global default", "", M{"backup_agent": "repo"}, &Config{DefaultBackupAgent: "global"}, "review", "", "repo"},
 	}
 
 	for _, tt := range tests {
@@ -1458,46 +1441,40 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 }
 
 func TestResolveBackupModelForWorkflow(t *testing.T) {
-	tests := []struct {
-		name     string
-		repo     map[string]string
-		global   *Config
-		workflow string
-		expect   string
-	}{
+	tests := []workflowTestCase{
 		// No backup model configured
-		{"empty config", nil, nil, "review", ""},
-		{"only backup agent configured", M{"review_backup_agent": "claude"}, nil, "review", ""},
+		{"empty config", "", nil, nil, "review", "", ""},
+		{"only backup agent configured", "", M{"review_backup_agent": testAgent}, nil, "review", "", ""},
 
 		// Global backup model
-		{"global backup model only", nil, &Config{ReviewBackupModel: "gpt-4"}, "review", "gpt-4"},
-		{"global backup model for refine", nil, &Config{RefineBackupModel: "claude-3"}, "refine", "claude-3"},
-		{"global backup model for fix", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "o3-mini"},
-		{"global backup model for security", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "gpt-4"},
-		{"global backup model for design", nil, &Config{DesignBackupModel: "claude-3"}, "design", "claude-3"},
+		{"global backup model only", "", nil, &Config{ReviewBackupModel: "gpt-4"}, "review", "", "gpt-4"},
+		{"global backup model for refine", "", nil, &Config{RefineBackupModel: "claude-3"}, "refine", "", "claude-3"},
+		{"global backup model for fix", "", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "", "o3-mini"},
+		{"global backup model for security", "", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "", "gpt-4"},
+		{"global backup model for design", "", nil, &Config{DesignBackupModel: "claude-3"}, "design", "", "claude-3"},
 
 		// Repo backup model overrides global
-		{"repo overrides global", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "repo-model"},
-		{"repo backup model only", M{"review_backup_model": "gpt-4"}, nil, "review", "gpt-4"},
+		{"repo overrides global", "", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "", "repo-model"},
+		{"repo backup model only", "", M{"review_backup_model": "gpt-4"}, nil, "review", "", "gpt-4"},
 
 		// Different workflows resolve independently
-		{"review backup model doesn't affect refine", M{"review_backup_model": "gpt-4"}, nil, "refine", ""},
-		{"each workflow has own backup model", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "review", "gpt-4"},
-		{"each workflow has own backup model - refine", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "refine", "claude-3"},
+		{"review backup model doesn't affect refine", "", M{"review_backup_model": "gpt-4"}, nil, "refine", "", ""},
+		{"each workflow has own backup model", "", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "review", "", "gpt-4"},
+		{"each workflow has own backup model - refine", "", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "refine", "", "claude-3"},
 
 		// Unknown workflow returns empty
-		{"unknown workflow", M{"review_backup_model": "gpt-4"}, nil, "unknown", ""},
+		{"unknown workflow", "", M{"review_backup_model": "gpt-4"}, nil, "unknown", "", ""},
 
 		// Default/generic backup model fallback
-		{"global default_backup_model", nil, &Config{DefaultBackupModel: "gpt-4"}, "review", "gpt-4"},
-		{"global default_backup_model for any workflow", nil, &Config{DefaultBackupModel: "gpt-4"}, "fix", "gpt-4"},
-		{"global workflow-specific overrides default", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "review", "claude-3"},
-		{"global default used when workflow not set", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "fix", "gpt-4"},
-		{"repo backup_model generic", M{"backup_model": "repo-model"}, nil, "review", "repo-model"},
-		{"repo backup_model generic for any workflow", M{"backup_model": "repo-model"}, nil, "refine", "repo-model"},
-		{"repo workflow-specific overrides repo generic", M{"backup_model": "generic", "review_backup_model": "specific"}, nil, "review", "specific"},
-		{"repo generic overrides global workflow-specific", M{"backup_model": "repo"}, &Config{ReviewBackupModel: "global"}, "review", "repo"},
-		{"repo generic overrides global default", M{"backup_model": "repo"}, &Config{DefaultBackupModel: "global"}, "review", "repo"},
+		{"global default_backup_model", "", nil, &Config{DefaultBackupModel: "gpt-4"}, "review", "", "gpt-4"},
+		{"global default_backup_model for any workflow", "", nil, &Config{DefaultBackupModel: "gpt-4"}, "fix", "", "gpt-4"},
+		{"global workflow-specific overrides default", "", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "review", "", "claude-3"},
+		{"global default used when workflow not set", "", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "fix", "", "gpt-4"},
+		{"repo backup_model generic", "", M{"backup_model": "repo-model"}, nil, "review", "", "repo-model"},
+		{"repo backup_model generic for any workflow", "", M{"backup_model": "repo-model"}, nil, "refine", "", "repo-model"},
+		{"repo workflow-specific overrides repo generic", "", M{"backup_model": "generic", "review_backup_model": "specific"}, nil, "review", "", "specific"},
+		{"repo generic overrides global workflow-specific", "", M{"backup_model": "repo"}, &Config{ReviewBackupModel: "global"}, "review", "", "repo"},
+		{"repo generic overrides global default", "", M{"backup_model": "repo"}, &Config{DefaultBackupModel: "global"}, "review", "", "repo"},
 	}
 
 	for _, tt := range tests {
@@ -1579,15 +1556,13 @@ func TestCIConfigNewFields(t *testing.T) {
 	t.Run("parses exclude_repos and max_repos", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		if err := os.WriteFile(configPath, []byte(`
+		writeTestFile(t, tmpDir, "config.toml", `
 [ci]
 enabled = true
 repos = ["myorg/*", "other/repo"]
 exclude_repos = ["myorg/archived-*", "myorg/internal-*"]
 max_repos = 50
-`), 0644); err != nil {
-			t.Fatal(err)
-		}
+`)
 
 		cfg, err := LoadGlobalFrom(configPath)
 		if err != nil {
@@ -1654,7 +1629,7 @@ reasoning = "standard"
 		if err != nil {
 			t.Fatalf("LoadRepoConfig: %v", err)
 		}
-		if len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != "claude" {
+		if len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != testAgent {
 			t.Errorf("got agents %v, want [gemini claude]", cfg.CI.Agents)
 		}
 		if len(cfg.CI.ReviewTypes) != 2 || cfg.CI.ReviewTypes[0] != "security" || cfg.CI.ReviewTypes[1] != "review" {

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,14 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// MigrationTestEnv manages the environment for schema migration tests.
-type MigrationTestEnv struct {
+// TestEnv manages the environment for schema migration tests.
+type TestEnv struct {
 	t    *testing.T
 	ctx  context.Context
 	pool *pgxpool.Pool
 }
 
-func NewMigrationTestEnv(t *testing.T) *MigrationTestEnv {
+func NewTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
 	connString := getTestPostgresURL(t)
 	cfg, err := pgxpool.ParseConfig(connString)
@@ -31,14 +30,23 @@ func NewMigrationTestEnv(t *testing.T) *MigrationTestEnv {
 	}
 	t.Cleanup(func() { p.Close() })
 
-	return &MigrationTestEnv{
+	return &TestEnv{
 		t:    t,
 		ctx:  t.Context(),
 		pool: p,
 	}
 }
 
-func (e *MigrationTestEnv) DropSchema(schema string) {
+func WrapTestEnv(t *testing.T, pool *pgxpool.Pool) *TestEnv {
+	t.Helper()
+	return &TestEnv{
+		t:    t,
+		ctx:  t.Context(),
+		pool: pool,
+	}
+}
+
+func (e *TestEnv) DropSchema(schema string) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	if err != nil {
@@ -46,7 +54,7 @@ func (e *MigrationTestEnv) DropSchema(schema string) {
 	}
 }
 
-func (e *MigrationTestEnv) DropTable(schema, table string) {
+func (e *TestEnv) DropTable(schema, table string) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
 	if err != nil {
@@ -54,7 +62,7 @@ func (e *MigrationTestEnv) DropTable(schema, table string) {
 	}
 }
 
-func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
+func (e *TestEnv) CleanupDropSchema(schema string) {
 	e.t.Helper()
 	e.t.Cleanup(func() {
 		// Use background context: t.Context() is canceled by
@@ -70,7 +78,7 @@ func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
 	})
 }
 
-func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
+func (e *TestEnv) CleanupDropTable(schema, table string) {
 	e.t.Helper()
 	e.t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(
@@ -84,7 +92,7 @@ func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
 	})
 }
 
-func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
+func (e *TestEnv) SkipIfTableInSchema(schema, table string) {
 	e.t.Helper()
 	var exists bool
 	err := e.pool.QueryRow(e.ctx, `
@@ -101,7 +109,7 @@ func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 	}
 }
 
-func (e *MigrationTestEnv) Exec(sql string, args ...any) {
+func (e *TestEnv) Exec(sql string, args ...any) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, sql, args...)
 	if err != nil {
@@ -109,7 +117,7 @@ func (e *MigrationTestEnv) Exec(sql string, args ...any) {
 	}
 }
 
-func (e *MigrationTestEnv) QueryRow(sql string, args ...any) pgx.Row {
+func (e *TestEnv) QueryRow(sql string, args ...any) pgx.Row {
 	e.t.Helper()
 	return e.pool.QueryRow(e.ctx, sql, args...)
 }
@@ -120,25 +128,26 @@ type TestRepoOpts struct {
 	Identity string
 }
 
-func (opts *TestRepoOpts) applyDefaults() {
+func (opts TestRepoOpts) withDefaults() TestRepoOpts {
 	if opts.Identity == "" {
 		opts.Identity = "https://github.com/test/repo-" + uuid.NewString() + ".git"
 	}
+	return opts
 }
 
-func createTestRepo(t *testing.T, pool *pgxpool.Pool, opts TestRepoOpts) int64 {
-	t.Helper()
-	opts.applyDefaults()
+func (e *TestEnv) CreateRepo(opts TestRepoOpts) int64 {
+	e.t.Helper()
+	opts = opts.withDefaults()
 
 	var id int64
-	err := pool.QueryRow(t.Context(), `
+	err := e.pool.QueryRow(e.ctx, `
 		INSERT INTO repos (identity)
 		VALUES ($1)
 		ON CONFLICT (identity) DO UPDATE SET identity = EXCLUDED.identity
 		RETURNING id
 	`, opts.Identity).Scan(&id)
 	if err != nil {
-		t.Fatalf("Failed to create repo %s: %v", opts.Identity, err)
+		e.t.Fatalf("Failed to create repo %s: %v", opts.Identity, err)
 	}
 	return id
 }
@@ -151,7 +160,7 @@ type TestCommitOpts struct {
 	Timestamp time.Time
 }
 
-func (opts *TestCommitOpts) applyDefaults() {
+func (opts TestCommitOpts) withDefaults() TestCommitOpts {
 	if opts.SHA == "" {
 		opts.SHA = uuid.NewString()
 	}
@@ -164,21 +173,22 @@ func (opts *TestCommitOpts) applyDefaults() {
 	if opts.Timestamp.IsZero() {
 		opts.Timestamp = time.Now()
 	}
+	return opts
 }
 
-func createTestCommit(t *testing.T, pool *pgxpool.Pool, opts TestCommitOpts) int64 {
-	t.Helper()
-	opts.applyDefaults()
+func (e *TestEnv) CreateCommit(opts TestCommitOpts) int64 {
+	e.t.Helper()
+	opts = opts.withDefaults()
 
 	var id int64
-	err := pool.QueryRow(t.Context(), `
+	err := e.pool.QueryRow(e.ctx, `
 		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (repo_id, sha) DO UPDATE SET author = EXCLUDED.author
 		RETURNING id
 	`, opts.RepoID, opts.SHA, opts.Author, opts.Subject, opts.Timestamp).Scan(&id)
 	if err != nil {
-		t.Fatalf("Failed to create commit %s: %v", opts.SHA, err)
+		e.t.Fatalf("Failed to create commit %s: %v", opts.SHA, err)
 	}
 	return id
 }
@@ -196,7 +206,7 @@ type TestJobOpts struct {
 	UpdatedAt       time.Time
 }
 
-func (opts *TestJobOpts) applyDefaults() {
+func (opts TestJobOpts) withDefaults() TestJobOpts {
 	if opts.UUID == "" {
 		opts.UUID = uuid.NewString()
 	}
@@ -223,18 +233,19 @@ func (opts *TestJobOpts) applyDefaults() {
 	if opts.UpdatedAt.IsZero() {
 		opts.UpdatedAt = now
 	}
+	return opts
 }
 
-func createTestJob(t *testing.T, pool *pgxpool.Pool, opts TestJobOpts) {
-	t.Helper()
-	opts.applyDefaults()
+func (e *TestEnv) CreateJob(opts TestJobOpts) {
+	e.t.Helper()
+	opts = opts.withDefaults()
 
-	_, err := pool.Exec(t.Context(), `
+	_, err := e.pool.Exec(e.ctx, `
 		INSERT INTO review_jobs (uuid, repo_id, commit_id, git_ref, agent, status, source_machine_id, enqueued_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, opts.UUID, opts.RepoID, opts.CommitID, opts.GitRef, opts.Agent, opts.Status, opts.SourceMachineID, opts.EnqueuedAt, opts.CreatedAt, opts.UpdatedAt)
 	if err != nil {
-		t.Fatalf("Failed to create job %s: %v", opts.UUID, err)
+		e.t.Fatalf("Failed to create job %s: %v", opts.UUID, err)
 	}
 }
 
@@ -250,7 +261,7 @@ type TestReviewOpts struct {
 	UpdatedByMachineID string
 }
 
-func (opts *TestReviewOpts) applyDefaults() {
+func (opts TestReviewOpts) withDefaults() TestReviewOpts {
 	if opts.UUID == "" {
 		opts.UUID = uuid.NewString()
 	}
@@ -267,38 +278,18 @@ func (opts *TestReviewOpts) applyDefaults() {
 	if opts.UpdatedByMachineID == "" {
 		opts.UpdatedByMachineID = uuid.NewString()
 	}
+	return opts
 }
 
-func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
-	t.Helper()
-	opts.applyDefaults()
+func (e *TestEnv) CreateReview(opts TestReviewOpts) {
+	e.t.Helper()
+	opts = opts.withDefaults()
 
-	_, err := pool.Exec(t.Context(), `
+	_, err := e.pool.Exec(e.ctx, `
 		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
 	if err != nil {
-		t.Fatalf("Failed to create review %s: %v", opts.UUID, err)
+		e.t.Fatalf("Failed to create review %s: %v", opts.UUID, err)
 	}
-}
-
-func hasExecutableCode(stmt string) bool {
-	for line := range strings.SplitSeq(stmt, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "--") {
-			return true
-		}
-	}
-	return false
-}
-
-func parseSQLStatements(sql string) []string {
-	var stmts []string
-	for stmt := range strings.SplitSeq(sql, ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt != "" && hasExecutableCode(stmt) {
-			stmts = append(stmts, stmt)
-		}
-	}
-	return stmts
 }

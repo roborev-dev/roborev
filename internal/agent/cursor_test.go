@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestCursorBuildArgs_Table(t *testing.T) {
+func TestCursorBuildArgs(t *testing.T) {
 	tests := []struct {
 		name        string
 		agentic     bool
@@ -43,16 +43,13 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewCursorAgent("agent")
+			var agent Agent = NewCursorAgent("agent")
 			if tt.model != "" {
-				var ok bool
-				a, ok = a.WithModel(tt.model).(*CursorAgent)
-				if !ok {
-					t.Fatalf("expected *CursorAgent")
-				}
+				agent = agent.WithModel(tt.model)
 			}
+			cursor := agent.(*CursorAgent)
 
-			args := a.buildArgs(tt.agentic)
+			args := cursor.buildArgs(tt.agentic)
 
 			for _, want := range tt.wantArgs {
 				assertContainsArg(t, args, want)
@@ -63,7 +60,6 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 		})
 	}
 }
-
 func setupMockCursorAgent(t *testing.T, opts MockCLIOpts) (*CursorAgent, *MockCLIResult) {
 	t.Helper()
 	skipIfWindows(t)
@@ -134,27 +130,25 @@ func TestCursorParseStreamJSON(t *testing.T) {
 }
 
 func TestCursorWithChaining(t *testing.T) {
-	a := NewCursorAgent("agent")
+	a := NewCursorAgent("agent").
+		WithModel("m1").
+		WithReasoning(ReasoningThorough).
+		WithAgentic(true)
 
-	// Chain WithModel, WithReasoning, WithAgentic
-	b := a.WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true)
-	cursor, ok := b.(*CursorAgent)
-	if !ok {
-		t.Fatalf("expected *CursorAgent, got %T", b)
-	}
+	cursor := a.(*CursorAgent)
 
-	if cursor.Model != "m1" {
-		t.Errorf("expected model m1, got %q", cursor.Model)
+	if cursor.Command != "agent" {
+		t.Errorf("expected Command 'agent', got %q", cursor.Command)
 	}
 	if cursor.Reasoning != ReasoningThorough {
-		t.Errorf("expected thorough reasoning, got %q", cursor.Reasoning)
+		t.Errorf("expected Reasoning %v, got %v", ReasoningThorough, cursor.Reasoning)
 	}
-	if !cursor.Agentic {
-		t.Error("expected agentic true")
-	}
-	if cursor.Command != "agent" {
-		t.Errorf("expected command 'agent', got %q", cursor.Command)
-	}
+
+	args := cursor.buildArgs(cursor.Agentic)
+
+	assertContainsArg(t, args, "--model")
+	assertContainsArg(t, args, "m1")
+	assertContainsArg(t, args, "--force") // Assumes Agentic maps to --force
 }
 
 func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
@@ -208,15 +202,8 @@ func TestCursorReviewErrorResult(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "Invalid API key") {
-		t.Errorf("expected error containing %q, got %q",
-			"Invalid API key", err.Error())
-	}
+	assertErrorContains(t, err, "Invalid API key")
 }
-
 func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
 	a, _ := setupMockCursorAgent(t, MockCLIOpts{
 		StdoutLines: []string{
@@ -229,20 +216,9 @@ func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	errStr := err.Error()
-	if !strings.Contains(errStr, "quota exceeded") {
-		t.Errorf("expected error containing %q, got %q",
-			"quota exceeded", errStr)
-	}
-	if !strings.Contains(errStr, "failed") {
-		t.Errorf("expected error containing %q, got %q",
-			"failed", errStr)
-	}
+	assertErrorContains(t, err, "quota exceeded")
+	assertErrorContains(t, err, "failed")
 }
-
 func TestCursorName(t *testing.T) {
 	a := NewCursorAgent("")
 	if a.Name() != "cursor" {

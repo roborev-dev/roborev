@@ -16,12 +16,9 @@ import (
 )
 
 type remapContext struct {
-	server  *Server
-	db      *storage.DB
-	repo    *testutil.GitHelper
-	oldSHA  string
-	patchID string
-	jobID   int64
+	server *Server
+	db     *storage.DB
+	repo   *testutil.GitHelper
 }
 
 func newRemapFixture(t *testing.T) *remapContext {
@@ -34,7 +31,7 @@ func newRemapFixture(t *testing.T) *remapContext {
 	}
 }
 
-func (ctx *remapContext) seedCompletedReview(t *testing.T) {
+func (ctx *remapContext) seedCompletedReview(t *testing.T, commitSHA string) (patchID string, jobID int64) {
 	t.Helper()
 
 	dbRepo, err := ctx.db.GetOrCreateRepo(ctx.repo.Path())
@@ -42,15 +39,14 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
 
-	ctx.oldSHA = ctx.repo.HeadSHA()
-	ctx.patchID = gitpkg.GetPatchID(ctx.repo.Path(), ctx.oldSHA)
-	if ctx.patchID == "" {
+	patchID = gitpkg.GetPatchID(ctx.repo.Path(), commitSHA)
+	if patchID == "" {
 		t.Fatal("expected non-empty patch-id for feature commit")
 	}
 
 	// Create commit record
 	commit, err := ctx.db.GetOrCreateCommit(
-		dbRepo.ID, ctx.oldSHA, "Test", "setup message", time.Now(),
+		dbRepo.ID, commitSHA, "Test", "setup message", time.Now(),
 	)
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit: %v", err)
@@ -60,9 +56,9 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 	job, err := ctx.db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   dbRepo.ID,
 		CommitID: commit.ID,
-		GitRef:   ctx.oldSHA,
+		GitRef:   commitSHA,
 		Agent:    "test",
-		PatchID:  ctx.patchID,
+		PatchID:  patchID,
 	})
 	if err != nil {
 		t.Fatalf("EnqueueJob: %v", err)
@@ -78,14 +74,14 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 		t.Fatalf("CompleteJob: %v", err)
 	}
 
-	ctx.jobID = job.ID
+	return patchID, job.ID
 }
 
 type remapResponse struct {
 	Remapped int `json:"remapped"`
 }
 
-func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapResponse {
+func (ctx *remapContext) executeRemapRequest(t *testing.T, oldSHA, patchID, newSHA string) remapResponse {
 	t.Helper()
 
 	info, err := gitpkg.GetCommitInfo(ctx.repo.Path(), newSHA)
@@ -98,9 +94,9 @@ func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapRe
 		RepoPath: ctx.repo.Path(),
 		Mappings: []RemapMapping{
 			{
-				OldSHA:    ctx.oldSHA,
+				OldSHA:    oldSHA,
 				NewSHA:    newSHA,
-				PatchID:   ctx.patchID,
+				PatchID:   patchID,
 				Author:    info.Author,
 				Subject:   info.Subject,
 				Timestamp: info.Timestamp.Format(time.RFC3339),
@@ -122,9 +118,9 @@ func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapRe
 	return result
 }
 
-func assertJobUpdated(t *testing.T, db *storage.DB, jobID int64, expectedSHA string) {
+func (ctx *remapContext) assertJobUpdated(t *testing.T, jobID int64, expectedSHA string) {
 	t.Helper()
-	updatedJob, err := db.GetJobByID(jobID)
+	updatedJob, err := ctx.db.GetJobByID(jobID)
 	if err != nil {
 		t.Fatalf("GetJobByID: %v", err)
 	}
@@ -133,9 +129,9 @@ func assertJobUpdated(t *testing.T, db *storage.DB, jobID int64, expectedSHA str
 	}
 }
 
-func assertReviewReachable(t *testing.T, db *storage.DB, newSHA string) {
+func (ctx *remapContext) assertReviewReachable(t *testing.T, newSHA string) {
 	t.Helper()
-	review, err := db.GetReviewByCommitSHA(newSHA)
+	review, err := ctx.db.GetReviewByCommitSHA(newSHA)
 	if err != nil {
 		t.Fatalf("GetReviewByCommitSHA(%s): %v", newSHA, err)
 	}
@@ -144,6 +140,17 @@ func assertReviewReachable(t *testing.T, db *storage.DB, newSHA string) {
 	}
 	if !strings.Contains(review.Output, "LGTM") {
 		t.Errorf("unexpected review output: %s", review.Output)
+	}
+}
+
+func (ctx *remapContext) assertValidRewrite(t *testing.T, oldSHA, newSHA, expectedPatchID string) {
+	t.Helper()
+	if oldSHA == newSHA {
+		t.Fatal("SHAs should differ after rewrite")
+	}
+
+	if actualPatchID := gitpkg.GetPatchID(ctx.repo.Path(), newSHA); expectedPatchID != actualPatchID {
+		t.Fatalf("patch-ids should match: %s != %s", expectedPatchID, actualPatchID)
 	}
 }
 
@@ -163,7 +170,8 @@ func TestRemapAfterRebase(t *testing.T) {
 	fixture.repo.CommitFile("feature.txt", "feature content", "add feature")
 
 	// 2. Seed the database based on the current Git state
-	fixture.seedCompletedReview(t)
+	oldSHA := fixture.repo.HeadSHA()
+	patchID, jobID := fixture.seedCompletedReview(t, oldSHA)
 
 	// Advance main so rebase has work to do
 	fixture.repo.Run("checkout", "main")
@@ -174,25 +182,17 @@ func TestRemapAfterRebase(t *testing.T) {
 	fixture.repo.Run("rebase", "main")
 	newSHA := fixture.repo.HeadSHA()
 
-	if fixture.oldSHA == newSHA {
-		t.Fatal("SHAs should differ after rebase")
-	}
-
-	newPatchID := gitpkg.GetPatchID(fixture.repo.Path(), newSHA)
-	if fixture.patchID != newPatchID {
-		t.Fatalf("patch-ids should match after clean rebase: %s != %s",
-			fixture.patchID, newPatchID)
-	}
+	fixture.assertValidRewrite(t, oldSHA, newSHA, patchID)
 
 	// Act
-	response := executeRemapRequest(t, fixture, newSHA)
+	response := fixture.executeRemapRequest(t, oldSHA, patchID, newSHA)
 	if response.Remapped != 1 {
 		t.Fatalf("expected remapped=1, got %d", response.Remapped)
 	}
 
 	// Assert
-	assertJobUpdated(t, fixture.db, fixture.jobID, newSHA)
-	assertReviewReachable(t, fixture.db, newSHA)
+	fixture.assertJobUpdated(t, jobID, newSHA)
+	fixture.assertReviewReachable(t, newSHA)
 }
 
 // TestRemapAfterAmendMessageOnly exercises the message-only amend flow.
@@ -203,34 +203,27 @@ func TestRemapAfterAmendMessageOnly(t *testing.T) {
 	fixture.repo.CommitFile("file.txt", "content", "original message")
 
 	// 2. Seed the database based on the current Git state
-	fixture.seedCompletedReview(t)
+	oldSHA := fixture.repo.HeadSHA()
+	patchID, jobID := fixture.seedCompletedReview(t, oldSHA)
 
 	// Amend message only
 	fixture.repo.Run("commit", "--amend", "-m", "amended message")
 	newSHA := fixture.repo.HeadSHA()
 
-	if fixture.oldSHA == newSHA {
-		t.Fatal("SHAs should differ after amend")
-	}
-
-	newPatchID := gitpkg.GetPatchID(fixture.repo.Path(), newSHA)
-	if fixture.patchID != newPatchID {
-		t.Fatalf("patch-ids should match for message-only amend: %s != %s",
-			fixture.patchID, newPatchID)
-	}
+	fixture.assertValidRewrite(t, oldSHA, newSHA, patchID)
 
 	// Act
-	response := executeRemapRequest(t, fixture, newSHA)
+	response := fixture.executeRemapRequest(t, oldSHA, patchID, newSHA)
 	if response.Remapped != 1 {
 		t.Fatalf("expected remapped=1, got %d", response.Remapped)
 	}
 
 	// Assert
-	assertJobUpdated(t, fixture.db, fixture.jobID, newSHA)
-	assertReviewReachable(t, fixture.db, newSHA)
+	fixture.assertJobUpdated(t, jobID, newSHA)
+	fixture.assertReviewReachable(t, newSHA)
 
 	// Old SHA should no longer find the review
-	oldReview, err := fixture.db.GetReviewByCommitSHA(fixture.oldSHA)
+	oldReview, err := fixture.db.GetReviewByCommitSHA(oldSHA)
 	if err == nil && oldReview != nil {
 		t.Error("old SHA should not find the review after remap")
 	}

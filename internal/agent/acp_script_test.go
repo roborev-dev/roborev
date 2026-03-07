@@ -11,15 +11,6 @@ import (
 	"testing"
 )
 
-func acpScriptsDir(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("failed to resolve test file path")
-	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "scripts")
-}
-
 func writeACPTestCommand(t *testing.T, dir, name, script string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -28,29 +19,19 @@ func writeACPTestCommand(t *testing.T, dir, name, script string) {
 	}
 }
 
-func runACPWrapperCommand(t *testing.T, commandPath string, env map[string]string, args ...string) (string, string, error) {
+func runACPWrapperCommand(t *testing.T, commandPath string, customEnv map[string]string, args ...string) (string, string, error) {
 	t.Helper()
 
 	cmd := exec.Command(commandPath, args...)
-	pathValue := os.Getenv("PATH")
-	if customPath, ok := env["PATH"]; ok {
-		pathValue = customPath
-	}
 
-	cmd.Env = []string{
-		"PATH=" + pathValue,
-	}
-	if home := os.Getenv("HOME"); home != "" {
-		cmd.Env = append(cmd.Env, "HOME="+home)
-	}
-	if tmpDir := os.Getenv("TMPDIR"); tmpDir != "" {
-		cmd.Env = append(cmd.Env, "TMPDIR="+tmpDir)
-	}
-
-	for k, v := range env {
-		if k == "PATH" {
-			continue
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "ROBOREV_ACP_") {
+			env = append(env, e)
 		}
+	}
+	cmd.Env = env
+	for k, v := range customEnv {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -67,100 +48,98 @@ func TestACPWrapperScripts(t *testing.T) {
 		t.Skip("ACP wrapper scripts are POSIX shell scripts")
 	}
 
-	scriptsDir := acpScriptsDir(t)
+	_, filename, _, _ := runtime.Caller(0)
+	scriptsDir := filepath.Join(filepath.Dir(filename), "..", "..", "scripts")
 	basePath := os.Getenv("PATH")
 
-	t.Run("ROBOREV_ACP_ADAPTER_COMMAND override takes precedence", func(t *testing.T) {
-		fakeBinDir := t.TempDir()
-		overrideCommand := filepath.Join(fakeBinDir, "override-acp")
-		writeACPTestCommand(t, fakeBinDir, "override-acp", "#!/bin/sh\necho ACP_OVERRIDE_OK\n")
+	tests := []struct {
+		name            string
+		adapter         string
+		overrideCommand string
+		mockBinary      string
+		mockScript      string
+		args            []string
+		wantStdout      string
+		wantStderr      string
+		wantErr         bool
+	}{
+		{
+			name:            "ROBOREV_ACP_ADAPTER_COMMAND override takes precedence",
+			adapter:         "gemini",
+			overrideCommand: "override-acp",
+			mockBinary:      "override-acp",
+			mockScript:      "#!/bin/sh\necho ACP_OVERRIDE_OK\n",
+			wantStdout:      "ACP_OVERRIDE_OK",
+		},
+		{
+			name:       "Adapter dispatch invokes claude wrapper binary from PATH",
+			adapter:    "claude",
+			mockBinary: "claude-agent-acp",
+			mockScript: "#!/bin/sh\necho ACP_CLAUDE_OK\n",
+			wantStdout: "ACP_CLAUDE_OK",
+		},
+		{
+			name:       "Adapter dispatch invokes codex wrapper binary from PATH",
+			adapter:    "codex",
+			mockBinary: "codex-acp",
+			mockScript: "#!/bin/sh\necho ACP_CODEX_OK\n",
+			wantStdout: "ACP_CODEX_OK",
+		},
+		{
+			name:       "Default adapter dispatch uses codex when adapter env is unset",
+			mockBinary: "codex-acp",
+			mockScript: "#!/bin/sh\necho ACP_DEFAULT_CODEX_OK\n",
+			wantStdout: "ACP_DEFAULT_CODEX_OK",
+		},
+		{
+			name:       "Gemini wrapper appends --experimental-acp flag",
+			adapter:    "gemini",
+			mockBinary: "gemini",
+			mockScript: "#!/bin/sh\necho GEMINI_ARGS:$@\n",
+			args:       []string{"--test-arg"},
+			wantStdout: "GEMINI_ARGS:--experimental-acp --test-arg",
+		},
+		{
+			name:       "Unsupported adapter returns error",
+			adapter:    "unsupported",
+			wantStderr: "unsupported ACP adapter",
+			wantErr:    true,
+		},
+	}
 
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"ROBOREV_ACP_ADAPTER_COMMAND": overrideCommand,
-			"ROBOREV_ACP_ADAPTER":         "gemini",
-			"PATH":                        fakeBinDir + string(os.PathListSeparator) + basePath,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeBinDir := t.TempDir()
+
+			env := map[string]string{
+				"PATH": fakeBinDir + string(os.PathListSeparator) + basePath,
+			}
+
+			if tt.adapter != "" {
+				env["ROBOREV_ACP_ADAPTER"] = tt.adapter
+			}
+
+			if tt.mockBinary != "" {
+				writeACPTestCommand(t, fakeBinDir, tt.mockBinary, tt.mockScript)
+			}
+
+			if tt.overrideCommand != "" {
+				env["ROBOREV_ACP_ADAPTER_COMMAND"] = filepath.Join(fakeBinDir, tt.overrideCommand)
+			}
+
+			stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), env, tt.args...)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("runACPWrapperCommand() error = %v, stderr = %q, wantErr %v", err, stderr, tt.wantErr)
+			}
+
+			if tt.wantStdout != "" && !strings.Contains(stdout, tt.wantStdout) {
+				t.Errorf("stdout = %q, want to contain %q", stdout, tt.wantStdout)
+			}
+
+			if tt.wantStderr != "" && !strings.Contains(stderr, tt.wantStderr) {
+				t.Errorf("stderr = %q, want to contain %q", stderr, tt.wantStderr)
+			}
 		})
-		if err != nil {
-			t.Fatalf("expected override command to succeed, got err=%v stderr=%q", err, stderr)
-		}
-		if !strings.Contains(stdout, "ACP_OVERRIDE_OK") {
-			t.Fatalf("expected override marker in stdout, got: %q", stdout)
-		}
-	})
-
-	t.Run("Adapter dispatch invokes claude wrapper binary from PATH", func(t *testing.T) {
-		fakeBinDir := t.TempDir()
-		writeACPTestCommand(t, fakeBinDir, "claude-agent-acp", "#!/bin/sh\necho ACP_CLAUDE_OK\n")
-
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"ROBOREV_ACP_ADAPTER": "claude",
-			"PATH":                fakeBinDir + string(os.PathListSeparator) + basePath,
-		})
-		if err != nil {
-			t.Fatalf("expected claude adapter dispatch to succeed, got err=%v stderr=%q", err, stderr)
-		}
-		if !strings.Contains(stdout, "ACP_CLAUDE_OK") {
-			t.Fatalf("expected claude marker in stdout, got: %q", stdout)
-		}
-	})
-
-	t.Run("Adapter dispatch invokes codex wrapper binary from PATH", func(t *testing.T) {
-		fakeBinDir := t.TempDir()
-		writeACPTestCommand(t, fakeBinDir, "codex-acp", "#!/bin/sh\necho ACP_CODEX_OK\n")
-
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"ROBOREV_ACP_ADAPTER": "codex",
-			"PATH":                fakeBinDir + string(os.PathListSeparator) + basePath,
-		})
-		if err != nil {
-			t.Fatalf("expected codex adapter dispatch to succeed, got err=%v stderr=%q", err, stderr)
-		}
-		if !strings.Contains(stdout, "ACP_CODEX_OK") {
-			t.Fatalf("expected codex marker in stdout, got: %q", stdout)
-		}
-	})
-
-	t.Run("Default adapter dispatch uses codex when adapter env is unset", func(t *testing.T) {
-		fakeBinDir := t.TempDir()
-		writeACPTestCommand(t, fakeBinDir, "codex-acp", "#!/bin/sh\necho ACP_DEFAULT_CODEX_OK\n")
-
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"PATH": fakeBinDir + string(os.PathListSeparator) + basePath,
-		})
-		if err != nil {
-			t.Fatalf("expected default adapter dispatch to succeed, got err=%v stderr=%q", err, stderr)
-		}
-		if !strings.Contains(stdout, "ACP_DEFAULT_CODEX_OK") {
-			t.Fatalf("expected default codex marker in stdout, got: %q", stdout)
-		}
-	})
-
-	t.Run("Gemini wrapper appends --experimental-acp flag", func(t *testing.T) {
-		fakeBinDir := t.TempDir()
-		writeACPTestCommand(t, fakeBinDir, "gemini", "#!/bin/sh\necho GEMINI_ARGS:$@\n")
-
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"ROBOREV_ACP_ADAPTER": "gemini",
-			"PATH":                fakeBinDir + string(os.PathListSeparator) + basePath,
-		}, "--test-arg")
-		if err != nil {
-			t.Fatalf("expected gemini adapter dispatch to succeed, got err=%v stderr=%q", err, stderr)
-		}
-		if !strings.Contains(stdout, "GEMINI_ARGS:--experimental-acp --test-arg") {
-			t.Fatalf("expected gemini experimental flag in args, got: %q", stdout)
-		}
-	})
-
-	t.Run("Unsupported adapter returns error", func(t *testing.T) {
-		stdout, stderr, err := runACPWrapperCommand(t, filepath.Join(scriptsDir, "acp-agent"), map[string]string{
-			"ROBOREV_ACP_ADAPTER": "unsupported",
-			"PATH":                basePath,
-		})
-		if err == nil {
-			t.Fatalf("expected unsupported adapter to fail, stdout=%q stderr=%q", stdout, stderr)
-		}
-		if !strings.Contains(stderr, "unsupported ACP adapter") {
-			t.Fatalf("expected unsupported adapter error message, got stderr=%q", stderr)
-		}
-	})
+	}
 }

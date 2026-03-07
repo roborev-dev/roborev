@@ -30,10 +30,19 @@ func setupTestEnv(t *testing.T) string {
 	return tmpHome
 }
 
+func createAgentDir(t *testing.T, homeDir string, agent Agent) string {
+	t.Helper()
+	dir := filepath.Join(homeDir, "."+string(agent))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // createMockSkill creates an installed skill file at ~/.<agent>/skills/<skill>/SKILL.md.
 func createMockSkill(t *testing.T, homeDir string, agent Agent, skill string) {
 	t.Helper()
-	dir := filepath.Join(homeDir, "."+string(agent), "skills", skill)
+	dir := filepath.Join(createAgentDir(t, homeDir, agent), "skills", skill)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -84,20 +93,16 @@ func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
 
 func TestInstallWhenDirExists(t *testing.T) {
 	tests := []struct {
-		agent   Agent
-		dirName string
+		agent Agent
 	}{
-		{AgentClaude, ".claude"},
-		{AgentCodex, ".codex"},
+		{AgentClaude},
+		{AgentCodex},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.agent), func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
-			agentDir := filepath.Join(tmpHome, tt.dirName)
-			if err := os.MkdirAll(agentDir, 0755); err != nil {
-				t.Fatal(err)
-			}
+			agentDir := createAgentDir(t, tmpHome, tt.agent)
 
 			results, err := Install()
 			if err != nil {
@@ -120,9 +125,7 @@ func TestInstallIdempotent(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 
 	// Create .claude directory
-	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	createAgentDir(t, tmpHome, AgentClaude)
 
 	// First install
 	results1, err := Install()
@@ -161,58 +164,35 @@ func TestIsInstalled(t *testing.T) {
 		shouldExist bool
 	}
 
-	tests := []testCase{
-		{
-			name:        "Claude missing dir",
-			agent:       AgentClaude,
-			setup:       func(t *testing.T, h string) {},
-			shouldExist: false,
-		},
-		{
-			name:  "Claude dir exists no skills",
-			agent: AgentClaude,
-			setup: func(t *testing.T, h string) {
-				if err := os.MkdirAll(filepath.Join(h, ".claude"), 0755); err != nil {
-					t.Fatal(err)
-				}
-			},
-			shouldExist: false,
-		},
-		{
-			name:        "Codex missing dir",
-			agent:       AgentCodex,
-			setup:       func(t *testing.T, h string) {},
-			shouldExist: false,
-		},
-		{
-			name:  "Codex dir exists no skills",
-			agent: AgentCodex,
-			setup: func(t *testing.T, h string) {
-				if err := os.MkdirAll(filepath.Join(h, ".codex"), 0755); err != nil {
-					t.Fatal(err)
-				}
-			},
-			shouldExist: false,
-		},
-	}
+	var tests []testCase
+	supportedAgents := []Agent{AgentClaude, AgentCodex}
 
-	for _, skill := range expectedSkills {
-		// Capture variable for closure
-		s := skill
-		tests = append(tests, testCase{
-			name:        "Claude with skill " + s,
-			agent:       AgentClaude,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentClaude, s) },
-			shouldExist: true,
-		})
-		tests = append(tests, testCase{
-			name:        "Codex with skill " + s,
-			agent:       AgentCodex,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentCodex, s) },
-			shouldExist: true,
-		})
+	for _, agent := range supportedAgents {
+		agentName := string(agent)
+		tests = append(tests,
+			testCase{
+				name:        agentName + " missing dir",
+				agent:       agent,
+				setup:       func(t *testing.T, h string) {},
+				shouldExist: false,
+			},
+			testCase{
+				name:        agentName + " dir exists no skills",
+				agent:       agent,
+				setup:       func(t *testing.T, h string) { createAgentDir(t, h, agent) },
+				shouldExist: false,
+			},
+		)
+		for _, skill := range expectedSkills {
+			s := skill // Capture loop variable
+			tests = append(tests, testCase{
+				name:        agentName + " with skill " + s,
+				agent:       agent,
+				setup:       func(t *testing.T, h string) { createMockSkill(t, h, agent, s) },
+				shouldExist: true,
+			})
+		}
 	}
-
 	// Unsupported agent should always return false.
 	tests = append(tests, testCase{
 		name:  "unsupported agent",
@@ -252,11 +232,8 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			setup: func(t *testing.T, homeDir string) {
 				createMockSkill(t, homeDir, AgentClaude, "roborev-fix")
 				// Create .codex but NO skills installed
-				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantResults:   1,
+				createAgentDir(t, homeDir, AgentCodex)
+			}, wantResults: 1,
 			wantAgents:    []Agent{AgentClaude},
 			wantUpdated:   1,
 			wantInstalled: len(expectedSkills) - 1,
@@ -305,14 +282,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		{
 			name: "skips both when neither has skills",
 			setup: func(t *testing.T, homeDir string) {
-				if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantResults:   0,
+				createAgentDir(t, homeDir, AgentClaude)
+				createAgentDir(t, homeDir, AgentCodex)
+			}, wantResults: 0,
 			wantAgents:    []Agent{},
 			wantUpdated:   0,
 			wantInstalled: 0,
@@ -334,23 +306,23 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			}
 
 			if tt.wantResults > 0 {
-				// Verify all expected agents are present
-				agentFound := make(map[Agent]bool)
-				for _, want := range tt.wantAgents {
-					agentFound[want] = false
-				}
+				// Create a map of returned results keyed by Agent for easy O(1) lookup
+				resultMap := make(map[Agent]InstallResult)
 				for _, r := range results {
-					agentFound[r.Agent] = true
+					resultMap[r.Agent] = r
+				}
+
+				for _, wantAgent := range tt.wantAgents {
+					r, found := resultMap[wantAgent]
+					if !found {
+						t.Errorf("expected %s in results", wantAgent)
+						continue
+					}
 					if len(r.Updated) != tt.wantUpdated {
 						t.Errorf("expected %d updated for %s, got %d", tt.wantUpdated, r.Agent, len(r.Updated))
 					}
 					if len(r.Installed) != tt.wantInstalled {
 						t.Errorf("expected %d installed for %s, got %d", tt.wantInstalled, r.Agent, len(r.Installed))
-					}
-				}
-				for want, found := range agentFound {
-					if !found {
-						t.Errorf("expected %s in results", want)
 					}
 				}
 			}

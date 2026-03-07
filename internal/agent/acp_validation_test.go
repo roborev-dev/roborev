@@ -15,128 +15,82 @@ import (
 func TestValidateSessionID(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Valid session ID matching agent session", func(t *testing.T) {
-		// Create agent with a session ID
-		agent := &ACPAgent{
-			SessionId: "test-session-123",
-		}
+	tests := []struct {
+		name          string
+		agentSession  string
+		clientSession string
+		requestID     acp.SessionId
+		wantErr       bool
+		wantErrMsg    string
+	}{
+		{
+			name:         "Valid session ID matching agent session",
+			agentSession: "test-session-123",
+			requestID:    "test-session-123",
+			wantErr:      false,
+		},
+		{
+			name:         "Invalid session ID not matching agent session",
+			agentSession: "test-session-123",
+			requestID:    "wrong-session-456",
+			wantErr:      true,
+			wantErrMsg:   "session ID mismatch: expected test-session-123, got wrong-session-456",
+		},
+		{
+			name:         "Empty agent session ID rejects non-empty request session ID",
+			agentSession: "",
+			requestID:    "any-session-789",
+			wantErr:      true,
+			wantErrMsg:   "session ID mismatch: no active session, got any-session-789",
+		},
+		{
+			name:         "Empty request session ID with non-empty agent session",
+			agentSession: "test-session-123",
+			requestID:    "",
+			wantErr:      true,
+			wantErrMsg:   "session ID mismatch: expected test-session-123, got ",
+		},
+		{
+			name:         "Both session IDs empty",
+			agentSession: "",
+			requestID:    "",
+			wantErr:      false,
+		},
+		{
+			name:          "Client session ID takes precedence over agent session ID",
+			agentSession:  "agent-session",
+			clientSession: "client-session",
+			requestID:     "agent-session",
+			wantErr:       true,
+			wantErrMsg:    "session ID mismatch: expected client-session, got agent-session",
+		},
+		{
+			name:          "Client session ID matches request",
+			agentSession:  "agent-session",
+			clientSession: "client-session",
+			requestID:     "client-session",
+			wantErr:       false,
+		},
+	}
 
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &acpClient{
+				agent:     &ACPAgent{SessionId: tt.agentSession},
+				sessionID: tt.clientSession,
+			}
 
-		// Test with matching session ID
-		sessionID := acp.SessionId("test-session-123")
-		err := client.validateSessionID(sessionID)
-		if err != nil {
-			t.Errorf("Expected no error for matching session ID, got: %v", err)
-		}
-	})
+			err := client.validateSessionID(tt.requestID)
 
-	t.Run("Invalid session ID not matching agent session", func(t *testing.T) {
-		// Create agent with a session ID
-		agent := &ACPAgent{
-			SessionId: "test-session-123",
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test with non-matching session ID
-		sessionID := acp.SessionId("wrong-session-456")
-		err := client.validateSessionID(sessionID)
-		if err == nil {
-			t.Error("Expected error for non-matching session ID")
-		} else if err.Error() != "session ID mismatch: expected test-session-123, got wrong-session-456" {
-			t.Errorf("Expected specific error message, got: %v", err)
-		}
-	})
-
-	t.Run("Empty agent session ID rejects non-empty request session ID", func(t *testing.T) {
-		// Create agent with empty session ID (before session is established)
-		agent := &ACPAgent{
-			SessionId: "",
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test with non-empty session ID in request.
-		sessionID := acp.SessionId("any-session-789")
-		err := client.validateSessionID(sessionID)
-		if err == nil {
-			t.Error("Expected error for non-empty request session ID before session is established")
-		} else if err.Error() != "session ID mismatch: no active session, got any-session-789" {
-			t.Errorf("Expected specific error message, got: %v", err)
-		}
-	})
-
-	t.Run("Empty request session ID with non-empty agent session", func(t *testing.T) {
-		// Create agent with a session ID
-		agent := &ACPAgent{
-			SessionId: "test-session-123",
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test with empty session ID in request
-		sessionID := acp.SessionId("")
-		err := client.validateSessionID(sessionID)
-		if err == nil {
-			t.Error("Expected error for empty session ID when agent has session ID")
-		} else if err.Error() != "session ID mismatch: expected test-session-123, got " {
-			t.Errorf("Expected specific error message, got: %v", err)
-		}
-	})
-
-	t.Run("Both session IDs empty", func(t *testing.T) {
-		// Create agent with empty session ID
-		agent := &ACPAgent{
-			SessionId: "",
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test with empty session ID in request
-		sessionID := acp.SessionId("")
-		err := client.validateSessionID(sessionID)
-		if err != nil {
-			t.Errorf("Expected no error when both session IDs are empty, got: %v", err)
-		}
-	})
-
-	t.Run("Client session ID takes precedence over agent session ID", func(t *testing.T) {
-		agent := &ACPAgent{
-			SessionId: "agent-session",
-		}
-		client := &acpClient{
-			agent:     agent,
-			sessionID: "client-session",
-		}
-
-		if err := client.validateSessionID(acp.SessionId("client-session")); err != nil {
-			t.Fatalf("Expected client session ID to validate, got: %v", err)
-		}
-
-		err := client.validateSessionID(acp.SessionId("agent-session"))
-		if err == nil {
-			t.Fatal("Expected mismatch when request matches agent session but not client session")
-		}
-		if !strings.Contains(err.Error(), "expected client-session") {
-			t.Fatalf("Expected error to use client session ID, got: %v", err)
-		}
-	})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateSessionID() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && err.Error() != tt.wantErrMsg {
+				t.Errorf("error %q did not match expected %q", err.Error(), tt.wantErrMsg)
+			}
+		})
+	}
 }
 
 func TestValidateAndResolvePathUsesClientRepoRootPrecedence(t *testing.T) {
@@ -184,47 +138,68 @@ func TestValidateAndResolvePathUsesClientRepoRootPrecedence(t *testing.T) {
 func TestValidateConfiguredSessionCapabilities(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Configured mode requires mode capability", func(t *testing.T) {
-		err := validateConfiguredMode("plan", nil)
-		if err == nil {
-			t.Fatal("Expected error when mode is configured but session mode capability is absent")
-		}
-		if !strings.Contains(err.Error(), "does not support session modes") {
-			t.Fatalf("Expected unsupported mode capability error, got: %v", err)
-		}
-	})
-
-	t.Run("Configured model requires model capability", func(t *testing.T) {
-		err := validateConfiguredModel("model-x", nil)
-		if err == nil {
-			t.Fatal("Expected error when model is configured but session model capability is absent")
-		}
-		if !strings.Contains(err.Error(), "does not support session models") {
-			t.Fatalf("Expected unsupported model capability error, got: %v", err)
-		}
-	})
-
-	t.Run("Mode and model validation succeeds when available", func(t *testing.T) {
-		modeState := &acp.SessionModeState{
-			AvailableModes: []acp.SessionMode{
-				{Id: acp.SessionModeId("plan"), Name: "Plan"},
+	tests := []struct {
+		name       string
+		validateFn func() error
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "Configured mode requires mode capability",
+			validateFn: func() error {
+				return validateConfiguredMode("plan", nil)
 			},
-			CurrentModeId: acp.SessionModeId("plan"),
-		}
-		modelState := &acp.SessionModelState{
-			AvailableModels: []acp.ModelInfo{
-				{ModelId: acp.ModelId("model-x"), Name: "Model X"},
+			wantErr:    true,
+			wantErrMsg: "agent does not support session modes (configured mode: plan)",
+		},
+		{
+			name: "Configured model requires model capability",
+			validateFn: func() error {
+				return validateConfiguredModel("model-x", nil)
 			},
-			CurrentModelId: acp.ModelId("model-x"),
-		}
+			wantErr:    true,
+			wantErrMsg: "agent does not support session models (configured model: model-x)",
+		},
+		{
+			name: "Mode validation succeeds when available",
+			validateFn: func() error {
+				modeState := &acp.SessionModeState{
+					AvailableModes: []acp.SessionMode{
+						{Id: acp.SessionModeId("plan"), Name: "Plan"},
+					},
+					CurrentModeId: acp.SessionModeId("plan"),
+				}
+				return validateConfiguredMode("plan", modeState)
+			},
+			wantErr: false,
+		},
+		{
+			name: "Model validation succeeds when available",
+			validateFn: func() error {
+				modelState := &acp.SessionModelState{
+					AvailableModels: []acp.ModelInfo{
+						{ModelId: acp.ModelId("model-x"), Name: "Model X"},
+					},
+					CurrentModelId: acp.ModelId("model-x"),
+				}
+				return validateConfiguredModel("model-x", modelState)
+			},
+			wantErr: false,
+		},
+	}
 
-		if err := validateConfiguredMode("plan", modeState); err != nil {
-			t.Fatalf("Expected mode validation success, got: %v", err)
-		}
-		if err := validateConfiguredModel("model-x", modelState); err != nil {
-			t.Fatalf("Expected model validation success, got: %v", err)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.validateFn()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validation error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && err.Error() != tt.wantErrMsg {
+				t.Fatalf("Expected error %q, got: %q", tt.wantErrMsg, err.Error())
+			}
+		})
+	}
 }
 
 func TestSessionUpdateValidatesSessionID(t *testing.T) {

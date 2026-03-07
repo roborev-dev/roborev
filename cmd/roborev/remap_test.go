@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"io"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -44,16 +44,13 @@ func TestRemapStdinParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseRemapPairs(tt.input)
-			if tt.expectedErr != nil {
-				if !errors.Is(err, tt.expectedErr) {
-					t.Errorf("parseRemapPairs() error = %v, want %v", err, tt.expectedErr)
-				}
-				return
+			if !errors.Is(err, tt.expectedErr) {
+				t.Fatalf("parseRemapPairs() error = %v, want %v", err, tt.expectedErr)
 			}
 			if err != nil {
-				t.Fatalf("parseRemapPairs() unexpected error: %v", err)
+				return
 			}
-			if !reflect.DeepEqual(got, tt.expected) {
+			if !slices.Equal(got, tt.expected) {
 				t.Errorf("parseRemapPairs() = %v, want %v", got, tt.expected)
 			}
 		})

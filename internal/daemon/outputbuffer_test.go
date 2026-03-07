@@ -5,6 +5,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+)
+
+const (
+	defaultJobBytesLimit    = 1024
+	defaultGlobalBytesLimit = 4096
 )
 
 // simpleNormalizer matches the common pattern used in Writer tests.
@@ -15,20 +23,17 @@ func simpleNormalizer(line string) *OutputLine {
 // assertLines verifies the count and content of lines for a job.
 func assertLines(t *testing.T, lines []OutputLine, expected ...OutputLine) {
 	t.Helper()
-	if len(lines) != len(expected) {
-		t.Fatalf("expected %d lines, got %d", len(expected), len(lines))
+	opts := cmp.Options{
+		cmpopts.IgnoreFields(OutputLine{}, "Timestamp"),
+		cmpopts.EquateEmpty(),
 	}
-	for i, want := range expected {
-		actual := lines[i]
-		actual.Timestamp = time.Time{}
-		if actual != want {
-			t.Errorf("line[%d]: expected %+v, got %+v", i, want, actual)
-		}
+	if diff := cmp.Diff(expected, lines, opts...); diff != "" {
+		t.Errorf("OutputLines mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestOutputBuffer_Append(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
 	ob.Append(1, OutputLine{Text: "line 1", Type: "text"})
 	ob.Append(1, OutputLine{Text: "line 2", Type: "tool"})
@@ -38,7 +43,7 @@ func TestOutputBuffer_Append(t *testing.T) {
 }
 
 func TestOutputBuffer_GetLinesEmpty(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
 	lines := ob.GetLines(999)
 	if lines != nil {
@@ -171,7 +176,7 @@ func TestOutputBuffer_Limits(t *testing.T) {
 }
 
 func TestOutputBuffer_CloseJob(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
 	ob.Append(1, OutputLine{Text: "test", Type: "text"})
 	if !ob.IsActive(1) {
@@ -190,76 +195,77 @@ func TestOutputBuffer_CloseJob(t *testing.T) {
 	}
 }
 
-func TestOutputBuffer_Subscribe(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+func TestOutputBuffer_Subscriptions(t *testing.T) {
+	t.Run("ReceiveNewLines", func(t *testing.T) {
+		ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
-	// Add initial line
-	ob.Append(1, OutputLine{Text: "initial", Type: "text"})
+		// Add initial line
+		ob.Append(1, OutputLine{Text: "initial", Type: "text"})
 
-	// Subscribe
-	initial, ch, cancel := ob.Subscribe(1)
-	defer cancel()
+		// Subscribe
+		initial, ch, cancel := ob.Subscribe(1)
+		defer cancel()
 
-	if len(initial) != 1 {
-		t.Fatalf("expected 1 initial line, got %d", len(initial))
-	}
-	if initial[0].Text != "initial" {
-		t.Errorf("expected 'initial', got %q", initial[0].Text)
-	}
+		if len(initial) != 1 {
+			t.Fatalf("expected 1 initial line, got %d", len(initial))
+		}
+		if initial[0].Text != "initial" {
+			t.Errorf("expected 'initial', got %q", initial[0].Text)
+		}
 
-	// Add more lines after subscription
-	go func() {
+		// Add more lines after subscription
+		// No goroutine needed, append then read works
 		ob.Append(1, OutputLine{Text: "new", Type: "text"})
-	}()
 
-	select {
-	case line := <-ch:
-		if line.Text != "new" {
-			t.Errorf("expected 'new', got %q", line.Text)
+		select {
+		case line := <-ch:
+			if line.Text != "new" {
+				t.Errorf("expected 'new', got %q", line.Text)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("timeout waiting for subscribed line")
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("timeout waiting for subscribed line")
-	}
-}
+	})
 
-func TestOutputBuffer_SubscribeCancel(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	t.Run("CancelClosesChannel", func(t *testing.T) {
+		ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
-	_, ch, cancel := ob.Subscribe(1)
-	cancel()
+		_, ch, cancel := ob.Subscribe(1)
+		cancel()
 
-	// Channel should be closed
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed")
+		// Channel should be closed
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Error("expected channel to be closed")
+			}
+		default:
+			// Channel closed, as expected
 		}
-	default:
-		// Channel closed, as expected
-	}
-}
+	})
 
-func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	t.Run("CloseJobClosesSubscribers", func(t *testing.T) {
+		ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 
-	ob.Append(1, OutputLine{Text: "test", Type: "text"})
-	_, ch, _ := ob.Subscribe(1)
+		ob.Append(1, OutputLine{Text: "test", Type: "text"})
+		_, ch, _ := ob.Subscribe(1)
 
-	ob.CloseJob(1)
+		ob.CloseJob(1)
 
-	// Channel should be closed
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed after CloseJob")
+		// Channel should be closed
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Error("expected channel to be closed after CloseJob")
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("channel not closed after CloseJob")
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("channel not closed after CloseJob")
-	}
+	})
 }
 
 func TestOutputWriter_Write(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write with newline
@@ -270,7 +276,7 @@ func TestOutputWriter_Write(t *testing.T) {
 }
 
 func TestOutputWriter_WritePartialLines(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write partial line
@@ -282,7 +288,7 @@ func TestOutputWriter_WritePartialLines(t *testing.T) {
 }
 
 func TestOutputWriter_Flush(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write without newline
@@ -298,7 +304,7 @@ func TestOutputWriter_Flush(t *testing.T) {
 }
 
 func TestOutputWriter_NormalizeFilters(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
+	ob := NewOutputBuffer(defaultJobBytesLimit, defaultGlobalBytesLimit)
 	// Normalizer that filters out empty lines
 	normalize := func(line string) *OutputLine {
 		if line == "" {

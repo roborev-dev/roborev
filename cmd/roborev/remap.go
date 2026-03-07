@@ -104,7 +104,7 @@ new commits. Called automatically by the post-rewrite hook.`,
 				return nil
 			}
 
-			addr := getDaemonAddr()
+			addr := getDaemonAddr(cmd)
 			client := daemon.NewHTTPClient(addr)
 
 			result, err := client.Remap(daemon.RemapRequest{

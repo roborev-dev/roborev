@@ -10,6 +10,35 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows due to shell script stubs")
+	}
+}
+
+func assertFileContains(t *testing.T, path string, expected, notExpected []string) {
+	t.Helper()
+	if len(expected) == 0 && len(notExpected) == 0 {
+		return
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read generated file: %v", err)
+	}
+	strContent := string(content)
+	for _, exp := range expected {
+		if !strings.Contains(strContent, exp) {
+			t.Errorf("generated file missing expected content: %q", exp)
+		}
+	}
+	for _, bad := range notExpected {
+		if strings.Contains(strContent, bad) {
+			t.Errorf("generated file should not contain: %q", bad)
+		}
+	}
+}
+
 func setupGhActionTest(t *testing.T) (*testutil.TestRepo, string) {
 	t.Helper()
 	tmpHome := t.TempDir()
@@ -25,9 +54,7 @@ func setupGhActionTest(t *testing.T) (*testutil.TestRepo, string) {
 }
 
 func TestGhActionCmd(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows due to shell script stubs")
-	}
+	skipOnWindows(t)
 
 	tests := []struct {
 		name             string
@@ -105,36 +132,24 @@ func TestGhActionCmd(t *testing.T) {
 			repo, outPath := setupGhActionTest(t)
 
 			if tt.repoConfig != "" {
-				if err := os.WriteFile(
-					filepath.Join(
-						repo.Root, ".roborev.toml"),
-					[]byte(tt.repoConfig), 0644,
-				); err != nil {
+				configPath := filepath.Join(repo.Root, ".roborev.toml")
+				if err := os.WriteFile(configPath, []byte(tt.repoConfig), 0644); err != nil {
 					t.Fatal(err)
 				}
 			}
 
 			cmd := ghActionCmd()
-			args := append(
-				[]string{}, tt.flags...)
-			args = append(args, "--output", outPath)
+			args := append(append([]string(nil), tt.flags...), "--output", outPath)
 			cmd.SetArgs(args)
 
 			err := cmd.Execute()
 
 			if tt.expectError {
 				if err == nil {
-					t.Fatal(
-						"expected error but got none")
+					t.Fatal("expected error but got none")
 				}
-				if tt.errorContains != "" &&
-					!strings.Contains(
-						err.Error(),
-						tt.errorContains) {
-					t.Errorf(
-						"error %q should contain %q",
-						err.Error(),
-						tt.errorContains)
+				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errorContains)
 				}
 				return
 			}
@@ -142,42 +157,20 @@ func TestGhActionCmd(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if len(tt.expectedContains) > 0 ||
-				len(tt.notContains) > 0 {
-				contentBytes, err := os.ReadFile(outPath)
-				if err != nil {
-					t.Fatalf("failed to read generated file: %v", err)
-				}
-				content := string(contentBytes)
-				for _, expected := range tt.expectedContains {
-					if !strings.Contains(content, expected) {
-						t.Errorf("generated file missing expected content: %q", expected)
-					}
-				}
-				for _, bad := range tt.notContains {
-					if strings.Contains(content, bad) {
-						t.Errorf("generated file should not contain: %q", bad)
-					}
-				}
-			}
+			assertFileContains(t, outPath, tt.expectedContains, tt.notContains)
 		})
 	}
 }
 
 func TestGhActionCmd_ForceOverwrite(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows")
-	}
+	skipOnWindows(t)
 
 	_, outPath := setupGhActionTest(t)
 
-	if err := os.MkdirAll(
-		filepath.Dir(outPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		outPath, []byte("existing content"), 0644,
-	); err != nil {
+	if err := os.WriteFile(outPath, []byte("existing content"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,31 +188,26 @@ func TestGhActionCmd_ForceOverwrite(t *testing.T) {
 
 	// With --force should succeed
 	cmd2 := ghActionCmd()
-	cmd2.SetArgs([]string{
-		"--output", outPath, "--force"})
+	cmd2.SetArgs([]string{"--output", outPath, "--force"})
 	if err := cmd2.Execute(); err != nil {
 		t.Fatalf("force should succeed: %v", err)
 	}
 
 	content, _ = os.ReadFile(outPath)
-	if !strings.Contains(
-		string(content), "name: roborev") {
-		t.Error(
-			"force should have overwritten with workflow")
+	if !strings.Contains(string(content), "name: roborev") {
+		t.Error("force should have overwritten with workflow")
 	}
 }
 
 func TestGhActionCmd_NotGitRepo(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows")
-	}
+	skipOnWindows(t)
 
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { os.Chdir(origDir) })
 
 	cmd := ghActionCmd()
 	cmd.SetArgs([]string{})
@@ -227,10 +215,7 @@ func TestGhActionCmd_NotGitRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error outside git repo")
 	}
-	if !strings.Contains(
-		err.Error(), "not a git repository") {
-		t.Errorf(
-			"expected 'not a git repository' error, "+
-				"got: %v", err)
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("expected 'not a git repository' error, got: %v", err)
 	}
 }

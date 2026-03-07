@@ -13,23 +13,27 @@ import (
 // M is a shorthand type for map[string]string to keep test tables compact
 type M = map[string]string
 
-// newTempRepo creates a temp directory and writes content to .roborev.toml.
+const configFilename = ".roborev.toml"
+
+// newTempRepo creates a temp directory, initializes a git repo, and writes content to the config file.
 func newTempRepo(t *testing.T, configContent string) string {
 	t.Helper()
 	dir := t.TempDir()
+	execGit(t, dir, "init")
 	if configContent != "" {
 		writeRepoConfigStr(t, dir, configContent)
 	}
 	return dir
 }
 
-// writeRepoConfigStr writes a TOML string to .roborev.toml in the given directory.
+// writeRepoConfigStr writes a TOML string to the config file in the given directory.
 func writeRepoConfigStr(t *testing.T, dir, content string) {
 	t.Helper()
-	writeTestFile(t, dir, ".roborev.toml", content)
+	writeTestFile(t, dir, configFilename, content)
 }
 
-func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
+// writeRepoConfig encodes a map to TOML and writes it to the repository's configuration file.
+func writeRepoConfig(t *testing.T, dir string, cfg M) {
 	t.Helper()
 	if cfg == nil {
 		return
@@ -48,6 +52,12 @@ func writeTestFile(t *testing.T, dir, filename, content string) {
 	if err != nil {
 		t.Fatalf("failed to write %s: %v", filename, err)
 	}
+}
+
+// writeIDFile writes content to .roborev-id in the given directory.
+func writeIDFile(t *testing.T, dir, content string) {
+	t.Helper()
+	writeTestFile(t, dir, ".roborev-id", content)
 }
 
 // execGit executes a git command in the given directory and returns its output.

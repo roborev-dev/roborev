@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,7 +130,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 		DoneAfterPolls: 2,
 	})
 
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, ts.URL)
 
 	analysisType := analyze.GetType("refactor")
 	opts := analyzeOptions{
@@ -147,13 +146,13 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	}
 
 	// Verify the workflow was executed
-	if atomic.LoadInt32(&state.JobsCount) < 2 {
+	if state.Jobs() < 2 {
 		t.Error("should have polled for job status")
 	}
-	if atomic.LoadInt32(&state.ReviewCount) == 0 {
+	if state.Reviews() == 0 {
 		t.Error("should have fetched the review")
 	}
-	if atomic.LoadInt32(&state.CloseCount) == 0 {
+	if state.Closes() == 0 {
 		t.Error("should have marked job as closed")
 	}
 

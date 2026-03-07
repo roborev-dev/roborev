@@ -8,9 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	streamURL     = "/api/stream/events"
+	typeStarted   = "review.started"
+	typeCompleted = "review.completed"
+	typeFailed    = "review.failed"
+	typeCanceled  = "review.canceled"
 )
 
 // startStreamHandler starts the stream handler in a goroutine and waits for subscription.
@@ -39,11 +46,59 @@ func startStreamHandler(t *testing.T, server *Server, url string) (context.Cance
 	return cancel, w, done
 }
 
+// finishAndParseEvents waits for expected events, cancels the stream, and parses the output into an Event slice.
+func finishAndParseEvents(t *testing.T, w *safeRecorder, cancel context.CancelFunc, done chan struct{}, expected int) []Event {
+	t.Helper()
+	if !waitForEvents(w, expected, time.Second) {
+		cancel()
+		t.Fatal("Timed out waiting for events")
+	}
+	cancel()
+	<-done
+
+	var events []Event
+	scanner := bufio.NewScanner(bytes.NewBufferString(w.bodyString()))
+	for scanner.Scan() {
+		if line := scanner.Text(); line != "" {
+			var ev Event
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				t.Fatalf("Parse error: %v, line: %s", err, line)
+			}
+			events = append(events, ev)
+		}
+	}
+	return events
+}
+
+// finishAndParseRawEvents is similar to finishAndParseEvents but returns map[string]any for raw JSON validation.
+func finishAndParseRawEvents(t *testing.T, w *safeRecorder, cancel context.CancelFunc, done chan struct{}, expected int) []map[string]any {
+	t.Helper()
+	if !waitForEvents(w, expected, time.Second) {
+		cancel()
+		t.Fatal("Timed out waiting for events")
+	}
+	cancel()
+	<-done
+
+	var events []map[string]any
+	scanner := bufio.NewScanner(bytes.NewBufferString(w.bodyString()))
+	for scanner.Scan() {
+		if line := scanner.Text(); line != "" {
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(line), &raw); err != nil {
+				t.Fatalf("Parse error: %v, line: %s", err, line)
+			}
+			events = append(events, raw)
+		}
+	}
+	return events
+}
+
 func TestHandleStreamEvents(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	t.Run("returns correct headers", func(t *testing.T) {
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
+		cancel, w, done := startStreamHandler(t, server, streamURL)
 
 		// Cancel request to stop the handler
 		cancel()
@@ -62,7 +117,7 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/stream/events", nil)
+		req := httptest.NewRequest(http.MethodPost, streamURL, nil)
 		w := httptest.NewRecorder()
 
 		server.handleStreamEvents(w, req)
@@ -73,11 +128,11 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("streams events as JSONL", func(t *testing.T) {
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
+		cancel, w, done := startStreamHandler(t, server, streamURL)
 
 		// Broadcast test events
 		event1 := Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			TS:       time.Now(),
 			JobID:    1,
 			Repo:     "/test/repo1",
@@ -87,7 +142,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			Verdict:  "pass",
 		}
 		event2 := Event{
-			Type:     "review.failed",
+			Type:     typeFailed,
 			TS:       time.Now(),
 			JobID:    2,
 			Repo:     "/test/repo2",
@@ -99,37 +154,13 @@ func TestHandleStreamEvents(t *testing.T) {
 		server.broadcaster.Broadcast(event1)
 		server.broadcaster.Broadcast(event2)
 
-		// Wait for events to be written
-		if !waitForEvents(w, 2, time.Second) {
-			cancel()
-			t.Fatal("Timed out waiting for events")
-		}
-
-		// Cancel and wait for handler to finish
-		cancel()
-		<-done
-
-		// Parse JSONL output (safe to read body after handler done)
-		body := w.bodyString()
-		scanner := bufio.NewScanner(bytes.NewBufferString(body))
-		var events []Event
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var ev Event
-			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v, line: %s", err, line)
-			}
-			events = append(events, ev)
-		}
+		events := finishAndParseEvents(t, w, cancel, done, 2)
 
 		if len(events) != 2 {
 			t.Fatalf("Expected 2 events, got %d", len(events))
 		}
 
-		if events[0].Type != "review.completed" || events[0].JobID != 1 {
+		if events[0].Type != typeCompleted || events[0].JobID != 1 {
 			t.Errorf("First event mismatch: %+v", events[0])
 		}
 		if events[0].RepoName != "repo1" {
@@ -138,7 +169,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		if events[0].Verdict != "pass" {
 			t.Errorf("Expected Verdict 'pass', got '%s'", events[0].Verdict)
 		}
-		if events[1].Type != "review.failed" || events[1].JobID != 2 {
+		if events[1].Type != typeFailed || events[1].JobID != 2 {
 			t.Errorf("Second event mismatch: %+v", events[1])
 		}
 		if events[1].Error != "agent timeout" {
@@ -147,11 +178,11 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("all event types are supported", func(t *testing.T) {
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
+		cancel, w, done := startStreamHandler(t, server, streamURL)
 
 		// Broadcast all event types
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.started",
+			Type:     typeStarted,
 			JobID:    1,
 			Repo:     "/test/repo",
 			RepoName: "repo",
@@ -159,7 +190,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			Agent:    "codex",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    1,
 			Repo:     "/test/repo",
 			RepoName: "repo",
@@ -168,7 +199,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			Verdict:  "pass",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.failed",
+			Type:     typeFailed,
 			JobID:    2,
 			Repo:     "/test/repo",
 			RepoName: "repo",
@@ -177,7 +208,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			Error:    "connection refused",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.canceled",
+			Type:     typeCanceled,
 			JobID:    3,
 			Repo:     "/test/repo",
 			RepoName: "repo",
@@ -185,47 +216,24 @@ func TestHandleStreamEvents(t *testing.T) {
 			Agent:    "codex",
 		})
 
-		if !waitForEvents(w, 4, time.Second) {
-			cancel()
-			t.Fatal("Timed out waiting for events")
-		}
-		cancel()
-		<-done
+		rawEvents := finishAndParseRawEvents(t, w, cancel, done, 4)
 
-		body := w.bodyString()
-		lines := strings.Split(strings.TrimSpace(body), "\n")
-
-		// Parse into maps to check actual key presence (not just empty values)
-		var rawEvents []map[string]any
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			var raw map[string]any
-			if err := json.Unmarshal([]byte(line), &raw); err != nil {
-				t.Fatalf("Failed to parse JSONL: %v", err)
-			}
-			rawEvents = append(rawEvents, raw)
-		}
-
-		expectedTypes := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
+		expectedTypes := []string{typeStarted, typeCompleted, typeFailed, typeCanceled}
 		if len(rawEvents) != len(expectedTypes) {
 			t.Fatalf("Expected %d events, got %d", len(expectedTypes), len(rawEvents))
 		}
-		for i, exp := range expectedTypes {
-			if rawEvents[i]["type"] != exp {
-				t.Errorf("Event %d: expected type '%s', got '%v'", i, exp, rawEvents[i]["type"])
-			}
-		}
 
-		// Verify error field is present (key exists) for failed event and absent for others
 		for i, raw := range rawEvents {
 			eventType, ok := raw["type"].(string)
 			if !ok {
 				t.Fatalf("Event %d: 'type' key missing or not a string", i)
 			}
+			if eventType != expectedTypes[i] {
+				t.Errorf("Event %d: expected type '%s', got '%v'", i, expectedTypes[i], eventType)
+			}
+
 			errorVal, hasError := raw["error"]
-			if eventType == "review.failed" {
+			if eventType == typeFailed {
 				if !hasError {
 					t.Error("Expected 'error' key present in review.failed event")
 				} else if errorStr, ok := errorVal.(string); !ok || errorStr != "connection refused" {
@@ -236,16 +244,9 @@ func TestHandleStreamEvents(t *testing.T) {
 					t.Errorf("Unexpected 'error' key in %s event", eventType)
 				}
 			}
-		}
 
-		// Verify verdict field is present (key exists) only in completed event
-		for i, raw := range rawEvents {
-			eventType, ok := raw["type"].(string)
-			if !ok {
-				t.Fatalf("Event %d: 'type' key missing or not a string", i)
-			}
 			verdictVal, hasVerdict := raw["verdict"]
-			if eventType == "review.completed" {
+			if eventType == typeCompleted {
 				if !hasVerdict {
 					t.Error("Expected 'verdict' key present in review.completed event")
 				} else if verdictStr, ok := verdictVal.(string); !ok || verdictStr != "pass" {
@@ -260,11 +261,11 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("omitempty fields are excluded when empty", func(t *testing.T) {
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
+		cancel, w, done := startStreamHandler(t, server, streamURL)
 
 		// Event with no optional fields set
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.started",
+			Type:     typeStarted,
 			JobID:    1,
 			Repo:     "/test/repo",
 			RepoName: "repo",
@@ -291,56 +292,32 @@ func TestHandleStreamEvents(t *testing.T) {
 
 	t.Run("repo filter only sends matching events", func(t *testing.T) {
 		// Filter for repo1 only
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events?repo="+url.QueryEscape("/test/repo1"))
+		cancel, w, done := startStreamHandler(t, server, streamURL+"?repo="+url.QueryEscape("/test/repo1"))
 
 		// Broadcast events for different repos
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    10,
 			Repo:     "/test/repo1",
 			RepoName: "repo1",
 			SHA:      "aaa",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    11,
 			Repo:     "/test/repo2", // Should be filtered out
 			RepoName: "repo2",
 			SHA:      "bbb",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    12,
 			Repo:     "/test/repo1",
 			RepoName: "repo1",
 			SHA:      "ccc",
 		})
 
-		// Wait for events to be written (expect 2 for repo1, repo2 event is filtered)
-		if !waitForEvents(w, 2, time.Second) {
-			cancel()
-			t.Fatal("Timed out waiting for events")
-		}
-
-		// Cancel and wait
-		cancel()
-		<-done
-
-		// Parse JSONL output
-		body := w.bodyString()
-		scanner := bufio.NewScanner(bytes.NewBufferString(body))
-		var events []Event
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var ev Event
-			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v", err)
-			}
-			events = append(events, ev)
-		}
+		events := finishAndParseEvents(t, w, cancel, done, 2)
 
 		// Should only have 2 events (repo1), not the repo2 event
 		if len(events) != 2 {
@@ -356,11 +333,11 @@ func TestHandleStreamEvents(t *testing.T) {
 
 	t.Run("special characters in repo filter are handled", func(t *testing.T) {
 		repoPath := "/test/my repo with spaces"
-		cancel, w, done := startStreamHandler(t, server, "/api/stream/events?repo="+url.QueryEscape(repoPath))
+		cancel, w, done := startStreamHandler(t, server, streamURL+"?repo="+url.QueryEscape(repoPath))
 
 		// Broadcast event for the repo with spaces
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    20,
 			Repo:     repoPath,
 			RepoName: "my repo with spaces",
@@ -368,36 +345,14 @@ func TestHandleStreamEvents(t *testing.T) {
 		})
 		// Broadcast event for different repo (should be filtered)
 		server.broadcaster.Broadcast(Event{
-			Type:     "review.completed",
+			Type:     typeCompleted,
 			JobID:    21,
 			Repo:     "/test/other",
 			RepoName: "other",
 			SHA:      "zzz",
 		})
 
-		// Wait for the event that passes filter
-		if !waitForEvents(w, 1, time.Second) {
-			cancel()
-			t.Fatal("Timed out waiting for events")
-		}
-		cancel()
-		<-done
-
-		// Parse output
-		body := w.bodyString()
-		scanner := bufio.NewScanner(bytes.NewBufferString(body))
-		var events []Event
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var ev Event
-			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v", err)
-			}
-			events = append(events, ev)
-		}
+		events := finishAndParseEvents(t, w, cancel, done, 1)
 
 		if len(events) != 1 {
 			t.Fatalf("Expected 1 event for repo with spaces, got %d", len(events))

@@ -202,12 +202,13 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		a := NewCodexAgent("").WithReasoning(tt.level)
-		codex, ok := a.(*CodexAgent)
-		if !ok {
-			t.Fatalf("expected CodexAgent, got %T", a)
-		}
-		if got := codex.codexReasoningEffort(); got != tt.want {
-			t.Errorf("codexReasoningEffort(%q) = %q, want %q", tt.level, got, tt.want)
+		cmdLine := a.CommandLine()
+		expectedConfig := `model_reasoning_effort="` + tt.want + `"`
+
+		if tt.want != "" && !strings.Contains(cmdLine, expectedConfig) {
+			t.Errorf("expected command line %q to contain %q", cmdLine, expectedConfig)
+		} else if tt.want == "" && strings.Contains(cmdLine, "model_reasoning_effort") {
+			t.Errorf("expected command line %q to omit reasoning effort", cmdLine)
 		}
 	}
 }
@@ -241,75 +242,33 @@ func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
 	}
 }
 
-func TestAgentWithModelPersistence(t *testing.T) {
-	for _, tt := range agentFixtures {
-		t.Run(tt.name+"/WithModel sets model", func(t *testing.T) {
-			a := tt.factory("").WithModel(tt.testModel)
-			cmdLine := a.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-
-		t.Run(tt.name+"/model persists through WithReasoning", func(t *testing.T) {
-			a := tt.factory("").WithModel(tt.testModel).WithReasoning(ReasoningThorough)
-			cmdLine := a.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-
-		t.Run(tt.name+"/model persists through WithAgentic", func(t *testing.T) {
-			a := tt.factory("").WithModel(tt.testModel).WithAgentic(true)
-			cmdLine := a.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-
-		t.Run(tt.name+"/model persists through chained calls", func(t *testing.T) {
-			a := tt.factory("").WithModel(tt.testModel).WithReasoning(ReasoningFast).WithAgentic(true)
-			cmdLine := a.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-	}
-}
-
-func TestWithModelEmptyPreservesDefault(t *testing.T) {
+func TestAgentModelConfiguration(t *testing.T) {
 	for _, tt := range agentFixtures {
 		t.Run(tt.name, func(t *testing.T) {
-			a := tt.factory("")
-			b := a.WithModel("")
-			cmdLine := b.CommandLine()
+			t.Run("explicit model sets flag", func(t *testing.T) {
+				a := tt.factory("").WithModel(tt.testModel)
+				assertArgsContain(t, a.CommandLine(), tt.modelFlag, tt.testModel)
+			})
 
-			if tt.defaultModel == "" {
-				assertArgsNotContain(t, cmdLine, tt.modelFlag)
-			} else {
-				assertArgsContain(t, cmdLine, tt.modelFlag, tt.defaultModel)
-			}
-		})
+			t.Run("empty model preserves default", func(t *testing.T) {
+				a := tt.factory("").WithModel("")
 
-		t.Run(tt.name+"/explicit then empty preserves explicit", func(t *testing.T) {
-			a := tt.factory("").WithModel("custom-model")
-			b := a.WithModel("")
-			cmdLine := b.CommandLine()
+				if tt.defaultModel == "" {
+					assertArgsNotContain(t, a.CommandLine(), tt.modelFlag)
+				} else {
+					assertArgsContain(t, a.CommandLine(), tt.modelFlag, tt.defaultModel)
+				}
+			})
 
-			assertArgsContain(t, cmdLine, tt.modelFlag, "custom-model")
-		})
-	}
-}
+			t.Run("explicit then empty preserves explicit", func(t *testing.T) {
+				a := tt.factory("").WithModel("custom-model").WithModel("")
+				assertArgsContain(t, a.CommandLine(), tt.modelFlag, "custom-model")
+			})
 
-func TestAgentBuildArgsWithModel(t *testing.T) {
-	for _, tt := range agentFixtures {
-		t.Run(tt.name+" with explicit model", func(t *testing.T) {
-			agent := tt.factory("").WithModel(tt.testModel)
-			cmdLine := agent.CommandLine()
-			assertArgsContain(t, cmdLine, tt.modelFlag, tt.testModel)
-		})
-
-		t.Run(tt.name+" without model", func(t *testing.T) {
-			agent := tt.factory("")
-			cmdLine := agent.CommandLine()
-
-			if tt.defaultModel == "" {
-				assertArgsNotContain(t, cmdLine, tt.modelFlag)
-			} else {
-				assertArgsContain(t, cmdLine, tt.modelFlag, tt.defaultModel)
-			}
+			t.Run("persists through chained calls", func(t *testing.T) {
+				a := tt.factory("").WithModel(tt.testModel).WithReasoning(ReasoningFast).WithAgentic(true)
+				assertArgsContain(t, a.CommandLine(), tt.modelFlag, tt.testModel)
+			})
 		})
 	}
 }
@@ -329,12 +288,15 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 func assertArgsContain(t *testing.T, cmdLine, flag, value string) {
 	t.Helper()
 	tokens := strings.Fields(cmdLine)
-	for i := 0; i < len(tokens)-1; i++ {
-		if tokens[i] == flag && tokens[i+1] == value {
+	for i, token := range tokens {
+		if token == flag && i+1 < len(tokens) && tokens[i+1] == value {
+			return
+		}
+		if token == flag+"="+value {
 			return
 		}
 	}
-	t.Errorf("command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
+	t.Errorf("command line %q expected to contain flag %q with value %q", cmdLine, flag, value)
 }
 
 func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
@@ -416,14 +378,12 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 	}
 	t.Setenv("PATH", fakeBin)
 
-	originalRegistry := registry
-	registry = map[string]Agent{
+	testRegistry := map[string]Agent{
 		"codex":       NewCodexAgent("definitely-not-on-path"),
 		"claude-code": NewClaudeAgent(""),
 	}
-	t.Cleanup(func() { registry = originalRegistry })
 
-	resolved, err := GetAvailable("codex")
+	resolved, err := GetAvailableFromRegistry(testRegistry, "codex")
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown agent") {
 			t.Fatalf("Known agent should not produce unknown agent error: %v", err)

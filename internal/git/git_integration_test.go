@@ -8,23 +8,40 @@ import (
 	"testing"
 )
 
+func resolvePath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved == "" {
+		return path
+	}
+	return resolved
+}
+
+func assertNoErrorMsg(t *testing.T, err error, msg string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", msg, err)
+	}
+}
+
+func assertEqual(t *testing.T, expected, actual, msg string) {
+	t.Helper()
+	if expected != actual {
+		t.Fatalf("%s: expected %s, got %s", msg, expected, actual)
+	}
+}
+
 func TestGetMainRepoRoot(t *testing.T) {
 	t.Run("regular repo returns same as GetRepoRoot", func(t *testing.T) {
 		repo := NewTestRepo(t)
 
 		mainRoot, err := GetMainRepoRoot(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot failed")
 
 		repoRoot, err := GetRepoRoot(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetRepoRoot failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetRepoRoot failed")
 
-		if mainRoot != repoRoot {
-			t.Errorf("GetMainRepoRoot returned %s, expected %s (same as GetRepoRoot)", mainRoot, repoRoot)
-		}
+		assertEqual(t, repoRoot, mainRoot, "GetMainRepoRoot should be same as GetRepoRoot")
 	})
 
 	t.Run("worktree returns main repo root", func(t *testing.T) {
@@ -35,27 +52,19 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		// GetRepoRoot from worktree returns the worktree path
 		worktreeRoot, err := GetRepoRoot(wt.Dir)
-		if err != nil {
-			t.Fatalf("GetRepoRoot on worktree failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetRepoRoot on worktree failed")
 
 		mainRepoRoot, err := GetRepoRoot(repo.Dir)
-		if err != nil {
-			t.Fatalf("GetRepoRoot on main repo failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetRepoRoot on main repo failed")
 
 		if worktreeRoot == mainRepoRoot {
 			t.Skip("worktree root equals main repo root - older git version")
 		}
 
 		mainRoot, err := GetMainRepoRoot(wt.Dir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on worktree failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on worktree failed")
 
-		if mainRoot != mainRepoRoot {
-			t.Errorf("GetMainRepoRoot on worktree returned %s, expected %s", mainRoot, mainRepoRoot)
-		}
+		assertEqual(t, mainRepoRoot, mainRoot, "GetMainRepoRoot on worktree mismatch")
 	})
 
 	t.Run("non-repo returns error", func(t *testing.T) {
@@ -74,35 +83,23 @@ func TestGetMainRepoRoot(t *testing.T) {
 		subSource.CommitFile("sub.txt", "sub", "sub initial")
 
 		// Add submodule to parent
-		parentRepo.AddSubmodule(t, subSource.Dir, "mysub")
+		parentRepo.AddSubmodule(subSource.Dir, "mysub")
 
 		submoduleDir := filepath.Join(parentRepo.Dir, "mysub")
-		submoduleDirResolved, _ := filepath.EvalSymlinks(submoduleDir)
-		if submoduleDirResolved == "" {
-			submoduleDirResolved = submoduleDir
-		}
+		submoduleDirResolved := resolvePath(t, submoduleDir)
 
 		subRoot, err := GetMainRepoRoot(submoduleDir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on submodule failed")
 
 		parentRoot, err := GetMainRepoRoot(parentRepo.Dir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on parent failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on parent failed")
 
 		if subRoot == parentRoot {
 			t.Errorf("submodule root should be distinct from parent: sub=%s parent=%s", subRoot, parentRoot)
 		}
 
-		subRootResolved, _ := filepath.EvalSymlinks(subRoot)
-		if subRootResolved == "" {
-			subRootResolved = subRoot
-		}
-		if subRootResolved != submoduleDirResolved {
-			t.Errorf("GetMainRepoRoot on submodule returned %s, expected %s", subRoot, submoduleDir)
-		}
+		subRootResolved := resolvePath(t, subRoot)
+		assertEqual(t, submoduleDirResolved, subRootResolved, "GetMainRepoRoot on submodule mismatch")
 	})
 
 	t.Run("worktree from submodule returns submodule root", func(t *testing.T) {
@@ -113,7 +110,7 @@ func TestGetMainRepoRoot(t *testing.T) {
 		subSource.CommitFile("sub.txt", "sub", "sub initial")
 
 		// Add submodule to parent
-		parentRepo.AddSubmodule(t, subSource.Dir, "mysub")
+		parentRepo.AddSubmodule(subSource.Dir, "mysub")
 		parentRepo.CommitAll("add submodule")
 
 		submoduleDir := filepath.Join(parentRepo.Dir, "mysub")
@@ -124,23 +121,15 @@ func TestGetMainRepoRoot(t *testing.T) {
 		worktreeDir := wt.Dir
 
 		wtRoot, err := GetMainRepoRoot(worktreeDir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule worktree failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on submodule worktree failed")
 
 		subRoot, err := GetMainRepoRoot(submoduleDir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on submodule failed")
 
-		if wtRoot != subRoot {
-			t.Errorf("worktree from submodule should return submodule root: wt=%s sub=%s", wtRoot, subRoot)
-		}
+		assertEqual(t, subRoot, wtRoot, "worktree from submodule should return submodule root")
 
 		parentRoot, err := GetMainRepoRoot(parentRepo.Dir)
-		if err != nil {
-			t.Fatalf("GetMainRepoRoot on parent failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "GetMainRepoRoot on parent failed")
 
 		if wtRoot == parentRoot {
 			t.Errorf("worktree from submodule should NOT return parent root: wt=%s parent=%s", wtRoot, parentRoot)
@@ -156,9 +145,7 @@ func TestGetMainRepoRoot(t *testing.T) {
 		mainRepo.CommitFile("file.txt", "v1", "commit1")
 
 		mainHead, err := ResolveSHA(mainRepo.Dir, "HEAD")
-		if err != nil {
-			t.Fatalf("ResolveSHA main HEAD failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "ResolveSHA main HEAD failed")
 
 		wt := mainRepo.AddWorktree("wt-branch")
 
@@ -166,27 +153,19 @@ func TestGetMainRepoRoot(t *testing.T) {
 		wt.CommitFile("file.txt", "v2", "commit2")
 
 		wtHead, err := ResolveSHA(wt.Dir, "HEAD")
-		if err != nil {
-			t.Fatalf("ResolveSHA worktree HEAD failed: %v", err)
-		}
+		assertNoErrorMsg(t, err, "ResolveSHA worktree HEAD failed")
 
 		if wtHead == mainHead {
 			t.Error("worktree HEAD should differ from main HEAD after new commit")
 		}
 
 		mainHeadAgain, err := ResolveSHA(mainRepo.Dir, "HEAD")
-		if err != nil {
-			t.Fatalf("ResolveSHA main HEAD again failed: %v", err)
-		}
-		if mainHeadAgain != mainHead {
-			t.Errorf("main HEAD changed unexpectedly: was %s, now %s", mainHead, mainHeadAgain)
-		}
+		assertNoErrorMsg(t, err, "ResolveSHA main HEAD again failed")
+		assertEqual(t, mainHead, mainHeadAgain, "main HEAD changed unexpectedly")
 
 		mainRoot, _ := GetMainRepoRoot(mainRepo.Dir)
 		wtRoot, _ := GetMainRepoRoot(wt.Dir)
-		if mainRoot != wtRoot {
-			t.Errorf("GetMainRepoRoot should return same root: main=%s wt=%s", mainRoot, wtRoot)
-		}
+		assertEqual(t, mainRoot, wtRoot, "GetMainRepoRoot should return same root")
 	})
 }
 
@@ -204,45 +183,39 @@ func setupBranchOriginTest(t *testing.T) (*TestRepo, *TestRepo) {
 	return bareRepo, seedRepo
 }
 
+func setupBranchOriginClone(t *testing.T) (*TestRepo, *TestRepo, *TestRepo) {
+	t.Helper()
+	bareRepo, seedRepo := setupBranchOriginTest(t)
+	clone := CloneTestRepo(t, bareRepo.Dir)
+	clone.Run("remote", "set-head", "origin", "-a")
+	return bareRepo, seedRepo, clone
+}
+
 func TestGetDefaultBranchOriginHead(t *testing.T) {
 	t.Run("missing local branch uses origin ref", func(t *testing.T) {
-		bareRepo, _ := setupBranchOriginTest(t)
-		clone := CloneTestRepo(t, bareRepo.Dir)
-		clone.Run("remote", "set-head", "origin", "-a")
+		_, _, clone := setupBranchOriginClone(t)
 		clone.Run("checkout", "--detach")
 		clone.Run("branch", "-D", "main")
 
 		branch, err := GetDefaultBranch(clone.Dir)
-		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
-		}
-		if branch != "origin/main" {
-			t.Fatalf("expected origin/main, got %s", branch)
-		}
+		assertNoErrorMsg(t, err, "GetDefaultBranch failed")
+		assertEqual(t, "origin/main", branch, "branch mismatch")
 	})
 
 	t.Run("stale local branch uses origin ref", func(t *testing.T) {
-		bareRepo, seedRepo := setupBranchOriginTest(t)
-		clone := CloneTestRepo(t, bareRepo.Dir)
-		clone.Run("remote", "set-head", "origin", "-a")
+		_, seedRepo, clone := setupBranchOriginClone(t)
 
 		seedRepo.CommitFile("file2.txt", "new", "update")
 		seedRepo.Run("push")
 		clone.Run("fetch", "origin")
 
 		branch, err := GetDefaultBranch(clone.Dir)
-		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
-		}
-		if branch != "origin/main" {
-			t.Fatalf("expected origin/main, got %s", branch)
-		}
+		assertNoErrorMsg(t, err, "GetDefaultBranch failed")
+		assertEqual(t, "origin/main", branch, "branch mismatch")
 	})
 
 	t.Run("origin/HEAD points to missing remote ref, falls back to local branch", func(t *testing.T) {
-		bareRepo, _ := setupBranchOriginTest(t)
-		clone := CloneTestRepo(t, bareRepo.Dir)
-		clone.Run("remote", "set-head", "origin", "-a")
+		_, _, clone := setupBranchOriginClone(t)
 
 		// Delete the remote-tracking branch while keeping origin/HEAD symbolic ref intact
 		clone.Run("update-ref", "-d", "refs/remotes/origin/main")
@@ -254,11 +227,7 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 		}
 
 		branch, err := GetDefaultBranch(clone.Dir)
-		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
-		}
-		if branch != "main" {
-			t.Fatalf("expected main (local branch fallback), got %s", branch)
-		}
+		assertNoErrorMsg(t, err, "GetDefaultBranch failed")
+		assertEqual(t, "main", branch, "branch mismatch")
 	})
 }

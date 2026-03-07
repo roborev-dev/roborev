@@ -10,95 +10,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
 )
 
-func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
+func mockSignalHandler(t *testing.T) (chan os.Signal, *bool) {
+	t.Helper()
+
+	var cleanupCalled bool
+	orig := setupSignalHandler
+	t.Cleanup(func() { setupSignalHandler = orig })
+
+	sigCh := make(chan os.Signal, 1)
+	setupSignalHandler = func() (chan os.Signal, func()) {
+		return sigCh, func() { cleanupCalled = true }
+	}
+	return sigCh, &cleanupCalled
+}
+
+func initDaemonTest(t *testing.T) (string, string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping daemon integration test on Windows due to file locking differences")
 	}
-
-	// Mock setupSignalHandler to verify cleanup
-	var cleanupCalled bool
-	origSetupSignalHandler := setupSignalHandler
-	setupSignalHandler = func() (chan os.Signal, func()) {
-		// Return a dummy channel that will never fire signals
-		sigCh := make(chan os.Signal, 1)
-		return sigCh, func() {
-			cleanupCalled = true
-		}
-	}
-	defer func() { setupSignalHandler = origSetupSignalHandler }()
-
-	dbPath, configPath := setupTestDaemon(t)
-
-	// Create context for cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create the daemon run command with custom flags
-	// Use an ephemeral port (0) to avoid conflicts with production.
-	cmd := daemonRunCmd()
-	cmd.SetContext(ctx)
-	cmd.SetArgs([]string{
-		"--db", dbPath,
-		"--config", configPath,
-		"--addr", "127.0.0.1:0",
-	})
-
-	// Run daemon in goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- cmd.Execute()
-	}()
-
-	// Wait for daemon to start (check if DB file is created)
-	if !waitFor(t, 5*time.Second, func() bool {
-		_, err := os.Stat(dbPath)
-		return err == nil
-	}) {
-		t.Fatal("timed out waiting for database creation")
-	}
-
-	// Verify DB was created (redundant with waitFor success, but keeps original intent)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatal("expected database to be created")
-	}
-
-	// Check that daemon didn't exit early with an error
-	select {
-	case err := <-errCh:
-		t.Fatalf("daemon exited unexpectedly: %v", err)
-	case <-time.After(100 * time.Millisecond):
-		// Daemon is still running - good
-	}
-
-	// Wait for daemon to be fully started and responsive.
-	// Use longer timeout for race detector which adds significant overhead.
-	myPID := os.Getpid()
-
-	if !waitForDaemonReady(t, 10*time.Second, myPID) {
-		// Provide more context for debugging CI failures
-		runtimes, _ := daemon.ListAllRuntimes()
-		t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
-	}
-
-	// Trigger shutdown via context cancellation instead of sending OS signal
-	cancel()
-
-	// Wait for daemon to exit (longer timeout for race detector)
-	select {
-	case <-errCh:
-		// Daemon exited - good
-		if !cleanupCalled {
-			t.Error("expected signal.Stop (cleanup) to be called")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not exit within 10 second timeout")
-	}
+	return setupTestDaemon(t)
 }
 
 func setupTestDaemon(t *testing.T) (string, string) {
@@ -147,12 +85,8 @@ func waitForDaemonReady(t *testing.T, timeout time.Duration, pid int) bool {
 	})
 }
 
-func TestDaemonShutdownBySignal(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping signal test on Windows")
-	}
-
-	dbPath, configPath := setupTestDaemon(t)
+func buildAndRunTestDaemon(t *testing.T, dbPath, configPath string) (*exec.Cmd, *bytes.Buffer) {
+	t.Helper()
 	tmpDir := filepath.Dir(dbPath) // Extract isolated temp dir for binary build
 
 	// 1. Build a test binary
@@ -181,6 +115,91 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start daemon: %v", err)
 	}
+
+	return cmd, outputBuffer
+}
+
+func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
+	dbPath, configPath := initDaemonTest(t)
+
+	// Mock setupSignalHandler to verify cleanup
+	_, cleanupCalled := mockSignalHandler(t)
+
+	// Create context for cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create the daemon run command with custom flags
+	// Use an ephemeral port (0) to avoid conflicts with production.
+	cmd := daemonRunCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:0",
+	})
+
+	// Run daemon in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Execute()
+	}()
+
+	// Wait for daemon to start (check if DB file is created)
+	if !waitFor(t, 5*time.Second, func() bool {
+		_, err := os.Stat(dbPath)
+		return err == nil
+	}) {
+		t.Fatal("timed out waiting for database creation")
+	}
+
+	// Verify DB was created (redundant with waitFor success, but keeps original intent)
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatal("expected database to be created")
+	}
+
+	// Wait for daemon to be fully started and responsive
+	// The runtime file is written before ListenAndServe, so we need to verify
+	// the HTTP server is actually accepting connections.
+	// Use longer timeout for race detector which adds significant overhead.
+	myPID := os.Getpid()
+
+	readyCh := make(chan bool)
+	go func() {
+		readyCh <- waitForDaemonReady(t, 10*time.Second, myPID)
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("daemon exited prematurely during startup: %v", err)
+	case ready := <-readyCh:
+		if !ready {
+			// Provide more context for debugging CI failures
+			runtimes, _ := daemon.ListAllRuntimes()
+			t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
+		}
+	}
+
+	// Trigger shutdown via context cancellation instead of sending OS signal
+	cancel()
+
+	// Wait for daemon to exit (longer timeout for race detector)
+	select {
+	case <-errCh:
+		// Daemon exited - good
+		if !*cleanupCalled {
+			t.Error("expected signal.Stop (cleanup) to be called")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not exit within 10 second timeout")
+	}
+}
+
+func TestDaemonShutdownBySignal(t *testing.T) {
+	dbPath, configPath := initDaemonTest(t)
+	tmpDir := filepath.Dir(dbPath) // Extract isolated temp dir for binary build
+
+	cmd, outputBuffer := buildAndRunTestDaemon(t, dbPath, configPath)
 
 	// Ensure cleanup in case of failure
 	done := make(chan error, 1)
@@ -215,7 +234,6 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	}
 
 	// 5. Wait for exit
-
 	select {
 	case err := <-done:
 		if err != nil {
@@ -231,29 +249,11 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 }
 
 func TestDaemonSignalCleanup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping daemon signal test on Windows due to file locking differences")
-	}
+	dbPath, configPath := initDaemonTest(t)
 
 	// Verify that signal.Stop is called when shutdown
 	// is triggered by a signal.
-	var cleanupCalled bool
-	origSetupSignalHandler := setupSignalHandler
-	defer func() { setupSignalHandler = origSetupSignalHandler }()
-
-	// Use a buffered channel so the mock can send sigCh
-	// back to the test goroutine without racing.
-	sigReady := make(chan chan os.Signal, 1)
-
-	setupSignalHandler = func() (chan os.Signal, func()) {
-		sigCh := make(chan os.Signal, 1)
-		sigReady <- sigCh
-		return sigCh, func() {
-			cleanupCalled = true
-		}
-	}
-
-	dbPath, configPath := setupTestDaemon(t)
+	sigCh, cleanupCalled := mockSignalHandler(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -271,12 +271,20 @@ func TestDaemonSignalCleanup(t *testing.T) {
 		errCh <- cmd.Execute()
 	}()
 
-	// Wait for the signal handler to be installed (race-free).
-	var sigCh chan os.Signal
+	// Wait for daemon to be fully started and responsive
+	myPID := os.Getpid()
+	readyCh := make(chan bool)
+	go func() {
+		readyCh <- waitForDaemonReady(t, 10*time.Second, myPID)
+	}()
+
 	select {
-	case sigCh = <-sigReady:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for signal handler setup")
+	case err := <-errCh:
+		t.Fatalf("daemon exited prematurely during startup: %v", err)
+	case ready := <-readyCh:
+		if !ready {
+			t.Fatalf("daemon did not create runtime file or is not responding")
+		}
 	}
 
 	// Trigger shutdown via signal.
@@ -287,7 +295,7 @@ func TestDaemonSignalCleanup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("daemon exited with error: %v", err)
 		}
-		if !cleanupCalled {
+		if !*cleanupCalled {
 			t.Error(
 				"expected signal.Stop (cleanup) to be" +
 					" called after signal shutdown",
@@ -295,5 +303,81 @@ func TestDaemonSignalCleanup(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("daemon did not exit within timeout")
+	}
+}
+
+func TestDaemonNonDefaultPortRegression(t *testing.T) {
+	dbPath, configPath := initDaemonTest(t)
+	tmpDir := filepath.Dir(dbPath)
+
+	// Build and run the test daemon on an ephemeral port
+	daemonCmd, outputBuffer := buildAndRunTestDaemon(t, dbPath, configPath)
+
+	done := make(chan error, 1)
+	go func() { done <- daemonCmd.Wait() }()
+	t.Cleanup(func() {
+		if daemonCmd.ProcessState == nil || !daemonCmd.ProcessState.Exited() {
+			_ = daemonCmd.Process.Kill()
+		}
+	})
+
+	// We must set ROBOREV_DATA_DIR in env so that daemon_lifecycle.go finds the runtime file
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	if !waitForDaemonReady(t, 10*time.Second, daemonCmd.Process.Pid) {
+		t.Fatalf("timed out waiting for daemon to start. Output:\n%s", outputBuffer.String())
+	}
+
+	// Capture the expected ephemeral addr from the runtime file
+	runtimes, err := daemon.ListAllRuntimes()
+	if err != nil || len(runtimes) == 0 {
+		t.Fatalf("failed to list runtimes: %v", err)
+	}
+	var expectedAddr string
+	for _, rt := range runtimes {
+		if rt.PID == daemonCmd.Process.Pid {
+			expectedAddr = "http://" + rt.Addr
+			break
+		}
+	}
+	if expectedAddr == "" {
+		t.Fatalf("could not find runtime file for test daemon (PID: %d)", daemonCmd.Process.Pid)
+	}
+
+	// We create a dummy git repo so commands like `run` or `analyze` can work
+	repoDir := initTestGitRepo(t)
+
+	// Also need to set working dir for the command
+	originalWd, _ := os.Getwd()
+	os.Chdir(repoDir)
+	t.Cleanup(func() { os.Chdir(originalWd) })
+
+	// Execute `run` command as a test. `run` should use `getDaemonAddr(cmd)` to talk to the non-default port daemon.
+	rc := runCmd()
+
+	// Explicitly initialize server flag to the default to mirror root command initialization
+	rc.Flags().String("server", "http://127.0.0.1:7373", "daemon server address")
+
+	// Pass an argument so it triggers the enqueue logic
+	rc.SetArgs([]string{"--quiet", "hello from regression test"})
+
+	var out bytes.Buffer
+	rc.SetOut(&out)
+	rc.SetErr(&out)
+
+	actualAddr := getDaemonAddr(rc)
+	if actualAddr != expectedAddr {
+		t.Fatalf("expected command to use address %q, got %q", expectedAddr, actualAddr)
+	}
+
+	err = rc.Execute()
+
+	// We expect the command to connect successfully. It might fail because there's no real agent,
+	// but it should NOT fail with a connection refused error on the default port.
+	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") || isTransportError(err) {
+			t.Fatalf("regression: command failed to connect to daemon, possibly using wrong port (default instead of ephemeral): %v", err)
+		}
+		// If it's another error (e.g., agent not found), that's fine for this test
 	}
 }

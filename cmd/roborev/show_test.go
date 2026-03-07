@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -18,7 +17,6 @@ func TestShowCommandArgParsing(t *testing.T) {
 		setupRepo    func(*TestGitRepo)
 		wantQueryHas []string
 		wantQueryNot []string
-		validate     func(t *testing.T, repo *TestGitRepo, query string)
 	}{
 		{
 			name: "numeric ref resolvable in repo treated as SHA not job ID",
@@ -26,14 +24,8 @@ func TestShowCommandArgParsing(t *testing.T) {
 			setupRepo: func(r *TestGitRepo) {
 				r.Run("tag", "12345")
 			},
-			wantQueryHas: []string{"sha="},
+			wantQueryHas: []string{"sha=<short_sha>"},
 			wantQueryNot: []string{"job_id="},
-			validate: func(t *testing.T, repo *TestGitRepo, query string) {
-				tagSHA := repo.Run("rev-parse", "12345")
-				if !strings.Contains(query, tagSHA[:7]) {
-					t.Errorf("expected query to contain resolved SHA %s (from ref 12345), got: %s", tagSHA[:7], query)
-				}
-			},
 		},
 		{
 			name:         "numeric non-resolvable treated as job ID",
@@ -61,7 +53,9 @@ func TestShowCommandArgParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newTestGitRepo(t)
-			repo.CommitFile("file.txt", "content", "initial commit")
+			commitSHA := repo.CommitFile("file.txt", "content", "initial commit")
+			shortSHA := commitSHA[:7]
+
 			if tt.setupRepo != nil {
 				tt.setupRepo(repo)
 			}
@@ -70,23 +64,24 @@ func TestShowCommandArgParsing(t *testing.T) {
 				ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
 			})
 
-			chdir(t, repo.Dir)
-			_ = runShowCmd(t, tt.args...)
+			args := append([]string{"--repo", repo.Dir}, tt.args...)
+			_, err := runShowCmd(t, args...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			q := getQuery()
 			for _, s := range tt.wantQueryHas {
+				s = strings.ReplaceAll(s, "<short_sha>", shortSHA)
 				if !strings.Contains(q, s) {
 					t.Errorf("expected query to contain %q, got: %s", s, q)
 				}
 			}
 			for _, s := range tt.wantQueryNot {
+				s = strings.ReplaceAll(s, "<short_sha>", shortSHA)
 				if strings.Contains(q, s) {
 					t.Errorf("expected query NOT to contain %q, got: %s", s, q)
 				}
-			}
-
-			if tt.validate != nil {
-				tt.validate(t, repo, q)
 			}
 		})
 	}
@@ -94,21 +89,21 @@ func TestShowCommandArgParsing(t *testing.T) {
 
 func TestShowOutputFormat(t *testing.T) {
 	tests := []struct {
-		name           string
-		argsFunc       func(sha string) []string
-		wantOutputFunc func(shortSHA string) string
-		notOutput      string
+		name       string
+		args       []string
+		wantOutput string
+		notOutput  string
 	}{
 		{
-			name:           "job ID shows 'Review for job X (by agent)'",
-			argsFunc:       func(sha string) []string { return []string{"--job", "42"} },
-			wantOutputFunc: func(shortSHA string) string { return "Review for job 42 (by codex)" },
-			notOutput:      "(job 42, by",
+			name:       "job ID shows 'Review for job X (by agent)'",
+			args:       []string{"--job", "42"},
+			wantOutput: "Review for job 42 (by codex)",
+			notOutput:  "(job 42, by",
 		},
 		{
-			name:           "SHA shows 'Review for abc123 (job X, by agent)'",
-			argsFunc:       func(sha string) []string { return []string{sha} },
-			wantOutputFunc: func(shortSHA string) string { return fmt.Sprintf("Review for %s (job 42, by codex)", shortSHA) },
+			name:       "SHA shows 'Review for abc123 (job X, by agent)'",
+			args:       []string{"<sha>"},
+			wantOutput: "Review for <short_sha> (job 42, by codex)",
 		},
 	}
 
@@ -122,12 +117,17 @@ func TestShowOutputFormat(t *testing.T) {
 				ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
 			})
 
-			chdir(t, repo.Dir)
+			args := make([]string, len(tt.args))
+			for i, arg := range tt.args {
+				args[i] = strings.ReplaceAll(arg, "<sha>", commitSHA)
+			}
+			args = append([]string{"--repo", repo.Dir}, args...)
+			output, err := runShowCmd(t, args...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-			args := tt.argsFunc(commitSHA)
-			output := runShowCmd(t, args...)
-
-			expected := tt.wantOutputFunc(shortSHA)
+			expected := strings.ReplaceAll(tt.wantOutput, "<short_sha>", shortSHA)
 
 			if !strings.Contains(output, expected) {
 				t.Errorf("expected %q in output, got: %s", expected, output)
@@ -144,26 +144,25 @@ func TestShowOutputFormat(t *testing.T) {
 func TestShowOutsideGitRepo(t *testing.T) {
 	t.Run("no args outside git repo returns guidance error", func(t *testing.T) {
 		nonGitDir := t.TempDir()
-		chdir(t, nonGitDir)
 
 		mockReviewDaemon(t, storage.Review{})
 
-		cmd := showCmd()
-		cmd.SetArgs([]string{})
-		err := cmd.Execute()
+		_, err := runShowCmd(t, "--repo", nonGitDir)
 		assertErrorContains(t, err, "not in a git repository")
 		assertErrorContains(t, err, "job ID")
 	})
 
 	t.Run("job ID outside git repo still works", func(t *testing.T) {
 		nonGitDir := t.TempDir()
-		chdir(t, nonGitDir)
 
 		getQuery := mockReviewDaemon(t, storage.Review{
 			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
 		})
 
-		output := runShowCmd(t, "--job", "42")
+		output, err := runShowCmd(t, "--repo", nonGitDir, "--job", "42")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		q := getQuery()
 		if !strings.Contains(q, "job_id=42") {
 			t.Errorf("expected job_id=42 in query, got: %s", q)
@@ -182,9 +181,10 @@ func TestShowJSONOutput(t *testing.T) {
 		ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
 	})
 
-	chdir(t, repo.Dir)
-
-	output := runShowCmd(t, "--job", "42", "--json")
+	output, err := runShowCmd(t, "--repo", repo.Dir, "--job", "42", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	t.Run("outputs valid JSON", func(t *testing.T) {
 		var parsed storage.Review

@@ -1113,6 +1113,40 @@ func ResolveWorkflowModel(repoPath string, globalCfg *Config, workflow, level st
 	return ""
 }
 
+// ResolveGenericFallbackAgent returns the agent paired with the generic model fallback.
+// This is the generic repo agent (if a generic repo model is configured)
+// or the global default agent.
+func ResolveGenericFallbackAgent(repoPath string, globalCfg *Config) string {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+
+	if repoCfg != nil && strings.TrimSpace(repoCfg.Model) != "" {
+		if s := strings.TrimSpace(repoCfg.Agent); s != "" {
+			return s
+		}
+	}
+
+	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultAgent) != "" {
+		return strings.TrimSpace(globalCfg.DefaultAgent)
+	}
+
+	return "codex"
+}
+
+// ResolveGenericFallbackModel returns the model paired with the generic agent fallback.
+func ResolveGenericFallbackModel(repoPath string, globalCfg *Config) string {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+
+	if repoCfg != nil && strings.TrimSpace(repoCfg.Model) != "" {
+		return strings.TrimSpace(repoCfg.Model)
+	}
+
+	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultModel) != "" {
+		return strings.TrimSpace(globalCfg.DefaultModel)
+	}
+
+	return ""
+}
+
 // ResolveBackupAgentForWorkflow returns the backup agent for a workflow,
 // or empty string if none is configured.
 // Priority:

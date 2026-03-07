@@ -57,11 +57,6 @@ func VersionMarker(hookName string) string {
 	}
 }
 
-// ReadFile is the function used to re-read a hook file after
-// cleanup during upgrade. Replaceable in tests to simulate
-// read failures.
-var ReadFile = os.ReadFile
-
 // NeedsUpgrade checks whether a repo's named hook contains
 // roborev but is outdated (missing the given version marker).
 func NeedsUpgrade(repoPath, hookName, versionMarker string) bool {
@@ -245,18 +240,17 @@ func embedSnippet(existing, snippet string) string {
 	return snippet + existing
 }
 
-// Install installs or upgrades a single hook. It handles:
-//   - No existing hook: write standalone content
-//   - Existing without roborev: embed snippet after shebang
-//   - Existing with current version: skip (no-op)
-//   - Existing with old version: remove old, embed new
-//   - force=true: overwrite unconditionally
+// Install installs or upgrades a single hook.
 func Install(hooksDir, hookName string, force bool) error {
+	return installWithFileReader(hooksDir, hookName, force, os.ReadFile)
+}
+
+func installWithFileReader(hooksDir, hookName string, force bool, readFile func(string) ([]byte, error)) error {
 	hookPath := filepath.Join(hooksDir, hookName)
 	versionMarker := VersionMarker(hookName)
 	hookContent := generateContent(hookName)
 
-	existing, err := os.ReadFile(hookPath)
+	existing, err := readFile(hookPath)
 	if err == nil && !force {
 		existingStr := string(existing)
 		if !strings.Contains(
@@ -291,7 +285,7 @@ func Install(hooksDir, hookName string, force bool) error {
 					"upgrade %s: %w", hookName, rmErr,
 				)
 			}
-			updated, readErr := ReadFile(hookPath)
+			updated, readErr := readFile(hookPath)
 			if readErr != nil && !os.IsNotExist(readErr) {
 				return fmt.Errorf(
 					"re-read %s after cleanup: %w",

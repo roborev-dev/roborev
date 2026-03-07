@@ -37,10 +37,7 @@ func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout t
 }
 
 func TestStreamEventsMethodNotAllowed(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server := &Server{}
 
 	req := httptest.NewRequest("POST", "/api/stream/events", nil)
 	rec := httptest.NewRecorder()
@@ -52,16 +49,9 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func setupBroadcaster(t *testing.T) (Broadcaster, <-chan Event) {
+func setupRepoAndJob(t *testing.T, db *storage.DB) *storage.ReviewJob {
 	t.Helper()
-	broadcaster := NewBroadcaster()
-	_, eventCh := broadcaster.Subscribe("")
-	return broadcaster, eventCh
-}
-
-func setupRepoAndJob(t *testing.T, db *storage.DB, tmpDir string) *storage.ReviewJob {
-	t.Helper()
-	repoDir := filepath.Join(tmpDir, "repo")
+	repoDir := filepath.Join(t.TempDir(), "repo")
 	testutil.InitTestGitRepo(t, repoDir)
 	sha := testutil.GetHeadSHA(t, repoDir)
 
@@ -73,11 +63,12 @@ func setupRepoAndJob(t *testing.T, db *storage.DB, tmpDir string) *storage.Revie
 }
 
 func TestBroadcasterIntegrationWithWorker(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 
-	broadcaster, eventCh := setupBroadcaster(t)
-	job := setupRepoAndJob(t, db, tmpDir)
+	broadcaster := NewBroadcaster()
+	_, eventCh := broadcaster.Subscribe("")
+	job := setupRepoAndJob(t, db)
 
 	// Create worker pool with our broadcaster
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil, nil)

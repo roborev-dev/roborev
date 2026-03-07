@@ -1,10 +1,38 @@
 package storage
 
 import (
+	"database/sql"
 	"path/filepath"
-	"regexp"
+	"strings"
 	"testing"
 )
+
+// Add this helper function
+func insertTestRepo(t *testing.T, db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, rootPath, name, identity string) int64 {
+	t.Helper()
+
+	result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, rootPath, name, identity)
+	if err != nil {
+		t.Fatalf("Failed to insert test repo %s: %v", name, err)
+	}
+
+	id, _ := result.LastInsertId()
+	return id
+}
+
+// Add this helper function
+func setupMigrationTestDB(t *testing.T, ddl string) (*sql.DB, string) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	rawDB, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open raw database: %v", err)
+	}
+	setupLegacySchema(t, rawDB, ddl)
+	return rawDB, dbPath
+}
 
 func TestGetOrCreateRepoByIdentity(t *testing.T) {
 	db := openTestDB(t)
@@ -101,12 +129,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		singleIdentity := "git@github.com:org/single-clone-repo.git"
 
 		// Create one local clone with the identity
-		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-			"/home/user/single-clone", "single-clone", singleIdentity)
-		if err != nil {
-			t.Fatalf("Insert single clone failed: %v", err)
-		}
-		localRepoID, _ := result.LastInsertId()
+		localRepoID := insertTestRepo(t, db, "/home/user/single-clone", "single-clone", singleIdentity)
 
 		// GetOrCreateRepoByIdentity should return the existing local repo, not create a placeholder
 		gotID, err := db.GetOrCreateRepoByIdentity(singleIdentity)
@@ -133,16 +156,8 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		sharedIdentity := "git@github.com:org/shared-repo.git"
 
 		// Create two local clones with the same identity
-		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-			"/home/user/clone-1", "clone-1", sharedIdentity)
-		if err != nil {
-			t.Fatalf("Insert clone-1 failed: %v", err)
-		}
-		_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-			"/home/user/clone-2", "clone-2", sharedIdentity)
-		if err != nil {
-			t.Fatalf("Insert clone-2 failed: %v", err)
-		}
+		insertTestRepo(t, db, "/home/user/clone-1", "clone-1", sharedIdentity)
+		insertTestRepo(t, db, "/home/user/clone-2", "clone-2", sharedIdentity)
 
 		// GetOrCreateRepoByIdentity should create a placeholder
 		placeholderID, err := db.GetOrCreateRepoByIdentity(sharedIdentity)
@@ -180,19 +195,10 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		placeholderIdentity := "git@github.com:org/placeholder-then-clone.git"
 
 		// First, create a placeholder (simulates sync with no local clone)
-		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-			placeholderIdentity, "placeholder-then-clone", placeholderIdentity)
-		if err != nil {
-			t.Fatalf("Insert placeholder failed: %v", err)
-		}
+		insertTestRepo(t, db, placeholderIdentity, "placeholder-then-clone", placeholderIdentity)
 
 		// Now create a single local clone (user cloned the repo after syncing)
-		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-			"/home/user/new-clone", "new-clone", placeholderIdentity)
-		if err != nil {
-			t.Fatalf("Insert local clone failed: %v", err)
-		}
-		localRepoID, _ := result.LastInsertId()
+		localRepoID := insertTestRepo(t, db, "/home/user/new-clone", "new-clone", placeholderIdentity)
 
 		// GetOrCreateRepoByIdentity should return the local repo, not the placeholder
 		gotID, err := db.GetOrCreateRepoByIdentity(placeholderIdentity)
@@ -240,94 +246,82 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 	}
 }
 
-func TestSetRepoIdentity(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
+func TestSyncIdentity(t *testing.T) {
+	t.Run("Set", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
 
-	// Create test repo
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+		// Create test repo
+		repo, err := db.GetOrCreateRepo(t.TempDir())
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
 
-	// Set identity
-	err = db.SetRepoIdentity(repo.ID, "https://github.com/user/repo.git")
-	if err != nil {
-		t.Fatalf("SetRepoIdentity failed: %v", err)
-	}
+		// Set identity
+		err = db.SetRepoIdentity(repo.ID, "https://github.com/user/repo.git")
+		if err != nil {
+			t.Fatalf("SetRepoIdentity failed: %v", err)
+		}
 
-	// Verify via GetRepoByIdentity
-	found, err := db.GetRepoByIdentity("https://github.com/user/repo.git")
-	if err != nil {
-		t.Fatalf("GetRepoByIdentity failed: %v", err)
-	}
-	if found == nil {
-		t.Fatal("Expected to find repo by identity")
-	}
-	if found.ID != repo.ID {
-		t.Errorf("Expected repo ID %d, got %d", repo.ID, found.ID)
-	}
-	if found.Identity != "https://github.com/user/repo.git" {
-		t.Errorf("Expected identity 'https://github.com/user/repo.git', got %q", found.Identity)
-	}
-}
+		// Verify via GetRepoByIdentity
+		found, err := db.GetRepoByIdentity("https://github.com/user/repo.git")
+		if err != nil {
+			t.Fatalf("GetRepoByIdentity failed: %v", err)
+		}
+		if found == nil {
+			t.Fatal("Expected to find repo by identity")
+		}
+		if found.ID != repo.ID {
+			t.Errorf("Expected repo ID %d, got %d", repo.ID, found.ID)
+		}
+		if found.Identity != "https://github.com/user/repo.git" {
+			t.Errorf("Expected identity 'https://github.com/user/repo.git', got %q", found.Identity)
+		}
+	})
 
-func TestGetRepoByIdentity_NotFound(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
+	t.Run("Get_NotFound", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
 
-	found, err := db.GetRepoByIdentity("nonexistent")
-	if err != nil {
-		t.Fatalf("GetRepoByIdentity failed: %v", err)
-	}
-	if found != nil {
-		t.Errorf("Expected nil for nonexistent identity, got %+v", found)
-	}
-}
+		found, err := db.GetRepoByIdentity("nonexistent")
+		if err != nil {
+			t.Fatalf("GetRepoByIdentity failed: %v", err)
+		}
+		if found != nil {
+			t.Errorf("Expected nil for nonexistent identity, got %+v", found)
+		}
+	})
 
-func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
-	// This test verifies GetRepoByIdentity returns an error if duplicates exist.
-	// Multiple repos can share the same identity (e.g., multiple clones of the same remote),
-	// but GetRepoByIdentity should return an error when asked to find a unique repo.
-	db := openTestDB(t)
-	defer db.Close()
+	t.Run("Get_DuplicateError", func(t *testing.T) {
+		// This test verifies GetRepoByIdentity returns an error if duplicates exist.
+		// Multiple repos can share the same identity (e.g., multiple clones of the same remote),
+		// but GetRepoByIdentity should return an error when asked to find a unique repo.
+		db := openTestDB(t)
+		defer db.Close()
 
-	// Create two repos with same identity (simulates two clones of the same remote)
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
-	if err != nil {
-		t.Fatalf("Failed to insert repo1: %v", err)
-	}
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path2', 'repo2', 'same-id')`)
-	if err != nil {
-		t.Fatalf("Failed to insert repo2: %v", err)
-	}
+		// Create two repos with same identity (simulates two clones of the same remote)
+		insertTestRepo(t, db, "/path1", "repo1", "same-id")
+		insertTestRepo(t, db, "/path2", "repo2", "same-id")
 
-	// GetRepoByIdentity should return error for duplicates
-	_, err = db.GetRepoByIdentity("same-id")
-	if err == nil {
-		t.Fatal("Expected error for duplicate identities, but got nil")
-	}
-	if !regexp.MustCompile(`multiple repos found`).MatchString(err.Error()) {
-		t.Errorf("Expected 'multiple repos found' error, got: %v", err)
-	}
+		// GetRepoByIdentity should return error for duplicates
+		_, err := db.GetRepoByIdentity("same-id")
+		if err == nil {
+			t.Fatal("Expected error for duplicate identities, but got nil")
+		}
+		if !strings.Contains(err.Error(), "multiple repos found") {
+			t.Errorf("Expected 'multiple repos found' error, got: %v", err)
+		}
+	})
 }
 
 func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 	// This test creates an old-schema database manually, runs migration,
 	// and verifies that the same SHA can now exist in different repos.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	rawDB, dbPath := setupMigrationTestDB(t, legacySchemaV1DDL)
 
-	// Create database with old schema (sha TEXT UNIQUE NOT NULL)
-	rawDB, err := openRawDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open raw database: %v", err)
-	}
-
-	// Create old schema with UNIQUE(sha) constraint
-	setupLegacySchema(t, rawDB, legacySchemaV1DDL)
-
+	// In legacySchemaV1DDL, there is NO identity column, so we must use raw SQL.
 	// Insert two repos
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
+	_, err := rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to insert repo1: %v", err)
@@ -388,27 +382,11 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 	// This test verifies that migration succeeds even when duplicate
 	// repos.identity values exist. Multiple clones of the same repo
 	// should be allowed (fix for https://github.com/roborev-dev/roborev/issues/131).
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-
-	rawDB, err := openRawDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open raw database: %v", err)
-	}
-
-	// Create schema with identity column but no index (simulates partial migration)
-	setupLegacySchema(t, rawDB, legacySchemaV2DDL)
+	rawDB, dbPath := setupMigrationTestDB(t, legacySchemaV2DDL)
 
 	// Insert two repos with the same identity (e.g., two clones of same remote)
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
-	if err != nil {
-		rawDB.Close()
-		t.Fatalf("Failed to insert repo1: %v", err)
-	}
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
-	if err != nil {
-		rawDB.Close()
-		t.Fatalf("Failed to insert repo2: %v", err)
-	}
+	insertTestRepo(t, rawDB, "/repo1", "repo1", "git@github.com:org/repo.git")
+	insertTestRepo(t, rawDB, "/repo2", "repo2", "git@github.com:org/repo.git")
 
 	rawDB.Close()
 
@@ -433,22 +411,10 @@ func TestUniqueIndexMigration(t *testing.T) {
 	// This test verifies that an existing database with the old UNIQUE index
 	// on repos.identity is properly migrated to a non-unique index.
 	// See: https://github.com/roborev-dev/roborev/issues/131
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-
-	rawDB, err := openRawDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open raw database: %v", err)
-	}
-
-	// Create schema with identity column AND the old unique index
-	setupLegacySchema(t, rawDB, legacySchemaV3DDL)
+	rawDB, dbPath := setupMigrationTestDB(t, legacySchemaV3DDL)
 
 	// Insert one repo
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
-	if err != nil {
-		rawDB.Close()
-		t.Fatalf("Failed to insert repo1: %v", err)
-	}
+	insertTestRepo(t, rawDB, "/repo1", "repo1", "git@github.com:org/repo.git")
 
 	rawDB.Close()
 
@@ -460,11 +426,7 @@ func TestUniqueIndexMigration(t *testing.T) {
 
 	// Verify we can now insert a second repo with the same identity
 	// (this would fail if the unique index wasn't converted to non-unique)
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
-	if err != nil {
-		db.Close()
-		t.Fatalf("Inserting second repo with same identity should succeed after migration, but got: %v", err)
-	}
+	insertTestRepo(t, db, "/repo2", "repo2", "git@github.com:org/repo.git")
 
 	db.Close()
 }

@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +31,17 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	}
 }
 
+func assertFileContent(t *testing.T, dir, file, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, file))
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", file, err)
+	}
+	if string(content) != expected {
+		t.Errorf("expected %q in %s, got %q", expected, file, content)
+	}
+}
+
 // setupGitRepo creates a minimal git repo with one commit and returns its path.
 func setupGitRepo(t *testing.T) string {
 	t.Helper()
@@ -38,12 +50,32 @@ func setupGitRepo(t *testing.T) string {
 	}
 	dir := t.TempDir()
 	runGit(t, dir, "init")
+	runGit(t, dir, "config", "core.hooksPath", os.DevNull)
 	runGit(t, dir, "config", "user.email", "test@test.com")
 	runGit(t, dir, "config", "user.name", "test")
 	writeTestFile(t, dir, "hello.txt", "hello")
 	runGit(t, dir, "add", "hello.txt")
 	runGit(t, dir, "commit", "-m", "initial")
 	return dir
+}
+
+func setupPatchConflict(t *testing.T) (repo string, patch string) {
+	t.Helper()
+	repo = setupGitRepo(t)
+	wt, err := Create(repo, "HEAD")
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	defer wt.Close()
+
+	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
+	patch, err = wt.CapturePatch()
+	if err != nil {
+		t.Fatalf("CapturePatch failed: %v", err)
+	}
+
+	writeTestFile(t, repo, "hello.txt", "conflicting-change")
+	return repo, patch
 }
 
 func TestCreateAndClose(t *testing.T) {
@@ -158,6 +190,7 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
+	defer wt.Close()
 
 	// Make changes in worktree
 	writeTestFile(t, wt.Dir, "hello.txt", "changed")
@@ -167,7 +200,6 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CapturePatch failed: %v", err)
 	}
-	wt.Close()
 
 	// Apply the patch back to the original repo
 	if err := ApplyPatch(repo, patch); err != nil {
@@ -175,20 +207,8 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 	}
 
 	// Verify the changes were applied
-	content, err := os.ReadFile(filepath.Join(repo, "hello.txt"))
-	if err != nil {
-		t.Fatalf("failed to read hello.txt: %v", err)
-	}
-	if string(content) != "changed" {
-		t.Errorf("expected 'changed', got %q", content)
-	}
-	content, err = os.ReadFile(filepath.Join(repo, "added.txt"))
-	if err != nil {
-		t.Fatalf("failed to read added.txt: %v", err)
-	}
-	if string(content) != "added" {
-		t.Errorf("expected 'added', got %q", content)
-	}
+	assertFileContent(t, repo, "hello.txt", "changed")
+	assertFileContent(t, repo, "added.txt", "added")
 }
 
 func TestCheckPatchClean(t *testing.T) {
@@ -198,12 +218,13 @@ func TestCheckPatchClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
+	defer wt.Close()
+
 	writeTestFile(t, wt.Dir, "hello.txt", "changed")
 	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatalf("CapturePatch failed: %v", err)
 	}
-	wt.Close()
 
 	// Check should pass on unmodified repo
 	if err := CheckPatch(repo, patch); err != nil {
@@ -218,22 +239,7 @@ func TestCheckPatchEmpty(t *testing.T) {
 }
 
 func TestCheckPatchConflict(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	// Create a patch that modifies hello.txt
-	wt, err := Create(repo, "HEAD")
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
-	patch, err := wt.CapturePatch()
-	if err != nil {
-		t.Fatalf("CapturePatch failed: %v", err)
-	}
-	wt.Close()
-
-	// Now modify hello.txt in the original repo to create a conflict
-	writeTestFile(t, repo, "hello.txt", "conflicting-change")
+	repo, patch := setupPatchConflict(t)
 
 	// CheckPatch should fail
 	if err := CheckPatch(repo, patch); err == nil {
@@ -242,21 +248,7 @@ func TestCheckPatchConflict(t *testing.T) {
 }
 
 func TestApplyPatchConflictFails(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	if err != nil {
-		t.Fatalf("Create failed: %v", err)
-	}
-	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
-	patch, err := wt.CapturePatch()
-	if err != nil {
-		t.Fatalf("CapturePatch failed: %v", err)
-	}
-	wt.Close()
-
-	// Create a conflict
-	writeTestFile(t, repo, "hello.txt", "different")
+	repo, patch := setupPatchConflict(t)
 
 	// ApplyPatch should fail
 	if err := ApplyPatch(repo, patch); err == nil {
@@ -270,8 +262,8 @@ func TestCreateEmptyRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty ref")
 	}
-	if !strings.Contains(err.Error(), "ref must not be empty") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrEmptyRef) {
+		t.Errorf("expected ErrEmptyRef, got: %v", err)
 	}
 }
 
@@ -294,13 +286,7 @@ func TestCreateWithSpecificSHA(t *testing.T) {
 	defer wt.Close()
 
 	// Worktree should have the original content, not "updated"
-	content, err := os.ReadFile(filepath.Join(wt.Dir, "hello.txt"))
-	if err != nil {
-		t.Fatalf("read hello.txt: %v", err)
-	}
-	if string(content) != "hello" {
-		t.Errorf("expected 'hello' at initial SHA, got %q", content)
-	}
+	assertFileContent(t, wt.Dir, "hello.txt", "hello")
 }
 
 func TestSubmoduleRequiresFileProtocol(t *testing.T) {

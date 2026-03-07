@@ -117,7 +117,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	}
 
 	// Determine working directory (use git repo root if in a repo, otherwise cwd)
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -135,7 +135,8 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 
@@ -180,15 +181,11 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// If --wait, poll until job completes and show result
 	if wait {
-		return waitForPromptJob(cmd, serverAddr, job.ID, quiet, promptPollInterval)
+		return waitForPromptJob(cmd, serverAddr, job.ID, quiet, 500*time.Millisecond)
 	}
 
 	return nil
 }
-
-// promptPollInterval is the initial poll interval for waiting on prompt jobs.
-// Can be overridden in tests to speed them up.
-var promptPollInterval = 500 * time.Millisecond
 
 // waitForPromptJob waits for a prompt job to complete and displays the result.
 // Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
@@ -197,7 +194,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if pollInterval <= 0 {
-		pollInterval = promptPollInterval
+		pollInterval = 500 * time.Millisecond
 	}
 
 	if !quiet {

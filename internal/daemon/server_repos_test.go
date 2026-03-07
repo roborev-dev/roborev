@@ -13,6 +13,15 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+type repoListResponse struct {
+	Repos []struct {
+		Name     string `json:"name"`
+		RootPath string `json:"root_path"`
+		Count    int    `json:"count"`
+	} `json:"repos"`
+	TotalCount int `json:"total_count"`
+}
+
 func TestHandleListRepos(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
@@ -24,10 +33,7 @@ func TestHandleListRepos(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response struct {
-			Repos      []struct{ Name string } `json:"repos"`
-			TotalCount int                     `json:"total_count"`
-		}
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Repos) != 0 {
@@ -50,13 +56,7 @@ func TestHandleListRepos(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response struct {
-			Repos []struct {
-				Name  string `json:"name"`
-				Count int    `json:"count"`
-			} `json:"repos"`
-			TotalCount int `json:"total_count"`
-		}
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Repos) != 2 {
@@ -84,9 +84,7 @@ func TestHandleListRepos(t *testing.T) {
 
 		server.handleListRepos(w, req)
 
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
-		}
+		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
 	})
 }
 
@@ -94,20 +92,15 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	// Create repos and jobs
-	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
-	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
+	_, repo1Jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	_, repo2Jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
-	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
-	setJobBranch(t, db, 1, "main")
-	setJobBranch(t, db, 2, "main")
-	setJobBranch(t, db, 4, "main")
-	setJobBranch(t, db, 5, "main")
-	setJobBranch(t, db, 3, "feature")
-
-	type reposResponse struct {
-		Repos      []struct{ Name string } `json:"repos"`
-		TotalCount int                     `json:"total_count"`
-	}
+	// Set branches: repo1 jobs 0,1 = main, job 2 = feature; repo2 jobs 0,1 = main
+	setJobBranch(t, db, repo1Jobs[0].ID, "main")
+	setJobBranch(t, db, repo1Jobs[1].ID, "main")
+	setJobBranch(t, db, repo1Jobs[2].ID, "feature")
+	setJobBranch(t, db, repo2Jobs[0].ID, "main")
+	setJobBranch(t, db, repo2Jobs[1].ID, "main")
 
 	t.Run("filter by main branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
@@ -115,7 +108,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		server.handleListRepos(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response reposResponse
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
 			t.Errorf("Expected 2 repos with main branch, got %d", len(response.Repos))
@@ -131,7 +124,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		server.handleListRepos(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response reposResponse
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 1 {
 			t.Errorf("Expected 1 repo with feature branch, got %d", len(response.Repos))
@@ -147,7 +140,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		server.handleListRepos(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response reposResponse
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 		if response.TotalCount != 0 {
 			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", response.TotalCount)
@@ -160,113 +153,48 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 
 	// Create repos under a "workspace" parent and one outside it
 	workspace := filepath.Join(tmpDir, "workspace")
-	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo1"), 3, "repo1")
-	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo2"), 2, "repo2")
+	_, repo1Jobs := seedRepoWithJobs(t, db, filepath.Join(workspace, "repo1"), 3, "repo1")
+	_, repo2Jobs := seedRepoWithJobs(t, db, filepath.Join(workspace, "repo2"), 2, "repo2")
 	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "other-repo"), 1, "other")
 
-	type reposResponse struct {
-		Repos      []struct{ Name string } `json:"repos"`
-		TotalCount int                     `json:"total_count"`
+	// Set branches on workspace repos: repo1 jobs 0,1=main, 2=feature; repo2 jobs 0,1=main
+	setJobBranch(t, db, repo1Jobs[0].ID, "main")
+	setJobBranch(t, db, repo1Jobs[1].ID, "main")
+	setJobBranch(t, db, repo1Jobs[2].ID, "feature")
+	setJobBranch(t, db, repo2Jobs[0].ID, "main")
+	setJobBranch(t, db, repo2Jobs[1].ID, "main")
+
+	tests := []struct {
+		name          string
+		query         string
+		expectedCount int
+		expectedTotal int
+	}{
+		{"prefix returns only child repos", "?prefix=" + url.QueryEscape(workspace), 2, 5},
+		{"prefix excludes non-matching repos", "?prefix=" + url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), 0, 0},
+		{"prefix + branch combined filter", "?prefix=" + url.QueryEscape(workspace) + "&branch=main", 2, 4},
+		{"prefix + feature branch narrows results", "?prefix=" + url.QueryEscape(workspace) + "&branch=feature", 1, 1},
+		{"prefix with trailing slash is normalized", "?prefix=" + url.QueryEscape(workspace+"/"), 2, 5},
+		{"prefix with dot-dot is normalized", "?prefix=" + url.QueryEscape(workspace+"/../"+filepath.Base(workspace)), 2, 5},
 	}
 
-	t.Run("prefix returns only child repos", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(workspace), nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/repos"+tt.query, nil)
+			w := httptest.NewRecorder()
+			server.handleListRepos(w, req)
+			testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos under workspace, got %d", len(response.Repos))
-		}
-		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
-		}
-	})
-
-	t.Run("prefix excludes non-matching repos", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 0 {
-			t.Errorf("Expected 0 repos for nonexistent prefix, got %d", len(response.Repos))
-		}
-	})
-
-	// Set branches on workspace repos: repo1 jobs 1,2=main, 3=feature; repo2 jobs 4,5=main
-	setJobBranch(t, db, 1, "main")
-	setJobBranch(t, db, 2, "main")
-	setJobBranch(t, db, 3, "feature")
-	setJobBranch(t, db, 4, "main")
-	setJobBranch(t, db, 5, "main")
-
-	t.Run("prefix + branch combined filter", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=main", nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with prefix+branch=main, got %d", len(response.Repos))
-		}
-		if response.TotalCount != 4 {
-			t.Errorf("Expected total_count 4, got %d", response.TotalCount)
-		}
-	})
-
-	t.Run("prefix + feature branch narrows results", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=feature", nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 1 {
-			t.Errorf("Expected 1 repo with prefix+branch=feature, got %d", len(response.Repos))
-		}
-		if response.TotalCount != 1 {
-			t.Errorf("Expected total_count 1, got %d", response.TotalCount)
-		}
-	})
-
-	t.Run("prefix with trailing slash is normalized", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/repos?prefix="+url.QueryEscape(workspace+"/"), nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with trailing-slash prefix, got %d", len(response.Repos))
-		}
-	})
-
-	t.Run("prefix with dot-dot is normalized", func(t *testing.T) {
-		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/repos?prefix="+url.QueryEscape(dotdotPrefix), nil)
-		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-
-		var response reposResponse
-		testutil.DecodeJSON(t, w, &response)
-		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with dot-dot prefix, got %d", len(response.Repos))
-		}
-	})
+			var response repoListResponse
+			testutil.DecodeJSON(t, w, &response)
+			if len(response.Repos) != tt.expectedCount {
+				t.Errorf("Expected %d repos, got %d", tt.expectedCount, len(response.Repos))
+			}
+			if response.TotalCount != tt.expectedTotal {
+				t.Errorf("Expected total_count %d, got %d", tt.expectedTotal, response.TotalCount)
+			}
+		})
+	}
 }
 
 func TestHandleListReposSlashNormalization(t *testing.T) {
@@ -278,15 +206,6 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 	seedRepoWithJobs(t, db, ws+"/repo-y", 1, "ry")
 	seedRepoWithJobs(t, db, filepath.ToSlash(tmpDir)+"/other-z", 1, "rz")
 
-	type repoEntry struct {
-		Name     string `json:"name"`
-		RootPath string `json:"root_path"`
-	}
-	type reposResponse struct {
-		Repos      []repoEntry `json:"repos"`
-		TotalCount int         `json:"total_count"`
-	}
-
 	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(ws), nil)
@@ -294,7 +213,7 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 		server.handleListRepos(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response reposResponse
+		var response repoListResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
 			t.Errorf(
@@ -322,15 +241,15 @@ func TestHandleListBranches(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	// Create repos and jobs
-	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
-	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
+	_, repo1Jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	_, repo2Jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
-	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
-	setJobBranch(t, db, 1, "main")
-	setJobBranch(t, db, 2, "main")
-	setJobBranch(t, db, 4, "main")
-	setJobBranch(t, db, 3, "feature")
-	// job 5 left empty
+	// Set branches: jobs 0,1 for repo1 = main, job 2 = feature, job 0 for repo2 = main, job 1 = no branch
+	setJobBranch(t, db, repo1Jobs[0].ID, "main")
+	setJobBranch(t, db, repo1Jobs[1].ID, "main")
+	setJobBranch(t, db, repo1Jobs[2].ID, "feature")
+	setJobBranch(t, db, repo2Jobs[0].ID, "main")
+	// repo2Jobs[1].ID left empty
 
 	type branchesResponse struct {
 		Branches       []json.RawMessage `json:"branches"`
@@ -414,9 +333,7 @@ func TestHandleListBranches(t *testing.T) {
 
 		server.handleListBranches(w, req)
 
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
-		}
+		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
 	})
 }
 
@@ -426,9 +343,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos/register", nil)
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected 405, got %d", w.Code)
-		}
+		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
 	})
 
 	t.Run("empty body returns 400", func(t *testing.T) {
@@ -436,9 +351,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{})
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
-		}
+		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("non-git path returns 400", func(t *testing.T) {
@@ -449,9 +362,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		})
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
-		}
+		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("valid git repo returns 200 and persists", func(t *testing.T) {
@@ -471,9 +382,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
-		}
+		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var repo storage.Repo
 		testutil.DecodeJSON(t, w, &repo)
@@ -505,17 +414,13 @@ func TestHandleRegisterRepo(t *testing.T) {
 		req1 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
 		w1 := httptest.NewRecorder()
 		server.handleRegisterRepo(w1, req1)
-		if w1.Code != http.StatusOK {
-			t.Fatalf("First call: expected 200, got %d: %s", w1.Code, w1.Body.String())
-		}
+		testutil.AssertStatusCode(t, w1, http.StatusOK)
 
 		// Second call
 		req2 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
 		w2 := httptest.NewRecorder()
 		server.handleRegisterRepo(w2, req2)
-		if w2.Code != http.StatusOK {
-			t.Fatalf("Second call: expected 200, got %d: %s", w2.Code, w2.Body.String())
-		}
+		testutil.AssertStatusCode(t, w2, http.StatusOK)
 
 		// Still only one repo in DB
 		repos, err := db.ListRepos()

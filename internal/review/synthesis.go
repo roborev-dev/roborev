@@ -152,7 +152,7 @@ func FormatRawBatchComment(
 			output := r.Output
 			const maxLen = 15000
 			if len(output) > maxLen {
-				output = output[:maxLen] +
+				output = TrimPartialRune(output[:maxLen]) +
 					"\n\n...(truncated)"
 			}
 			b.WriteString(output)

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -391,7 +392,7 @@ func isLoopbackAddr(addr string) bool {
 // KillDaemon attempts to gracefully shut down a daemon, then force kill if needed.
 // Returns true if the daemon was killed or is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
-func KillDaemon(info *RuntimeInfo) bool {
+func KillDaemon(ctx context.Context, info *RuntimeInfo) bool {
 	if info == nil {
 		return true
 	}
@@ -407,16 +408,28 @@ func KillDaemon(info *RuntimeInfo) bool {
 
 	// First try graceful HTTP shutdown (only for loopback addresses)
 	if info.Addr != "" && isLoopbackAddr(info.Addr) {
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Post(fmt.Sprintf("http://%s/api/shutdown", info.Addr), "application/json", nil)
+		req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("http://%s/api/shutdown", info.Addr), nil)
 		if err == nil {
-			resp.Body.Close()
-			// Wait for graceful shutdown
-			for range 10 {
-				time.Sleep(200 * time.Millisecond)
-				if !IsDaemonAlive(info.Addr) {
-					removeRuntimeFile()
-					return true
+			req.Header.Set("Content-Type", "application/json")
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				// Wait for graceful shutdown
+				ticker := time.NewTicker(200 * time.Millisecond)
+				defer ticker.Stop()
+
+			WaitLoop:
+				for range 10 {
+					select {
+					case <-ctx.Done():
+						break WaitLoop
+					case <-ticker.C:
+						if !IsDaemonAlive(info.Addr) {
+							removeRuntimeFile()
+							return true
+						}
+					}
 				}
 			}
 		}
@@ -458,7 +471,7 @@ func CleanupZombieDaemons() int {
 		}
 
 		// Unresponsive - try to kill it
-		if KillDaemon(info) {
+		if KillDaemon(context.Background(), info) {
 			cleaned++
 		}
 	}

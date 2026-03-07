@@ -17,6 +17,7 @@ func showCmd() *cobra.Command {
 	var forceJobID bool
 	var showPrompt bool
 	var jsonOutput bool
+	var repoPath string
 
 	cmd := &cobra.Command{
 		Use:   "show [job_id|sha]",
@@ -38,11 +39,10 @@ Examples:
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
-
-			addr := getDaemonAddr()
 			client := &http.Client{Timeout: 5 * time.Second}
 
 			var queryURL string
@@ -54,7 +54,7 @@ Examples:
 				}
 				// Default to HEAD
 				sha := "HEAD"
-				root, rootErr := git.GetRepoRoot(".")
+				root, rootErr := git.GetRepoRoot(repoPath)
 				if rootErr != nil {
 					return fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")
 				}
@@ -72,7 +72,7 @@ Examples:
 					isJobID = true
 				} else {
 					// Try to resolve as SHA first (handles numeric SHAs like "123456")
-					if root, err := git.GetRepoRoot("."); err == nil {
+					if root, err := git.GetRepoRoot(repoPath); err == nil {
 						if resolved, err := git.ResolveSHA(root, arg); err == nil {
 							resolvedSHA = resolved
 						}
@@ -139,5 +139,6 @@ Examples:
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().StringVar(&repoPath, "repo", ".", "path to git repository")
 	return cmd
 }

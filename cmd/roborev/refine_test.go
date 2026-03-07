@@ -19,6 +19,7 @@ import (
 type mockDaemonClient struct {
 	reviews   map[string]*storage.Review // keyed by SHA
 	jobs      map[int64]*storage.ReviewJob
+	jobsSlice []*storage.ReviewJob
 	responses map[int64][]storage.Response
 
 	// Track calls for assertions
@@ -50,6 +51,7 @@ func newMockDaemonClient() *mockDaemonClient {
 	return &mockDaemonClient{
 		reviews:   make(map[string]*storage.Review),
 		jobs:      make(map[int64]*storage.ReviewJob),
+		jobsSlice: make([]*storage.ReviewJob, 0),
 		responses: make(map[int64][]storage.Response),
 	}
 }
@@ -100,7 +102,7 @@ func (m *mockDaemonClient) WaitForReview(jobID int64) (*storage.Review, error) {
 }
 
 func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
-	for _, job := range m.jobs {
+	for _, job := range m.jobsSlice {
 		if job.GitRef == sha {
 			return job, nil
 		}
@@ -109,7 +111,7 @@ func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.Revi
 }
 
 func (m *mockDaemonClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
-	for _, job := range m.jobs {
+	for _, job := range m.jobsSlice {
 		if job.GitRef == gitRef {
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
 				return job, nil
@@ -141,11 +143,13 @@ func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, cl
 
 // WithJob adds a job to the mock client, returning the client for chaining.
 func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobStatus) *mockDaemonClient {
-	m.jobs[id] = &storage.ReviewJob{
+	job := &storage.ReviewJob{
 		ID:     id,
 		GitRef: gitRef,
 		Status: status,
 	}
+	m.jobs[id] = job
+	m.jobsSlice = append(m.jobsSlice, job)
 	return m
 }
 
@@ -241,7 +245,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
-	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+	testutil.MockExecutable(t, "codex", 0)
 
 	selected, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
 	if err != nil {
@@ -258,8 +262,8 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
-	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
-	t.Cleanup(testutil.MockExecutable(t, "acp-agent", 0))
+	testutil.MockExecutable(t, "codex", 0)
+	testutil.MockExecutable(t, "acp-agent", 0)
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
@@ -283,7 +287,7 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
-	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
+	testutil.MockExecutableIsolated(t, "codex", 0)
 
 	// Request a known-but-unavailable agent, codex should be used as fallback
 	selected, err := selectRefineAgent(nil, "gemini", agent.ReasoningThorough, "")
@@ -297,6 +301,58 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	}
 	if codexAgent.Reasoning != agent.ReasoningThorough {
 		t.Fatalf("expected codex fallback to use requested reasoning (thorough), got %q", codexAgent.Reasoning)
+	}
+}
+
+func assertErrors(t *testing.T, err error, wantErrs []string) {
+	t.Helper()
+	if len(wantErrs) > 0 {
+		if err == nil {
+			t.Fatalf("expected error containing %q, got nil", wantErrs)
+		}
+		for _, wantErr := range wantErrs {
+			if !strings.Contains(err.Error(), wantErr) {
+				t.Errorf("expected error containing %q, got: %v", wantErr, err)
+			}
+		}
+	} else if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func assertJobID(t *testing.T, found *storage.Review, wantJobID int64) {
+	t.Helper()
+	if wantJobID == 0 {
+		if found != nil {
+			t.Errorf("expected no failed reviews, got job %d", found.JobID)
+		}
+	} else {
+		if found == nil {
+			t.Fatalf("expected to find a failed review (job %d)", wantJobID)
+		}
+		if found.JobID != wantJobID {
+			t.Errorf("expected job %d, got job %d", wantJobID, found.JobID)
+		}
+	}
+}
+
+func assertClosedReviews(t *testing.T, closedJobIDs []int64, wantClosedIDs []int64) {
+	t.Helper()
+	if len(wantClosedIDs) > 0 {
+		if len(closedJobIDs) != len(wantClosedIDs) {
+			t.Errorf("expected %d reviews to be closed, got %d", len(wantClosedIDs), len(closedJobIDs))
+		}
+		closed := make(map[int64]bool)
+		for _, id := range closedJobIDs {
+			closed[id] = true
+		}
+		for _, id := range wantClosedIDs {
+			if !closed[id] {
+				t.Errorf("expected job %d to be closed, got %v", id, closedJobIDs)
+			}
+		}
+	} else if len(closedJobIDs) > 0 {
+		t.Errorf("expected no reviews to be closed, got %v", closedJobIDs)
 	}
 }
 
@@ -364,7 +420,6 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		},
 		{
 			name:      "no reviews",
-			setup:     func(c *mockDaemonClient) {},
 			commits:   []string{"unreviewed1", "unreviewed2"},
 			wantJobID: 0,
 		},
@@ -442,58 +497,22 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := newMockDaemonClient()
-			tt.setup(client)
+			if tt.setup != nil {
+				tt.setup(client)
+			}
 
 			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
 
+			assertErrors(t, err, tt.wantErrs)
 			if len(tt.wantErrs) > 0 {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErrs)
-				}
-				for _, wantErr := range tt.wantErrs {
-					if !strings.Contains(err.Error(), wantErr) {
-						t.Errorf("expected error containing %q, got: %v", wantErr, err)
-					}
-				}
 				if found != nil {
 					t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
 				}
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("findFailedReviewForBranch failed: %v", err)
-			}
-
-			if tt.wantJobID == 0 {
-				if found != nil {
-					t.Errorf("expected no failed reviews, got job %d", found.JobID)
-				}
-			} else {
-				if found == nil {
-					t.Fatalf("expected to find a failed review (job %d)", tt.wantJobID)
-				}
-				if found.JobID != tt.wantJobID {
-					t.Errorf("expected job %d, got job %d", tt.wantJobID, found.JobID)
-				}
-			}
-
-			if len(tt.wantClosedIDs) > 0 {
-				if len(client.closedJobIDs) != len(tt.wantClosedIDs) {
-					t.Errorf("expected %d reviews to be closed, got %d", len(tt.wantClosedIDs), len(client.closedJobIDs))
-				}
-				closed := make(map[int64]bool)
-				for _, id := range client.closedJobIDs {
-					closed[id] = true
-				}
-				for _, id := range tt.wantClosedIDs {
-					if !closed[id] {
-						t.Errorf("expected job %d to be closed, got %v", id, client.closedJobIDs)
-					}
-				}
-			} else if len(client.closedJobIDs) > 0 {
-				t.Errorf("expected no reviews to be closed, got %v", client.closedJobIDs)
-			}
+			assertJobID(t, found, tt.wantJobID)
+			assertClosedReviews(t, client.closedJobIDs, tt.wantClosedIDs)
 		})
 	}
 }
@@ -533,7 +552,6 @@ func TestFindPendingJobForBranch(t *testing.T) {
 		},
 		{
 			name:      "no jobs for commits",
-			setup:     func(c *mockDaemonClient) {},
 			commits:   []string{"unreviewed1", "unreviewed2"},
 			wantJobID: 0,
 		},
@@ -551,26 +569,33 @@ func TestFindPendingJobForBranch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := newMockDaemonClient()
-			tt.setup(client)
+			if tt.setup != nil {
+				tt.setup(client)
+			}
 
 			pending, err := findPendingJobForBranch(client, "/repo", tt.commits)
 			if err != nil {
 				t.Fatalf("findPendingJobForBranch failed: %v", err)
 			}
 
-			if tt.wantJobID == 0 {
-				if pending != nil {
-					t.Errorf("expected no pending jobs, got job %d", pending.ID)
-				}
-			} else {
-				if pending == nil {
-					t.Fatalf("expected to find a pending job (job %d)", tt.wantJobID)
-				}
-				if pending.ID != tt.wantJobID {
-					t.Errorf("expected job %d, got job %d", tt.wantJobID, pending.ID)
-				}
-			}
+			assertPendingJobID(t, pending, tt.wantJobID)
 		})
+	}
+}
+
+func assertPendingJobID(t *testing.T, pending *storage.ReviewJob, wantJobID int64) {
+	t.Helper()
+	if wantJobID == 0 {
+		if pending != nil {
+			t.Errorf("expected no pending jobs, got job %d", pending.ID)
+		}
+	} else {
+		if pending == nil {
+			t.Fatalf("expected to find a pending job (job %d)", wantJobID)
+		}
+		if pending.ID != wantJobID {
+			t.Errorf("expected job %d, got job %d", wantJobID, pending.ID)
+		}
 	}
 }
 
@@ -586,15 +611,20 @@ func chdirForTest(t *testing.T, dir string) {
 	t.Cleanup(func() { os.Chdir(orig) })
 }
 
-func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
+func setupGitTest(t *testing.T) *testutil.TestRepo {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-
 	repo := testutil.InitTestRepo(t)
+	chdirForTest(t, repo.Root)
+	return repo
+}
+
+func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
+	setupGitTest(t)
 
 	// Stay on main branch (don't create feature branch)
-	chdirForTest(t, repo.Root)
 
 	// Validating without --since on main should fail
 	_, _, _, _, err := validateRefineContext("", "", "")
@@ -610,17 +640,11 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 }
 
 func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Add another commit on main
 	repo.CommitFile("second.txt", "second", "second commit")
-
-	chdirForTest(t, repo.Root)
 
 	// Validating with --since on main should pass
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
@@ -639,18 +663,12 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 }
 
 func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch with commits
 	repo.RunGit("checkout", "-b", "feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
-
-	chdirForTest(t, repo.Root)
 
 	// --since should work on feature branch
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
@@ -669,13 +687,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 }
 
 func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
-
-	chdirForTest(t, repo.Root)
+	setupGitTest(t)
 
 	// Invalid --since ref should fail with clear error
 	_, _, _, _, err := validateRefineContext("", "nonexistent-ref-abc123", "")
@@ -688,11 +700,7 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 }
 
 func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	// Create a commit on a separate branch that diverges from main
 	repo.RunGit("checkout", "-b", "other-branch")
@@ -702,8 +710,6 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 	// Go back to main and create a different commit
 	repo.RunGit("checkout", "main")
 	repo.CommitFile("main2.txt", "main2", "second commit on main")
-
-	chdirForTest(t, repo.Root)
 
 	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
 	_, _, _, _, err := validateRefineContext("", otherBranchSHA, "")
@@ -716,18 +722,12 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 }
 
 func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch
 	repo.RunGit("checkout", "-b", "feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
-
-	chdirForTest(t, repo.Root)
 
 	// Feature branch without --since should pass validation (uses merge-base)
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", "", "")
@@ -747,11 +747,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 }
 
 func TestCommitWithHookRetrySucceeds(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	// Install a pre-commit hook that fails on the first 2 calls and
 	// succeeds on the 3rd+. The hook runs twice before a retry: once
@@ -794,11 +790,7 @@ exit 0
 }
 
 func TestCommitWithHookRetryExhausted(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
@@ -819,11 +811,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 }
 
 func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	// No pre-commit hook installed. Commit with no changes will fail
 	// for a non-hook reason ("nothing to commit").
@@ -843,11 +831,7 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 }
 
 func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
@@ -879,11 +863,7 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 }
 
 func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := testutil.InitTestRepo(t)
+	repo := setupGitTest(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
@@ -959,7 +939,7 @@ func TestResolveReasoningWithFast(t *testing.T) {
 // Regression test for f7385273.
 func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 	// Make only codex available (not gemini, which will be "primary").
-	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
+	testutil.MockExecutableIsolated(t, "codex", 0)
 
 	selected, err := selectRefineAgent(
 		nil, "gemini", agent.ReasoningStandard, "codex",
@@ -1005,7 +985,7 @@ func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 // resolved model is empty.
 // Regression test for f7385273.
 func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
-	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+	testutil.MockExecutable(t, "codex", 0)
 
 	a, err := agent.Get("codex")
 	if err != nil {
@@ -1043,7 +1023,7 @@ func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 // primary and backup resolve to the same agent, the agent is treated as
 // the primary (not backup) and gets the workflow model, not the backup model.
 func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
-	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+	testutil.MockExecutable(t, "codex", 0)
 
 	a, err := agent.Get("codex")
 	if err != nil {

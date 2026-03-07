@@ -11,6 +11,7 @@ proto/*.pb.go
 *.out
 coverage.out
 *.test
+*.log
 
 # IDE
 .idea/

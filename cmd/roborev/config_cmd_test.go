@@ -65,9 +65,8 @@ func getNestedValue(t *testing.T, raw map[string]any, dotKey string) any {
 	return current
 }
 
-func assertConfigValue(t *testing.T, path, dotKey string, expected any) {
+func assertMapValue(t *testing.T, raw map[string]any, dotKey string, expected any) {
 	t.Helper()
-	raw := readTOML(t, path)
 	val := getNestedValue(t, raw, dotKey)
 	if val != expected {
 		t.Errorf("%s = %v (%T), want %v (%T)", dotKey, val, val, expected, expected)
@@ -84,38 +83,34 @@ func assertErrorContains(t *testing.T, err error, want string) {
 	}
 }
 
+func assertOutputContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Errorf("expected string to contain %q, got:\n%s", substr, s)
+	}
+}
+
+func assertOutputNotContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if strings.Contains(s, substr) {
+		t.Errorf("expected string to NOT contain %q, got:\n%s", substr, s)
+	}
+}
+
 // stubRepoResolver implements RepoResolver for testing.
 type stubRepoResolver struct {
-	gitRoot    string
-	gitErr     error
-	workingDir string
-	workingErr error
+	StubGitRoot    string
+	StubGitErr     error
+	StubWorkingDir string
+	StubWorkingErr error
 }
 
 func (s *stubRepoResolver) RepoRoot() (string, error) {
-	return s.gitRoot, s.gitErr
+	return s.StubGitRoot, s.StubGitErr
 }
 
 func (s *stubRepoResolver) WorkingDir() (string, error) {
-	return s.workingDir, s.workingErr
-}
-
-func (s *stubRepoResolver) SetGitRoot(path string) {
-	s.gitRoot = path
-	s.gitErr = nil
-}
-
-func (s *stubRepoResolver) SetGitError(err error) {
-	s.gitErr = err
-}
-
-func (s *stubRepoResolver) SetWorkingDir(path string) {
-	s.workingDir = path
-	s.workingErr = nil
-}
-
-func (s *stubRepoResolver) SetWorkingDirError(err error) {
-	s.workingErr = err
+	return s.StubWorkingDir, s.StubWorkingErr
 }
 
 // createFakeGitRepo creates a temporary directory with a .git subdirectory,
@@ -155,8 +150,9 @@ func setupConfigEnv(t *testing.T, globalTOML, localTOML string) configEnv {
 		}
 	}
 
-	resolver := &stubRepoResolver{}
-	resolver.SetGitRoot(repoDir)
+	resolver := &stubRepoResolver{
+		StubGitRoot: repoDir,
+	}
 
 	return configEnv{DataDir: dataDir, RepoDir: repoDir, Resolver: resolver}
 }
@@ -216,8 +212,9 @@ func TestDetermineScope(t *testing.T) {
 
 func TestRepoRoot(t *testing.T) {
 	t.Run("uses git resolver when available", func(t *testing.T) {
-		resolver := &stubRepoResolver{}
-		resolver.SetGitRoot("/tmp/from-git")
+		resolver := &stubRepoResolver{
+			StubGitRoot: "/tmp/from-git",
+		}
 
 		got, err := repoRoot(resolver)
 		if err != nil {
@@ -235,9 +232,10 @@ func TestRepoRoot(t *testing.T) {
 			t.Fatalf("create nested dir: %v", err)
 		}
 
-		resolver := &stubRepoResolver{}
-		resolver.SetGitError(errors.New(errGitStub))
-		resolver.SetWorkingDir(nestedDir)
+		resolver := &stubRepoResolver{
+			StubGitErr:     errors.New(errGitStub),
+			StubWorkingDir: nestedDir,
+		}
 
 		got, err := repoRoot(resolver)
 		if err != nil {
@@ -249,9 +247,10 @@ func TestRepoRoot(t *testing.T) {
 	})
 
 	t.Run("optional lookup returns empty when not in repo", func(t *testing.T) {
-		resolver := &stubRepoResolver{}
-		resolver.SetGitError(errors.New(errGitStub))
-		resolver.SetWorkingDir(t.TempDir())
+		resolver := &stubRepoResolver{
+			StubGitErr:     errors.New(errGitStub),
+			StubWorkingDir: t.TempDir(),
+		}
 
 		got, err := repoRoot(resolver)
 		if err != nil {
@@ -262,11 +261,13 @@ func TestRepoRoot(t *testing.T) {
 		}
 	})
 }
+
 func TestRequireRepoRoot(t *testing.T) {
 	t.Run("returns not repo error when required and missing", func(t *testing.T) {
-		resolver := &stubRepoResolver{}
-		resolver.SetGitError(errors.New(errGitStub))
-		resolver.SetWorkingDir(t.TempDir())
+		resolver := &stubRepoResolver{
+			StubGitErr:     errors.New(errGitStub),
+			StubWorkingDir: t.TempDir(),
+		}
 
 		_, err := requireRepoRoot(resolver)
 		if err == nil {
@@ -278,164 +279,205 @@ func TestRequireRepoRoot(t *testing.T) {
 	})
 
 	t.Run("surfaces resolver errors", func(t *testing.T) {
-		resolver := &stubRepoResolver{}
-		resolver.SetGitError(errors.New(errGitStub))
-		resolver.SetWorkingDirError(errors.New(errCwdStub))
+		resolver := &stubRepoResolver{
+			StubGitErr:     errors.New(errGitStub),
+			StubWorkingErr: errors.New(errCwdStub),
+		}
 
 		_, err := requireRepoRoot(resolver)
 		assertErrorContains(t, err, "determine repository root: "+errCwdStub)
 	})
 }
-func TestGetValueForScopeMergedPrefersLocal(t *testing.T) {
-	env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "review_agent = \"local-agent\"\n")
 
-	nestedDir := filepath.Join(env.RepoDir, "a", "b")
-	if err := os.MkdirAll(nestedDir, 0755); err != nil {
-		t.Fatalf("create nested dir: %v", err)
-	}
+func TestGetValueForScope(t *testing.T) {
+	t.Run("MergedPrefersLocal", func(t *testing.T) {
+		env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "review_agent = \"local-agent\"\n")
 
-	env.Resolver.SetGitError(errors.New(errGitStub))
-	env.Resolver.SetWorkingDir(nestedDir)
+		nestedDir := filepath.Join(env.RepoDir, "a", "b")
+		if err := os.MkdirAll(nestedDir, 0755); err != nil {
+			t.Fatalf("create nested dir: %v", err)
+		}
 
-	got, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
-	if err != nil {
-		t.Fatalf("getValueForScope returned error: %v", err)
-	}
-	if got != "local-agent" {
-		t.Fatalf("getValueForScope = %q, want %q", got, "local-agent")
-	}
-}
-func TestGetValueForScopeMergedRepoResolutionError(t *testing.T) {
-	env := setupConfigEnv(t, "", "")
+		env.Resolver.StubGitErr = errors.New(errGitStub)
+		env.Resolver.StubWorkingDir = nestedDir
 
-	env.Resolver.SetGitError(errors.New(errGitStub))
-	env.Resolver.SetWorkingDirError(errors.New(errCwdStub))
+		got, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
+		if err != nil {
+			t.Fatalf("getValueForScope returned error: %v", err)
+		}
+		if got != "local-agent" {
+			t.Fatalf("getValueForScope = %q, want %q", got, "local-agent")
+		}
+	})
 
-	_, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
-	assertErrorContains(t, err, "determine repository root: "+errCwdStub)
-}
-func TestListMergedConfigRepoResolutionError(t *testing.T) {
-	env := setupConfigEnv(t, "", "")
+	t.Run("MergedRepoResolutionError", func(t *testing.T) {
+		env := setupConfigEnv(t, "", "")
 
-	env.Resolver.SetGitError(errors.New(errGitStub))
-	env.Resolver.SetWorkingDirError(errors.New(errCwdStub))
+		env.Resolver.StubGitErr = errors.New(errGitStub)
+		env.Resolver.StubWorkingErr = errors.New(errCwdStub)
 
-	err := listMergedConfig(env.Resolver, false)
-	assertErrorContains(t, err, "determine repository root: "+errCwdStub)
-}
-func TestSetConfigKey(t *testing.T) {
-	path := setupConfigFile(t)
+		_, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
+		assertErrorContains(t, err, "determine repository root: "+errCwdStub)
+	})
 
-	tests := []struct {
-		name     string
-		key      string
-		val      string
-		expected any
-	}{
-		{"String", "default_agent", "gemini", "gemini"},
-		{"Integer", "max_workers", "8", int64(8)},
-		{"Boolean", "sync.enabled", "true", true},
-		{"NestedBoolean", "advanced.tasks_enabled", "true", true},
-	}
+	t.Run("MergedMalformedLocalConfig", func(t *testing.T) {
+		env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "invalid toml [[[\n")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := setConfigKey(path, tt.key, tt.val, true); err != nil {
-				t.Fatalf("setConfigKey: %v", err)
-			}
-			assertConfigValue(t, path, tt.key, tt.expected)
-		})
-	}
+		_, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
+		assertErrorContains(t, err, "load repo config")
+	})
 
-	t.Run("Persistence", func(t *testing.T) {
-		// Previous values should still be present after multiple sets.
-		assertConfigValue(t, path, "default_agent", "gemini")
-		assertConfigValue(t, path, "max_workers", int64(8))
-		assertConfigValue(t, path, "sync.enabled", true)
-		assertConfigValue(t, path, "advanced.tasks_enabled", true)
+	t.Run("MergedRepoOnlyKeyNotSet", func(t *testing.T) {
+		env := setupConfigEnv(t, "default_agent = \"codex\"\n", "")
+
+		// No repo (no .git dir)
+		env.Resolver.StubGitErr = errors.New(errGitStub)
+		env.Resolver.StubWorkingDir = t.TempDir()
+
+		// "agent" is a repo-only key — should not fall through to global config
+		_, err := getValueForScope(env.Resolver, "agent", scopeMerged)
+		assertErrorContains(t, err, "not set in local config")
 	})
 }
 
-func TestSetConfigKeyNestedCreation(t *testing.T) {
-	path := setupConfigFile(t)
+func TestListMergedConfig(t *testing.T) {
+	t.Run("RepoResolutionError", func(t *testing.T) {
+		env := setupConfigEnv(t, "", "")
 
-	if err := setConfigKey(path, "ci.poll_interval", "10m", true); err != nil {
-		t.Fatalf("setConfigKey nested: %v", err)
-	}
-	assertConfigValue(t, path, "ci.poll_interval", "10m")
+		env.Resolver.StubGitErr = errors.New(errGitStub)
+		env.Resolver.StubWorkingErr = errors.New(errCwdStub)
+
+		err := listMergedConfig(env.Resolver, false)
+		assertErrorContains(t, err, "determine repository root: "+errCwdStub)
+	})
+
+	t.Run("MalformedLocalConfig", func(t *testing.T) {
+		env := setupConfigEnv(t, "", "invalid toml [[[\n")
+
+		err := listMergedConfig(env.Resolver, false)
+		assertErrorContains(t, err, "load repo config")
+	})
 }
 
-func TestSetConfigKeyInvalidKey(t *testing.T) {
-	path := setupConfigFile(t)
+func TestSetConfigKey(t *testing.T) {
+	t.Run("BasicTypes", func(t *testing.T) {
+		path := setupConfigFile(t)
 
-	err := setConfigKey(path, "nonexistent_key", "value", true)
-	if err == nil {
-		t.Fatal("expected error for invalid key")
-	}
-}
+		tests := []struct {
+			name     string
+			key      string
+			val      string
+			expected any
+		}{
+			{"String", "default_agent", "gemini", "gemini"},
+			{"Integer", "max_workers", "8", int64(8)},
+			{"Boolean", "sync.enabled", "true", true},
+			{"NestedBoolean", "advanced.tasks_enabled", "true", true},
+		}
 
-func TestSetConfigKeySlice(t *testing.T) {
-	path := setupConfigFile(t)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if err := setConfigKey(path, tt.key, tt.val, true); err != nil {
+					t.Fatalf("setConfigKey: %v", err)
+				}
+				raw := readTOML(t, path)
+				assertMapValue(t, raw, tt.key, tt.expected)
+			})
+		}
 
-	if err := setConfigKey(path, "ci.repos", "org/repo1,org/repo2", true); err != nil {
-		t.Fatalf("setConfigKey slice: %v", err)
-	}
+		t.Run("Persistence", func(t *testing.T) {
+			raw := readTOML(t, path)
+			// Previous values should still be present after multiple sets.
+			assertMapValue(t, raw, "default_agent", "gemini")
+			assertMapValue(t, raw, "max_workers", int64(8))
+			assertMapValue(t, raw, "sync.enabled", true)
+			assertMapValue(t, raw, "advanced.tasks_enabled", true)
+		})
+	})
 
-	raw := readTOML(t, path)
-	repos, ok := getNestedValue(t, raw, "ci.repos").([]any)
-	if !ok {
-		t.Fatalf("ci.repos is not a slice: %v (%T)", getNestedValue(t, raw, "ci.repos"), getNestedValue(t, raw, "ci.repos"))
-	}
-	if len(repos) != 2 {
-		t.Errorf("ci.repos length = %d, want 2", len(repos))
-	}
-}
+	t.Run("NestedCreation", func(t *testing.T) {
+		path := setupConfigFile(t)
 
-func TestSetConfigKeySliceEmpty(t *testing.T) {
-	path := setupConfigFile(t)
+		if err := setConfigKey(path, "ci.poll_interval", "10m", true); err != nil {
+			t.Fatalf("setConfigKey nested: %v", err)
+		}
+		raw := readTOML(t, path)
+		assertMapValue(t, raw, "ci.poll_interval", "10m")
+	})
 
-	// Seed with a non-empty slice first.
-	if err := setConfigKey(path, "ci.repos", "org/repo1,org/repo2", true); err != nil {
-		t.Fatalf("setConfigKey seed: %v", err)
-	}
+	t.Run("InvalidKey", func(t *testing.T) {
+		path := setupConfigFile(t)
 
-	// Clear the slice by setting it to an empty string.
-	if err := setConfigKey(path, "ci.repos", "", true); err != nil {
-		t.Fatalf("setConfigKey empty: %v", err)
-	}
+		err := setConfigKey(path, "nonexistent_key", "value", true)
+		if err == nil {
+			t.Fatal("expected error for invalid key")
+		}
+	})
 
-	raw := readTOML(t, path)
-	repos := getNestedValue(t, raw, "ci.repos")
-	slice, ok := repos.([]any)
-	if !ok {
-		t.Fatalf("ci.repos is not a slice after clearing: %v (%T)", repos, repos)
-	}
-	if len(slice) != 0 {
-		t.Errorf("ci.repos length = %d, want 0", len(slice))
-	}
-}
+	t.Run("Slice", func(t *testing.T) {
+		path := setupConfigFile(t)
 
-func TestSetConfigKeyRepoConfig(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".roborev.toml")
+		if err := setConfigKey(path, "ci.repos", "org/repo1,org/repo2", true); err != nil {
+			t.Fatalf("setConfigKey slice: %v", err)
+		}
 
-	if err := setConfigKey(path, "agent", "claude-code", false); err != nil {
-		t.Fatalf("setConfigKey repo: %v", err)
-	}
-	assertConfigValue(t, path, "agent", "claude-code")
-}
+		raw := readTOML(t, path)
+		repos, ok := getNestedValue(t, raw, "ci.repos").([]any)
+		if !ok {
+			t.Fatalf("ci.repos is not a slice: %v (%T)", getNestedValue(t, raw, "ci.repos"), getNestedValue(t, raw, "ci.repos"))
+		}
+		if len(repos) != 2 {
+			t.Errorf("ci.repos length = %d, want 2", len(repos))
+		}
+	})
 
-func TestSetConfigKeyRepoConfigRejectsGlobalACPSettings(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".roborev.toml")
+	t.Run("SliceEmpty", func(t *testing.T) {
+		path := setupConfigFile(t)
 
-	err := setConfigKey(path, "acp.command", "malicious-wrapper", false)
-	if err == nil {
-		t.Fatal("expected error when setting global ACP key in repo config")
-	}
-	if !strings.Contains(err.Error(), "is a global setting") {
-		t.Fatalf("expected global-setting error, got: %v", err)
-	}
+		// Seed with a non-empty slice first.
+		if err := setConfigKey(path, "ci.repos", "org/repo1,org/repo2", true); err != nil {
+			t.Fatalf("setConfigKey seed: %v", err)
+		}
+
+		// Clear the slice by setting it to an empty string.
+		if err := setConfigKey(path, "ci.repos", "", true); err != nil {
+			t.Fatalf("setConfigKey empty: %v", err)
+		}
+
+		raw := readTOML(t, path)
+		repos := getNestedValue(t, raw, "ci.repos")
+		slice, ok := repos.([]any)
+		if !ok {
+			t.Fatalf("ci.repos is not a slice after clearing: %v (%T)", repos, repos)
+		}
+		if len(slice) != 0 {
+			t.Errorf("ci.repos length = %d, want 0", len(slice))
+		}
+	})
+
+	t.Run("RepoConfig", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".roborev.toml")
+
+		if err := setConfigKey(path, "agent", "claude-code", false); err != nil {
+			t.Fatalf("setConfigKey repo: %v", err)
+		}
+		raw := readTOML(t, path)
+		assertMapValue(t, raw, "agent", "claude-code")
+	})
+
+	t.Run("RepoConfigRejectsGlobalACPSettings", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".roborev.toml")
+
+		err := setConfigKey(path, "acp.command", "malicious-wrapper", false)
+		if err == nil {
+			t.Fatal("expected error when setting global ACP key in repo config")
+		}
+		if !strings.Contains(err.Error(), "is a global setting") {
+			t.Fatalf("expected global-setting error, got: %v", err)
+		}
+	})
 }
 
 func TestSetRawMapKey(t *testing.T) {
@@ -474,84 +516,43 @@ func TestSetRawMapKey(t *testing.T) {
 	}
 }
 
-func TestGetValueForScopeMergedMalformedLocalConfig(t *testing.T) {
-	env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "invalid toml [[[")
+func TestListConfig(t *testing.T) {
+	t.Run("GlobalExplicitKeys", func(t *testing.T) {
+		setupConfigEnv(t, strings.Join([]string{
+			`max_workers = 4`,
+			`review_context_count = 0`,
+			``,
+			`[sync]`,
+			`enabled = false`,
+		}, "\n")+"\n", "")
 
-	_, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
-	assertErrorContains(t, err, "load repo config")
-}
-func TestListMergedConfigMalformedLocalConfig(t *testing.T) {
-	env := setupConfigEnv(t, "", "invalid toml [[[")
-
-	err := listMergedConfig(env.Resolver, false)
-	assertErrorContains(t, err, "load repo config")
-}
-func TestListGlobalConfigExplicitKeys(t *testing.T) {
-	setupConfigEnv(t, strings.Join([]string{
-		`max_workers = 4`,
-		`review_context_count = 0`,
-		``,
-		`[sync]`,
-		`enabled = false`,
-	}, "\n")+"\n", "")
-
-	// Capture stdout
-	output := captureOutput(t, listGlobalConfig)
-	// Explicit default-valued key should be shown
-	if !strings.Contains(output, "max_workers=4") {
-		t.Errorf("output should include explicit default-valued key max_workers=4, got:\n%s", output)
-	}
-
-	// Explicit zero key should be shown
-	if !strings.Contains(output, "review_context_count=0") {
-		t.Errorf("output should include explicit zero key review_context_count=0, got:\n%s", output)
-	}
-
-	// Explicit false key should be shown
-	if !strings.Contains(output, "sync.enabled=false") {
-		t.Errorf("output should include explicit false key sync.enabled=false, got:\n%s", output)
-	}
-
-	// Non-explicit default key (default_agent) should NOT be shown
-	if strings.Contains(output, "default_agent=") {
-		t.Errorf("output should NOT include non-explicit default_agent, got:\n%s", output)
-	}
-}
-
-func TestListLocalConfigExplicitKeys(t *testing.T) {
-	env := setupConfigEnv(t, "", strings.Join([]string{
-		`agent = "claude-code"`,
-		`review_context_count = 0`,
-	}, "\n")+"\n")
-
-	// Capture stdout
-	output := captureOutput(t, func() error {
-		return listLocalConfig(env.Resolver)
+		// Capture stdout
+		output := captureOutput(t, listGlobalConfig)
+		// Explicit default-valued key should be shown
+		assertOutputContains(t, output, "max_workers=4")
+		// Explicit zero key should be shown
+		assertOutputContains(t, output, "review_context_count=0")
+		// Explicit false key should be shown
+		assertOutputContains(t, output, "sync.enabled=false")
+		// Non-explicit default key (default_agent) should NOT be shown
+		assertOutputNotContains(t, output, "default_agent=")
 	})
-	// Explicit key should be shown
-	if !strings.Contains(output, "agent=claude-code") {
-		t.Errorf("output should include explicit agent=claude-code, got:\n%s", output)
-	}
 
-	// Explicit zero key should be shown
-	if !strings.Contains(output, "review_context_count=0") {
-		t.Errorf("output should include explicit zero review_context_count=0, got:\n%s", output)
-	}
+	t.Run("LocalExplicitKeys", func(t *testing.T) {
+		env := setupConfigEnv(t, "", strings.Join([]string{
+			`agent = "claude-code"`,
+			`review_context_count = 0`,
+		}, "\n")+"\n")
 
-	// Non-explicit keys should NOT be shown (review_guidelines was not set)
-	if strings.Contains(output, "review_guidelines=") {
-		t.Errorf("output should NOT include non-explicit review_guidelines, got:\n%s", output)
-	}
-}
-
-func TestGetValueForScopeMergedRepoOnlyKeyNotSet(t *testing.T) {
-	env := setupConfigEnv(t, "default_agent = \"codex\"\n", "")
-
-	// No repo (no .git dir)
-	env.Resolver.SetGitError(errors.New(errGitStub))
-	env.Resolver.SetWorkingDir(t.TempDir())
-
-	// "agent" is a repo-only key — should not fall through to global config
-	_, err := getValueForScope(env.Resolver, "agent", scopeMerged)
-	assertErrorContains(t, err, "not set in local config")
+		// Capture stdout
+		output := captureOutput(t, func() error {
+			return listLocalConfig(env.Resolver)
+		})
+		// Explicit key should be shown
+		assertOutputContains(t, output, "agent=claude-code")
+		// Explicit zero key should be shown
+		assertOutputContains(t, output, "review_context_count=0")
+		// Non-explicit keys should NOT be shown (review_guidelines was not set)
+		assertOutputNotContains(t, output, "review_guidelines=")
+	})
 }

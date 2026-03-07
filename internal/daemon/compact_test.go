@@ -60,7 +60,7 @@ func TestReadCompactMetadata(t *testing.T) {
 
 			if tt.mockFile != nil {
 				path := compactMetadataPath(tt.jobID)
-				if err := os.WriteFile(path, tt.mockFile, 0644); err != nil {
+				if err := os.WriteFile(path, tt.mockFile, 0o644); err != nil {
 					t.Fatalf("Setup failed: %v", err)
 				}
 			}
@@ -81,38 +81,36 @@ func TestReadCompactMetadata(t *testing.T) {
 }
 
 func TestDeleteCompactMetadata(t *testing.T) {
-	t.Run("delete_existing_file", func(t *testing.T) {
-		setupTestEnv(t)
-		jobID := int64(123)
+	tests := []struct {
+		name       string
+		jobID      int64
+		createFile bool
+	}{
+		{name: "delete_existing_file", jobID: 123, createFile: true},
+		{name: "delete_nonexistent_file", jobID: 999, createFile: false},
+	}
 
-		// Create a metadata file
-		path := compactMetadataPath(jobID)
-		if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0644); err != nil {
-			t.Fatalf("Failed to write metadata file: %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupTestEnv(t)
 
-		// Delete it
-		err := DeleteCompactMetadata(jobID)
-		if err != nil {
-			t.Errorf("DeleteCompactMetadata failed: %v", err)
-		}
+			path := compactMetadataPath(tt.jobID)
+			if tt.createFile {
+				if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0o644); err != nil {
+					t.Fatalf("Failed to write metadata file: %v", err)
+				}
+			}
 
-		// Verify it's gone
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Error("Metadata file should be deleted")
-		}
-	})
+			err := DeleteCompactMetadata(tt.jobID)
+			if err != nil {
+				t.Errorf("DeleteCompactMetadata() error = %v", err)
+			}
 
-	t.Run("delete_nonexistent_file", func(t *testing.T) {
-		setupTestEnv(t)
-		jobID := int64(999)
-
-		// Try to delete non-existent file (should not error)
-		err := DeleteCompactMetadata(jobID)
-		if err != nil {
-			t.Errorf("DeleteCompactMetadata should not error on missing file, got: %v", err)
-		}
-	})
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Error("Metadata file should be deleted")
+			}
+		})
+	}
 }
 
 func TestIsValidCompactOutput(t *testing.T) {
@@ -121,13 +119,13 @@ func TestIsValidCompactOutput(t *testing.T) {
 		input string
 		want  bool
 	}{
-		{"real_review", "No issues found.", true},
-		{"empty", "", false},
-		{"whitespace", "   \n  ", false},
-		{"error_prefix", "Error: something broke", false},
-		{"exception_prefix", "Exception: null pointer", false},
-		{"traceback", "Traceback (most recent call last):", false},
-		{"placeholder", "No review output generated", false},
+		{name: "real_review", input: "No issues found.", want: true},
+		{name: "empty", input: "", want: false},
+		{name: "whitespace", input: "   \n  ", want: false},
+		{name: "error_prefix", input: "Error: something broke", want: false},
+		{name: "exception_prefix", input: "Exception: null pointer", want: false},
+		{name: "traceback", input: "Traceback (most recent call last):", want: false},
+		{name: "placeholder", input: "No review output generated", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

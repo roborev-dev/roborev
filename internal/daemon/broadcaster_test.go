@@ -36,15 +36,6 @@ func assertEventFields(t *testing.T, got Event, expected Event) {
 
 func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) {
 	t.Helper()
-	// fast path non-blocking check
-	select {
-	case e := <-ch:
-		t.Errorf("Received unexpected event: %+v", e)
-		return
-	default:
-	}
-
-	// timeout-backed check
 	select {
 	case e := <-ch:
 		t.Errorf("Received unexpected event: %+v", e)
@@ -56,7 +47,8 @@ func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) 
 func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	_, eventCh := broadcaster.Subscribe("")
+	id, eventCh := broadcaster.Subscribe("")
+	t.Cleanup(func() { broadcaster.Unsubscribe(id) })
 
 	testEvent := newTestEvent(42, func(e *Event) {
 		e.Repo = "/path/to/repo"
@@ -71,7 +63,8 @@ func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 func TestStreamEventsWithRepoFilter(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	_, eventCh := broadcaster.Subscribe("/path/to/repo1")
+	id, eventCh := broadcaster.Subscribe("/path/to/repo1")
+	t.Cleanup(func() { broadcaster.Unsubscribe(id) })
 
 	broadcaster.Broadcast(newTestEvent(1, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha1" }))
 	broadcaster.Broadcast(newTestEvent(2, func(e *Event) { e.Repo = "/path/to/repo2"; e.SHA = "sha2"; e.Verdict = "F" }))
@@ -84,18 +77,15 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 	// Should not receive more events (repo2 event was filtered out)
 	assertNoEventWithin(t, eventCh, 100*time.Millisecond)
 
-	if e1.JobID != 1 {
-		t.Errorf("Expected first event JobID 1, got %d", e1.JobID)
-	}
-	if e2.JobID != 3 {
-		t.Errorf("Expected second event JobID 3, got %d", e2.JobID)
-	}
+	assertEventFields(t, e1, newTestEvent(1, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha1" }))
+	assertEventFields(t, e2, newTestEvent(3, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha3" }))
 }
 
 func TestStreamMultipleEvents(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	_, eventCh := broadcaster.Subscribe("")
+	id, eventCh := broadcaster.Subscribe("")
+	t.Cleanup(func() { broadcaster.Unsubscribe(id) })
 
 	for i := 1; i <= 3; i++ {
 		broadcaster.Broadcast(newTestEvent(int64(i)))
@@ -104,32 +94,32 @@ func TestStreamMultipleEvents(t *testing.T) {
 	// Receive all 3 events
 	for i := 1; i <= 3; i++ {
 		e := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
-		if e.JobID != int64(i) {
-			t.Errorf("Expected event %d, got JobID %d", i, e.JobID)
-		}
+		assertEventFields(t, e, newTestEvent(int64(i)))
 	}
 }
 
 func TestBroadcaster_MultiSubscriber(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	_, chAll := broadcaster.Subscribe("")
-	_, chRepo1 := broadcaster.Subscribe("/path/to/repo1")
-	_, chRepo2 := broadcaster.Subscribe("/path/to/repo2")
+	idAll, chAll := broadcaster.Subscribe("")
+	t.Cleanup(func() { broadcaster.Unsubscribe(idAll) })
 
-	broadcaster.Broadcast(newTestEvent(123, func(e *Event) { e.Repo = "/path/to/repo1" }))
+	idRepo1, chRepo1 := broadcaster.Subscribe("/path/to/repo1")
+	t.Cleanup(func() { broadcaster.Unsubscribe(idRepo1) })
+
+	idRepo2, chRepo2 := broadcaster.Subscribe("/path/to/repo2")
+	t.Cleanup(func() { broadcaster.Unsubscribe(idRepo2) })
+
+	expectedEvent := newTestEvent(123, func(e *Event) { e.Repo = "/path/to/repo1" })
+	broadcaster.Broadcast(expectedEvent)
 
 	// catch-all should receive
 	e1 := testutil.ReceiveWithTimeout(t, chAll, 500*time.Millisecond)
-	if e1.JobID != 123 {
-		t.Errorf("Expected catch-all to receive JobID 123, got %d", e1.JobID)
-	}
+	assertEventFields(t, e1, expectedEvent)
 
 	// exact-match should receive
 	e2 := testutil.ReceiveWithTimeout(t, chRepo1, 500*time.Millisecond)
-	if e2.JobID != 123 {
-		t.Errorf("Expected exact-match to receive JobID 123, got %d", e2.JobID)
-	}
+	assertEventFields(t, e2, expectedEvent)
 
 	// mismatch should NOT receive
 	assertNoEventWithin(t, chRepo2, 100*time.Millisecond)
@@ -140,9 +130,11 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 
 	// Subscribe without filter
 	id1, ch1 := b.Subscribe("")
+	t.Cleanup(func() { b.Unsubscribe(id1) })
 
 	// Subscribe with filter
 	id2, ch2 := b.Subscribe("/path/to/repo")
+	t.Cleanup(func() { b.Unsubscribe(id2) })
 
 	// Verify IDs are different
 	if id1 == id2 {
@@ -181,9 +173,10 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	b := NewBroadcaster()
 
-	_, ch := b.Subscribe("")
+	id, ch := b.Subscribe("")
+	t.Cleanup(func() { b.Unsubscribe(id) })
 
-	const testBufferSize = 10 // Must match channel buffer size in NewBroadcaster
+	const testBufferSize = DefaultBufferSize // Must match channel buffer size in NewBroadcaster
 
 	// Fill the channel buffer
 	for i := range testBufferSize {
@@ -207,9 +200,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	// Verify we received the first testBufferSize events (not the dropped one)
 	for i := range testBufferSize {
 		e := <-ch
-		if e.JobID != int64(i) {
-			t.Errorf("expected JobID %d, got %d", i, e.JobID)
-		}
+		assertEventFields(t, e, Event{JobID: int64(i)})
 	}
 
 	// Channel should be empty now

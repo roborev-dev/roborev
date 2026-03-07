@@ -7,6 +7,24 @@ import (
 	"time"
 )
 
+func seedJobs(t *testing.T, db *DB, repoID int64, prefix string, count int) {
+	t.Helper()
+	for i := range count {
+		sha := fmt.Sprintf("%s-sha%d", prefix, i)
+		commit := createCommit(t, db, repoID, sha)
+		enqueueJob(t, db, repoID, commit.ID, sha)
+	}
+}
+
+func findJob(jobs []ReviewJob, id int64) *ReviewJob {
+	for i := range jobs {
+		if jobs[i].ID == id {
+			return &jobs[i]
+		}
+	}
+	return nil
+}
+
 func TestJobCounts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -14,11 +32,7 @@ func TestJobCounts(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 
 	// Create 3 jobs that will stay queued
-	for i := range 3 {
-		sha := fmt.Sprintf("queued%d", i)
-		commit := createCommit(t, db, repo.ID, sha)
-		enqueueJob(t, db, repo.ID, commit.ID, sha)
-	}
+	seedJobs(t, db, repo.ID, "queued", 3)
 
 	// Create a job, claim it, and complete it
 	commit := createCommit(t, db, repo.ID, "done1")
@@ -142,19 +156,9 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	repo2 := createRepo(t, db, "/tmp/repo2")
 	_ = createRepo(t, db, "/tmp/repo3") // will have 0 jobs
 
-	// Add jobs to repo1 (3 jobs)
-	for i := range 3 {
-		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit := createCommit(t, db, repo1.ID, sha)
-		enqueueJob(t, db, repo1.ID, commit.ID, sha)
-	}
-
-	// Add jobs to repo2 (2 jobs)
-	for i := range 2 {
-		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit := createCommit(t, db, repo2.ID, sha)
-		enqueueJob(t, db, repo2.ID, commit.ID, sha)
-	}
+	// Add jobs
+	seedJobs(t, db, repo1.ID, "repo1", 3)
+	seedJobs(t, db, repo2.ID, "repo2", 2)
 
 	t.Run("repos with varying job counts", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
@@ -231,103 +235,63 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
 
-	// Add 3 jobs to repo1
-	for i := range 3 {
-		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit := createCommit(t, db, repo1.ID, sha)
-		enqueueJob(t, db, repo1.ID, commit.ID, sha)
+	// Add jobs
+	seedJobs(t, db, repo1.ID, "repo1", 3)
+	seedJobs(t, db, repo2.ID, "repo2", 2)
+
+	tests := []struct {
+		name           string
+		status         string
+		repoPath       string
+		limit          int
+		offset         int
+		expectedLen    int
+		expectedRepo   string
+		expectedStatus JobStatus
+		setup          func(t *testing.T)
+	}{
+		{"no filter returns all jobs", "", "", 50, 0, 5, "", "", nil},
+		{"repo filter returns only matching jobs", "", repo1.RootPath, 50, 0, 3, "repo1", "", nil},
+		{"limit parameter works", "", "", 2, 0, 2, "", "", nil},
+		{"limit=0 returns all jobs", "", "", 0, 0, 5, "", "", nil},
+		{"repo filter with limit", "", repo1.RootPath, 2, 0, 2, "repo1", "", nil},
+		{"status and repo filter combined", "done", repo1.RootPath, 50, 0, 1, "", JobStatusDone, func(t *testing.T) {
+			claimed, err := db.ClaimJob("worker-1")
+			if err != nil {
+				t.Fatalf("ClaimJob failed: %v", err)
+			}
+			if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output"); err != nil {
+				t.Fatalf("CompleteJob failed: %v", err)
+			}
+		}},
 	}
 
-	// Add 2 jobs to repo2
-	for i := range 2 {
-		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit := createCommit(t, db, repo2.ID, sha)
-		enqueueJob(t, db, repo2.ID, commit.ID, sha)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			jobs, err := db.ListJobs(tt.status, tt.repoPath, tt.limit, tt.offset)
+			if err != nil {
+				t.Fatalf("ListJobs failed: %v", err)
+			}
+			if len(jobs) != tt.expectedLen {
+				t.Errorf("Expected %d jobs, got %d", tt.expectedLen, len(jobs))
+			}
+			if tt.expectedRepo != "" {
+				for _, job := range jobs {
+					if job.RepoName != tt.expectedRepo {
+						t.Errorf("Expected RepoName '%s', got '%s'", tt.expectedRepo, job.RepoName)
+					}
+				}
+			}
+			if tt.expectedStatus != "" && len(jobs) > 0 {
+				if jobs[0].Status != tt.expectedStatus {
+					t.Errorf("Expected status '%s', got '%s'", tt.expectedStatus, jobs[0].Status)
+				}
+			}
+		})
 	}
-
-	t.Run("no filter returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(jobs))
-		}
-	})
-
-	t.Run("repo filter returns only matching jobs", func(t *testing.T) {
-		// Filter by root_path (not name) since repos with same name could exist at different paths
-		jobs, err := db.ListJobs("", repo1.RootPath, 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 3 {
-			t.Errorf("Expected 3 jobs for repo1, got %d", len(jobs))
-		}
-		for _, job := range jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
-			}
-		}
-	})
-
-	t.Run("limit parameter works", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 2, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs with limit=2, got %d", len(jobs))
-		}
-	})
-
-	t.Run("limit=0 returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 0, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(jobs))
-		}
-	})
-
-	t.Run("repo filter with limit", func(t *testing.T) {
-		jobs, err := db.ListJobs("", repo1.RootPath, 2, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(jobs))
-		}
-		for _, job := range jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
-			}
-		}
-	})
-
-	t.Run("status and repo filter combined", func(t *testing.T) {
-		// Complete one job from repo1
-		claimed, err := db.ClaimJob("worker-1")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output"); err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
-
-		// Query for done jobs in repo1
-		jobs, err := db.ListJobs("done", repo1.RootPath, 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 done job for repo1, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].Status != JobStatusDone {
-			t.Errorf("Expected status 'done', got '%s'", jobs[0].Status)
-		}
-	})
 
 	t.Run("offset pagination", func(t *testing.T) {
 		// Get first 2 jobs
@@ -382,61 +346,34 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		enqueueJob(t, db, repo.ID, commit.ID, ref)
 	}
 
-	t.Run("git_ref filter returns matching job", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with git_ref=abc123, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].GitRef != "abc123" {
-			t.Errorf("Expected GitRef 'abc123', got '%s'", jobs[0].GitRef)
-		}
-	})
+	tests := []struct {
+		name        string
+		repoPath    string
+		opts        []ListJobsOption
+		expectedLen int
+		checkGitRef string
+	}{
+		{"git_ref filter returns matching job", "", []ListJobsOption{WithGitRef("abc123")}, 1, "abc123"},
+		{"git_ref filter with range ref", "", []ListJobsOption{WithGitRef("abc123..def456")}, 1, "abc123..def456"},
+		{"git_ref filter with no match returns empty", "", []ListJobsOption{WithGitRef("nonexistent")}, 0, ""},
+		{"empty git_ref filter returns all jobs", "", nil, 4, ""},
+		{"git_ref filter combined with repo filter", repo.RootPath, []ListJobsOption{WithGitRef("def456")}, 1, ""},
+	}
 
-	t.Run("git_ref filter with range ref", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123..def456"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with range ref, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].GitRef != "abc123..def456" {
-			t.Errorf("Expected GitRef 'abc123..def456', got '%s'", jobs[0].GitRef)
-		}
-	})
-
-	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("nonexistent"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 0 {
-			t.Errorf("Expected 0 jobs with nonexistent git_ref, got %d", len(jobs))
-		}
-	})
-
-	t.Run("empty git_ref filter returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 4 {
-			t.Errorf("Expected 4 jobs with empty git_ref filter, got %d", len(jobs))
-		}
-	})
-
-	t.Run("git_ref filter combined with repo filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", repo.RootPath, 50, 0, WithGitRef("def456"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with git_ref and repo filter, got %d", len(jobs))
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := db.ListJobs("", tt.repoPath, 50, 0, tt.opts...)
+			if err != nil {
+				t.Fatalf("ListJobs failed: %v", err)
+			}
+			if len(jobs) != tt.expectedLen {
+				t.Errorf("Expected %d jobs, got %d", tt.expectedLen, len(jobs))
+			}
+			if tt.checkGitRef != "" && len(jobs) > 0 && jobs[0].GitRef != tt.checkGitRef {
+				t.Errorf("Expected GitRef '%s', got '%s'", tt.checkGitRef, jobs[0].GitRef)
+			}
+		})
+	}
 }
 
 func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
@@ -470,45 +407,28 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 		}
 	}
 
-	t.Run("branch filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs on main, got %d", len(jobs))
-		}
-	})
+	tests := []struct {
+		name        string
+		opts        []ListJobsOption
+		expectedLen int
+	}{
+		{"branch filter", []ListJobsOption{WithBranch("main")}, 2},
+		{"closed=false filter", []ListJobsOption{WithClosed(false)}, 2},
+		{"closed=true filter", []ListJobsOption{WithClosed(true)}, 1},
+		{"branch + closed combined", []ListJobsOption{WithBranch("main"), WithClosed(false)}, 1},
+	}
 
-	t.Run("closed=false filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 open jobs, got %d", len(jobs))
-		}
-	})
-
-	t.Run("closed=true filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(true))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 closed job, got %d", len(jobs))
-		}
-	})
-
-	t.Run("branch + closed combined", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithClosed(false))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 open job on main, got %d", len(jobs))
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs, err := db.ListJobs("", "", 50, 0, tt.opts...)
+			if err != nil {
+				t.Fatalf("ListJobs failed: %v", err)
+			}
+			if len(jobs) != tt.expectedLen {
+				t.Errorf("Expected %d jobs, got %d", tt.expectedLen, len(jobs))
+			}
+		})
+	}
 }
 
 func TestWithBranchOrEmpty(t *testing.T) {
@@ -593,18 +513,12 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		}
 
 		// Find our job
-		var found bool
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				if !j.Agentic {
-					t.Errorf("ListJobs should return Agentic=true for job %d", j.ID)
-				}
-				break
-			}
+		j := findJob(jobs, job.ID)
+		if j == nil {
+			t.Fatalf("Job %d not found in ListJobs result", job.ID)
 		}
-		if !found {
-			t.Errorf("Job %d not found in ListJobs result", job.ID)
+		if !j.Agentic {
+			t.Errorf("ListJobs should return Agentic=true for job %d", job.ID)
 		}
 	})
 
@@ -643,18 +557,12 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
-		var found bool
-		for _, j := range jobs {
-			if j.ID == nonAgenticJob.ID {
-				found = true
-				if j.Agentic {
-					t.Errorf("ListJobs should return Agentic=false for non-agentic job %d", j.ID)
-				}
-				break
-			}
+		j := findJob(jobs, nonAgenticJob.ID)
+		if j == nil {
+			t.Fatalf("Non-agentic job %d not found in ListJobs result", nonAgenticJob.ID)
 		}
-		if !found {
-			t.Errorf("Non-agentic job %d not found in ListJobs result", nonAgenticJob.ID)
+		if j.Agentic {
+			t.Errorf("ListJobs should return Agentic=false for non-agentic job %d", nonAgenticJob.ID)
 		}
 	})
 }
@@ -847,21 +755,15 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 		t.Fatalf("ListJobs failed: %v", err)
 	}
 
-	var found bool
-	for _, j := range jobs {
-		if j.ID == job.ID {
-			found = true
-			if j.Verdict == nil {
-				t.Fatal("expected verdict to be parsed for branch range review, got nil")
-			}
-			if *j.Verdict != "F" {
-				t.Errorf("expected verdict F for review with findings, got %q", *j.Verdict)
-			}
-			break
-		}
-	}
-	if !found {
+	j := findJob(jobs, job.ID)
+	if j == nil {
 		t.Fatal("branch range job not found in ListJobs result")
+	}
+	if j.Verdict == nil {
+		t.Fatal("expected verdict to be parsed for branch range review, got nil")
+	}
+	if *j.Verdict != "F" {
+		t.Errorf("expected verdict F for review with findings, got %q", *j.Verdict)
 	}
 }
 

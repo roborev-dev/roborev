@@ -83,7 +83,7 @@ func initCmd() *cobra.Command {
 			var initIncomplete bool
 			if noDaemon {
 				// Try to register with an already-running daemon, but don't start one
-				if err := registerRepo(root); err != nil {
+				if err := registerRepo(cmd, root); err != nil {
 					initIncomplete = true
 					if isTransportError(err) {
 						fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
@@ -93,13 +93,13 @@ func initCmd() *cobra.Command {
 				} else {
 					fmt.Println("  Repo registered with running daemon")
 				}
-			} else if err := ensureDaemon(); err != nil {
+			} else if _, err := ensureDaemon(cmd); err != nil {
 				initIncomplete = true
 				fmt.Printf("  Warning: %v\n", err)
 				fmt.Println("  Run 'roborev daemon start' to start manually")
 			} else {
 				fmt.Println("  Daemon is running")
-				if err := registerRepo(root); err != nil {
+				if err := registerRepo(cmd, root); err != nil {
 					initIncomplete = true
 					fmt.Printf("  Warning: failed to register repo: %v\n", err)
 				} else {

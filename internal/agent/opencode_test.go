@@ -71,9 +71,19 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, args, _ := runMockOpenCodeReview(
-				t, tt.model, "review this", nil,
-			)
+			_, args, _, err := executeReviewTest(t, reviewTestOpts{
+				MockOpts: MockCLIOpts{
+					CaptureArgs:  true,
+					CaptureStdin: true,
+					StdoutLines:  []string{makeTextEvent("ok")},
+				},
+				Model:  tt.model,
+				Prompt: "review this",
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
 			args = strings.TrimSpace(args)
 
 			assertContains(t, args, "--format json")
@@ -92,7 +102,17 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 	skipIfWindows(t)
 
 	prompt := "Review this commit carefully"
-	_, args, stdin := runMockOpenCodeReview(t, "", prompt, nil)
+	_, args, stdin, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureArgs:  true,
+			CaptureStdin: true,
+			StdoutLines:  []string{makeTextEvent("ok")},
+		},
+		Prompt: prompt,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Prompt must be in stdin
 	if strings.TrimSpace(stdin) != prompt {
@@ -103,39 +123,112 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 	assertNotContains(t, args, prompt)
 }
 
-func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
+func TestOpenCodeReviewBehaviors(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	stdoutLines := []string{
-		makeOpenCodeEvent("step_start", map[string]any{
-			"type": "step-start",
-		}),
-		makeTextEvent("**Review:** Fix the typo."),
-		makeOpenCodeEvent("tool", map[string]any{
-			"type": "tool",
-			"tool": "Read",
-			"state": map[string]any{
-				"status": "running",
-				"input": map[string]any{
-					"file_path": "/foo/bar.go",
+	tests := []struct {
+		name         string
+		opts         reviewTestOpts
+		wantResult   string
+		wantContains []string
+		wantNotText  []string
+		wantErr      string
+	}{
+		{
+			name: "parses JSON stream",
+			opts: reviewTestOpts{
+				Prompt: "prompt",
+				MockOpts: MockCLIOpts{
+					CaptureArgs:  true,
+					CaptureStdin: true,
+					StdoutLines: []string{
+						makeOpenCodeEvent("step_start", map[string]any{
+							"type": "step-start",
+						}),
+						makeTextEvent("**Review:** Fix the typo."),
+						makeOpenCodeEvent("tool", map[string]any{
+							"type": "tool",
+							"tool": "Read",
+							"state": map[string]any{
+								"status": "running",
+								"input": map[string]any{
+									"file_path": "/foo/bar.go",
+								},
+							},
+						}),
+						makeTextEvent(" Done."),
+						makeOpenCodeEvent("step_finish", map[string]any{
+							"type":   "step-finish",
+							"reason": "stop",
+						}),
+					},
 				},
 			},
-		}),
-		makeTextEvent(" Done."),
-		makeOpenCodeEvent("step_finish", map[string]any{
-			"type":   "step-finish",
-			"reason": "stop",
-		}),
+			wantContains: []string{"**Review:** Fix the typo.", " Done."},
+			wantNotText:  []string{"Read", "file_path"},
+		},
+		{
+			name: "partial on error",
+			opts: reviewTestOpts{
+				Prompt: "prompt",
+				MockOpts: MockCLIOpts{
+					CaptureStdin: true,
+					StdoutLines:  []string{makeTextEvent("Partial review text")},
+					ExitCode:     1,
+				},
+			},
+			wantErr: "Partial review text",
+		},
+		{
+			name: "no output",
+			opts: reviewTestOpts{
+				Prompt: "prompt",
+				MockOpts: MockCLIOpts{
+					CaptureArgs:  true,
+					CaptureStdin: true,
+					StdoutLines: []string{
+						makeOpenCodeEvent("step_start", map[string]any{
+							"type": "step-start",
+						}),
+						makeOpenCodeEvent("step_finish", map[string]any{
+							"type":   "step-finish",
+							"reason": "stop",
+						}),
+					},
+				},
+			},
+			wantResult: "No review output generated",
+		},
 	}
 
-	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	assertContains(t, result, "**Review:** Fix the typo.")
-	assertContains(t, result, " Done.")
-	// Tool events should not appear in the result text
-	assertNotContains(t, result, "Read")
-	assertNotContains(t, result, "file_path")
+			result, _, _, err := executeReviewTest(t, tt.opts)
+
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				assertContains(t, err.Error(), tt.wantErr)
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if tt.wantResult != "" {
+					assertEqual(t, result, tt.wantResult)
+				}
+				for _, substr := range tt.wantContains {
+					assertContains(t, result, substr)
+				}
+				for _, substr := range tt.wantNotText {
+					assertNotContains(t, result, substr)
+				}
+			}
+		})
+	}
 }
 
 func TestOpenCodeReviewStreamsToOutput(t *testing.T) {
@@ -166,59 +259,16 @@ func TestOpenCodeReviewStreamsToOutput(t *testing.T) {
 	assertContains(t, outStr, `"type":"text"`)
 }
 
-func TestOpenCodeReviewPartialOnError(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	stdoutLines := []string{
-		makeTextEvent("Partial review text"),
-	}
-
-	_, _, _, err := executeReviewTest(t, reviewTestOpts{
-		MockOpts: MockCLIOpts{
-			CaptureStdin: true,
-			StdoutLines:  stdoutLines,
-			ExitCode:     1,
-		},
-		Prompt: "prompt",
-	})
-	if err == nil {
-		t.Fatal("expected error for non-zero exit")
-	}
-	// Error should contain partial output
-	assertContains(t, err.Error(), "Partial review text")
-}
-
-func TestOpenCodeReviewNoOutput(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	// Events with no text parts should produce fallback message
-	stdoutLines := []string{
-		makeOpenCodeEvent("step_start", map[string]any{
-			"type": "step-start",
-		}),
-		makeOpenCodeEvent("step_finish", map[string]any{
-			"type":   "step-finish",
-			"reason": "stop",
-		}),
-	}
-
-	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
-
-	assertEqual(t, result, "No review output generated")
-}
-
 func TestParseOpenCodeJSON(t *testing.T) {
 	t.Parallel()
 
-	lines := strings.Join([]string{
+	lines := makeJSONLines(
 		makeTextEvent("Part one."),
 		makeOpenCodeEvent("reasoning", map[string]any{
 			"type": "reasoning", "text": "thinking...",
 		}),
 		makeTextEvent(" Part two."),
-	}, "\n") + "\n"
+	)
 
 	var outputBuf bytes.Buffer
 	result, err := parseOpenCodeJSON(
@@ -240,7 +290,7 @@ func TestParseOpenCodeJSON(t *testing.T) {
 func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	t.Parallel()
 
-	lines := makeTextEvent("ok") + "\n"
+	lines := makeJSONLines(makeTextEvent("ok"))
 
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
@@ -308,7 +358,7 @@ func TestParseOpenCodeJSON_ReadError(t *testing.T) {
 
 	result, err := parseOpenCodeJSON(
 		&failAfterReader{
-			data: makeTextEvent("partial") + "\n",
+			data: makeJSONLines(makeTextEvent("partial")),
 		},
 		nil,
 	)
@@ -373,34 +423,6 @@ func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, strin
 	return out, string(argsBytes), string(stdinBytes), err
 }
 
-func runMockOpenCodeReview(
-	t *testing.T, model, prompt string,
-	stdoutLines []string,
-) (output, args, stdin string) {
-	t.Helper()
-
-	if stdoutLines == nil {
-		stdoutLines = []string{
-			makeTextEvent("ok"),
-		}
-	}
-
-	out, argsStr, stdinStr, err := executeReviewTest(t, reviewTestOpts{
-		MockOpts: MockCLIOpts{
-			CaptureArgs:  true,
-			CaptureStdin: true,
-			StdoutLines:  stdoutLines,
-		},
-		Model:  model,
-		Prompt: prompt,
-	})
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
-
-	return out, argsStr, stdinStr
-}
-
 func readFileOrFatal(t *testing.T, path string) []byte {
 	t.Helper()
 
@@ -439,7 +461,7 @@ func TestStripTerminalControls(t *testing.T) {
 func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
 	t.Parallel()
 
-	lines := makeTextEvent("\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe") + "\n"
+	lines := makeJSONLines(makeTextEvent("\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe"))
 
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
@@ -457,6 +479,14 @@ func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
 	assertContains(t, result, "red")
 	assertContains(t, result, "safe")
 	assertNotContains(t, result, "evil")
+}
+
+// makeJSONLines joins JSON strings into a properly formatted JSONL payload.
+func makeJSONLines(events ...string) string {
+	if len(events) == 0 {
+		return ""
+	}
+	return strings.Join(events, "\n") + "\n"
 }
 
 // makeOpenCodeEvent builds an opencode JSONL event line.

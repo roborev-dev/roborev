@@ -10,7 +10,13 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/spf13/cobra"
 )
+
+// testCmd returns a minimal *cobra.Command for ensureDaemon tests.
+func testCmd() *cobra.Command {
+	return &cobra.Command{Use: "test"}
+}
 
 func TestEnsureDaemonRestartsWhenLegacyProbeHasNoVersion(t *testing.T) {
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
@@ -47,16 +53,16 @@ func TestEnsureDaemonRestartsWhenLegacyProbeHasNoVersion(t *testing.T) {
 				}, nil
 			}
 			restartCalls := 0
-			restartDaemonForEnsure = func() error {
+			restartDaemonForEnsure = func(_ *cobra.Command) (string, error) {
 				restartCalls++
-				return nil
+				return "http://127.0.0.1:7373", nil
 			}
 			t.Cleanup(func() {
 				getAnyRunningDaemon = origGetAnyRunningDaemon
 				restartDaemonForEnsure = origRestartDaemon
 			})
 
-			if err := ensureDaemon(); err != nil {
+			if _, err := ensureDaemon(testCmd()); err != nil {
 				t.Fatalf("ensureDaemon returned error: %v", err)
 			}
 			if restartCalls != 1 {
@@ -96,18 +102,18 @@ func TestEnsureDaemonRestartsWhenManualLegacyProbeHasNoVersion(t *testing.T) {
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 				return nil, os.ErrNotExist
 			}
-			patchServerAddr(t, server.URL)
+			t.Setenv("ROBOREV_TEST_SERVER_ADDR", server.URL)
 			restartCalls := 0
-			restartDaemonForEnsure = func() error {
+			restartDaemonForEnsure = func(_ *cobra.Command) (string, error) {
 				restartCalls++
-				return nil
+				return "http://127.0.0.1:7373", nil
 			}
 			t.Cleanup(func() {
 				getAnyRunningDaemon = origGetAnyRunningDaemon
 				restartDaemonForEnsure = origRestartDaemon
 			})
 
-			if err := ensureDaemon(); err != nil {
+			if _, err := ensureDaemon(testCmd()); err != nil {
 				t.Fatalf("ensureDaemon returned error: %v", err)
 			}
 			if restartCalls != 1 {
@@ -143,16 +149,16 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	restartDaemonForEnsure = func(_ *cobra.Command) (string, error) {
 		restartCalls++
-		return nil
+		return "http://127.0.0.1:7373", nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
 	})
 
-	if err := ensureDaemon(); err != nil {
+	if _, err := ensureDaemon(testCmd()); err != nil {
 		t.Fatalf("ensureDaemon returned error: %v", err)
 	}
 	if restartCalls != 1 {
@@ -173,16 +179,16 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	restartDaemonForEnsure = func(_ *cobra.Command) (string, error) {
 		restartCalls++
-		return nil
+		return "http://127.0.0.1:7373", nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
 	})
 
-	if err := ensureDaemon(); err != nil {
+	if _, err := ensureDaemon(testCmd()); err != nil {
 		t.Fatalf("ensureDaemon returned error: %v", err)
 	}
 	if restartCalls != 1 {

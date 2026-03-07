@@ -198,6 +198,10 @@ func (cw *ConfigWatcher) reloadConfig() {
 	newCfg, err := config.LoadGlobalFrom(cw.configPath)
 	if err != nil {
 		log.Printf("Failed to reload config: %v", err)
+		cw.broadcaster.Broadcast(Event{
+			Type: "config.reload.failed",
+			TS:   time.Now(),
+		})
 		return
 	}
 

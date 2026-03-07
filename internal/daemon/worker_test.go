@@ -56,6 +56,14 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	}
 }
 
+// startPool starts the worker pool and registers a cleanup function to stop it.
+func (c *workerTestContext) startPool(t *testing.T) {
+	c.Pool.Start()
+	t.Cleanup(func() {
+		c.Pool.Stop()
+	})
+}
+
 // createJobWithAgent enqueues a job for the given SHA and agent and returns it.
 func (c *workerTestContext) createJobWithAgent(t *testing.T, sha, agent string) *storage.ReviewJob {
 	t.Helper()
@@ -67,6 +75,7 @@ func (c *workerTestContext) createJobWithAgent(t *testing.T, sha, agent string) 
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
+	job.RepoPath = c.TmpDir
 	return job
 }
 
@@ -117,6 +126,26 @@ func (c *workerTestContext) assertJobPendingCancel(t *testing.T, jobID int64, ex
 	}
 }
 
+func (c *workerTestContext) assertJobStatus(t *testing.T, jobID int64, expectedStatus storage.JobStatus) *storage.ReviewJob {
+	t.Helper()
+	job, err := c.DB.GetJobByID(jobID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if job.Status != expectedStatus {
+		t.Errorf("status=%q, want %q", job.Status, expectedStatus)
+	}
+	return job
+}
+
+func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
+	workers := cfg.MaxWorkers
+	if workers == 0 {
+		workers = 1
+	}
+	c.Pool = NewWorkerPool(c.DB, NewStaticConfig(cfg), workers, c.Broadcaster, nil, nil)
+}
+
 func TestWorkerPoolConcurrency(t *testing.T) {
 	tc := newWorkerTestContext(t, 4)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
@@ -125,7 +154,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 		tc.createJob(t, sha)
 	}
 
-	tc.Pool.Start()
+	tc.startPool(t)
 
 	// Poll until workers are active or timeout
 	var activeWorkers int
@@ -141,8 +170,6 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	if activeWorkers == 0 {
 		t.Fatal("expected active worker within timeout")
 	}
-
-	tc.Pool.Stop()
 
 	t.Logf("Peak active workers: %d", activeWorkers)
 }
@@ -599,16 +626,7 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	// processJob should detect cooldown via alias resolution
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		t.Errorf(
-			"status=%q, want failed (cooldown via alias)",
-			updated.Status,
-		)
-	}
+	tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 }
 
 func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
@@ -647,13 +665,7 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", quotaErr, true)
 
 	// Job should be failed (not retried) with quota prefix
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
@@ -694,13 +706,7 @@ func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 	// "quota exhausted" (not "quota exceeded") must also trigger quota-skip
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "quota exhausted, reset after 2h", true)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
@@ -718,14 +724,8 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 	// A non-quota agent error should follow the normal retry path
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "connection reset", true)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
 	// Should be queued for retry, not failed
-	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (retry)", updated.Status)
-	}
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 
 	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
 	if err != nil {
@@ -748,23 +748,16 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	// Configure backup agent
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+	tc.reconfigurePool(cfg)
 
 	// Enqueue with agent "codex" (backup is "test")
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	// Fill in RepoPath so resolveBackupAgent can work
-	job.RepoPath = tc.TmpDir
 
 	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
 	// Should be queued for failover, agent changed to "test"
-	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		t.Errorf("agent=%q, want test (failover)", updated.Agent)
 	}
@@ -778,20 +771,13 @@ func TestFailoverOrFail_PassesBackupModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
 	cfg.DefaultBackupModel = "claude-sonnet"
-	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+	tc.reconfigurePool(cfg)
 
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
 
 	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		t.Errorf("agent=%q, want test (failover)", updated.Agent)
 	}
@@ -808,95 +794,75 @@ func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	// No backup configured — should fail with quota prefix
 	tc.Pool.failoverOrFail(testWorkerID, job, "test", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 }
 
-func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-
-	// Configure backup agent
-	cfg := config.DefaultConfig()
-	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
-
-	// Enqueue with agent "codex"
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
-
-	// Exhaust retries
-	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
-
-	// Put the backup agent in cooldown
-	tc.Pool.cooldownAgent(
-		"test", time.Now().Add(30*time.Minute),
-	)
-
-	// Final failure — retries exhausted, backup in cooldown
-	tc.Pool.failOrRetryInner(
-		testWorkerID, job, "codex",
-		"connection reset", true,
-	)
-
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+func TestFailOrRetryInner_RetryExhausted(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(*workerTestContext)
+		wantStatus storage.JobStatus
+		wantAgent  string
+		wantModel  string
+	}{
+		{
+			name: "BackupInCooldown",
+			setup: func(tc *workerTestContext) {
+				cfg := config.DefaultConfig()
+				cfg.DefaultBackupAgent = "test"
+				tc.reconfigurePool(cfg)
+				tc.Pool.cooldownAgent("test", time.Now().Add(30*time.Minute))
+			},
+			wantStatus: storage.JobStatusFailed,
+			wantAgent:  "codex",
+		},
+		{
+			name: "FailsOverToBackup",
+			setup: func(tc *workerTestContext) {
+				cfg := config.DefaultConfig()
+				cfg.DefaultBackupAgent = "test"
+				tc.reconfigurePool(cfg)
+			},
+			wantStatus: storage.JobStatusQueued,
+			wantAgent:  "test",
+		},
+		{
+			name: "PassesBackupModel",
+			setup: func(tc *workerTestContext) {
+				cfg := config.DefaultConfig()
+				cfg.DefaultBackupAgent = "test"
+				cfg.DefaultBackupModel = "backup-model"
+				tc.reconfigurePool(cfg)
+			},
+			wantStatus: storage.JobStatusQueued,
+			wantAgent:  "test",
+			wantModel:  "backup-model",
+		},
 	}
-	// Should be failed, NOT queued for failover to cooled-down agent
-	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
-	}
-	// Agent should still be codex (not failed over)
-	if updated.Agent != "codex" {
-		t.Errorf("agent=%q, want codex (no failover)", updated.Agent)
-	}
-}
 
-func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			tt.setup(tc)
 
-	// Configure backup agent
-	cfg := config.DefaultConfig()
-	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+			job = tc.exhaustRetries(t, job, testWorkerID, "codex")
 
-	// Enqueue with agent "codex"
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
+			tc.Pool.failOrRetryInner(testWorkerID, job, "codex", "connection reset", true)
 
-	// Exhaust retries
-	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
+			updated := tc.assertJobStatus(t, job.ID, tt.wantStatus)
 
-	// Final failure — retries exhausted, backup available
-	tc.Pool.failOrRetryInner(
-		testWorkerID, job, "codex",
-		"connection reset", true,
-	)
-
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	// Should be queued for failover, agent changed to "test"
-	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
-	}
-	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+			if updated.Agent != tt.wantAgent {
+				t.Errorf("agent=%q, want %q", updated.Agent, tt.wantAgent)
+			}
+			if tt.wantModel != "" && updated.Model != tt.wantModel {
+				t.Errorf("model=%q, want %q", updated.Model, tt.wantModel)
+			}
+		})
 	}
 }
 
@@ -1046,43 +1012,5 @@ func TestFailoverWorkflow_FixJobDoesNotUseReviewBackup(t *testing.T) {
 	gotModel := pool.resolveBackupModel(job)
 	if gotModel != "" {
 		t.Errorf("resolveBackupModel(fix job) = %q, want empty", gotModel)
-	}
-}
-
-func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-
-	cfg := config.DefaultConfig()
-	cfg.DefaultBackupAgent = "test"
-	cfg.DefaultBackupModel = "backup-model"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
-
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	job.RepoPath = tc.TmpDir
-
-	// Exhaust retries
-	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
-
-	// Final failure — retries exhausted, backup available
-	tc.Pool.failOrRetryInner(
-		testWorkerID, job, "codex",
-		"connection reset", true,
-	)
-
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
-	}
-	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
-	}
-	if updated.Model != "backup-model" {
-		t.Errorf("model=%q, want backup-model", updated.Model)
 	}
 }

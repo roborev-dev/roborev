@@ -37,6 +37,7 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			server, _, _ := newTestServer(t)
 
 			reqData := EnqueueRequest{
@@ -48,15 +49,16 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 			w := httptest.NewRecorder()
 
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
+			body := w.Body.String()
 			if w.Code != tt.wantCode {
-				t.Fatalf("status=%d, want %d; body=%s", w.Code, tt.wantCode, w.Body.String())
+				t.Fatalf("status=%d, want %d; body=%s", w.Code, tt.wantCode, body)
 			}
 
 			if tt.wantErrorMsg != "" {
-				if !strings.Contains(w.Body.String(), tt.wantErrorMsg) {
-					t.Fatalf("expected error containing %q, got %s", tt.wantErrorMsg, w.Body.String())
+				if !strings.Contains(body, tt.wantErrorMsg) {
+					t.Fatalf("expected error containing %q, got %s", tt.wantErrorMsg, body)
 				}
 				return
 			}

@@ -12,9 +12,7 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	if len(cfg.Agents) != 1 || cfg.Agents[0] != "codex" {
-		t.Errorf(
-			"expected default agents [codex], got %v",
-			cfg.Agents)
+		t.Errorf("expected default agents [codex], got %v", cfg.Agents)
 	}
 }
 
@@ -75,17 +73,36 @@ func TestValidate(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error")
 				}
-				if !strings.Contains(
-					err.Error(), tt.wantErr) {
-					t.Errorf(
-						"error %q should contain %q",
-						err.Error(), tt.wantErr)
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
 				}
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}
+}
+
+func extractReviewEnv(t *testing.T, yamlContent string) map[string]string {
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &wf); err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			if step.Name == "Run review" {
+				return step.Env
+			}
+		}
+	}
+	return nil
 }
 
 func TestGenerate(t *testing.T) {
@@ -289,26 +306,7 @@ func TestGenerate(t *testing.T) {
 			}
 
 			if tt.envChecks != nil || tt.name == "dedupes env vars" {
-				var wf struct {
-					Jobs map[string]struct {
-						Steps []struct {
-							Name string            `yaml:"name"`
-							Env  map[string]string `yaml:"env"`
-						} `yaml:"steps"`
-					} `yaml:"jobs"`
-				}
-				if err := yaml.Unmarshal([]byte(out), &wf); err != nil {
-					t.Fatalf("failed to parse yaml: %v", err)
-				}
-
-				var reviewEnv map[string]string
-				for _, job := range wf.Jobs {
-					for _, step := range job.Steps {
-						if step.Name == "Run review" {
-							reviewEnv = step.Env
-						}
-					}
-				}
+				reviewEnv := extractReviewEnv(t, out)
 				if tt.envChecks != nil {
 					tt.envChecks(t, reviewEnv)
 				}
@@ -379,15 +377,11 @@ func TestAgentInstallCmd(t *testing.T) {
 		t.Run(tt.agent, func(t *testing.T) {
 			cmd := AgentInstallCmd(tt.agent)
 			if !strings.Contains(cmd, tt.wantPkg) {
-				t.Errorf(
-					"AgentInstallCmd(%q) = %q, want package %q",
-					tt.agent, cmd, tt.wantPkg)
+				t.Errorf("AgentInstallCmd(%q) = %q, want package %q", tt.agent, cmd, tt.wantPkg)
 			}
 			for _, bad := range tt.notWantPkgs {
 				if strings.Contains(cmd, bad) {
-					t.Errorf(
-						"AgentInstallCmd(%q) = %q, should NOT contain %q",
-						tt.agent, cmd, bad)
+					t.Errorf("AgentInstallCmd(%q) = %q, should NOT contain %q", tt.agent, cmd, bad)
 				}
 			}
 		})
@@ -417,93 +411,81 @@ func TestGenerate_Injection_Rejected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Generate(tt.cfg)
 			if err == nil {
-				t.Fatal(
-					"expected Generate to reject config")
+				t.Fatal("expected Generate to reject config")
 			}
 		})
 	}
 }
 
-func TestWriteWorkflow_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(
-		dir, ".github", "workflows", "roborev.yml")
-
-	cfg := DefaultConfig()
-	if err := WriteWorkflow(
-		cfg, outPath, false); err != nil {
-		t.Fatalf("WriteWorkflow failed: %v", err)
+func TestWriteWorkflow(t *testing.T) {
+	tests := []struct {
+		name           string
+		path           string
+		initialContent string
+		force          bool
+		wantErr        string
+		wantContent    string
+	}{
+		{
+			name:        "creates file",
+			path:        "roborev.yml",
+			force:       false,
+			wantContent: "name: roborev",
+		},
+		{
+			name:        "creates nested file",
+			path:        ".github/workflows/roborev.yml",
+			force:       false,
+			wantContent: "name: roborev",
+		},
+		{
+			name:           "existing file no force",
+			path:           "roborev.yml",
+			initialContent: "existing",
+			force:          false,
+			wantErr:        "already exists",
+			wantContent:    "existing",
+		},
+		{
+			name:           "existing file with force",
+			path:           "roborev.yml",
+			initialContent: "existing",
+			force:          true,
+			wantContent:    "name: roborev",
+		},
 	}
 
-	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if !strings.Contains(
-		string(content), "name: roborev") {
-		t.Error("written file should contain workflow name")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			outPath := filepath.Join(dir, tt.path)
 
-func TestWriteWorkflow_ExistingFile_NoForce(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "roborev.yml")
+			if tt.initialContent != "" {
+				if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outPath, []byte(tt.initialContent), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	if err := os.WriteFile(
-		outPath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
-	}
+			err := WriteWorkflow(DefaultConfig(), outPath, tt.force)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	cfg := DefaultConfig()
-	err := WriteWorkflow(cfg, outPath, false)
-	if err == nil {
-		t.Fatal(
-			"expected error for existing file without --force")
-	}
-	if !strings.Contains(
-		err.Error(), "already exists") {
-		t.Errorf(
-			"expected 'already exists' error, got: %v",
-			err)
-	}
-
-	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "existing" {
-		t.Error(
-			"existing file content should be preserved")
-	}
-}
-
-func TestWriteWorkflow_ExistingFile_Force(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "roborev.yml")
-
-	if err := os.WriteFile(
-		outPath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := DefaultConfig()
-	if err := WriteWorkflow(
-		cfg, outPath, true); err != nil {
-		t.Fatalf("WriteWorkflow with force failed: %v", err)
-	}
-
-	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) == "existing" {
-		t.Error(
-			"force should have overwritten existing content")
-	}
-	if !strings.Contains(
-		string(content), "name: roborev") {
-		t.Error(
-			"overwritten file should contain workflow name")
+			content, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("failed to read file: %v", err)
+			}
+			if !strings.Contains(string(content), tt.wantContent) && string(content) != tt.wantContent {
+				t.Errorf("expected content to contain %q, got %q", tt.wantContent, string(content))
+			}
+		})
 	}
 }
 
@@ -525,9 +507,7 @@ func TestAgentEnvVar(t *testing.T) {
 		t.Run(tt.agent, func(t *testing.T) {
 			got := AgentEnvVar(tt.agent)
 			if got != tt.want {
-				t.Errorf(
-					"AgentEnvVar(%q) = %q, want %q",
-					tt.agent, got, tt.want)
+				t.Errorf("AgentEnvVar(%q) = %q, want %q", tt.agent, got, tt.want)
 			}
 		})
 	}

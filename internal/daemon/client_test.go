@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,14 +16,19 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+func normalizePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
 // createTestGitRepo creates a temporary git repo with an initial commit and
 // returns the repo path (symlink-resolved) and a helper to run git commands in it.
 func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
-		tmpDir = resolved
-	}
+	tmpDir = normalizePath(tmpDir)
 	repoDir := filepath.Join(tmpDir, "repo")
 	if err := os.MkdirAll(repoDir, 0755); err != nil {
 		t.Fatal(err)
@@ -187,15 +193,15 @@ func TestFindJobForCommit(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryRepo      string
-		setupMock      func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request)
+		setupMock      func(t *testing.T) http.HandlerFunc
 		expectedJobID  int64
 		expectNotFound bool
 	}{
 		{
 			name:      "worktree path normalized to main repo",
 			queryRepo: worktreeDir,
-			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+			setupMock: func(t *testing.T) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 					repo := r.URL.Query().Get("repo")
@@ -206,10 +212,7 @@ func TestFindJobForCommit(t *testing.T) {
 						t.Errorf("expected server to NOT receive worktree path %q", worktreeDir)
 					}
 
-					normalizedReceived := repo
-					if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-						normalizedReceived = resolved
-					}
+					normalizedReceived := normalizePath(repo)
 
 					if normalizedReceived == mainRepo {
 						writeTestJSON(t, w, map[string]any{
@@ -227,15 +230,12 @@ func TestFindJobForCommit(t *testing.T) {
 		{
 			name:      "main repo path works directly",
 			queryRepo: mainRepo,
-			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+			setupMock: func(t *testing.T) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 					repo := r.URL.Query().Get("repo")
-					normalizedReceived := repo
-					if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-						normalizedReceived = resolved
-					}
+					normalizedReceived := normalizePath(repo)
 
 					if normalizedReceived == mainRepo {
 						writeTestJSON(t, w, map[string]any{
@@ -253,14 +253,14 @@ func TestFindJobForCommit(t *testing.T) {
 		{
 			name:      "fallback when primary query returns no results",
 			queryRepo: mainRepo,
-			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+			setupMock: func(t *testing.T) http.HandlerFunc {
 				var calls int
 				t.Cleanup(func() {
 					if calls != 2 {
 						t.Errorf("expected 2 calls, got %d", calls)
 					}
 				})
-				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				return func(w http.ResponseWriter, r *http.Request) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
 					calls++
 
@@ -295,26 +295,20 @@ func TestFindJobForCommit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			handler := tc.setupMock(t)
-			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-				handler(t, w, r)
-			})
+			client := mockAPI(t, tc.setupMock(t))
 			job, err := client.FindJobForCommit(tc.queryRepo, sha)
 			if err != nil {
 				t.Fatalf("FindJobForCommit failed: %v", err)
 			}
 
-			if tc.expectNotFound {
-				if job != nil {
-					t.Errorf("expected no job, got ID %d", job.ID)
-				}
-			} else {
-				if job == nil {
-					t.Fatalf("expected to find job, got nil")
-				}
-				if job.ID != tc.expectedJobID {
-					t.Errorf("expected job ID %d, got %d", tc.expectedJobID, job.ID)
-				}
+			if tc.expectNotFound && job != nil {
+				t.Fatalf("expected no job, got ID %d", job.ID)
+			}
+			if !tc.expectNotFound && job == nil {
+				t.Fatalf("expected to find job, got nil")
+			}
+			if job != nil && job.ID != tc.expectedJobID {
+				t.Errorf("expected job ID %d, got %d", tc.expectedJobID, job.ID)
 			}
 		})
 	}
@@ -397,30 +391,21 @@ func TestFindPendingJobForRef(t *testing.T) {
 				t.Fatalf("FindPendingJobForRef failed: %v", err)
 			}
 
-			if tc.expectNotFound {
-				if job != nil {
-					t.Errorf("expected nil job, got ID %d", job.ID)
-				}
-			} else {
-				if job == nil {
-					t.Fatal("expected to find job")
-				}
-				if job.ID != tc.expectJobID {
-					t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
-				}
-				if tc.expectStatus != "" && job.Status != tc.expectStatus {
-					t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
-				}
+			if tc.expectNotFound && job != nil {
+				t.Fatalf("expected nil job, got ID %d", job.ID)
+			}
+			if !tc.expectNotFound && job == nil {
+				t.Fatalf("expected to find job")
+			}
+			if job != nil && job.ID != tc.expectJobID {
+				t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
+			}
+			if job != nil && tc.expectStatus != "" && job.Status != tc.expectStatus {
+				t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
 			}
 
-			if len(requestedStatuses) != len(tc.expectedRequestOrder) {
-				t.Errorf("expected %d requests, got %d: %v", len(tc.expectedRequestOrder), len(requestedStatuses), requestedStatuses)
-			} else {
-				for i, want := range tc.expectedRequestOrder {
-					if requestedStatuses[i] != want {
-						t.Errorf("request %d: expected status %q, got %q", i, want, requestedStatuses[i])
-					}
-				}
+			if !slices.Equal(requestedStatuses, tc.expectedRequestOrder) {
+				t.Errorf("expected requests %v, got %v", tc.expectedRequestOrder, requestedStatuses)
 			}
 		})
 	}

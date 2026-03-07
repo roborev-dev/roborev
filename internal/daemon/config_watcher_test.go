@@ -21,10 +21,19 @@ type configWatcherHarness struct {
 
 const (
 	eventConfigReloaded = "config.reloaded"
+	eventConfigFailed   = "config.reload.failed"
 	reloadTimeout       = 2 * time.Second
 )
 
-func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherHarness {
+// assertEqual is a generic test helper
+func assertEqual[T comparable](t *testing.T, want, got T, msg string) {
+	t.Helper()
+	if want != got {
+		t.Errorf("%s: want %v, got %v", msg, want, got)
+	}
+}
+
+func newUnstartedHarness(t *testing.T, initialConfig string) *configWatcherHarness {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -40,14 +49,6 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 	_, ch := bc.Subscribe("")
 	cw := NewConfigWatcher(path, cfg, bc, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	if err := cw.Start(ctx); err != nil {
-		t.Fatalf("Failed to start watcher: %v", err)
-	}
-	t.Cleanup(cw.Stop)
-
 	return &configWatcherHarness{
 		Watcher:     cw,
 		Broadcaster: bc,
@@ -55,6 +56,21 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 		EventCh:     ch,
 		dir:         dir,
 	}
+}
+
+func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherHarness {
+	t.Helper()
+	h := newUnstartedHarness(t, initialConfig)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	if err := h.Watcher.Start(ctx); err != nil {
+		t.Fatalf("Failed to start watcher: %v", err)
+	}
+	t.Cleanup(h.Watcher.Stop)
+
+	return h
 }
 
 func setupUnstartedWatcher(t *testing.T, configPath string) *ConfigWatcher {
@@ -75,43 +91,30 @@ func (h *configWatcherHarness) updateConfigAndWait(t *testing.T, content string)
 	h.waitForReload(t)
 }
 
-func (h *configWatcherHarness) waitForReload(t *testing.T) {
+func (h *configWatcherHarness) waitForEvent(t *testing.T, eventType string) {
 	t.Helper()
 	timeout := time.After(reloadTimeout)
 	for {
 		select {
 		case event := <-h.EventCh:
-			if event.Type == eventConfigReloaded {
+			if event.Type == eventType {
 				return
 			}
 		case <-timeout:
-			t.Fatal("Timeout waiting for config.reloaded event")
+			t.Fatalf("Timeout waiting for %s event", eventType)
 		}
 	}
+}
+
+func (h *configWatcherHarness) waitForReload(t *testing.T) {
+	t.Helper()
+	h.waitForEvent(t, eventConfigReloaded)
 }
 
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write %s: %v", filepath.Base(path), err)
-	}
-}
-
-func requireNever(t *testing.T, condition func() bool, duration, interval time.Duration) {
-	t.Helper()
-	timeout := time.After(duration)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			return
-		case <-ticker.C:
-			if condition() {
-				t.Fatalf("condition evaluated to true within %v", duration)
-			}
-		}
 	}
 }
 
@@ -124,15 +127,11 @@ func TestStaticConfig(t *testing.T) {
 	sc := NewStaticConfig(cfg)
 
 	// Should always return the same config
-	if sc.Config() != cfg {
-		t.Error("StaticConfig.Config() should return the same config object")
-	}
+	assertEqual(t, cfg, sc.Config(), "StaticConfig.Config() should return the same config object")
 
 	// Call multiple times to verify consistency
 	for range 3 {
-		if sc.Config().DefaultAgent != "test-agent" {
-			t.Errorf("StaticConfig.Config().DefaultAgent = %q, want %q", sc.Config().DefaultAgent, "test-agent")
-		}
+		assertEqual(t, "test-agent", sc.Config().DefaultAgent, "StaticConfig.Config().DefaultAgent")
 	}
 }
 
@@ -145,18 +144,11 @@ func TestNewConfigWatcher(t *testing.T) {
 
 	cw := NewConfigWatcher("/path/to/config.toml", cfg, broadcaster, nil)
 
-	if cw.Config() != cfg {
-		t.Error("NewConfigWatcher should store the initial config")
-	}
-
-	if cw.configPath != "/path/to/config.toml" {
-		t.Errorf("configPath = %q, want %q", cw.configPath, "/path/to/config.toml")
-	}
+	assertEqual(t, cfg, cw.Config(), "NewConfigWatcher should store the initial config")
+	assertEqual(t, "/path/to/config.toml", cw.configPath, "configPath")
 
 	// LastReloadedAt should be zero initially
-	if !cw.LastReloadedAt().IsZero() {
-		t.Error("LastReloadedAt should be zero initially")
-	}
+	assertEqual(t, true, cw.LastReloadedAt().IsZero(), "LastReloadedAt should be zero initially")
 }
 
 func TestConfigWatcher_NoConfigPath(t *testing.T) {
@@ -191,12 +183,8 @@ default_agent = "updated-agent"
 max_workers = 4
 `,
 			validate: func(t *testing.T, c *config.Config) {
-				if c.DefaultAgent != "updated-agent" {
-					t.Errorf("got agent %q, want %q", c.DefaultAgent, "updated-agent")
-				}
-				if c.MaxWorkers != 4 {
-					t.Errorf("got max workers %d, want 4", c.MaxWorkers)
-				}
+				assertEqual(t, "updated-agent", c.DefaultAgent, "DefaultAgent")
+				assertEqual(t, 4, c.MaxWorkers, "MaxWorkers")
 			},
 		},
 		{
@@ -212,15 +200,9 @@ review_context_count = 7
 job_timeout_minutes = 30
 `,
 			validate: func(t *testing.T, c *config.Config) {
-				if c.ReviewContextCount != 7 {
-					t.Errorf("got context count %d, want 7", c.ReviewContextCount)
-				}
-				if c.JobTimeoutMinutes != 30 {
-					t.Errorf("got timeout %d, want 30", c.JobTimeoutMinutes)
-				}
-				if c.DefaultAgent != "updated-agent" {
-					t.Errorf("got agent %q, want %q", c.DefaultAgent, "updated-agent")
-				}
+				assertEqual(t, 7, c.ReviewContextCount, "ReviewContextCount")
+				assertEqual(t, 30, c.JobTimeoutMinutes, "JobTimeoutMinutes")
+				assertEqual(t, "updated-agent", c.DefaultAgent, "DefaultAgent")
 			},
 		},
 	}
@@ -230,18 +212,14 @@ job_timeout_minutes = 30
 			h := newConfigWatcherHarness(t, tt.initialConfig)
 
 			// Verify initial state
-			if !h.Watcher.LastReloadedAt().IsZero() {
-				t.Errorf("LastReloadedAt should be zero initially, got %v", h.Watcher.LastReloadedAt())
-			}
+			assertEqual(t, true, h.Watcher.LastReloadedAt().IsZero(), "LastReloadedAt should be zero initially")
 
 			h.updateConfigAndWait(t, tt.updateConfig)
 
 			tt.validate(t, h.Watcher.Config())
 
 			// Verify LastReloadedAt was updated and is recent
-			if h.Watcher.LastReloadedAt().IsZero() {
-				t.Error("LastReloadedAt should not be zero after reload")
-			}
+			assertEqual(t, false, h.Watcher.LastReloadedAt().IsZero(), "LastReloadedAt should not be zero after reload")
 			if time.Since(h.Watcher.LastReloadedAt()) > 5*time.Second {
 				t.Errorf("LastReloadedAt should be recent (within 5s), got %v", h.Watcher.LastReloadedAt())
 			}
@@ -255,23 +233,16 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	// Write invalid TOML - this should not crash the watcher
 	h.updateConfig(t, `this is not valid toml [[[`)
 
-	// Wait for debounce and potential reload attempt (no event fired for failure)
-	requireNever(t, func() bool {
-		return h.Watcher.Config().DefaultAgent != "test-agent"
-	}, 500*time.Millisecond, 50*time.Millisecond)
+	h.waitForEvent(t, eventConfigFailed)
 
 	// Config should still be the original value
-	if h.Watcher.Config().DefaultAgent != "test-agent" {
-		t.Errorf("Config should not change on invalid TOML, DefaultAgent = %q", h.Watcher.Config().DefaultAgent)
-	}
+	assertEqual(t, "test-agent", h.Watcher.Config().DefaultAgent, "Config should not change on invalid TOML")
 
 	// Watcher should still be working - fix the config
 	h.updateConfigAndWait(t, `default_agent = "fixed-agent"`)
 
 	// Now config should be updated
-	if h.Watcher.Config().DefaultAgent != "fixed-agent" {
-		t.Errorf("After fix, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "fixed-agent")
-	}
+	assertEqual(t, "fixed-agent", h.Watcher.Config().DefaultAgent, "Config should update after fix")
 }
 
 func TestConfigGetter_Interface(t *testing.T) {
@@ -298,25 +269,17 @@ func TestConfigWatcher_StopAfterStart(t *testing.T) {
 }
 
 func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	writeTestFile(t, configPath, `default_agent = "test"`)
-
-	cfg, _ := config.LoadGlobalFrom(configPath)
-	broadcaster := NewBroadcaster()
-	cw := NewConfigWatcher(configPath, cfg, broadcaster, nil)
-
+	h := newUnstartedHarness(t, `default_agent = "test"`)
 	ctx := context.Background()
 
 	// Start and stop
-	if err := cw.Start(ctx); err != nil {
+	if err := h.Watcher.Start(ctx); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
-	cw.Stop()
+	h.Watcher.Stop()
 
 	// Start after Stop should error (not restart-safe)
-	err := cw.Start(ctx)
+	err := h.Watcher.Start(ctx)
 	if err == nil {
 		t.Error("Expected error when calling Start after Stop")
 	}
@@ -326,21 +289,15 @@ func TestConfigWatcher_ReloadCounter(t *testing.T) {
 	h := newConfigWatcherHarness(t, `default_agent = "v1"`)
 
 	// Initial counter should be 0
-	if h.Watcher.ReloadCounter() != 0 {
-		t.Errorf("Initial ReloadCounter = %d, want 0", h.Watcher.ReloadCounter())
-	}
+	assertEqual(t, uint64(0), h.Watcher.ReloadCounter(), "Initial ReloadCounter")
 
 	// First reload
 	h.updateConfigAndWait(t, `default_agent = "v2"`)
-	if h.Watcher.ReloadCounter() != 1 {
-		t.Errorf("After first reload, ReloadCounter = %d, want 1", h.Watcher.ReloadCounter())
-	}
+	assertEqual(t, uint64(1), h.Watcher.ReloadCounter(), "After first reload")
 
 	// Second reload
 	h.updateConfigAndWait(t, `default_agent = "v3"`)
-	if h.Watcher.ReloadCounter() != 2 {
-		t.Errorf("After second reload, ReloadCounter = %d, want 2", h.Watcher.ReloadCounter())
-	}
+	assertEqual(t, uint64(2), h.Watcher.ReloadCounter(), "After second reload")
 }
 
 func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
@@ -356,7 +313,5 @@ func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
 	h.waitForReload(t)
 
 	// Verify config was updated
-	if h.Watcher.Config().DefaultAgent != "atomic-saved" {
-		t.Errorf("After atomic save, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "atomic-saved")
-	}
+	assertEqual(t, "atomic-saved", h.Watcher.Config().DefaultAgent, "After atomic save")
 }

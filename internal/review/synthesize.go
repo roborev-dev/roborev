@@ -17,8 +17,6 @@ import (
 var ErrAllFailed = errors.New(
 	"all review jobs failed")
 
-var getAvailableWithConfig = agent.GetAvailableWithConfig
-
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
 	// Agent name for synthesis (empty = first available).
@@ -35,6 +33,8 @@ type SynthesizeOpts struct {
 	HeadSHA string
 	// GlobalConfig allows runtime agent resolution to honor ACP naming/command overrides.
 	GlobalConfig *config.Config
+	// Resolver allows overriding agent resolution for testing
+	Resolver func(string, *config.Config) (agent.Agent, error)
 }
 
 // Synthesize combines multiple review results into a single
@@ -118,7 +118,14 @@ func runSynthesis(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (string, error) {
-	synthAgent, err := getAvailableWithConfig(opts.Agent, opts.GlobalConfig)
+	resolver := opts.Resolver
+	if resolver == nil {
+		resolver = func(name string, cfg *config.Config) (agent.Agent, error) {
+			return agent.GetAvailableWithConfig(name, cfg)
+		}
+	}
+
+	synthAgent, err := resolver(opts.Agent, opts.GlobalConfig)
 	if err != nil {
 		return "", fmt.Errorf("get synthesis agent: %w", err)
 	}

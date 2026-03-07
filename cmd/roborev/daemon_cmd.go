@@ -26,7 +26,7 @@ func daemonCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Start the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			if _, err := ensureDaemon(cmd); err != nil {
 				return err
 			}
 			fmt.Println("Daemon started")
@@ -59,7 +59,7 @@ func daemonCmd() *cobra.Command {
 			} else if err != nil {
 				return err
 			}
-			if err := ensureDaemon(); err != nil {
+			if _, err := ensureDaemon(cmd); err != nil {
 				return err
 			}
 			if wasRunning {

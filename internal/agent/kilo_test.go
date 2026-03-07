@@ -14,18 +14,15 @@ func TestKiloModelFlag(t *testing.T) {
 	tests := []struct {
 		name         string
 		model        string
-		wantModel    bool
 		wantContains string
 	}{
 		{
-			name:      "no model omits flag",
-			model:     "",
-			wantModel: false,
+			name:  "no model omits flag",
+			model: "",
 		},
 		{
 			name:         "explicit model includes flag",
 			model:        "anthropic/claude-sonnet-4-20250514",
-			wantModel:    true,
 			wantContains: "anthropic/claude-sonnet-4-20250514",
 		},
 	}
@@ -35,7 +32,7 @@ func TestKiloModelFlag(t *testing.T) {
 			a := NewKiloAgent("kilo")
 			a.Model = tt.model
 			cl := a.CommandLine()
-			if tt.wantModel {
+			if tt.wantContains != "" {
 				assertContains(t, cl, "--model")
 				assertContains(t, cl, tt.wantContains)
 			} else {
@@ -51,18 +48,15 @@ func TestKiloReviewModelFlag(t *testing.T) {
 	tests := []struct {
 		name      string
 		model     string
-		wantFlag  bool
 		wantModel string
 	}{
 		{
-			name:     "no model omits --model from args",
-			model:    "",
-			wantFlag: false,
+			name:  "no model omits --model from args",
+			model: "",
 		},
 		{
 			name:      "explicit model passes --model to subprocess",
 			model:     "openai/gpt-4o",
-			wantFlag:  true,
 			wantModel: "openai/gpt-4o",
 		},
 	}
@@ -71,7 +65,7 @@ func TestKiloReviewModelFlag(t *testing.T) {
 			t.Parallel()
 			_, args, _ := runKiloMockReview(t, tt.model, "review this", nil)
 			args = strings.TrimSpace(args)
-			if tt.wantFlag {
+			if tt.wantModel != "" {
 				assertContains(t, args, "--model")
 				assertContains(t, args, tt.wantModel)
 			} else {
@@ -122,36 +116,46 @@ func TestKiloReviewStripsANSIFromJSONL(t *testing.T) {
 }
 
 func TestKiloAgenticAutoFlag(t *testing.T) {
-	skipIfWindows(t)
-
-	withUnsafeAgents(t, false)
-	a := NewKiloAgent("kilo").WithAgentic(true).(*KiloAgent)
-	cl := a.CommandLine()
-	assertContains(t, cl, "--auto")
-
-	b := NewKiloAgent("kilo").WithAgentic(false).(*KiloAgent)
-	cl2 := b.CommandLine()
-	assertNotContains(t, cl2, "--auto")
+	tests := []struct {
+		name     string
+		agentic  bool
+		wantFlag bool
+	}{
+		{"enabled includes flag", true, true},
+		{"disabled omits flag", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skipIfWindows(t)
+			withUnsafeAgents(t, false)
+			a := NewKiloAgent("kilo").WithAgentic(tt.agentic).(*KiloAgent)
+			cl := a.CommandLine()
+			if tt.wantFlag {
+				assertContains(t, cl, "--auto")
+			} else {
+				assertNotContains(t, cl, "--auto")
+			}
+		})
+	}
 }
 
 func TestKiloVariantFlag(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name        string
-		reasoning   ReasoningLevel
-		wantVariant bool
-		wantValue   string
+		name      string
+		reasoning ReasoningLevel
+		wantValue string
 	}{
-		{name: "thorough maps to high", reasoning: ReasoningThorough, wantVariant: true, wantValue: "high"},
-		{name: "fast maps to minimal", reasoning: ReasoningFast, wantVariant: true, wantValue: "minimal"},
-		{name: "standard omits variant", reasoning: ReasoningStandard, wantVariant: false},
+		{name: "thorough maps to high", reasoning: ReasoningThorough, wantValue: "high"},
+		{name: "fast maps to minimal", reasoning: ReasoningFast, wantValue: "minimal"},
+		{name: "standard omits variant", reasoning: ReasoningStandard},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a := NewKiloAgent("kilo").WithReasoning(tt.reasoning).(*KiloAgent)
 			cl := a.CommandLine()
-			if tt.wantVariant {
+			if tt.wantValue != "" {
 				assertContains(t, cl, "--variant")
 				assertContains(t, cl, tt.wantValue)
 			} else {
@@ -168,139 +172,76 @@ func TestKiloUsesJSONFormat(t *testing.T) {
 	assertContains(t, cl, "--format json")
 }
 
-func TestKiloReviewStderrOnExitZero(t *testing.T) {
+func TestKiloReviewDiagnostics(t *testing.T) {
 	t.Parallel()
-	skipIfWindows(t)
-
-	// Kilo exits 0 but writes error to stderr and produces no stdout.
-	// The error must be surfaced, not hidden behind "No review output".
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"},
-		ExitCode:    0,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err == nil {
-		t.Fatal("expected error when kilo writes to stderr with no stdout")
-	}
-	assertContains(t, err.Error(), "Model not found")
-}
-
-func TestKiloReviewNonZeroExitSurfacesStderr(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"},
-		ExitCode:    1,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
-	assertContains(t, err.Error(), "Model not found")
-}
-
-func TestKiloReviewStderrStripsANSI(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	// Kilo outputs ANSI-colored errors; verify they get stripped.
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StderrLines: []string{
-			"\x1b[0m\x1b[91m\x1b[0m\x1b[1mError: \x1b[0m\x1b[0mModel not found",
-		},
-		ExitCode: 1,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
-	assertContains(t, err.Error(), "Error: Model not found")
-	assertNotContains(t, err.Error(), "\x1b[")
-}
-
-func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	// Some CLIs print errors to stdout instead of stderr.
-	// When stderr is empty, the raw stdout should be included
-	// in the error diagnostics.
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StdoutLines: []string{"fatal: something went wrong"},
-		ExitCode:    1,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
-	assertContains(t, err.Error(), "something went wrong")
-}
-
-func TestKiloReviewExitZeroNonJSONStdout(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	// Kilo exits 0 but writes only non-JSON text to stdout.
-	// parseOpenCodeJSON extracts nothing; the raw stdout
-	// should be surfaced as an error.
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StdoutLines: []string{
-			"Error: invalid configuration",
-		},
-		ExitCode: 0,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err == nil {
-		t.Fatal(
-			"expected error when stdout is non-JSON",
-		)
-	}
-	assertContains(t, err.Error(), "invalid configuration")
-}
-
-func TestKiloReviewExitZeroJSONOnlyNoText(t *testing.T) {
-	t.Parallel()
-	skipIfWindows(t)
-
-	// Kilo exits 0 with valid JSONL but no text events (e.g.,
-	// only step/tool events). This is a valid run that produced
-	// no review text — should return the generic message, not
-	// an error.
 	stepEvent := `{"type":"step","part":{"type":"tool","name":"read"}}`
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StdoutLines: []string{stepEvent},
-		ExitCode:    0,
-	})
-
-	a := NewKiloAgent(mock.CmdPath)
-	result, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name       string
+		opts       MockCLIOpts
+		wantErr    string
+		wantResult string
+	}{
+		{
+			name:    "stderr on exit zero",
+			opts:    MockCLIOpts{StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"}, ExitCode: 0},
+			wantErr: "Model not found",
+		},
+		{
+			name:    "non-zero exit surfaces stderr",
+			opts:    MockCLIOpts{StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"}, ExitCode: 1},
+			wantErr: "Model not found",
+		},
+		{
+			name: "stderr strips ANSI",
+			opts: MockCLIOpts{
+				StderrLines: []string{"\x1b[0m\x1b[91m\x1b[0m\x1b[1mError: \x1b[0m\x1b[0mModel not found"},
+				ExitCode:    1,
+			},
+			wantErr: "Error: Model not found",
+		},
+		{
+			name:    "non-zero exit falls back to stdout",
+			opts:    MockCLIOpts{StdoutLines: []string{"fatal: something went wrong"}, ExitCode: 1},
+			wantErr: "something went wrong",
+		},
+		{
+			name:    "exit zero non-JSON stdout",
+			opts:    MockCLIOpts{StdoutLines: []string{"Error: invalid configuration"}, ExitCode: 0},
+			wantErr: "invalid configuration",
+		},
+		{
+			name:       "exit zero JSON only no text",
+			opts:       MockCLIOpts{StdoutLines: []string{stepEvent}, ExitCode: 0},
+			wantResult: "No review output generated",
+		},
 	}
-	assertEqual(t, result, "No review output generated")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			skipIfWindows(t)
+			mock := mockAgentCLI(t, tt.opts)
+			a := NewKiloAgent(mock.CmdPath)
+			result, err := a.Review(
+				context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+			)
+
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				assertContains(t, err.Error(), tt.wantErr)
+				if strings.Contains(tt.name, "ANSI") {
+					assertNotContains(t, err.Error(), "\x1b[")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				assertEqual(t, result, tt.wantResult)
+			}
+		})
+	}
 }
 
 // kiloTextEvent returns a JSONL line representing a text event

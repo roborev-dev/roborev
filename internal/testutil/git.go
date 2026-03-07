@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 // GitHelper runs git commands in a repo directory.
@@ -15,10 +17,17 @@ type GitHelper struct {
 	resolvedPath string
 }
 
+func newIsolatedGitCmd(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = testenv.BuildIsolatedGitEnv(os.Environ(), dir)
+
+	return cmd
+}
+
 func (g *GitHelper) Run(args ...string) {
 	g.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = g.dir
+	cmd := newIsolatedGitCmd(g.dir, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		g.t.Fatalf("git %v: %s: %v", args, out, err)
 	}
@@ -33,8 +42,7 @@ func (g *GitHelper) Path() string {
 
 func (g *GitHelper) HeadSHA() string {
 	g.t.Helper()
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = g.dir
+	cmd := newIsolatedGitCmd(g.dir, "rev-parse", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		g.t.Fatalf("git rev-parse HEAD: %v", err)
@@ -63,6 +71,7 @@ func NewGitRepo(t *testing.T) *GitHelper {
 
 	g := &GitHelper{t: t, dir: dir, resolvedPath: resolvedPath}
 	g.Run("init", "-b", "main")
+	g.Run("config", "core.hooksPath", os.DevNull)
 	g.Run("config", "user.email", "test@test.com")
 	g.Run("config", "user.name", "Test")
 	return g

@@ -20,6 +20,12 @@ type systemPromptTestCase struct {
 
 func (tc *systemPromptTestCase) assert(t *testing.T, got string) {
 	t.Helper()
+
+	// Prevent contradictory test configurations
+	if tc.wantEmpty && (tc.wantExact != "" || len(tc.wantContains) > 0 || len(tc.wantNotContains) > 0 || tc.wantNotDefault) {
+		t.Fatal("invalid test case: wantEmpty cannot be combined with other assertions")
+	}
+
 	if tc.wantEmpty {
 		if got != "" {
 			t.Errorf("got %q, want empty string", got)
@@ -59,20 +65,15 @@ func (tc *systemPromptTestCase) assert(t *testing.T, got string) {
 	}
 }
 
-func TestGetSystemPrompt_Fallbacks(t *testing.T) {
-	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
-
-	// Define a mock time provider
-	mockNow := func() time.Time {
-		return fixedTime
-	}
-
-	// Get the review prompt to verify fallbacks match exactly
+func TestGetSystemPrompt(t *testing.T) {
+	mockNow := func() time.Time { return time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC) }
+	fixedDateStr := "Current date: 2030-06-15 (UTC)"
 	geminiReviewPrompt := getSystemPrompt("gemini", "review", mockNow)
 	codexReviewPrompt := getSystemPrompt("codex", "review", mockNow)
 	claudeReviewPrompt := getSystemPrompt("claude-code", "review", mockNow)
 
 	tests := []systemPromptTestCase{
+		// --- Fallbacks ---
 		{
 			name:           "Codex Review",
 			agent:          "codex",
@@ -122,25 +123,8 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 			wantExact:      geminiReviewPrompt,
 			wantNotDefault: true,
 		},
-	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := getSystemPrompt(tc.agent, tc.command, mockNow)
-			tc.assert(t, got)
-		})
-	}
-}
-
-func TestGetSystemPrompt_DateInjection(t *testing.T) {
-	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
-	fixedDateStr := "Current date: 2030-06-15 (UTC)"
-
-	mockNow := func() time.Time {
-		return fixedTime
-	}
-
-	tests := []systemPromptTestCase{
+		// --- Date Injection ---
 		{
 			name:         "Gemini Run",
 			agent:        "gemini",
@@ -159,21 +143,8 @@ func TestGetSystemPrompt_DateInjection(t *testing.T) {
 			command:      "review",
 			wantContains: []string{fixedDateStr},
 		},
-	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := getSystemPrompt(tc.agent, tc.command, mockNow)
-			tc.assert(t, got)
-		})
-	}
-}
-
-func TestGetSystemPrompt_Instructions(t *testing.T) {
-	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
-	mockNow := func() time.Time { return fixedTime }
-
-	tests := []systemPromptTestCase{
+		// --- Instructions ---
 		{
 			name:      "Non-Gemini Run (Claude)",
 			agent:     "claude-code",

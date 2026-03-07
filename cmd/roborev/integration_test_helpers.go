@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -45,4 +46,33 @@ func execGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func assertAppearsBefore(t *testing.T, content, first, second string) {
+	t.Helper()
+	firstIdx := strings.Index(content, first)
+	secondIdx := strings.Index(content, second)
+	if firstIdx < 0 {
+		t.Fatalf("Expected %q to be present", first)
+	}
+	if secondIdx < 0 {
+		t.Fatalf("Expected %q to be present", second)
+	}
+	if firstIdx > secondIdx {
+		t.Errorf("Expected %q to appear before %q", first, second)
+	}
+}
+
+func assertNotContains(t *testing.T, content, substr, msg string) {
+	t.Helper()
+	if strings.Contains(content, substr) {
+		t.Errorf("%s. Expected NOT to find %q in:\n%s", msg, substr, content)
+	}
+}
+
+func assertIsExecutable(t *testing.T, info os.FileInfo) {
+	t.Helper()
+	if info.Mode()&0111 == 0 {
+		t.Errorf("expected file %s to be executable", info.Name())
+	}
 }

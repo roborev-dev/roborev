@@ -18,55 +18,39 @@ func assertContains(t *testing.T, s, substr string) {
 	}
 }
 
-// commonMockAgent provides default no-op chaining methods
-type commonMockAgent struct {
-	self agent.Agent
+type synthMockAgent struct {
+	name       string
+	reviewFunc func(ctx context.Context, typ, gitRef, prompt string, w io.Writer) (string, error)
 }
 
-func (a *commonMockAgent) WithReasoning(_ agent.ReasoningLevel) agent.Agent { return a.self }
-func (a *commonMockAgent) WithAgentic(_ bool) agent.Agent                   { return a.self }
-func (a *commonMockAgent) WithModel(_ string) agent.Agent                   { return a.self }
+func (m *synthMockAgent) Name() string { return m.name }
 
-// failingSynthAgent always returns an error from Review,
-// used to force synthesis fallback deterministically.
-type failingSynthAgent struct {
-	commonMockAgent
+func (m *synthMockAgent) CommandLine() string                              { return m.name }
+func (m *synthMockAgent) WithReasoning(_ agent.ReasoningLevel) agent.Agent { return m }
+func (m *synthMockAgent) WithAgentic(_ bool) agent.Agent                   { return m }
+func (m *synthMockAgent) WithModel(_ string) agent.Agent                   { return m }
+
+func (m *synthMockAgent) Review(ctx context.Context, typ, gitRef, prompt string, w io.Writer) (string, error) {
+	if m.reviewFunc != nil {
+		return m.reviewFunc(ctx, typ, gitRef, prompt, w)
+	}
+	return "", nil
 }
 
-func newFailingSynthAgent() *failingSynthAgent {
-	a := &failingSynthAgent{}
-	a.self = a
-	return a
+var defaultTestResults = []ReviewResult{
+	{
+		Agent:      "codex",
+		ReviewType: "security",
+		Status:     "done",
+		Output:     "Found issue A",
+	},
+	{
+		Agent:      "codex",
+		ReviewType: "design",
+		Status:     "done",
+		Output:     "Design looks good",
+	},
 }
-
-func (a *failingSynthAgent) Name() string { return "failing-synth" }
-func (a *failingSynthAgent) Review(
-	_ context.Context, _, _, _ string, _ io.Writer,
-) (string, error) {
-	return "", errors.New("agent exploded")
-}
-func (a *failingSynthAgent) CommandLine() string { return "failing-synth" }
-
-// capturingAgent records the gitRef passed to Review.
-type capturingAgent struct {
-	commonMockAgent
-	capturedGitRef string
-}
-
-func newCapturingAgent() *capturingAgent {
-	a := &capturingAgent{}
-	a.self = a
-	return a
-}
-
-func (a *capturingAgent) Name() string { return "capture" }
-func (a *capturingAgent) Review(
-	_ context.Context, _, gitRef, _ string, _ io.Writer,
-) (string, error) {
-	a.capturedGitRef = gitRef
-	return "synthesized output", nil
-}
-func (a *capturingAgent) CommandLine() string { return "capture" }
 
 func TestSynthesize_Formatting(t *testing.T) {
 	tests := []struct {
@@ -144,27 +128,17 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	// Register an agent that always fails so the test is
 	// deterministic regardless of what other agents exist
 	// in the global registry.
-	ag := newFailingSynthAgent()
+	ag := &synthMockAgent{
+		name: "failing-synth",
+		reviewFunc: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "", errors.New("agent exploded")
+		},
+	}
 	agent.Register(ag)
 	t.Cleanup(func() { agent.Unregister("failing-synth") })
 
-	results := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "Found issue A",
-		},
-		{
-			Agent:      "codex",
-			ReviewType: "design",
-			Status:     "done",
-			Output:     "Design looks good",
-		},
-	}
-
 	comment, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
+		context.Background(), defaultTestResults, SynthesizeOpts{
 			Agent:   "failing-synth",
 			HeadSHA: "def456789012",
 		})
@@ -209,27 +183,19 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 }
 
 func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
-	cap := newCapturingAgent()
+	var capturedGitRef string
+	cap := &synthMockAgent{
+		name: "capture",
+		reviewFunc: func(_ context.Context, _, gitRef, _ string, _ io.Writer) (string, error) {
+			capturedGitRef = gitRef
+			return "synthesized output", nil
+		},
+	}
 	agent.Register(cap)
 	t.Cleanup(func() { agent.Unregister("capture") })
 
-	results := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "Found issue A",
-		},
-		{
-			Agent:      "codex",
-			ReviewType: "design",
-			Status:     "done",
-			Output:     "Design looks good",
-		},
-	}
-
 	_, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
+		context.Background(), defaultTestResults, SynthesizeOpts{
 			Agent:   "capture",
 			GitRef:  "aaa111..bbb222",
 			HeadSHA: "bbb222",
@@ -238,24 +204,21 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cap.capturedGitRef != "aaa111..bbb222" {
+	if capturedGitRef != "aaa111..bbb222" {
 		t.Errorf(
 			"gitRef = %q, want %q",
-			cap.capturedGitRef, "aaa111..bbb222")
+			capturedGitRef, "aaa111..bbb222")
 	}
 }
 
 func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
-	originalResolver := getAvailableWithConfig
-	t.Cleanup(func() { getAvailableWithConfig = originalResolver })
-
 	var seenAgent string
 	var seenCfg *config.Config
-	cap := newCapturingAgent()
-	getAvailableWithConfig = func(agentName string, cfg *config.Config, backups ...string) (agent.Agent, error) {
-		seenAgent = agentName
-		seenCfg = cfg
-		return cap, nil
+	cap := &synthMockAgent{
+		name: "capture",
+		reviewFunc: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "synthesized output", nil
+		},
 	}
 
 	cfg := &config.Config{
@@ -264,26 +227,17 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 			Command: "acp-agent",
 		},
 	}
-	results := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "issue A",
-		},
-		{
-			Agent:      "codex",
-			ReviewType: "design",
-			Status:     "done",
-			Output:     "issue B",
-		},
-	}
 
-	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	comment, err := Synthesize(context.Background(), defaultTestResults, SynthesizeOpts{
 		Agent:        "custom-acp",
 		GlobalConfig: cfg,
 		HeadSHA:      "abc123",
 		GitRef:       "abc123..def456",
+		Resolver: func(agentName string, c *config.Config) (agent.Agent, error) {
+			seenAgent = agentName
+			seenCfg = c
+			return cap, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

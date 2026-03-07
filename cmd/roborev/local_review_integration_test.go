@@ -11,23 +11,28 @@ import (
 func TestLocalReviewReasoningLevels(t *testing.T) {
 	tests := []struct {
 		name      string
-		reasoning string
-		expected  string
+		reasoning agent.ReasoningLevel
 	}{
-		{name: "Fast", reasoning: string(agent.ReasoningFast), expected: "reasoning: " + string(agent.ReasoningFast)},
-		{name: "Standard", reasoning: string(agent.ReasoningStandard), expected: "reasoning: " + string(agent.ReasoningStandard)},
-		{name: "Thorough", reasoning: string(agent.ReasoningThorough), expected: "reasoning: " + string(agent.ReasoningThorough)},
-		{name: "Default", reasoning: "", expected: "reasoning: " + string(agent.ReasoningThorough)}, // default (agent defaults)
+		{name: "Fast", reasoning: agent.ReasoningFast},
+		{name: "Standard", reasoning: agent.ReasoningStandard},
+		{name: "Thorough", reasoning: agent.ReasoningThorough},
+		{name: "Default", reasoning: ""}, // default (agent defaults)
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			h := newReviewHarness(t)
 			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
 			}
-			h.assertOutputContains(tc.expected)
+
+			expectedReasoning := tc.reasoning
+			if expectedReasoning == "" {
+				expectedReasoning = agent.ReasoningThorough
+			}
+			h.assertOutputContains("reasoning: " + string(expectedReasoning))
 		})
 	}
 }

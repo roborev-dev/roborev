@@ -9,15 +9,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 // reviewHarness encapsulates a test git repo, cobra command, and output buffer.
 type reviewHarness struct {
-	t   *testing.T
-	Dir string
-	Cmd *cobra.Command
-	Out *bytes.Buffer
+	t        *testing.T
+	Dir      string
+	Cmd      *cobra.Command
+	Out      *bytes.Buffer
+	executed bool
 }
 
 // newReviewHarness creates a harness with the real CLI command structure.
@@ -43,6 +45,10 @@ func (h *reviewHarness) writeConfig(content string) {
 // runCmd executes the command with the given arguments.
 func (h *reviewHarness) runCmd(args ...string) error {
 	h.t.Helper()
+	if h.executed {
+		h.t.Fatal("runCmd/run called multiple times on the same harness; cobra flags do not reset cleanly")
+	}
+	h.executed = true
 	h.Cmd.SetArgs(args)
 	return h.Cmd.Execute()
 }
@@ -63,23 +69,12 @@ func (h *reviewHarness) assertOutputNotContains(want string) {
 	}
 }
 
-// assertErrorContains checks if the error contains the expected string.
-func (h *reviewHarness) assertErrorContains(err error, want string) {
-	h.t.Helper()
-	if err == nil {
-		h.t.Fatal("Expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), want) {
-		h.t.Errorf("Error missing %q. Got: %v", want, err)
-	}
-}
-
 // runOpts holds optional parameters for run, mapping to CLI flags.
 type runOpts struct {
 	Revision   string
 	Agent      string
 	Model      string
-	Reasoning  string
+	Reasoning  agent.ReasoningLevel
 	ReviewType string
 	Quiet      bool
 	Dirty      bool
@@ -91,9 +86,6 @@ func (h *reviewHarness) run(opts runOpts) error {
 	// Always enforce --local and --repo to ensure we target the test repo and don't need daemon
 	args := []string{"--local", "--repo", h.Dir}
 
-	if opts.Revision != "" {
-		args = append(args, opts.Revision)
-	}
 	if opts.Dirty {
 		args = append(args, "--dirty")
 	}
@@ -104,13 +96,18 @@ func (h *reviewHarness) run(opts runOpts) error {
 		args = append(args, "--model", opts.Model)
 	}
 	if opts.Reasoning != "" {
-		args = append(args, "--reasoning", opts.Reasoning)
+		args = append(args, "--reasoning", string(opts.Reasoning))
 	}
 	if opts.ReviewType != "" {
 		args = append(args, "--type", opts.ReviewType)
 	}
 	if opts.Quiet {
 		args = append(args, "--quiet")
+	}
+
+	// Append positional arguments last
+	if opts.Revision != "" {
+		args = append(args, opts.Revision)
 	}
 
 	return h.runCmd(args...)
@@ -131,7 +128,7 @@ func TestLocalReviewFlag(t *testing.T) {
 func TestLocalReviewRequiresAgent(t *testing.T) {
 	h := newReviewHarness(t)
 
-	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
+	err := h.run(runOpts{Agent: "test", Reasoning: agent.ReasoningFast})
 	if err != nil {
 		t.Fatalf("Expected no error with test agent, got: %v", err)
 	}
@@ -148,7 +145,7 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
+	err := h.run(runOpts{Dirty: true, Agent: "test", Reasoning: agent.ReasoningFast})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -156,31 +153,68 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 	h.assertOutputContains("Commit: dirty")
 }
 
-func TestLocalReviewAgentResolution(t *testing.T) {
-	h := newReviewHarness(t)
-	h.writeConfig(`agent = "test"`)
-
-	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	h.assertOutputContains("Running test review")
-}
-
-func TestLocalReviewModelResolution(t *testing.T) {
-	h := newReviewHarness(t)
-	h.writeConfig(`
+func TestLocalReviewConfigResolution(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     string
+		opts       runOpts
+		wantOutput string
+	}{
+		{
+			name:       "Agent Resolution",
+			config:     `agent = "test"`,
+			opts:       runOpts{Reasoning: agent.ReasoningFast},
+			wantOutput: "Running test review",
+		},
+		{
+			name: "Model Resolution",
+			config: `
 agent = "test"
 model = "test-model"
-`)
-
-	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
+`,
+			opts:       runOpts{Reasoning: agent.ReasoningFast},
+			wantOutput: "model: test-model",
+		},
+		{
+			name: "Workflow Specific Agent",
+			config: `
+agent = "codex"
+review_agent_fast = "test"
+`,
+			opts:       runOpts{Reasoning: agent.ReasoningFast},
+			wantOutput: "Running test review",
+		},
+		{
+			name: "Workflow Specific Model",
+			config: `
+agent = "test"
+model = "default-model"
+review_model_thorough = "thorough-model"
+`,
+			opts:       runOpts{},
+			wantOutput: "model: thorough-model",
+		},
+		{
+			name: "Reasoning From Config",
+			config: `
+agent = "test"
+review_reasoning = "fast"
+`,
+			opts:       runOpts{},
+			wantOutput: "reasoning: fast",
+		},
 	}
 
-	h.assertOutputContains("model: test-model")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newReviewHarness(t)
+			h.writeConfig(tc.config)
+			if err := h.run(tc.opts); err != nil {
+				t.Fatalf("Expected no error, got: %v", err)
+			}
+			h.assertOutputContains(tc.wantOutput)
+		})
+	}
 }
 
 func TestLocalReviewValidation(t *testing.T) {
@@ -192,25 +226,25 @@ func TestLocalReviewValidation(t *testing.T) {
 	}{
 		{
 			name:    "Invalid Reasoning",
-			opts:    runOpts{Agent: "test", Reasoning: "invalid-reasoning"},
+			opts:    runOpts{Agent: "test", Reasoning: agent.ReasoningLevel("invalid-reasoning")},
 			wantErr: "invalid reasoning",
 		},
 		{
 			name:    "Invalid Type",
-			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "bogus"},
+			opts:    runOpts{Agent: "test", Reasoning: agent.ReasoningFast, ReviewType: "bogus"},
 			wantErr: "invalid --type",
 		},
 		{
 			name: "Valid Security Type",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security"},
+			opts: runOpts{Agent: "test", Reasoning: agent.ReasoningFast, ReviewType: "security"},
 		},
 		{
 			name: "Valid Design Type",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"},
+			opts: runOpts{Agent: "test", Reasoning: agent.ReasoningFast, ReviewType: "design"},
 		},
 		{
 			name: "Empty Type Accepted",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""},
+			opts: runOpts{Agent: "test", Reasoning: agent.ReasoningFast, ReviewType: ""},
 		},
 	}
 
@@ -219,7 +253,7 @@ func TestLocalReviewValidation(t *testing.T) {
 			h := newReviewHarness(t)
 			err := h.run(tc.opts)
 			if tc.wantErr != "" {
-				h.assertErrorContains(err, tc.wantErr)
+				assertErrorContains(t, err, tc.wantErr)
 			} else if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
 			}
@@ -230,56 +264,10 @@ func TestLocalReviewValidation(t *testing.T) {
 	}
 }
 
-func TestLocalReviewWorkflowSpecificAgent(t *testing.T) {
-	h := newReviewHarness(t)
-	h.writeConfig(`
-agent = "codex"
-review_agent_fast = "test"
-`)
-
-	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	h.assertOutputContains("Running test review")
-}
-
-func TestLocalReviewWorkflowSpecificModel(t *testing.T) {
-	h := newReviewHarness(t)
-	h.writeConfig(`
-agent = "test"
-model = "default-model"
-review_model_thorough = "thorough-model"
-`)
-
-	err := h.run(runOpts{})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	h.assertOutputContains("model: thorough-model")
-}
-
-func TestLocalReviewReasoningFromConfig(t *testing.T) {
-	h := newReviewHarness(t)
-	h.writeConfig(`
-agent = "test"
-review_reasoning = "fast"
-`)
-
-	err := h.run(runOpts{})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	h.assertOutputContains("reasoning: fast")
-}
-
 func TestLocalReviewQuietMode(t *testing.T) {
 	h := newReviewHarness(t)
 
-	err := h.run(runOpts{Agent: "test", Reasoning: "fast", Quiet: true})
+	err := h.run(runOpts{Agent: "test", Reasoning: agent.ReasoningFast, Quiet: true})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -292,7 +280,7 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 
 	t.Setenv("HOME", t.TempDir())
 
-	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
+	err := h.run(runOpts{Agent: "test", Reasoning: agent.ReasoningFast})
 	if err != nil {
 		t.Fatalf("Expected --local to work without daemon, got: %v", err)
 	}

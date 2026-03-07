@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -12,9 +13,13 @@ import (
 // toolsArgValue returns the value of the --allowedTools argument.
 func toolsArgValue(t *testing.T, args []string) string {
 	t.Helper()
-	idx := slices.Index(args, "--allowedTools")
-	if idx != -1 && idx+1 < len(args) {
-		return args[idx+1]
+	for i, arg := range args {
+		if arg == "--allowedTools" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if val, ok := strings.CutPrefix(arg, "--allowedTools="); ok {
+			return val
+		}
 	}
 	t.Fatal("--allowedTools not found in args")
 	return ""
@@ -40,6 +45,22 @@ func assertTools(t *testing.T, args []string, want []string, dontWant []string) 
 			t.Errorf("forbidden tool %q found in %v", d, gotTools)
 		}
 	}
+}
+
+func TestToolsArgValue(t *testing.T) {
+	t.Run("SplitArg", func(t *testing.T) {
+		args := []string{"--verbose", "--allowedTools", "Read,Glob,Grep"}
+		if got := toolsArgValue(t, args); got != "Read,Glob,Grep" {
+			t.Errorf("toolsArgValue() = %q, want %q", got, "Read,Glob,Grep")
+		}
+	})
+
+	t.Run("CombinedArg", func(t *testing.T) {
+		args := []string{"--verbose", "--allowedTools=Edit,Write"}
+		if got := toolsArgValue(t, args); got != "Edit,Write" {
+			t.Errorf("toolsArgValue() = %q, want %q", got, "Edit,Write")
+		}
+	})
 }
 
 func TestClaudeBuildArgs(t *testing.T) {
@@ -82,10 +103,20 @@ func TestClaudeDangerousFlagSupport(t *testing.T) {
 	}
 }
 
+func writeMockClaudeAgent(t *testing.T, output string, exitCode int) string {
+	t.Helper()
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
+%s
+exit %d
+`, output, exitCode)
+	return writeTempCommand(t, script)
+}
+
 func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	withUnsafeAgents(t, true)
 
-	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
+	cmdPath := writeMockClaudeAgent(t, "", 0)
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
@@ -94,138 +125,138 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	}
 }
 
-func TestParseStreamJSON(t *testing.T) {
-	tests := []struct {
-		name           string
-		input          string
-		expectedResult string
-		expectedErr    string // substring match
-		expectOutput   bool   // verify output buffer was written to
-	}{
-		{
-			name: "ResultEvent",
-			input: `{"type":"system","subtype":"init"}
+var parseStreamJSONTests = []struct {
+	name           string
+	input          string
+	expectedResult string
+	expectedErr    string // substring match
+	expectOutput   bool   // verify output buffer was written to
+}{
+	{
+		name: "ResultEvent",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"Working on it..."}}
 {"type":"result","result":"Done! Created the file."}
 `,
-			expectedResult: "Done! Created the file.",
-		},
-		{
-			name: "AssistantFallback",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "Done! Created the file.",
+	},
+	{
+		name: "AssistantFallback",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
 `,
-			expectedResult: "First message\nSecond message",
-		},
-		{
-			name: "MalformedLines",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "First message\nSecond message",
+	},
+	{
+		name: "MalformedLines",
+		input: `{"type":"system","subtype":"init"}
 not valid json
 {"type":"result","result":"Success"}
 also not json
 `,
-			expectedResult: "Success",
-		},
-		{
-			name: "NoValidEvents",
-			input: `not json at all
+		expectedResult: "Success",
+	},
+	{
+		name: "NoValidEvents",
+		input: `not json at all
 still not json
 `,
-			expectedErr: "no valid stream-json events",
-		},
-		{
-			name:        "EmptyInput",
-			input:       "",
-			expectedErr: "no valid stream-json events",
-		},
-		{
-			name: "StreamsToOutput",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "no valid stream-json events",
+	},
+	{
+		name:        "EmptyInput",
+		input:       "",
+		expectedErr: "no valid stream-json events",
+	},
+	{
+		name: "StreamsToOutput",
+		input: `{"type":"system","subtype":"init"}
 {"type":"result","result":"Done"}
 `,
-			expectedResult: "Done",
-			expectOutput:   true,
-		},
-		// Error detection: is_error flag on result events
-		{
-			name: "ErrorResultWithErrorMessage",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "Done",
+		expectOutput:   true,
+	},
+	// Error detection: is_error flag on result events
+	{
+		name: "ErrorResultWithErrorMessage",
+		input: `{"type":"system","subtype":"init"}
 {"type":"result","is_error":true,"result":"","error":{"message":"Invalid API key"}}
 `,
-			expectedErr: "Invalid API key",
-		},
-		{
-			name: "ErrorResultWithResultText",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "Invalid API key",
+	},
+	{
+		name: "ErrorResultWithResultText",
+		input: `{"type":"system","subtype":"init"}
 {"type":"result","is_error":true,"result":"Your credit balance is too low"}
 `,
-			expectedErr: "Your credit balance is too low",
-		},
-		{
-			name: "ErrorResultNoDetails",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "Your credit balance is too low",
+	},
+	{
+		name: "ErrorResultNoDetails",
+		input: `{"type":"system","subtype":"init"}
 {"type":"result","is_error":true,"result":""}
 `,
-			expectedErr: "review returned error",
-		},
-		{
-			name: "ErrorResultWithPartialAssistant",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "review returned error",
+	},
+	{
+		name: "ErrorResultWithPartialAssistant",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"I'll review this commit..."}}
 {"type":"result","is_error":true,"result":"","error":{"message":"rate limit exceeded"}}
 `,
-			expectedErr: "rate limit exceeded",
-		},
-		// Content array format (real Claude Code output)
-		{
-			name: "ContentBlockArray",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "rate limit exceeded",
+	},
+	// Content array format (real Claude Code output)
+	{
+		name: "ContentBlockArray",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"Reviewing the changes..."}]}}
 {"type":"result","result":"All good."}
 `,
-			expectedResult: "All good.",
-		},
-		{
-			name: "ContentBlockArrayFallback",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "All good.",
+	},
+	{
+		name: "ContentBlockArrayFallback",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"First block"},{"type":"text","text":"Second block"}]}}
 `,
-			expectedResult: "First block\nSecond block",
-		},
-		{
-			name: "ContentBlockArrayWithToolUse",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "First block\nSecond block",
+	},
+	{
+		name: "ContentBlockArrayWithToolUse",
+		input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."},{"type":"tool_use","name":"Read"}]}}
 {"type":"result","result":"Found the issue."}
 `,
-			expectedResult: "Found the issue.",
-		},
-		// Standalone error events (non-result)
-		{
-			name: "StandaloneErrorEvent",
-			input: `{"type":"system","subtype":"init"}
+		expectedResult: "Found the issue.",
+	},
+	// Standalone error events (non-result)
+	{
+		name: "StandaloneErrorEvent",
+		input: `{"type":"system","subtype":"init"}
 {"type":"error","error":{"message":"connection reset"}}
 `,
-			expectedErr: "connection reset",
-		},
-		// Empty output (valid events, no content)
-		{
-			name:           "ValidEventsNoContent",
-			input:          `{"type":"system","subtype":"init"}` + "\n",
-			expectedResult: "",
-		},
-		// Non-error result with is_error=false (normal path)
-		{
-			name: "ResultIsErrorFalse",
-			input: `{"type":"system","subtype":"init"}
+		expectedErr: "connection reset",
+	},
+	// Empty output (valid events, no content)
+	{
+		name:           "ValidEventsNoContent",
+		input:          `{"type":"system","subtype":"init"}` + "\n",
+		expectedResult: "",
+	},
+	// Non-error result with is_error=false (normal path)
+	{
+		name: "ResultIsErrorFalse",
+		input: `{"type":"system","subtype":"init"}
 {"type":"result","is_error":false,"result":"No issues found."}
 `,
-			expectedResult: "No issues found.",
-		},
-	}
+		expectedResult: "No issues found.",
+	},
+}
 
-	for _, tt := range tests {
+func TestParseStreamJSON(t *testing.T) {
+	for _, tt := range parseStreamJSONTests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			var w io.Writer
@@ -317,12 +348,7 @@ func TestExtractContentText(t *testing.T) {
 func TestClaudeReviewEmptyOutput(t *testing.T) {
 	// When Claude produces valid events but no review content,
 	// Review() should return "No review output generated" (not empty).
-	script := `#!/bin/sh
-if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
-echo '{"type":"system","subtype":"init"}'
-exit 0
-`
-	cmdPath := writeTempCommand(t, script)
+	cmdPath := writeMockClaudeAgent(t, `echo '{"type":"system","subtype":"init"}'`, 0)
 
 	a := NewClaudeAgent(cmdPath)
 	result, err := a.Review(
@@ -339,13 +365,7 @@ exit 0
 func TestClaudeReviewErrorResult(t *testing.T) {
 	// When Claude exits with code 0 but emits is_error result,
 	// the error should propagate as a failure.
-	script := `#!/bin/sh
-if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"result","is_error":true,"result":"","error":{"message":"Invalid API key"}}'
-exit 0
-`
-	cmdPath := writeTempCommand(t, script)
+	cmdPath := writeMockClaudeAgent(t, "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"\",\"error\":{\"message\":\"Invalid API key\"}}'", 0)
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(
@@ -362,13 +382,7 @@ exit 0
 func TestClaudeReviewErrorResultNonZeroExit(t *testing.T) {
 	// When Claude emits is_error result AND exits non-zero,
 	// the error should include both stream error and exit status.
-	script := `#!/bin/sh
-if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"result","is_error":true,"result":"","error":{"message":"quota exceeded"}}'
-exit 1
-`
-	cmdPath := writeTempCommand(t, script)
+	cmdPath := writeMockClaudeAgent(t, "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"\",\"error\":{\"message\":\"quota exceeded\"}}'", 1)
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(
@@ -388,8 +402,9 @@ exit 1
 
 func TestAnthropicAPIKey(t *testing.T) {
 	// Clear any existing key
+	originalKey := AnthropicAPIKey()
+	t.Cleanup(func() { SetAnthropicAPIKey(originalKey) })
 	SetAnthropicAPIKey("")
-	t.Cleanup(func() { SetAnthropicAPIKey("") })
 
 	// Initially should be empty
 	if key := AnthropicAPIKey(); key != "" {

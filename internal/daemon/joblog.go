@@ -25,13 +25,11 @@ func JobLogPath(jobID int64) string {
 }
 
 // openJobLog creates the log directory and opens a log file for the
-// given job. Returns nil if the file cannot be created (logged, not
-// fatal — the review still runs without disk logging).
-func openJobLog(jobID int64) *os.File {
+// given job.
+func openJobLog(jobID int64) (*os.File, error) {
 	dir := JobLogDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		log.Printf("Warning: cannot create job log dir %s: %v", dir, err)
-		return nil
+		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	// Tighten pre-existing directories from older installs.
 	if err := os.Chmod(dir, 0700); err != nil {
@@ -42,14 +40,13 @@ func openJobLog(jobID int64) *os.File {
 		path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600,
 	)
 	if err != nil {
-		log.Printf("Warning: cannot create job log file for job %d: %v", jobID, err)
-		return nil
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	// Tighten pre-existing files from older installs.
 	if err := f.Chmod(0600); err != nil {
 		log.Printf("Warning: cannot chmod job log file: %v", err)
 	}
-	return f
+	return f, nil
 }
 
 // CleanJobLogs removes log files older than maxAge and returns the

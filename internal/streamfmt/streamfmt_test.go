@@ -74,10 +74,21 @@ func (fix *streamFormatterFixture) assertCount(
 	}
 }
 
-func toJSON(v any) string {
+func (fix *streamFormatterFixture) assertNoEscapeCodes(t *testing.T) {
+	t.Helper()
+	raw := fix.buf.String()
+	if strings.Contains(raw, "\x1b]0;") || strings.Contains(raw, "\x07") {
+		t.Errorf("OSC/BEL escape sequence leaked: %q", raw)
+	}
+	if strings.Contains(raw, "\x1b[31m") || strings.Contains(raw, "\x1b[1m") {
+		t.Errorf("ANSI SGR escape sequence leaked: %q", raw)
+	}
+}
+
+func mustJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("toJSON: %v", err))
+		panic(fmt.Sprintf("mustJSON: %v", err))
 	}
 	return string(b)
 }
@@ -119,137 +130,265 @@ func runStreamTestCase(t *testing.T, tc streamTestCase) {
 
 // Event builders for Anthropic-style JSON.
 
+type anthropicToolUse struct {
+	Type  string         `json:"type"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
+}
+
+type anthropicText struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type anthropicMessage struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content any `json:"content"`
+	} `json:"message"`
+}
+
+type anthropicToolUseResult struct {
+	Type          string `json:"type"`
+	ToolUseResult struct {
+		FilePath string `json:"filePath"`
+	} `json:"tool_use_result"`
+}
+
+type anthropicResult struct {
+	Type   string `json:"type"`
+	Result string `json:"result"`
+}
+
 func eventAssistantToolUse(
 	toolName string, input map[string]any,
 ) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": []any{
-				map[string]any{
-					"type":  "tool_use",
-					"name":  toolName,
-					"input": input,
-				},
+	return mustJSON(anthropicMessage{
+		Type: "assistant",
+		Message: struct {
+			Content any `json:"content"`
+		}{
+			Content: []any{
+				anthropicToolUse{Type: "tool_use", Name: toolName, Input: input},
 			},
 		},
 	})
 }
 
 func eventAssistantText(text string) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": []any{
-				map[string]any{
-					"type": "text", "text": text,
-				},
+	return mustJSON(anthropicMessage{
+		Type: "assistant",
+		Message: struct {
+			Content any `json:"content"`
+		}{
+			Content: []any{
+				anthropicText{Type: "text", Text: text},
 			},
 		},
 	})
 }
 
-func eventAssistantMulti(blocks ...map[string]any) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": blocks,
+func eventAssistantMulti(blocks ...any) string {
+	return mustJSON(anthropicMessage{
+		Type: "assistant",
+		Message: struct {
+			Content any `json:"content"`
+		}{
+			Content: blocks,
 		},
 	})
 }
 
-func contentBlockText(text string) map[string]any {
-	return map[string]any{"type": "text", "text": text}
+func contentBlockText(text string) any {
+	return anthropicText{Type: "text", Text: text}
 }
 
 func contentBlockToolUse(
 	toolName string, input map[string]any,
-) map[string]any {
-	return map[string]any{
-		"type": "tool_use", "name": toolName, "input": input,
-	}
+) any {
+	return anthropicToolUse{Type: "tool_use", Name: toolName, Input: input}
 }
 
 func eventAssistantLegacy(content string) string {
-	return toJSON(map[string]any{
-		"type":    "assistant",
-		"message": map[string]any{"content": content},
+	return mustJSON(anthropicMessage{
+		Type: "assistant",
+		Message: struct {
+			Content any `json:"content"`
+		}{
+			Content: content,
+		},
 	})
 }
 
 func eventAssistantToolUseResult(filePath string) string {
-	return toJSON(map[string]any{
-		"type":            "user",
-		"tool_use_result": map[string]any{"filePath": filePath},
+	return mustJSON(anthropicToolUseResult{
+		Type: "user",
+		ToolUseResult: struct {
+			FilePath string `json:"filePath"`
+		}{FilePath: filePath},
 	})
 }
 
 func eventAssistantResult(result string) string {
-	return toJSON(map[string]any{
-		"type": "result", "result": result,
-	})
+	return mustJSON(anthropicResult{Type: "result", Result: result})
 }
 
 // Event builders for Gemini-style JSON.
 
+type geminiInit struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
 func eventGeminiInit(sessionID string) string {
-	return toJSON(map[string]any{
-		"type": "init", "session_id": sessionID,
-	})
+	return mustJSON(geminiInit{Type: "init", SessionID: sessionID})
+}
+
+type geminiMessage struct {
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	Delta   bool   `json:"delta,omitempty"`
 }
 
 func eventGeminiMessage(
 	role, content string, delta bool,
 ) string {
-	m := map[string]any{
-		"type": "message", "role": role, "content": content,
-	}
-	if delta {
-		m["delta"] = true
-	}
-	return toJSON(m)
+	return mustJSON(geminiMessage{
+		Type:    "message",
+		Role:    role,
+		Content: content,
+		Delta:   delta,
+	})
+}
+
+type geminiToolUse struct {
+	Type       string         `json:"type"`
+	ToolName   string         `json:"tool_name"`
+	ToolID     string         `json:"tool_id"`
+	Parameters map[string]any `json:"parameters"`
 }
 
 func eventGeminiToolUse(
 	toolName, toolID string, params map[string]any,
 ) string {
-	return toJSON(map[string]any{
-		"type":       "tool_use",
-		"tool_name":  toolName,
-		"tool_id":    toolID,
-		"parameters": params,
+	return mustJSON(geminiToolUse{
+		Type:       "tool_use",
+		ToolName:   toolName,
+		ToolID:     toolID,
+		Parameters: params,
 	})
+}
+
+type geminiToolResult struct {
+	Type   string `json:"type"`
+	ToolID string `json:"tool_id"`
+	Status string `json:"status"`
+	Output string `json:"output,omitempty"`
 }
 
 func eventGeminiToolResult(
 	toolID, status, output string,
 ) string {
-	m := map[string]any{
-		"type": "tool_result", "tool_id": toolID,
-		"status": status,
-	}
-	if output != "" {
-		m["output"] = output
-	}
-	return toJSON(m)
+	return mustJSON(geminiToolResult{
+		Type:   "tool_result",
+		ToolID: toolID,
+		Status: status,
+		Output: output,
+	})
+}
+
+type geminiResult struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
 }
 
 func eventGeminiResult(status string) string {
-	return toJSON(map[string]any{
-		"type": "result", "status": status,
-	})
+	return mustJSON(geminiResult{Type: "result", Status: status})
 }
 
 // Event builder for OpenCode-style JSON.
 
+type openCodeEvent struct {
+	Type string `json:"type"`
+	Part any    `json:"part"`
+}
+
 func eventOpenCode(
-	eventType string, part map[string]any,
+	eventType string, part any,
 ) string {
-	return toJSON(map[string]any{
-		"type": eventType,
-		"part": part,
+	return mustJSON(openCodeEvent{
+		Type: eventType,
+		Part: part,
 	})
 }
+
+// Event builders for Codex-style JSON.
+
+type codexEvent struct {
+	Type     string `json:"type"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Item     any    `json:"item,omitempty"`
+	Usage    any    `json:"usage,omitempty"`
+}
+
+type codexUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+}
+
+type codexItemCommand struct {
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type"`
+	Command  string `json:"command,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+}
+
+type codexItemFileChange struct {
+	ID      string            `json:"id,omitempty"`
+	Type    string            `json:"type"`
+	Changes []codexFileChange `json:"changes,omitempty"`
+}
+
+type codexFileChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type codexItemText struct {
+	ID   string `json:"id,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+func eventCodexThreadStarted(threadID string) string {
+	return mustJSON(codexEvent{Type: "thread.started", ThreadID: threadID})
+}
+
+func eventCodexTurnStarted() string {
+	return mustJSON(codexEvent{Type: "turn.started"})
+}
+
+func eventCodexTurnCompleted(inputTokens, outputTokens int) string {
+	return mustJSON(codexEvent{
+		Type:  "turn.completed",
+		Usage: codexUsage{InputTokens: inputTokens, OutputTokens: outputTokens},
+	})
+}
+
+func eventCodexItemStarted(item any) string {
+	return mustJSON(codexEvent{Type: "item.started", Item: item})
+}
+
+func eventCodexItemUpdated(item any) string {
+	return mustJSON(codexEvent{Type: "item.updated", Item: item})
+}
+
+func eventCodexItemCompleted(item any) string {
+	return mustJSON(codexEvent{Type: "item.completed", Item: item})
+}
+
+func intPtr(i int) *int { return &i }
 
 func TestFormatter_NonTTY(t *testing.T) {
 	fix := newFixture(false)
@@ -420,16 +559,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			contains:    []string{"red", "normal"},
 			notContains: []string{"evil"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
-				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC title escape leaked: %q", raw)
-				}
-				if strings.Contains(raw, "\x07") {
-					t.Errorf("BEL char leaked: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR escape leaked: %q", raw)
-				}
+				fix.assertNoEscapeCodes(t)
 			},
 		},
 		{
@@ -441,16 +571,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			},
 			contains: []string{"Read", ".go"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
-				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC escape leaked in tool arg: %q", raw)
-				}
-				if strings.Contains(raw, "\x07") {
-					t.Errorf("BEL char leaked in tool arg: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR escape leaked in tool arg: %q", raw)
-				}
+				fix.assertNoEscapeCodes(t)
 			},
 		},
 		{
@@ -464,10 +585,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			},
 			contains: []string{"clean.go"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
-				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR in tool name leaked: %q", raw)
-				}
+				fix.assertNoEscapeCodes(t)
 			},
 		},
 	}
@@ -513,7 +631,7 @@ func TestFormatter_Gemini(t *testing.T) {
 		{
 			name: "SanitizesGeminiText",
 			events: []string{
-				toJSON(map[string]any{
+				mustJSON(map[string]any{
 					"type":    "message",
 					"role":    "assistant",
 					"content": "\x1b[1mbold\x1b[0m safe \x1b]0;title\x07",
@@ -522,13 +640,7 @@ func TestFormatter_Gemini(t *testing.T) {
 			contains:    []string{"bold", "safe"},
 			notContains: []string{"title"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
-				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC escape leaked in Gemini text: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[1m") {
-					t.Errorf("injected bold escape leaked: %q", raw)
-				}
+				fix.assertNoEscapeCodes(t)
 			},
 		},
 	}
@@ -671,16 +783,16 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Events Lifecycle",
 			events: []string{
-				`{"type":"thread.started","thread_id":"abc123"}`,
-				`{"type":"turn.started"}`,
-				`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.updated","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
-				`{"type":"item.updated","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
-				`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
-				`{"type":"item.updated","item":{"type":"agent_message","text":"draft"}}`,
-				`{"type":"item.completed","item":{"type":"agent_message","text":"I fixed the issue."}}`,
-				`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
+				eventCodexThreadStarted("abc123"),
+				eventCodexTurnStarted(),
+				eventCodexItemStarted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemUpdated(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls", ExitCode: intPtr(0)}),
+				eventCodexItemUpdated(codexItemFileChange{Type: "file_change", Changes: []codexFileChange{{Path: "main.go", Kind: "update"}}}),
+				eventCodexItemCompleted(codexItemFileChange{Type: "file_change", Changes: []codexFileChange{{Path: "main.go", Kind: "update"}}}),
+				eventCodexItemUpdated(codexItemText{Type: "agent_message", Text: "draft"}),
+				eventCodexItemCompleted(codexItemText{Type: "agent_message", Text: "I fixed the issue."}),
+				eventCodexTurnCompleted(100, 50),
 			},
 			contains: []string{
 				"Bash   bash -lc ls",
@@ -701,17 +813,17 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Updated Suppressed",
 			events: []string{
-				`{"type":"item.updated","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.updated","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
-				`{"type":"item.updated","item":{"type":"agent_message","text":"still drafting"}}`,
+				eventCodexItemUpdated(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemUpdated(codexItemFileChange{Type: "file_change", Changes: []codexFileChange{{Path: "main.go", Kind: "update"}}}),
+				eventCodexItemUpdated(codexItemText{Type: "agent_message", Text: "still drafting"}),
 			},
 			empty: true,
 		},
 		{
 			name: "Codex Sanitizes Control Chars",
 			events: []string{
-				`{"type":"item.completed","item":{"type":"agent_message","text":"\u001b[31mred\u001b[0m and \u0007bell"}}`,
-				`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc \u001b[32mls\u001b[0m"}}`,
+				eventCodexItemCompleted(codexItemText{Type: "agent_message", Text: "\x1b[31mred\x1b[0m and \x07bell"}),
+				eventCodexItemStarted(codexItemCommand{Type: "command_execution", Command: "bash -lc \x1b[32mls\x1b[0m"}),
 			},
 			contains: []string{
 				"red and bell",
@@ -725,16 +837,16 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Lifecycle Suppressed",
 			events: []string{
-				`{"type":"thread.started","thread_id":"abc"}`,
-				`{"type":"turn.started"}`,
-				`{"type":"turn.completed","usage":{"input_tokens":100}}`,
+				eventCodexThreadStarted("abc"),
+				eventCodexTurnStarted(),
+				eventCodexTurnCompleted(100, 0),
 			},
 			empty: true,
 		},
 		{
 			name: "Codex Command Truncation",
 			events: []string{
-				fmt.Sprintf(`{"type":"item.started","item":{"type":"command_execution","command":%q}}`, longCmd),
+				eventCodexItemStarted(codexItemCommand{Type: "command_execution", Command: longCmd}),
 			},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				output := fix.output()
@@ -746,9 +858,9 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Command Completed Fallback",
 			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc pwd"}}`,
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_1", Type: "command_execution"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_1", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_2", Type: "command_execution", Command: "bash -lc pwd"}),
 			},
 			contains: []string{
 				"Bash   bash -lc ls",
@@ -762,8 +874,8 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Command Mixed ID Started Without ID Completed With ID",
 			events: []string{
-				`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
+				eventCodexItemStarted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_1", Type: "command_execution", Command: "bash -lc ls"}),
 			},
 			contains: []string{"Bash   bash -lc ls"},
 			counts:   map[string]int{"Bash   bash -lc ls": 1},
@@ -771,8 +883,8 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Command Mixed ID Started With ID Completed Without ID",
 			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_1", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
 			},
 			contains: []string{"Bash   bash -lc ls"},
 			counts:   map[string]int{"Bash   bash -lc ls": 1},
@@ -780,9 +892,9 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Command Started With ID Completed Without Command Clears Counter",
 			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc ls"}}`,
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_1", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_1", Type: "command_execution"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_2", Type: "command_execution", Command: "bash -lc ls"}),
 			},
 			contains: []string{"Bash   bash -lc ls"},
 			counts:   map[string]int{"Bash   bash -lc ls": 2},
@@ -790,11 +902,11 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Command Mixed ID Fallback Does Not Leave Stale ID",
 			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.started","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_1", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_2", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_1", Type: "command_execution"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
 			},
 			contains: []string{"Bash   bash -lc ls"},
 			counts:   map[string]int{"Bash   bash -lc ls": 2},
@@ -802,26 +914,26 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 		{
 			name: "Codex Reasoning Displayed",
 			events: []string{
-				`{"type":"item.completed","item":{"type":"reasoning","text":"**Reviewing error handling changes**"}}`,
+				eventCodexItemCompleted(codexItemText{Type: "reasoning", Text: "**Reviewing error handling changes**"}),
 			},
 			contains: []string{"Reviewing error handling changes"},
 		},
 		{
 			name: "Codex Reasoning Suppressed On Non-Completed",
 			events: []string{
-				`{"type":"item.started","item":{"type":"reasoning","text":"draft thinking"}}`,
-				`{"type":"item.updated","item":{"type":"reasoning","text":"still thinking"}}`,
+				eventCodexItemStarted(codexItemText{Type: "reasoning", Text: "draft thinking"}),
+				eventCodexItemUpdated(codexItemText{Type: "reasoning", Text: "still thinking"}),
 			},
 			empty: true,
 		},
 		{
 			name: "Codex Multi ID Same Command Deterministic Pairing",
 			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_A","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.started","item":{"id":"cmd_B","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_B","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_A", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemStarted(codexItemCommand{ID: "cmd_B", Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
+				eventCodexItemCompleted(codexItemCommand{ID: "cmd_B", Type: "command_execution"}),
+				eventCodexItemCompleted(codexItemCommand{Type: "command_execution", Command: "bash -lc ls"}),
 			},
 			counts: map[string]int{"Bash   bash -lc ls": 3},
 		},

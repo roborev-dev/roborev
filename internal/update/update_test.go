@@ -209,44 +209,45 @@ abc123cef456789012345678901234567890123456789012345678901234abcc  roborev_darwin
 
 func TestExtractBaseSemver(t *testing.T) {
 	tests := []struct {
+		name    string
 		version string
 		want    string
 	}{
 		// Clean semver
-		{"0.4.0", "0.4.0"},
-		{"1.2.3", "1.2.3"},
-		{"v0.4.0", "0.4.0"},
-		{"v1.2.3", "1.2.3"},
+		{name: "clean semver 1", version: "0.4.0", want: "0.4.0"},
+		{name: "clean semver 2", version: "1.2.3", want: "1.2.3"},
+		{name: "clean semver with v 1", version: "v0.4.0", want: "0.4.0"},
+		{name: "clean semver with v 2", version: "v1.2.3", want: "1.2.3"},
 		// Git describe format (dev builds)
-		{"0.4.0-5-gabcdef", "0.4.0"},
-		{"v0.4.0-5-gabcdef", "0.4.0"},
-		{"0.4.0-15-g1234567", "0.4.0"},
-		{"1.2.3-100-gdeadbeef", "1.2.3"},
+		{name: "git describe 1", version: "0.4.0-5-gabcdef", want: "0.4.0"},
+		{name: "git describe 2", version: "v0.4.0-5-gabcdef", want: "0.4.0"},
+		{name: "git describe 3", version: "0.4.0-15-g1234567", want: "0.4.0"},
+		{name: "git describe 4", version: "1.2.3-100-gdeadbeef", want: "1.2.3"},
 		// Prerelease tags
-		{"0.4.0-dev", "0.4.0"},
-		{"0.4.0-rc1", "0.4.0"},
-		{"0.4.0-beta.1", "0.4.0"},
-		{"v1.0.0-alpha", "1.0.0"},
+		{name: "prerelease dev", version: "0.4.0-dev", want: "0.4.0"},
+		{name: "prerelease rc", version: "0.4.0-rc1", want: "0.4.0"},
+		{name: "prerelease beta", version: "0.4.0-beta.1", want: "0.4.0"},
+		{name: "prerelease alpha", version: "v1.0.0-alpha", want: "1.0.0"},
 		// Pure dev/hash versions (no semver)
-		{"dev", ""},
-		{"abc1234", ""},
-		{"88be010", ""},
-		{"abc1234-dirty", ""},
-		{"", ""},
+		{name: "pure dev keyword", version: "dev", want: ""},
+		{name: "pure hash 1", version: "abc1234", want: ""},
+		{name: "pure hash 2", version: "88be010", want: ""},
+		{name: "dirty hash", version: "abc1234-dirty", want: ""},
+		{name: "empty string", version: "", want: ""},
 		// Build metadata
-		{"1.2.3+meta", "1.2.3"},
-		{"v1.2.3+build.42", "1.2.3"},
-		{"1.0.0-rc1+build", "1.0.0"},
+		{name: "build metadata 1", version: "1.2.3+meta", want: "1.2.3"},
+		{name: "build metadata 2", version: "v1.2.3+build.42", want: "1.2.3"},
+		{name: "build metadata 3", version: "1.0.0-rc1+build", want: "1.0.0"},
 		// Edge cases
-		{"0", ""},              // No dots
-		{"v", ""},              // Just v
-		{"vdev", ""},           // v followed by non-digit
-		{"1.0", "1.0"},         // Two-part version
-		{"1.0.0.0", "1.0.0.0"}, // Four-part version
+		{name: "no dots", version: "0", want: ""},                        // No dots
+		{name: "just v", version: "v", want: ""},                         // Just v
+		{name: "v followed by non-digit", version: "vdev", want: ""},     // v followed by non-digit
+		{name: "two-part version", version: "1.0", want: "1.0"},          // Two-part version
+		{name: "four-part version", version: "1.0.0.0", want: "1.0.0.0"}, // Four-part version
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.version, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got := extractBaseSemver(tt.version)
 			if got != tt.want {
 				t.Errorf("extractBaseSemver(%q) = %q, want %q", tt.version, got, tt.want)
@@ -257,39 +258,40 @@ func TestExtractBaseSemver(t *testing.T) {
 
 func TestIsDevBuildVersion(t *testing.T) {
 	tests := []struct {
+		name    string
 		version string
 		want    bool
 	}{
 		// Official releases - NOT dev builds
-		{"0.16.1", false},
-		{"v0.16.1", false},
-		{"1.0.0", false},
-		{"v1.0.0", false},
+		{name: "official release 1", version: "0.16.1", want: false},
+		{name: "official release 2", version: "v0.16.1", want: false},
+		{name: "official release 3", version: "1.0.0", want: false},
+		{name: "official release 4", version: "v1.0.0", want: false},
 
 		// Git describe format - ARE dev builds
-		{"0.16.1-2-g75d300a", true},
-		{"v0.16.1-2-g75d300a", true},
-		{"0.4.0-5-gabcdef", true},
-		{"1.2.3-100-gdeadbeef", true},
+		{name: "git describe 1", version: "0.16.1-2-g75d300a", want: true},
+		{name: "git describe 2", version: "v0.16.1-2-g75d300a", want: true},
+		{name: "git describe 3", version: "0.4.0-5-gabcdef", want: true},
+		{name: "git describe 4", version: "1.2.3-100-gdeadbeef", want: true},
 
 		// Git describe with -dirty suffix - ARE dev builds
-		{"0.16.1-2-g75d300a-dirty", true},
-		{"v0.16.1-2-g75d300a-dirty", true},
-		{"0.4.0-5-gabcdef-dirty", true},
+		{name: "git describe dirty 1", version: "0.16.1-2-g75d300a-dirty", want: true},
+		{name: "git describe dirty 2", version: "v0.16.1-2-g75d300a-dirty", want: true},
+		{name: "git describe dirty 3", version: "0.4.0-5-gabcdef-dirty", want: true},
 
 		// Pure hash/dev - ARE dev builds
-		{"dev", true},
-		{"abc1234", true},
-		{"88be010", true},
+		{name: "pure dev keyword", version: "dev", want: true},
+		{name: "pure hash 1", version: "abc1234", want: true},
+		{name: "pure hash 2", version: "88be010", want: true},
 
 		// Prerelease tags - NOT dev builds (intentional releases)
-		{"0.16.1-rc1", false},
-		{"v1.0.0-beta.1", false},
-		{"0.4.0-alpha", false},
+		{name: "prerelease rc", version: "0.16.1-rc1", want: false},
+		{name: "prerelease beta", version: "v1.0.0-beta.1", want: false},
+		{name: "prerelease alpha", version: "0.4.0-alpha", want: false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.version, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got := isDevBuildVersion(tt.version)
 			if got != tt.want {
 				t.Errorf("isDevBuildVersion(%q) = %v, want %v", tt.version, got, tt.want)
@@ -305,53 +307,53 @@ func TestIsNewer(t *testing.T) {
 		want   bool
 	}{
 		// Basic semver comparisons
-		{"minor downgrade", "1.0.0", "0.9.0", true},
-		{"minor upgrade", "1.1.0", "1.0.0", true},
-		{"patch upgrade", "1.0.1", "1.0.0", true},
-		{"major upgrade", "2.0.0", "1.9.9", true},
-		{"same version", "1.0.0", "1.0.0", false},
-		{"older version", "0.9.0", "1.0.0", false},
-		{"v prefix upgrade", "v1.0.0", "v0.9.0", true},
-		{"mixed v prefix upgrade 1", "v1.0.0", "0.9.0", true},
-		{"mixed v prefix upgrade 2", "1.0.0", "v0.9.0", true},
+		{name: "minor downgrade", v1: "1.0.0", v2: "0.9.0", want: true},
+		{name: "minor upgrade", v1: "1.1.0", v2: "1.0.0", want: true},
+		{name: "patch upgrade", v1: "1.0.1", v2: "1.0.0", want: true},
+		{name: "major upgrade", v1: "2.0.0", v2: "1.9.9", want: true},
+		{name: "same version", v1: "1.0.0", v2: "1.0.0", want: false},
+		{name: "older version", v1: "0.9.0", v2: "1.0.0", want: false},
+		{name: "v prefix upgrade", v1: "v1.0.0", v2: "v0.9.0", want: true},
+		{name: "mixed v prefix upgrade 1", v1: "v1.0.0", v2: "0.9.0", want: true},
+		{name: "mixed v prefix upgrade 2", v1: "1.0.0", v2: "v0.9.0", want: true},
 
 		// Pure hash dev versions - skip update notification (can't determine relationship)
-		{"pure hash 1", "0.4.2", "88be010", false},
-		{"dev keyword", "0.4.2", "dev", false},
-		{"dirty hash", "0.4.2", "abc1234-dirty", false},
-		{"pure hash v prefix", "v0.4.2", "88be010", false},
+		{name: "pure hash 1", v1: "0.4.2", v2: "88be010", want: false},
+		{name: "dev keyword", v1: "0.4.2", v2: "dev", want: false},
+		{name: "dirty hash", v1: "0.4.2", v2: "abc1234-dirty", want: false},
+		{name: "pure hash v prefix", v1: "v0.4.2", v2: "88be010", want: false},
 
 		// Non-semver release version - not newer
-		{"bad version 1", "badversion", "0.4.0", false},
-		{"bad version 2", "abc123", "0.4.0", false},
+		{name: "bad version 1", v1: "badversion", v2: "0.4.0", want: false},
+		{name: "bad version 2", v1: "abc123", v2: "0.4.0", want: false},
 
 		// Git describe format - KEY TEST CASES for dev builds
 		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.4.0
-		{"git describe same base", "0.4.0", "0.4.0-5-gabcdef", false},
-		{"git describe same base v prefix", "v0.4.0", "v0.4.0-5-gabcdef", false},
-		{"git describe same base v prefix 2", "0.4.0", "v0.4.0-15-g1234567", false},
+		{name: "git describe same base", v1: "0.4.0", v2: "0.4.0-5-gabcdef", want: false},
+		{name: "git describe same base v prefix", v1: "v0.4.0", v2: "v0.4.0-5-gabcdef", want: false},
+		{name: "git describe same base v prefix 2", v1: "0.4.0", v2: "v0.4.0-15-g1234567", want: false},
 
 		// Dev build v0.4.0-5-gabcdef SHOULD show update for v0.5.0
-		{"git describe newer major", "0.5.0", "0.4.0-5-gabcdef", true},
-		{"git describe newer major v prefix", "v0.5.0", "v0.4.0-5-gabcdef", true},
-		{"git describe newer patch", "0.4.1", "0.4.0-5-gabcdef", true},
-		{"git describe newer major 2", "1.0.0", "0.4.0-5-gabcdef", true},
+		{name: "git describe newer major", v1: "0.5.0", v2: "0.4.0-5-gabcdef", want: true},
+		{name: "git describe newer major v prefix", v1: "v0.5.0", v2: "v0.4.0-5-gabcdef", want: true},
+		{name: "git describe newer patch", v1: "0.4.1", v2: "0.4.0-5-gabcdef", want: true},
+		{name: "git describe newer major 2", v1: "1.0.0", v2: "0.4.0-5-gabcdef", want: true},
 
 		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.3.0
-		{"git describe older minor", "0.3.0", "0.4.0-5-gabcdef", false},
-		{"git describe older major", "0.4.0", "0.5.0-5-gabcdef", false},
+		{name: "git describe older minor", v1: "0.3.0", v2: "0.4.0-5-gabcdef", want: false},
+		{name: "git describe older major", v1: "0.4.0", v2: "0.5.0-5-gabcdef", want: false},
 
 		// Prerelease versions
-		{"prerelease same base", "0.4.0", "0.4.0-rc1", false},
-		{"prerelease newer minor", "0.5.0", "0.4.0-rc1", true},
-		{"prerelease dev same base", "0.4.0", "0.4.0-dev", false},
-		{"prerelease dev newer minor", "0.5.0", "0.4.0-dev", true},
+		{name: "prerelease same base", v1: "0.4.0", v2: "0.4.0-rc1", want: false},
+		{name: "prerelease newer minor", v1: "0.5.0", v2: "0.4.0-rc1", want: true},
+		{name: "prerelease dev same base", v1: "0.4.0", v2: "0.4.0-dev", want: false},
+		{name: "prerelease dev newer minor", v1: "0.5.0", v2: "0.4.0-dev", want: true},
 
 		// Build metadata (+meta) suffix handling
-		{"build meta newer", "1.2.4", "1.2.3+meta", true},
-		{"build meta same", "1.2.3", "1.2.3+meta", false},
-		{"build meta diff", "1.2.3+build1", "1.2.3+build2", false},
-		{"build meta older", "1.3.0+meta", "1.2.0", true},
+		{name: "build meta newer", v1: "1.2.4", v2: "1.2.3+meta", want: true},
+		{name: "build meta same", v1: "1.2.3", v2: "1.2.3+meta", want: false},
+		{name: "build meta diff", v1: "1.2.3+build1", v2: "1.2.3+build2", want: false},
+		{name: "build meta older", v1: "1.3.0+meta", v2: "1.2.0", want: true},
 	}
 
 	for _, tt := range tests {
@@ -389,35 +391,35 @@ func TestFindAssets(t *testing.T) {
 			name:          "find darwin_arm64 (second in list)",
 			assets:        standardAssets,
 			assetName:     "roborev_darwin_arm64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_arm64", Size: 2000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
+			wantAsset:     &Asset{Name: "roborev_darwin_arm64.tar.gz", BrowserDownloadURL: "https://example.com/darwin_arm64", Size: 2000},
+			wantChecksums: &Asset{Name: "SHA256SUMS", BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
 			name:          "find linux_amd64 (first in list)",
 			assets:        standardAssets,
 			assetName:     "roborev_linux_amd64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/linux_amd64", Size: 1000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
+			wantAsset:     &Asset{Name: "roborev_linux_amd64.tar.gz", BrowserDownloadURL: "https://example.com/linux_amd64", Size: 1000},
+			wantChecksums: &Asset{Name: "SHA256SUMS", BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
 			name:          "find darwin_amd64 (after checksums)",
 			assets:        standardAssets,
 			assetName:     "roborev_darwin_amd64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_amd64", Size: 3000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
+			wantAsset:     &Asset{Name: "roborev_darwin_amd64.tar.gz", BrowserDownloadURL: "https://example.com/darwin_amd64", Size: 3000},
+			wantChecksums: &Asset{Name: "SHA256SUMS", BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
 			name:          "asset not found",
 			assets:        standardAssets,
 			assetName:     "roborev_freebsd_amd64.tar.gz",
 			wantAsset:     nil,
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
+			wantChecksums: &Asset{Name: "SHA256SUMS", BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
 			name:          "no checksums file",
 			assets:        noChecksumsAssets,
 			assetName:     "roborev_darwin_arm64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin", Size: 2000},
+			wantAsset:     &Asset{Name: "roborev_darwin_arm64.tar.gz", BrowserDownloadURL: "https://example.com/darwin", Size: 2000},
 			wantChecksums: nil,
 		},
 	}
@@ -435,17 +437,14 @@ func checkAsset(t *testing.T, got *Asset, want *Asset) {
 	t.Helper()
 	if want == nil {
 		if got != nil {
-			t.Errorf("expected nil asset, got %v", got)
+			t.Errorf("expected nil asset, got %+v", got)
 		}
 		return
 	}
 	if got == nil {
 		t.Fatal("expected non-nil asset")
 	}
-	if got.BrowserDownloadURL != want.BrowserDownloadURL {
-		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, want.BrowserDownloadURL)
-	}
-	if got.Size != want.Size {
-		t.Errorf("got Size %d, want %d", got.Size, want.Size)
+	if *got != *want {
+		t.Errorf("got asset %+v, want %+v", *got, *want)
 	}
 }

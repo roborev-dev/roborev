@@ -435,10 +435,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}()
 
 	// Tee raw agent output to a per-job log file on disk
-	logFile := openJobLog(job.ID)
+	logFile, err := openJobLog(job.ID)
+	if err != nil {
+		log.Printf("Warning: cannot open job log for %d: %v", job.ID, err)
+	}
 	if logFile != nil {
 		defer logFile.Close()
 	}
+
 	var agentOutput io.Writer = outputWriter
 	if logFile != nil {
 		agentOutput = io.MultiWriter(

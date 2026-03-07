@@ -746,24 +746,30 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// When the requested agent differs from what config resolves by
 	// default, skip generic default_model — it's paired with the
 	// default agent and may be incompatible with the override.
-	configAgent := config.ResolveAgentForWorkflow(
-		"", repoRoot, cfg, workflow, reasoning,
-	)
-	agentChanged := req.Agent != "" &&
-		agent.CanonicalName(req.Agent) != agent.CanonicalName(configAgent)
 	var model string
 	if usingBackup && req.Model == "" {
 		model = config.ResolveBackupModelForWorkflow(
 			repoRoot, cfg, workflow,
 		)
-	} else if agentChanged && req.Model == "" {
-		model = config.ResolveWorkflowModel(
-			repoRoot, cfg, workflow, reasoning,
-		)
-	} else {
+	} else if req.Model != "" {
 		model = config.ResolveModelForWorkflow(
 			req.Model, repoRoot, cfg, workflow, reasoning,
 		)
+	} else if req.Agent == "" {
+		model = config.ResolveModelForWorkflow(
+			"", repoRoot, cfg, workflow, reasoning,
+		)
+	} else {
+		workflowAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, workflow, reasoning)
+		fallbackAgent := config.ResolveGenericFallbackAgent(repoRoot, cfg)
+		
+		if agent.CanonicalName(req.Agent) == agent.CanonicalName(workflowAgent) {
+			model = config.ResolveModelForWorkflow("", repoRoot, cfg, workflow, reasoning)
+		} else if agent.CanonicalName(req.Agent) == agent.CanonicalName(fallbackAgent) {
+			model = config.ResolveGenericFallbackModel(repoRoot, cfg)
+		} else {
+			model = ""
+		}
 	}
 
 	// Check if this is a custom prompt, dirty review, range, or single commit

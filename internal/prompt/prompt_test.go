@@ -9,6 +9,15 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+const (
+	sysPromptCodeReview     = "You are a code reviewer"
+	sysPromptDesignReview   = "design reviewer"
+	sectionCurrent          = "## Current Commit"
+	sectionPrevious         = "## Previous Reviews"
+	sectionGuidelines       = "## Project Guidelines"
+	sectionPreviousAttempts = "## Previous Review Attempts"
+)
+
 func TestBuildPromptWithoutContext(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 	targetSHA := commits[len(commits)-1]
@@ -20,7 +29,7 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	}
 
 	// Should contain system prompt
-	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
+	assertContains(t, prompt, sysPromptCodeReview, "Prompt should contain system prompt")
 
 	// Should contain the 5 review criteria
 	expectedCriteria := []string{"Bugs", "Security", "Testing gaps", "Regressions", "Code quality"}
@@ -29,14 +38,14 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	}
 
 	// Should contain current commit section
-	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
+	assertContains(t, prompt, sectionCurrent, "Prompt should contain current commit section")
 
 	// Should contain short SHA
 	shortSHA := targetSHA[:7]
 	assertContains(t, prompt, shortSHA, "Prompt should contain short SHA")
 
 	// Should NOT contain previous reviews section (no db)
-	assertNotContains(t, prompt, "## Previous Reviews", "Prompt should not contain previous reviews section without db")
+	assertNotContains(t, prompt, sectionPrevious, "Prompt should not contain previous reviews section without db")
 }
 
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
@@ -66,7 +75,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	}
 
 	// Should contain previous reviews section
-	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
+	assertContains(t, prompt, sectionPrevious, "Prompt should contain previous reviews section")
 
 	// Should contain the review texts we added
 	for _, reviewText := range reviewTexts {
@@ -112,7 +121,7 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	}
 
 	// Should contain previous reviews section
-	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
+	assertContains(t, prompt, sectionPrevious, "Prompt should contain previous reviews section")
 
 	// Should contain the review text
 	assertContains(t, prompt, "memory leak in connection pool", "Prompt should contain the previous review text")
@@ -148,11 +157,11 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 	}
 
 	// Should contain system prompt and current commit
-	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
-	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
+	assertContains(t, prompt, sysPromptCodeReview, "Prompt should contain system prompt")
+	assertContains(t, prompt, sectionCurrent, "Prompt should contain current commit section")
 
 	// Should NOT contain previous reviews (no parents exist)
-	assertNotContains(t, prompt, "## Previous Reviews", "Prompt should not contain previous reviews section when no parents exist")
+	assertNotContains(t, prompt, sectionPrevious, "Prompt should not contain previous reviews section when no parents exist")
 }
 
 func TestPromptContainsExpectedFormat(t *testing.T) {
@@ -172,10 +181,10 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 
 	// Verify structure
 	sections := []string{
-		"You are a code reviewer",
-		"## Previous Reviews",
+		sysPromptCodeReview,
+		sectionPrevious,
 		"--- Review for commit",
-		"## Current Commit",
+		sectionCurrent,
 	}
 
 	for _, section := range sections {
@@ -183,114 +192,79 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 	}
 }
 
-func TestBuildPromptWithProjectGuidelines(t *testing.T) {
-	repoPath, commits := setupTestRepo(t)
-	targetSHA := commits[len(commits)-1]
-
-	// Create .roborev.toml with review guidelines as multi-line string
-	configContent := `
+func TestBuildPromptConfiguration(t *testing.T) {
+	tests := []struct {
+		name            string
+		configContent   string
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name: "WithProjectGuidelines",
+			configContent: `
 agent = "codex"
 review_guidelines = """
 We are not doing database migrations because there are no production databases yet.
 Prefer composition over inheritance.
 All public APIs must have documentation comments.
 """
-`
-	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+`,
+			wantContains: []string{
+				sectionGuidelines,
+				"database migrations",
+				"composition over inheritance",
+				"documentation comments",
+			},
+		},
+		{
+			name:            "WithoutProjectGuidelines",
+			configContent:   `agent = "codex"`,
+			wantNotContains: []string{sectionGuidelines},
+		},
+		{
+			name:            "NoConfig",
+			configContent:   "",
+			wantContains:    []string{sysPromptCodeReview, sectionCurrent},
+			wantNotContains: []string{sectionGuidelines},
+		},
 	}
 
-	// Build prompt without database
-	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, commits := setupTestRepo(t)
+			targetSHA := commits[len(commits)-1]
+
+			if tt.configContent != "" {
+				writeTestConfig(t, repoPath, tt.configContent)
+			}
+
+			prompt, err := BuildSimple(repoPath, targetSHA, "")
+			if err != nil {
+				t.Fatalf("BuildSimple failed: %v", err)
+			}
+
+			for _, want := range tt.wantContains {
+				assertContains(t, prompt, want, "Prompt should contain expected text")
+			}
+			for _, wantNot := range tt.wantNotContains {
+				assertNotContains(t, prompt, wantNot, "Prompt should not contain unexpected text")
+			}
+		})
 	}
-
-	// Should contain project guidelines section
-	assertContains(t, prompt, "## Project Guidelines", "Prompt should contain project guidelines section")
-
-	// Should contain the guidelines text
-	assertContains(t, prompt, "database migrations", "Prompt should contain guidelines about database migrations")
-	assertContains(t, prompt, "composition over inheritance", "Prompt should contain guidelines about composition")
-	assertContains(t, prompt, "documentation comments", "Prompt should contain guidelines about documentation")
-
-	// Print prompt for inspection
-	t.Logf("Generated prompt with guidelines:\n%s", prompt)
-}
-
-func TestBuildPromptWithoutProjectGuidelines(t *testing.T) {
-	repoPath, commits := setupTestRepo(t)
-	targetSHA := commits[len(commits)-1]
-
-	// Create .roborev.toml WITHOUT review guidelines
-	configContent := `agent = "codex"`
-	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
-	}
-
-	// Build prompt
-	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
-
-	// Should NOT contain project guidelines section
-	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when none configured")
-}
-
-func TestBuildPromptNoConfig(t *testing.T) {
-	repoPath, commits := setupTestRepo(t)
-	targetSHA := commits[len(commits)-1]
-
-	// Build prompt
-	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
-
-	// Should NOT contain project guidelines section
-	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when no config file")
-
-	// Should still contain standard sections
-	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
-	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
 }
 
 func TestBuildPromptGuidelinesOrder(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 	targetSHA := commits[len(commits)-1]
 
-	// Create .roborev.toml with review guidelines
-	configContent := `review_guidelines = "Test guideline"`
-	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
-	}
+	writeTestConfig(t, repoPath, `review_guidelines = "Test guideline"`)
 
-	// Build prompt
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
 
-	// Guidelines should appear after system prompt but before current commit
-	systemPromptPos := strings.Index(prompt, "You are a code reviewer")
-	guidelinesPos := strings.Index(prompt, "## Project Guidelines")
-	currentCommitPos := strings.Index(prompt, "## Current Commit")
-
-	if guidelinesPos == -1 {
-		t.Fatal("Guidelines section not found")
-	}
-
-	if systemPromptPos > guidelinesPos {
-		t.Error("System prompt should come before guidelines")
-	}
-
-	if guidelinesPos > currentCommitPos {
-		t.Error("Guidelines should come before current commit section")
-	}
+	assertOrder(t, prompt, sysPromptCodeReview, sectionGuidelines, sectionCurrent)
 }
 
 func TestBuildPromptWithPreviousAttempts(t *testing.T) {
@@ -317,7 +291,7 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 	}
 
 	// Should contain previous review attempts section
-	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
+	assertContains(t, prompt, sectionPreviousAttempts, "Prompt should contain previous review attempts section")
 
 	// Should contain both review texts
 	for _, reviewText := range reviewTexts {
@@ -350,7 +324,7 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	}
 
 	// Should contain the previous review
-	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
+	assertContains(t, prompt, sectionPreviousAttempts, "Prompt should contain previous review attempts section")
 
 	assertContains(t, prompt, "missing null check", "Prompt should contain the previous review text")
 
@@ -390,7 +364,7 @@ func TestBuildPromptDesignReviewType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
-	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for reviewType=design")
+	assertContains(t, prompt, sysPromptDesignReview, "Expected design-review system prompt for reviewType=design")
 	assertNotContains(t, prompt, "code reviewer", "Should not contain standard code review prompt")
 }
 
@@ -404,7 +378,7 @@ func TestBuildDirtyDesignReviewType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildDirty failed: %v", err)
 	}
-	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for dirty reviewType=design")
+	assertContains(t, prompt, sysPromptDesignReview, "Expected design-review system prompt for dirty reviewType=design")
 	assertNotContains(t, prompt, "code reviewer", "Should not contain standard dirty review prompt")
 }
 
@@ -536,7 +510,12 @@ func TestLoadGuidelines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := setupGuidelinesRepo(t, tt.defaultBranch, tt.baseGuidelines, tt.branchGuidelines, tt.setupGit)
+			ctx := setupGuidelinesRepo(t, GuidelinesRepoOpts{
+				DefaultBranch:    tt.defaultBranch,
+				BaseGuidelines:   tt.baseGuidelines,
+				BranchGuidelines: tt.branchGuidelines,
+				SetupGitOverride: tt.setupGit,
+			})
 			if tt.setupFilesystem != nil {
 				tt.setupFilesystem(t, ctx.Dir)
 			}
@@ -552,10 +531,10 @@ func TestLoadGuidelines(t *testing.T) {
 	}
 }
 
-// extractGuidelinesSection returns the text between "## Project Guidelines"
+// extractGuidelinesSection returns the text between sectionGuidelines
 // and the next "## " header, or empty string if no guidelines section exists.
 func extractGuidelinesSection(prompt string) string {
-	_, after, found := strings.Cut(prompt, "## Project Guidelines")
+	_, after, found := strings.Cut(prompt, sectionGuidelines)
 	if !found {
 		return ""
 	}
@@ -567,8 +546,11 @@ func extractGuidelinesSection(prompt string) string {
 }
 
 func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
-	ctx := setupGuidelinesRepo(t, "main",
-		"Security: validate all inputs.", "Branch-only rule.", nil)
+	ctx := setupGuidelinesRepo(t, GuidelinesRepoOpts{
+		DefaultBranch:    "main",
+		BaseGuidelines:   "Security: validate all inputs.",
+		BranchGuidelines: "Branch-only rule.",
+	})
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(ctx.Dir, ctx.FeatureSHA, 0, 0, "test", "review")
@@ -582,8 +564,11 @@ func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
 }
 
 func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
-	ctx := setupGuidelinesRepo(t, "main",
-		"Base guideline.", "Branch-only rule.", nil)
+	ctx := setupGuidelinesRepo(t, GuidelinesRepoOpts{
+		DefaultBranch:    "main",
+		BaseGuidelines:   "Base guideline.",
+		BranchGuidelines: "Branch-only rule.",
+	})
 
 	rangeRef := ctx.BaseSHA + ".." + ctx.FeatureSHA
 	b := NewBuilder(nil)
@@ -595,4 +580,27 @@ func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	section := extractGuidelinesSection(prompt)
 	assertContains(t, section, "Base guideline.", "expected default branch guidelines in range prompt")
 	assertNotContains(t, section, "Branch-only rule.", "branch guidelines should not appear in guidelines section")
+}
+
+func writeTestConfig(t *testing.T, repoDir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+}
+
+func assertOrder(t *testing.T, text string, substrings ...string) {
+	t.Helper()
+	lastPos := -1
+	for _, sub := range substrings {
+		pos := strings.Index(text, sub)
+		if pos == -1 {
+			t.Errorf("Substring %q not found", sub)
+			return
+		}
+		if pos < lastPos {
+			t.Errorf("Substring %q appeared out of order", sub)
+		}
+		lastPos = pos
+	}
 }

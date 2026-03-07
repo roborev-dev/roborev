@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 var (
 	templateOnce sync.Once
+	templateDir  string
 	templatePath string
 	templateErr  error
 )
@@ -25,6 +28,7 @@ func getTemplatePath() (string, error) {
 			templateErr = err
 			return
 		}
+		templateDir = dir
 		p := filepath.Join(dir, "template.db")
 		db, err := Open(p)
 		if err != nil {
@@ -37,6 +41,13 @@ func getTemplatePath() (string, error) {
 	return templatePath, templateErr
 }
 
+// CleanupTemplate removes the temporary directory created by getTemplatePath.
+func CleanupTemplate() {
+	if templateDir != "" {
+		os.RemoveAll(templateDir)
+		templateDir = ""
+	}
+}
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 	tmpl, err := getTemplatePath()
@@ -44,14 +55,21 @@ func openTestDB(t *testing.T) *DB {
 		t.Fatalf("Failed to create template DB: %v", err)
 	}
 
-	data, err := os.ReadFile(tmpl)
+	src, err := os.Open(tmpl)
 	if err != nil {
-		t.Fatalf("Failed to read template DB: %v", err)
+		t.Fatalf("Failed to open template DB: %v", err)
 	}
+	defer src.Close()
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	if err := os.WriteFile(dbPath, data, 0644); err != nil {
-		t.Fatalf("Failed to write test DB: %v", err)
+	dst, err := os.Create(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create test DB: %v", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		t.Fatalf("Failed to copy template DB: %v", err)
 	}
 
 	db, err := Open(dbPath)
@@ -60,7 +78,6 @@ func openTestDB(t *testing.T) *DB {
 	}
 	return db
 }
-
 func createRepo(t *testing.T, db *DB, path string) *Repo {
 	t.Helper()
 	repo, err := db.GetOrCreateRepo(path)
@@ -114,21 +131,22 @@ func mustEnqueuePromptJob(t *testing.T, db *DB, opts EnqueueOpts) *ReviewJob {
 
 func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	t.Helper()
-	var query string
+	setClause := ""
 	switch status {
 	case JobStatusQueued:
-		query = `UPDATE review_jobs SET status = 'queued', started_at = NULL, finished_at = NULL, error = NULL WHERE id = ?`
+		setClause = "started_at = NULL, finished_at = NULL, error = NULL"
 	case JobStatusRunning:
-		query = `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`
+		setClause = "started_at = datetime('now')"
 	case JobStatusDone:
-		query = `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+		setClause = "started_at = datetime('now'), finished_at = datetime('now')"
 	case JobStatusFailed:
-		query = `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`
+		setClause = "started_at = datetime('now'), finished_at = datetime('now'), error = 'test error'"
 	case JobStatusCanceled:
-		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+		setClause = "started_at = datetime('now'), finished_at = datetime('now')"
 	default:
 		t.Fatalf("Unknown job status: %s", status)
 	}
+	query := fmt.Sprintf(`UPDATE review_jobs SET status = '%s', %s WHERE id = ?`, status, setClause)
 	res, err := db.Exec(query, jobID)
 	if err != nil {
 		t.Fatalf("Failed to set job status to %s: %v", status, err)
@@ -145,11 +163,7 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 // backdateJobStart updates a job's started_at time to the specified duration ago.
 func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
 	t.Helper()
-	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
-	if err != nil {
-		t.Fatalf("failed to backdate job: %v", err)
-	}
+	backdateJobStartWithOffset(t, db, jobID, d, time.UTC)
 }
 
 // backdateJobStartWithOffset updates a job's started_at time to the specified duration ago,

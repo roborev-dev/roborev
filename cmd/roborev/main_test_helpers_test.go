@@ -23,10 +23,64 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
+func TestGitTestEnvStripsPropagation(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+	t.Setenv("GIT_CONFIG_VALUE_0", "/some/path")
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'core.autocrlf=true'")
+
+	env := gitTestEnv(t.TempDir())
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") ||
+			strings.HasPrefix(entry, "GIT_CONFIG_KEY_0=") ||
+			strings.HasPrefix(entry, "GIT_CONFIG_VALUE_0=") ||
+			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=") {
+			t.Errorf("gitTestEnv leaked config propagation variable: %s", entry)
+		}
+	}
+}
+
 // GitTestRepo encapsulates a temporary git repository for tests.
 type GitTestRepo struct {
 	Dir string
 	t   *testing.T
+}
+
+func gitTestEnv(dir string) []string {
+	overrides := []struct {
+		key   string
+		value string
+	}{
+		{"HOME", dir},
+		{"GIT_CONFIG_GLOBAL", filepath.Join(dir, ".gitconfig")},
+		{"GIT_CONFIG_NOSYSTEM", "1"},
+		{"GIT_AUTHOR_NAME", "Test"},
+		{"GIT_AUTHOR_EMAIL", "test@test.com"},
+		{"GIT_COMMITTER_NAME", "Test"},
+		{"GIT_COMMITTER_EMAIL", "test@test.com"},
+	}
+	skip := make(map[string]struct{}, len(overrides))
+	for _, override := range overrides {
+		skip[strings.ToUpper(override.key)] = struct{}{}
+	}
+
+	env := os.Environ()
+	filtered := make([]string, 0, len(env)+len(overrides))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		upperKey := strings.ToUpper(key)
+		if _, ok := skip[upperKey]; ok {
+			continue
+		}
+		if upperKey == "GIT_CONFIG_PARAMETERS" || upperKey == "GIT_CONFIG_COUNT" || strings.HasPrefix(upperKey, "GIT_CONFIG_KEY_") || strings.HasPrefix(upperKey, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	for _, override := range overrides {
+		filtered = append(filtered, override.key+"="+override.value)
+	}
+	return filtered
 }
 
 // NewGitTestRepo creates a new temporary git repository.
@@ -36,6 +90,7 @@ func NewGitTestRepo(t *testing.T) *GitTestRepo {
 	r := &GitTestRepo{Dir: dir, t: t}
 	r.Run("init")
 	r.Run("symbolic-ref", "HEAD", "refs/heads/main")
+	r.Run("config", "core.hooksPath", os.DevNull)
 	r.Run("config", "user.email", "test@test.com")
 	r.Run("config", "user.name", "Test")
 	return r
@@ -46,6 +101,7 @@ func (r *GitTestRepo) Run(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
+	cmd.Env = gitTestEnv(r.Dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
@@ -76,6 +132,19 @@ type MockDaemon struct {
 	t      *testing.T
 }
 
+func registerRoute(mux *http.ServeMux, path, method string, state *mockRefineState, hook func(http.ResponseWriter, *http.Request, *mockRefineState) bool, handler func(http.ResponseWriter, *http.Request)) {
+	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			mockMethodNotAllowed(w)
+			return
+		}
+		if hook != nil && hook(w, r, state) {
+			return
+		}
+		handler(w, r)
+	})
+}
+
 // NewMockDaemon creates a new mock daemon.
 func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	t.Helper()
@@ -83,84 +152,14 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnGetJobs != nil && hooks.OnGetJobs(w, r, state) {
-			return
-		}
-		state.handleJobs(w, r)
-	})
-
-	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnEnqueue != nil && hooks.OnEnqueue(w, r, state) {
-			return
-		}
-		state.handleEnqueue(w, r)
-	})
-
-	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnReview != nil && hooks.OnReview(w, r, state) {
-			return
-		}
-		state.handleReview(w, r)
-	})
-
-	mux.HandleFunc("/api/comments", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnComments != nil && hooks.OnComments(w, r, state) {
-			return
-		}
-		state.handleComments(w, r)
-	})
-
-	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnStatus != nil && hooks.OnStatus(w, r, state) {
-			return
-		}
-		state.handleStatus(w, r)
-	})
-	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			mockMethodNotAllowed(w)
-			return
-		}
-		if hooks.OnPing != nil && hooks.OnPing(w, r, state) {
-			return
-		}
-		state.handlePing(w, r)
-	})
-
-	mux.HandleFunc("/api/comment", func(w http.ResponseWriter, r *http.Request) {
-		if hooks.OnComment != nil && hooks.OnComment(w, r, state) {
-			return
-		}
-		state.handleComment(w, r)
-	})
-
-	mux.HandleFunc("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
-		if hooks.OnReviewClose != nil && hooks.OnReviewClose(w, r, state) {
-			return
-		}
-		state.handleReviewClose(w, r)
-	})
+	registerRoute(mux, "/api/jobs", http.MethodGet, state, hooks.OnGetJobs, state.handleJobs)
+	registerRoute(mux, "/api/enqueue", http.MethodPost, state, hooks.OnEnqueue, state.handleEnqueue)
+	registerRoute(mux, "/api/review", http.MethodGet, state, hooks.OnReview, state.handleReview)
+	registerRoute(mux, "/api/comments", http.MethodGet, state, hooks.OnComments, state.handleComments)
+	registerRoute(mux, "/api/status", http.MethodGet, state, hooks.OnStatus, state.handleStatus)
+	registerRoute(mux, "/api/ping", http.MethodGet, state, hooks.OnPing, state.handlePing)
+	registerRoute(mux, "/api/comment", http.MethodPost, state, hooks.OnComment, state.handleComment)
+	registerRoute(mux, "/api/review/close", http.MethodPost, state, hooks.OnReviewClose, state.handleReviewClose)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if hooks.OnUnhandled != nil && hooks.OnUnhandled(w, r, state) {
@@ -188,12 +187,8 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 		t.Fatalf("failed to write daemon.json: %v", err)
 	}
 
-	origServerAddr := serverAddr
-	serverAddr = ts.URL
-
 	t.Cleanup(func() {
 		ts.Close()
-		serverAddr = origServerAddr
 	})
 
 	m := &MockDaemon{
@@ -216,8 +211,10 @@ func (m *MockDaemon) Close() {
 
 // functionalMockAgent is a configurable mock agent that accepts behavior as a function.
 type functionalMockAgent struct {
-	nameVal    string
-	reviewFunc func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
+	nameVal        string
+	modelVal       string
+	withModelCalls []string
+	reviewFunc     func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
 }
 
 func (f *functionalMockAgent) Name() string { return f.nameVal }
@@ -231,8 +228,12 @@ func (f *functionalMockAgent) Review(ctx context.Context, repoPath, commitSHA, p
 
 func (f *functionalMockAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
 func (f *functionalMockAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
-func (f *functionalMockAgent) WithModel(model string) agent.Agent                   { return f }
-func (f *functionalMockAgent) CommandLine() string                                  { return "" }
+func (f *functionalMockAgent) WithModel(model string) agent.Agent {
+	f.modelVal = model
+	f.withModelCalls = append(f.withModelCalls, model)
+	return f
+}
+func (f *functionalMockAgent) CommandLine() string { return "" }
 
 // MockRefineHooks allows overriding specific endpoints in the mock refine handler.
 type MockRefineHooks struct {
@@ -282,10 +283,6 @@ func mockMethodNotAllowed(w http.ResponseWriter) {
 }
 
 func (state *mockRefineState) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		mockMethodNotAllowed(w)
-		return
-	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"version": version.Version,
 	})
@@ -304,10 +301,6 @@ func (state *mockRefineState) handlePing(w http.ResponseWriter, r *http.Request)
 }
 
 func (state *mockRefineState) handleReview(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		mockMethodNotAllowed(w)
-		return
-	}
 	sha := r.URL.Query().Get("sha")
 	jobIDStr := r.URL.Query().Get("job_id")
 
@@ -341,10 +334,6 @@ func (state *mockRefineState) handleReview(w http.ResponseWriter, r *http.Reques
 }
 
 func (state *mockRefineState) handleComments(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		mockMethodNotAllowed(w)
-		return
-	}
 	jobIDStr := r.URL.Query().Get("job_id")
 	var jobID int64
 	_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
@@ -360,16 +349,15 @@ func (state *mockRefineState) handleComments(w http.ResponseWriter, r *http.Requ
 }
 
 func (state *mockRefineState) handleComment(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		mockMethodNotAllowed(w)
-		return
-	}
 	var req struct {
 		JobID     int64  `json:"job_id"`
 		Responder string `json:"responder"`
 		Response  string `json:"response"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	state.mu.Lock()
 	state.respondCalled = append(state.respondCalled, struct {
 		jobID     int64
@@ -391,15 +379,14 @@ func (state *mockRefineState) handleComment(w http.ResponseWriter, r *http.Reque
 }
 
 func (state *mockRefineState) handleReviewClose(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		mockMethodNotAllowed(w)
-		return
-	}
 	var req struct {
 		JobID  int64 `json:"job_id"`
 		Closed bool  `json:"closed"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	state.mu.Lock()
 	if req.Closed {
 		state.closedIDs = append(state.closedIDs, req.JobID)
@@ -416,16 +403,15 @@ func (state *mockRefineState) handleReviewClose(w http.ResponseWriter, r *http.R
 }
 
 func (state *mockRefineState) handleEnqueue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		mockMethodNotAllowed(w)
-		return
-	}
 	var req struct {
 		RepoPath string `json:"repo_path"`
 		GitRef   string `json:"git_ref"`
 		Agent    string `json:"agent"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	state.mu.Lock()
 	state.enqueuedRefs = append(state.enqueuedRefs, req.GitRef)
 
@@ -444,10 +430,6 @@ func (state *mockRefineState) handleEnqueue(w http.ResponseWriter, r *http.Reque
 }
 
 func (state *mockRefineState) handleJobs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		mockMethodNotAllowed(w)
-		return
-	}
 	state.mu.Lock()
 	var jobs []storage.ReviewJob
 	for _, job := range state.jobs {
@@ -463,78 +445,46 @@ func (state *mockRefineState) handleJobs(w http.ResponseWriter, r *http.Request)
 // createMockRefineHandler creates an HTTP handler that simulates daemon behavior
 func createMockRefineHandler(state *mockRefineState) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/ping", state.handlePing)
-	mux.HandleFunc("/api/status", state.handleStatus)
-	mux.HandleFunc("/api/review", state.handleReview)
-	mux.HandleFunc("/api/comments", state.handleComments)
-	mux.HandleFunc("/api/comment", state.handleComment)
-	mux.HandleFunc("/api/review/close", state.handleReviewClose)
-	mux.HandleFunc("/api/enqueue", state.handleEnqueue)
-	mux.HandleFunc("/api/jobs", state.handleJobs)
+	registerRoute(mux, "/api/ping", http.MethodGet, state, nil, state.handlePing)
+	registerRoute(mux, "/api/status", http.MethodGet, state, nil, state.handleStatus)
+	registerRoute(mux, "/api/review", http.MethodGet, state, nil, state.handleReview)
+	registerRoute(mux, "/api/comments", http.MethodGet, state, nil, state.handleComments)
+	registerRoute(mux, "/api/comment", http.MethodPost, state, nil, state.handleComment)
+	registerRoute(mux, "/api/review/close", http.MethodPost, state, nil, state.handleReviewClose)
+	registerRoute(mux, "/api/enqueue", http.MethodPost, state, nil, state.handleEnqueue)
+	registerRoute(mux, "/api/jobs", http.MethodGet, state, nil, state.handleJobs)
 	return mux
 }
 
 // daemonFromHandler wraps a legacy http.Handler in a MockDaemon.
 func daemonFromHandler(t *testing.T, handler http.Handler) *MockDaemon {
 	t.Helper()
+	delegate := func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+		handler.ServeHTTP(w, r)
+		return true
+	}
 	return NewMockDaemon(t, MockRefineHooks{
-		OnGetJobs: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnEnqueue: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnReview: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnComments: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnComment: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnReviewClose: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
-		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			handler.ServeHTTP(w, r)
-			return true
-		},
+		OnGetJobs:     delegate,
+		OnEnqueue:     delegate,
+		OnReview:      delegate,
+		OnComments:    delegate,
+		OnComment:     delegate,
+		OnReviewClose: delegate,
+		OnUnhandled:   delegate,
 	})
 }
 
-var chdirMutex sync.Mutex
-
-// runWithOutput runs a cobra command within a specific directory and returns its output.
+// runWithOutput runs a cobra command with the given directory set in its context and returns its output.
 func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) (string, error) {
 	t.Helper()
-
-	chdirMutex.Lock()
-	defer chdirMutex.Unlock()
-
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get current directory: %v", err)
-	}
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to change directory to %s: %v", dir, err)
-	}
-	defer func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore directory to %s: %v", oldWd, err)
-		}
-	}()
 
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&output)
-	err = fn(cmd)
+
+	ctx := context.WithValue(context.Background(), workDirKey{}, dir)
+	cmd.SetContext(ctx)
+
+	err := fn(cmd)
 	return output.String(), err
 }

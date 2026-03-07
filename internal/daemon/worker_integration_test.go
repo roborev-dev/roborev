@@ -3,10 +3,14 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
@@ -14,13 +18,7 @@ import (
 func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses ...storage.JobStatus) *storage.ReviewJob {
 	t.Helper()
 
-	waitingForFailure := false
-	for _, status := range statuses {
-		if status == storage.JobStatusFailed {
-			waitingForFailure = true
-			break
-		}
-	}
+	waitingForFailure := slices.Contains(statuses, storage.JobStatusFailed)
 
 	waitStatuses := statuses
 	if !waitingForFailure {
@@ -41,13 +39,9 @@ func TestWorkerPoolE2E(t *testing.T) {
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJob(t, sha)
 
-	tc.Pool.Start()
-	defer tc.Pool.Stop()
-	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
-
-	if finalJob.Status != storage.JobStatusDone {
-		t.Fatalf("Expected job to complete successfully, got status: %s", finalJob.Status)
-	}
+	tc.startPool(t)
+	// No manual check needed; helper will t.Fatalf if the job fails.
+	tc.waitForJobStatus(t, job.ID, storage.JobStatusDone)
 
 	review, err := tc.DB.GetReviewByCommitSHA(sha)
 	if err != nil {
@@ -61,13 +55,47 @@ func TestWorkerPoolE2E(t *testing.T) {
 	}
 }
 
+func TestWorkerPoolJobLogFailure(t *testing.T) {
+	testenv.SetDataDir(t)
+	tc := newWorkerTestContext(t, 2)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createJob(t, sha)
+
+	// Force JobLogDir to collide with a file so that openJobLog will fail
+	dir := JobLogDir()
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("collision"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tc.startPool(t)
+
+	// Even though logging failed, the job should complete successfully
+	tc.waitForJobStatus(t, job.ID, storage.JobStatusDone)
+
+	review, err := tc.DB.GetReviewByCommitSHA(sha)
+	if err != nil {
+		t.Fatalf("GetReviewByCommitSHA failed: %v", err)
+	}
+	if review.Output == "" {
+		t.Error("Review output should not be empty")
+	}
+
+	// Verify that the job log file was not created.
+	logPath := JobLogPath(job.ID)
+	if _, err := os.Stat(logPath); err == nil {
+		t.Errorf("Expected job log file %s to not exist, but it was created", logPath)
+	}
+}
+
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJob(t, sha)
 
-	tc.Pool.Start()
-	defer tc.Pool.Stop()
+	tc.startPool(t)
 
 	// Wait for job to be claimed
 	tc.waitForJobStatus(t, job.ID, storage.JobStatusRunning)

@@ -19,7 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -109,7 +112,10 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{
 			OnEnqueue: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 				var req daemon.EnqueueRequest
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return true
+				}
 
 				if req.RepoPath != "/test/repo" || req.GitRef != "abc..def" {
 					t.Errorf("unexpected request body: %+v", req)
@@ -122,7 +128,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc..def", "codex")
+		jobID, err := enqueueReview(md.Server.URL, "/test/repo", "abc..def", "codex")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -141,7 +147,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		_, err := enqueueReview("/bad/repo", "HEAD", "codex")
+		_, err := enqueueReview(md.Server.URL, "/bad/repo", "HEAD", "codex")
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -232,7 +238,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 
 	ctx := newFastRunContext(repoDir)
 
-	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+	if err := runRefine(&cobra.Command{}, ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -254,7 +260,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	ctx := newFastRunContext(repoDir)
 
 	output := captureStdout(t, func() {
-		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+		if err := runRefine(&cobra.Command{}, ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -281,15 +287,21 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	isTerminal = func(fd uintptr) bool { return true }
 	defer func() { isTerminal = origIsTerminal }()
 
-	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 		return "", fmt.Errorf("test agent failure")
-	}})
-	defer agent.Register(agent.NewTestAgent())
+	}}
 
 	ctx := newFastRunContext(repoDir)
 
 	output := captureStdout(t, func() {
-		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+		if err := runRefine(&cobra.Command{}, ctx, refineOptions{
+			agentName: "test",
+			agentFactory: func(_ *config.Config, _ string, _ agent.ReasoningLevel, _ string) (agent.Agent, error) {
+				return testAgent, nil
+			},
+			maxIterations: 1,
+			quiet:         true,
+		}); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -371,7 +383,7 @@ func TestRefineLoopNoChangeSkipsReview(t *testing.T) {
 	}
 
 	// Job with no prior comments — skip should still apply (no retries needed)
-	responses, err := getCommentsForJob(42)
+	responses, err := getCommentsForJob(md.Server.URL, 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -380,7 +392,7 @@ func TestRefineLoopNoChangeSkipsReview(t *testing.T) {
 	}
 
 	// Job with a prior skip comment — verify the comment text matches
-	responses, err = getCommentsForJob(99)
+	responses, err = getCommentsForJob(md.Server.URL, 99)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -429,7 +441,7 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc123..HEAD", "codex")
+		jobID, err := enqueueReview(md.Server.URL, "/test/repo", "abc123..HEAD", "codex")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -459,7 +471,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
 		}
 
-		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		review, err := waitForReviewWithInterval(md.Server.URL, 42, 1*time.Millisecond)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -482,7 +494,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			Error:  "Agent timeout after 10 minutes",
 		}
 
-		_, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		_, err := waitForReviewWithInterval(md.Server.URL, 42, 1*time.Millisecond)
 		if err == nil {
 			t.Fatal("expected error for failed job")
 		}
@@ -496,13 +508,8 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 // (in-progress) job does not consume a refinement iteration. The test runs with
 // maxIterations=1 and a job that starts as Running then transitions to Done with a
 // passing review - if iterations were consumed during the wait, the test would fail.
-func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
-	repoDir, commitSHA := setupRefineRepo(t)
-
-	// Track how many times the job has been polled
-	var pollCount int32
-
-	handleGetJobs := func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
+func makePendingJobGetJobsHandler(pollCount *atomic.Int32) func(http.ResponseWriter, *http.Request, *mockRefineState) bool {
+	return func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 		q := r.URL.Query()
 		if idStr := q.Get("id"); idStr != "" {
 			var jobID int64
@@ -515,7 +522,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				return true
 			}
 			// On first poll, job is still Running; on subsequent polls, transition to Done
-			count := atomic.AddInt32(&pollCount, 1)
+			count := pollCount.Add(1)
 			if count > 1 {
 				job.Status = storage.JobStatusDone
 			}
@@ -543,13 +550,18 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 		}
 		return false // fall through to base handler
 	}
+}
 
-	handleEnqueue := func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
+func makePendingJobEnqueueHandler(repoDir string) func(http.ResponseWriter, *http.Request, *mockRefineState) bool {
+	return func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 		// Handle branch review enqueue - create a passing branch review
 		var req struct {
 			GitRef string `json:"git_ref"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return true
+		}
 		s.mu.Lock()
 		branchJobID := s.nextJobID
 		s.nextJobID++
@@ -569,10 +581,17 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 		json.NewEncoder(w).Encode(jobCopy)
 		return true
 	}
+}
+
+func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
+	repoDir, commitSHA := setupRefineRepo(t)
+
+	// Track how many times the job has been polled
+	var pollCount atomic.Int32
 
 	md := NewMockDaemon(t, MockRefineHooks{
-		OnGetJobs: handleGetJobs,
-		OnEnqueue: handleEnqueue,
+		OnGetJobs: makePendingJobGetJobsHandler(&pollCount),
+		OnEnqueue: makePendingJobEnqueueHandler(repoDir),
 	})
 	defer md.Close()
 
@@ -596,7 +615,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	// an iteration, this would fail with "max iterations reached". Since the
 	// pending job transitions to Done with a passing review (and no failed
 	// reviews exist), refine should succeed.
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err := runRefine(&cobra.Command{}, ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 
 	// Should succeed - all reviews pass after waiting for the pending one
 	if err != nil {
@@ -604,8 +623,8 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 
 	// Verify the job was actually polled multiple times (proving we waited)
-	if atomic.LoadInt32(&pollCount) < 2 {
-		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", atomic.LoadInt32(&pollCount))
+	if pollCount.Load() < 2 {
+		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", pollCount.Load())
 	}
 }
 
@@ -776,7 +795,7 @@ func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {
 	}
 
 	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-	err = startDaemon()
+	_, err = startDaemon(&cobra.Command{})
 	if err == nil {
 		t.Fatal("expected startDaemon to refuse go test binary auto-start")
 	}
@@ -793,6 +812,16 @@ func setupIsolatedDataDir(t *testing.T) string {
 }
 
 // TestDaemonStopNotRunning verifies daemon stop reports when no daemon is running
+
+func writeMockDaemonFile(t *testing.T, tmpDir string, content string, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(tmpDir, "daemon.json")
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatalf("write mock daemon.json: %v", err)
+	}
+	return path
+}
+
 func TestDaemonStopNotRunning(t *testing.T) {
 	_ = setupIsolatedDataDir(t)
 
@@ -808,11 +837,7 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 
 	// Create daemon.json with PID 0 and an address on a port that's definitely not in use
 	// Port 59999 is unlikely to be in use and will get connection refused quickly
-	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:59999"}
-	data, _ := json.Marshal(daemonInfo)
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
-		t.Fatalf("write daemon.json: %v", err)
-	}
+	writeMockDaemonFile(t, tmpDir, `{"pid":0,"addr":"127.0.0.1:59999"}`, 0644)
 
 	// ListAllRuntimes validates files and removes invalid ones (pid <= 0),
 	// so it returns an empty list, and stopDaemon returns ErrDaemonNotRunning.
@@ -833,9 +858,7 @@ func TestDaemonStopCorruptedFile(t *testing.T) {
 	tmpDir := setupIsolatedDataDir(t)
 
 	// Create corrupted daemon.json
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0644); err != nil {
-		t.Fatalf("write daemon.json: %v", err)
-	}
+	writeMockDaemonFile(t, tmpDir, "not valid json", 0644)
 
 	err := stopDaemon()
 	if err != ErrDaemonNotRunning {
@@ -855,9 +878,7 @@ func TestDaemonStopTruncatedFile(t *testing.T) {
 
 	// Create truncated daemon.json (partial JSON that triggers io.ErrUnexpectedEOF)
 	// A JSON object that ends abruptly mid-string causes io.ErrUnexpectedEOF
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte(`{"pid": 123, "addr": "127.0.0.1:7373`), 0644); err != nil {
-		t.Fatalf("write daemon.json: %v", err)
-	}
+	writeMockDaemonFile(t, tmpDir, `{"pid": 123, "addr": "127.0.0.1:7373`, 0644)
 
 	err := stopDaemon()
 	if err != ErrDaemonNotRunning {
@@ -882,12 +903,7 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	tmpDir := setupIsolatedDataDir(t)
 
 	// Create daemon.json with valid content
-	daemonInfo := daemon.RuntimeInfo{PID: 12345, Addr: "127.0.0.1:7373"}
-	data, _ := json.Marshal(daemonInfo)
-	daemonPath := filepath.Join(tmpDir, "daemon.json")
-	if err := os.WriteFile(daemonPath, data, 0644); err != nil {
-		t.Fatalf("write daemon.json: %v", err)
-	}
+	daemonPath := writeMockDaemonFile(t, tmpDir, `{"pid":12345,"addr":"127.0.0.1:7373"}`, 0644)
 
 	// Remove read permission
 	if err := os.Chmod(daemonPath, 0000); err != nil {
@@ -938,7 +954,7 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	t.Helper()
 	origGet := getAnyRunningDaemon
 	origList := listAllRuntimes
-	origPIDAlive := isPIDAliveForUpdate
+	origPIDAlive := isPIDAlive
 	origStop := stopDaemonForUpdate
 	origKill := killAllDaemonsForUpdate
 	origStart := startUpdatedDaemon
@@ -947,7 +963,7 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		listAllRuntimes = origList
-		isPIDAliveForUpdate = origPIDAlive
+		isPIDAlive = origPIDAlive
 		stopDaemonForUpdate = origStop
 		killAllDaemonsForUpdate = origKill
 		startUpdatedDaemon = origStart
@@ -961,7 +977,7 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
-	isPIDAliveForUpdate = func(int) bool {
+	isPIDAlive = func(int) bool {
 		return false
 	}
 
@@ -980,85 +996,6 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	return s
 }
 
-func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", true)
-	})
-
-	if !strings.Contains(output, "Skipping daemon restart (--no-restart)") {
-		t.Fatalf("expected no-restart message, got %q", output)
-	}
-	if s.stopCalls != 0 {
-		t.Fatalf("expected stopDaemonForUpdate not called, got %d", s.stopCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
-	}
-}
-
-func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// After stop, an external manager restarted with a new PID.
-		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if !strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("expected successful restart output, got %q", output)
-	}
-	if s.stopCalls != 1 {
-		t.Fatalf("expected stopDaemonForUpdate called once, got %d", s.stopCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
-	}
-}
-
-func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if !strings.Contains(output, "warning: failed to stop daemon: cannot stop daemon") {
-		t.Fatalf("expected stop warning, got %q", output)
-	}
-	if !strings.Contains(output, "warning: daemon pid 100 is still running; restart it manually") {
-		t.Fatalf("expected same-pid warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output: %q", output)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected start not called, got %d", s.startCalls)
-	}
-}
-
 func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	stubRestartVars(t)
 
@@ -1068,7 +1005,7 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
 	}
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return pid == 100
 	}
 
@@ -1091,7 +1028,7 @@ func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
 	}
 	// PID is dead; runtime entry is stale.
-	isPIDAliveForUpdate = func(int) bool {
+	isPIDAlive = func(int) bool {
 		return false
 	}
 
@@ -1113,7 +1050,7 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return pid == 100
 	}
 
@@ -1137,7 +1074,7 @@ func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
 	}
 	// Simulate PID reuse: old daemon runtime is gone and PID now belongs
 	// to a non-daemon process, so daemon liveness should not block exit.
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return false
 	}
 
@@ -1161,7 +1098,7 @@ func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *tes
 			{PID: 200, Addr: "127.0.0.1:7373"},
 		}, nil
 	}
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return pid == 200
 	}
 
@@ -1180,7 +1117,7 @@ func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return pid == 101
 	}
 
@@ -1202,7 +1139,7 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
-	isPIDAliveForUpdate = func(pid int) bool {
+	isPIDAlive = func(pid int) bool {
 		return pid == 500
 	}
 
@@ -1218,580 +1155,474 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 	}
 }
 
-func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testing.T) {
-	s := stubRestartVars(t)
+type mockDaemonStep struct {
+	info *daemon.RuntimeInfo
+	err  error
+}
 
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		// Initial probe sees old daemon.
-		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// During first wait loop, manager PID appears but old runtime still exists.
-		if s.killCalls == 0 {
-			return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill and manual start, readiness probe succeeds.
-		if s.startCalls > 0 {
-			return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
-		}
-		// During second wait loop after kill, no daemon responds.
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before cleanup, one original PID still exists.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		// Cleanup removed old daemons.
-		return nil, nil
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop all daemons")
-	}
+type mockRuntimeStep struct {
+	list []*daemon.RuntimeInfo
+	err  error
+}
 
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if !strings.Contains(output, "warning: failed to stop daemon: cannot stop all daemons") {
-		t.Fatalf("expected stop warning, got %q", output)
-	}
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 1 {
-		t.Fatalf("expected manual start after cleanup, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "Restarting daemon...") || !strings.Contains(output, "OK") {
-		t.Fatalf("expected restart flow to complete, got %q", output)
+func mockDaemonSequence(steps ...mockDaemonStep) func() (*daemon.RuntimeInfo, error) {
+	var i int
+	return func() (*daemon.RuntimeInfo, error) {
+		if len(steps) == 0 {
+			return nil, os.ErrNotExist
+		}
+		if i >= len(steps) {
+			i = len(steps) - 1
+		}
+		step := steps[i]
+		i++
+		if step.info == nil && step.err == nil {
+			return nil, os.ErrNotExist
+		}
+		return step.info, step.err
 	}
 }
 
-func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill, external manager restarts the daemon.
-		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called when manager restarted daemon, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("expected manager-restart success output, got %q", output)
-	}
-}
-
-func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// Replacement daemon is not yet responsive.
-		return nil, os.ErrNotExist
-	}
-
-	var listCalls int
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		listCalls++
-		if listCalls == 1 {
-			// Initial snapshot for stop validation.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		// Runtime handoff to manager-restarted PID.
-		return []*daemon.RuntimeInfo{
-			{PID: 200, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 0 {
-		t.Fatalf("expected kill fallback not called when handoff PID already exists, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected handoff success output: %q", output)
-	}
-	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
-		t.Fatalf("expected not-ready handoff warning, got %q", output)
-	}
-}
-
-func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var handoffSeen bool
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial probe + first wait loop see only the old daemon,
-			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		if !handoffSeen {
-			// After kill fallback, handoff PID appears once.
-			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
-		}
-		// Replacement remains unresponsive during readiness polling.
-		return nil, os.ErrNotExist
-	}
-
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
-
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 500
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
-		t.Fatalf("expected not-ready handoff warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output: %q", output)
-	}
-}
-
-func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPID(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill, external manager restarts one daemon PID.
-		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial runtime snapshot includes multiple daemon PIDs.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		// After kill, previousPID is gone but another initial PID remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 101, Addr: "127.0.0.1:7373"},
-			{PID: 500, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop all daemons")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called with lingering initial PID, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually") {
-		t.Fatalf("expected lingering-runtime warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output when initial PID still lingers: %q", output)
-	}
-}
-
-func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingering(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// previousPID exited quickly; no replacement PID observed.
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		switch getCalls {
-		case 0:
-			// Initial snapshot includes multiple daemon PIDs.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
-		case 1:
-			// waitForDaemonExit still sees previous PID.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
-		default:
-			// previousPID gone, but another initial PID lingers.
-			return []*daemon.RuntimeInfo{
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop all daemons")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 0 {
-		t.Fatalf("expected kill fallback not called when previousPID exited quickly, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called with lingering initial PID, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: older daemon runtimes still present after stop; restart it manually") {
-		t.Fatalf("expected lingering-runtime warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output when initial PID still lingers: %q", output)
-	}
-}
-
-func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRuntimeSkipsStart(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// After stop attempt, daemon probe fails.
-		return nil, os.ErrNotExist
-	}
-
-	var listCalls int
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		listCalls++
-		switch listCalls {
-		case 1:
-			// Initial runtime snapshot fails.
-			return nil, errors.New("cannot read runtime files")
-		case 2:
-			// waitForDaemonExit still sees previous PID.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		case 3:
-			// previousPID is now gone from runtime files.
+func mockRuntimeSequence(steps ...mockRuntimeStep) func() ([]*daemon.RuntimeInfo, error) {
+	var i int
+	return func() ([]*daemon.RuntimeInfo, error) {
+		if len(steps) == 0 {
 			return nil, nil
-		default:
-			// Verification after stop failure finds another lingering runtime.
-			return []*daemon.RuntimeInfo{
-				{PID: 101, Addr: "127.0.0.1:7373"},
-			}, nil
 		}
-	}
-
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 0 {
-		t.Fatalf("expected kill fallback not called when previousPID exits, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called with lingering runtime, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: older daemon runtimes still present after stop; restart it manually") {
-		t.Fatalf("expected lingering-runtime warning, got %q", output)
+		if i >= len(steps) {
+			i = len(steps) - 1
+		}
+		step := steps[i]
+		i++
+		return step.list, step.err
 	}
 }
 
-func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testing.T) {
-	s := stubRestartVars(t)
+func TestRestartDaemonAfterUpdate(t *testing.T) {
+	errStop := errors.New("cannot stop daemon")
+	errStopAll := errors.New("cannot stop all daemons")
 
-	var handoffSeen bool
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial probe + first wait loop see only the old daemon,
-			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		if !handoffSeen {
-			// Second wait loop sees manager handoff PID once.
-			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
-		}
-		// Replacement remains unresponsive during readiness polling.
-		return nil, os.ErrNotExist
+	tests := []struct {
+		name            string
+		noRestart       bool
+		mockDaemons     []mockDaemonStep
+		mockRuntimes    []mockRuntimeStep
+		stopErr         error
+		wantOutput      []string
+		wantSuccess     bool
+		dontWantSuccess bool
+		wantStopCalls   int
+		wantStartCalls  int
+		wantKillCalls   int
+		setup           func(s *restartStubs)
+	}{
+		{
+			name:           "NoRestart",
+			noRestart:      true,
+			mockDaemons:    []mockDaemonStep{{info: &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}}},
+			wantOutput:     []string{"Skipping daemon restart (--no-restart)"},
+			wantStopCalls:  0,
+			wantStartCalls: 0,
+			wantKillCalls:  0,
+		},
+		{
+			name:           "ManagerRestarted",
+			wantOutput:     []string{"Restarting daemon... "},
+			wantSuccess:    true,
+			wantStopCalls:  1,
+			wantStartCalls: 0,
+			wantKillCalls:  0,
+			mockDaemons: []mockDaemonStep{
+				{info: &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}},
+				{info: &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}},
+			},
+		},
+		{
+			name:            "StopFailureSamePID",
+			mockDaemons:     []mockDaemonStep{{info: &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}}},
+			stopErr:         errStop,
+			wantOutput:      []string{"warning: failed to stop daemon: cannot stop daemon", "warning: daemon pid 100 is still running; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   1,
+		},
+		{
+			name:           "StopFailureManagerRestartNeedsCleanup",
+			stopErr:        errStopAll,
+			wantOutput:     []string{"warning: failed to stop daemon: cannot stop all daemons", "OK"},
+			wantStopCalls:  1,
+			wantStartCalls: 1,
+			wantKillCalls:  1,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					if s.killCalls == 0 {
+						return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+					}
+					if s.startCalls > 0 {
+						return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return []*daemon.RuntimeInfo{
+							{PID: 100, Addr: "127.0.0.1:7373"},
+							{PID: 101, Addr: "127.0.0.1:7373"},
+						}, nil
+					}
+					return nil, nil
+				}
+			},
+		},
+		{
+			name:           "ManagerRestartedAfterKill",
+			wantOutput:     []string{"Restarting daemon... "},
+			wantSuccess:    true,
+			wantStopCalls:  1,
+			wantStartCalls: 0,
+			wantKillCalls:  1,
+			setup: func(s *restartStubs) {
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					}
+					return []*daemon.RuntimeInfo{{PID: 500, Addr: "127.0.0.1:7373"}}, nil
+				}
+			},
+		},
+		{
+			name:            "ManagerHandoffUnresponsiveUsesRuntimePID",
+			wantOutput:      []string{"warning: daemon handoff detected but replacement is not ready; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   0,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				var listCalls int
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					listCalls++
+					if listCalls == 1 {
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					}
+					return []*daemon.RuntimeInfo{{PID: 200, Addr: "127.0.0.1:7373"}}, nil
+				}
+				isPIDAlive = func(pid int) bool { return pid == 200 }
+			},
+		},
+		{
+			name:            "ManagerHandoffAfterKillNotReadyWarnsNoStart",
+			wantOutput:      []string{"warning: daemon handoff detected but replacement is not ready; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   1,
+			setup: func(s *restartStubs) {
+				var handoffSeen bool
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					if !handoffSeen {
+						handoffSeen = true
+						return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					}
+					return []*daemon.RuntimeInfo{{PID: 500, Addr: "127.0.0.1:7373"}}, nil
+				}
+				isPIDAlive = func(pid int) bool { return pid == 500 }
+			},
+		},
+		{
+			name:            "ManagerRestartedAfterKillWithLingeringInitialPID",
+			stopErr:         errStopAll,
+			wantOutput:      []string{"warning: daemon restart detected but older daemon runtimes remain; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   1,
+			setup: func(s *restartStubs) {
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return []*daemon.RuntimeInfo{
+							{PID: 100, Addr: "127.0.0.1:7373"},
+							{PID: 101, Addr: "127.0.0.1:7373"},
+						}, nil
+					}
+					return []*daemon.RuntimeInfo{
+						{PID: 101, Addr: "127.0.0.1:7373"},
+						{PID: 500, Addr: "127.0.0.1:7373"},
+					}, nil
+				}
+			},
+		},
+		{
+			name:            "StopFailedPreviousPIDExitedButInitialPIDLingering",
+			stopErr:         errStopAll,
+			wantOutput:      []string{"warning: older daemon runtimes still present after stop; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   0,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					switch getCalls {
+					case 0, 1:
+						return []*daemon.RuntimeInfo{
+							{PID: 100, Addr: "127.0.0.1:7373"},
+							{PID: 101, Addr: "127.0.0.1:7373"},
+						}, nil
+					default:
+						return []*daemon.RuntimeInfo{
+							{PID: 101, Addr: "127.0.0.1:7373"},
+						}, nil
+					}
+				}
+			},
+		},
+		{
+			name:            "StopFailedInitialSnapshotErrorWithLingeringRuntimeSkipsStart",
+			stopErr:         errStop,
+			wantOutput:      []string{"warning: older daemon runtimes still present after stop; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   0,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				var listCalls int
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					listCalls++
+					switch listCalls {
+					case 1:
+						return nil, errors.New("cannot read runtime files")
+					case 2:
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					case 3:
+						return nil, nil
+					default:
+						return []*daemon.RuntimeInfo{{PID: 101, Addr: "127.0.0.1:7373"}}, nil
+					}
+				}
+			},
+		},
+		{
+			name:            "StopFailedHandoffNotReadyWarnsNoStart",
+			stopErr:         errStop,
+			wantOutput:      []string{"warning: daemon handoff detected but replacement is not ready; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   1,
+			setup: func(s *restartStubs) {
+				var handoffSeen bool
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					if !handoffSeen {
+						handoffSeen = true
+						return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if s.killCalls == 0 {
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					}
+					return []*daemon.RuntimeInfo{{PID: 500, Addr: "127.0.0.1:7373"}}, nil
+				}
+				isPIDAlive = func(pid int) bool { return pid == 500 }
+			},
+		},
+		{
+			name:            "StopFailedPreExistingPIDNotAcceptedAsHandoff",
+			stopErr:         errStop,
+			wantOutput:      []string{"warning: daemon restart detected but older daemon runtimes remain; restart it manually"},
+			dontWantSuccess: true,
+			wantStopCalls:   1,
+			wantStartCalls:  0,
+			wantKillCalls:   1,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+				}
+				var listCalls int
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					listCalls++
+					if listCalls == 1 {
+						return []*daemon.RuntimeInfo{
+							{PID: 100, Addr: "127.0.0.1:7373"},
+							{PID: 200, Addr: "127.0.0.1:7373"},
+						}, nil
+					}
+					return []*daemon.RuntimeInfo{{PID: 200, Addr: "127.0.0.1:7373"}}, nil
+				}
+				isPIDAlive = func(pid int) bool { return pid == 200 }
+			},
+		},
+		{
+			name:           "ProbeFailFallback",
+			wantOutput:     []string{"Restarting daemon... "},
+			wantSuccess:    true,
+			wantStopCalls:  1,
+			wantStartCalls: 1,
+			wantKillCalls:  0,
+			setup: func(s *restartStubs) {
+				updateRestartWaitTimeout = 200 * time.Millisecond
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls <= 4 {
+						return nil, os.ErrNotExist
+					}
+					return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					if getCalls <= 3 {
+						return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+					}
+					return nil, nil
+				}
+			},
+		},
+		{
+			name:           "NoDaemon",
+			mockDaemons:    []mockDaemonStep{{err: os.ErrNotExist}},
+			mockRuntimes:   []mockRuntimeStep{{}},
+			wantOutput:     []string{""},
+			wantStopCalls:  0,
+			wantStartCalls: 0,
+			wantKillCalls:  0,
+		},
+		{
+			name:           "ExitsQuickly",
+			wantOutput:     []string{"Restarting daemon... "},
+			wantSuccess:    true,
+			wantStopCalls:  1,
+			wantStartCalls: 1,
+			wantKillCalls:  0,
+			setup: func(s *restartStubs) {
+				var getCalls int
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					getCalls++
+					if getCalls == 1 {
+						return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+					}
+					if getCalls == 2 {
+						return nil, os.ErrNotExist
+					}
+					return &daemon.RuntimeInfo{PID: 400, Addr: "127.0.0.1:7373"}, nil
+				}
+			},
+		},
 	}
 
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		// previousPID is gone; only replacement PID runtime remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := stubRestartVars(t)
 
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 500
-	}
+			// We only use simple arrays when setup doesn't override them
+			if tt.mockDaemons != nil {
+				getAnyRunningDaemon = mockDaemonSequence(tt.mockDaemons...)
+			}
 
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
+			if tt.mockRuntimes != nil {
+				listAllRuntimes = mockRuntimeSequence(tt.mockRuntimes...)
+			}
 
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
+			if tt.stopErr != nil {
+				stopDaemonForUpdate = func() error {
+					s.stopCalls++
+					return tt.stopErr
+				}
+			}
 
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
-		t.Fatalf("expected not-ready handoff warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output: %q", output)
-	}
-}
+			if tt.setup != nil {
+				tt.setup(s)
+			}
 
-func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t *testing.T) {
-	s := stubRestartVars(t)
+			output := captureStdout(t, func() {
+				restartDaemonAfterUpdate("/tmp/bin", tt.noRestart)
+			})
 
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		// Existing daemon PID 200 remains responsive throughout.
-		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
-	}
+			for _, want := range tt.wantOutput {
+				if want == "" {
+					if output != "" {
+						t.Errorf("expected no output, got %q", output)
+					}
+				} else if !strings.Contains(output, want) {
+					t.Errorf("expected output to contain %q, got %q", want, output)
+				}
+			}
 
-	var listCalls int
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		listCalls++
-		if listCalls == 1 {
-			// Initial snapshot already includes PID 200.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 200, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		// previousPID disappeared, but pre-existing PID 200 remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 200, Addr: "127.0.0.1:7373"},
-		}, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
+			if tt.wantSuccess && !strings.Contains(output, "OK\n") {
+				t.Errorf("expected output to indicate success with OK, got %q", output)
+			}
+			if tt.dontWantSuccess && strings.Contains(output, "OK\n") {
+				t.Errorf("expected output to not indicate success, got %q", output)
+			}
 
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
-	}
-	if !strings.Contains(output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually") {
-		t.Fatalf("expected pre-existing handoff warning, got %q", output)
-	}
-	if strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("unexpected success output: %q", output)
-	}
-}
-
-// Fix #2: Probe failure with runtime files should use PID from
-// runtime files and still attempt stop/wait/start.
-func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
-	s := stubRestartVars(t)
-	// This test needs 5 getAnyRunningDaemon calls to succeed. On
-	// Windows the default timer resolution is ~15ms, so the 5ms
-	// timeout from stubRestartVars expires before enough poll
-	// iterations run. Use a longer timeout.
-	updateRestartWaitTimeout = 200 * time.Millisecond
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls <= 2 {
-			// Initial probe + first waitForDaemonExit poll fail.
-			return nil, os.ErrNotExist
-		}
-		if getCalls <= 4 {
-			// Continue failing until the old runtime disappears.
-			return nil, os.ErrNotExist
-		}
-		// After manual start, daemon responds with new PID.
-		return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
-	}
-	// Runtime files exist with a known PID.
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if getCalls <= 3 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-			}, nil
-		}
-		return nil, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if !strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("expected restart OK, got %q", output)
-	}
-	if s.stopCalls != 1 {
-		t.Fatalf("expected stop called once, got %d", s.stopCalls)
-	}
-	if s.startCalls != 1 {
-		t.Fatalf("expected start called once, got %d", s.startCalls)
-	}
-}
-
-// Fix #2: No responsive daemon and no runtime files should skip silently.
-func TestRestartDaemonAfterUpdateNoDaemon(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
-	}
-	// No runtime files either.
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return nil, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if output != "" {
-		t.Fatalf("expected no output, got %q", output)
-	}
-	if s.stopCalls != 0 {
-		t.Fatalf("expected stop not called, got %d", s.stopCalls)
-	}
-	if s.startCalls != 0 {
-		t.Fatalf("expected start not called, got %d", s.startCalls)
-	}
-}
-
-// Fix #3: Unmanaged daemon exits quickly — no 2s delay.
-func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
-		}
-		if getCalls == 2 {
-			// Daemon exited after stop.
-			return nil, os.ErrNotExist
-		}
-		// After manual start, daemon is ready.
-		return &daemon.RuntimeInfo{PID: 400, Addr: "127.0.0.1:7373"}, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	if !strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("expected restart OK, got %q", output)
-	}
-	if s.stopCalls != 1 {
-		t.Fatalf("expected stop called once, got %d", s.stopCalls)
-	}
-	if s.startCalls != 1 {
-		t.Fatalf("expected start called once, got %d", s.startCalls)
+			if s.stopCalls != tt.wantStopCalls {
+				t.Errorf("expected %d stop calls, got %d", tt.wantStopCalls, s.stopCalls)
+			}
+			if s.startCalls != tt.wantStartCalls {
+				t.Errorf("expected %d start calls, got %d", tt.wantStartCalls, s.startCalls)
+			}
+			if s.killCalls != tt.wantKillCalls {
+				t.Errorf("expected %d kill calls, got %d", tt.wantKillCalls, s.killCalls)
+			}
+		})
 	}
 }
 
@@ -1864,4 +1695,62 @@ func TestShortJobRef(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetDaemonAddr(t *testing.T) {
+	origGet := getAnyRunningDaemon
+	t.Cleanup(func() { getAnyRunningDaemon = origGet })
+
+	// Mock a running daemon
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{Addr: "runtime:1111"}, nil
+	}
+
+	t.Run("returns explicitly set context address over runtime", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		ctx := context.WithValue(context.Background(), serverAddrKey{}, "http://context:2222")
+		cmd.SetContext(ctx)
+		addr := getDaemonAddr(cmd)
+		if addr != "http://context:2222" {
+			t.Errorf("Expected context address, got %q", addr)
+		}
+	})
+
+	t.Run("returns explicitly set server flag over runtime", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("server", "http://127.0.0.1:7373", "daemon server address")
+		cmd.Flags().Set("server", "http://flag:3333")
+		addr := getDaemonAddr(cmd)
+		if addr != "http://flag:3333" {
+			t.Errorf("Expected flag address, got %q", addr)
+		}
+	})
+
+	t.Run("returns explicitly set env var over runtime", func(t *testing.T) {
+		t.Setenv("ROBOREV_TEST_SERVER_ADDR", "http://env-fallback:4444")
+		cmd := &cobra.Command{}
+		addr := getDaemonAddr(cmd)
+		if addr != "http://env-fallback:4444" {
+			t.Errorf("Expected env var address, got %q", addr)
+		}
+	})
+
+	t.Run("returns runtime address when no explicit overrides present", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		addr := getDaemonAddr(cmd)
+		if addr != "http://runtime:1111" {
+			t.Errorf("Expected runtime address, got %q", addr)
+		}
+	})
+
+	t.Run("returns default address when no runtime or overrides", func(t *testing.T) {
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return nil, fmt.Errorf("no daemon")
+		}
+		cmd := &cobra.Command{}
+		addr := getDaemonAddr(cmd)
+		if addr != "http://127.0.0.1:7373" {
+			t.Errorf("Expected default address, got %q", addr)
+		}
+	})
 }

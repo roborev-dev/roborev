@@ -11,89 +11,107 @@ import (
 	"testing"
 )
 
+type Job struct {
+	ID int `json:"id"`
+}
+
+type JobResponse struct {
+	Jobs []Job `json:"jobs"`
+}
+
+type EnqueueResponse struct {
+	ID int `json:"id"`
+}
+
+type fixMockServer struct {
+	*httptest.Server
+	jobCheckCalls atomic.Int32
+	enqueueCalls  atomic.Int32
+}
+
+func newFixMockServer(t *testing.T, jobResponses []JobResponse) *fixMockServer {
+	m := &fixMockServer{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			n := m.jobCheckCalls.Add(1)
+			if len(jobResponses) == 0 {
+				t.Errorf("jobResponses must not be empty")
+				http.Error(w, "jobResponses empty", http.StatusInternalServerError)
+				return
+			}
+			// Return the response corresponding to the call sequence, or the last one
+			idx := int(n - 1)
+			if idx >= len(jobResponses) {
+				idx = len(jobResponses) - 1
+			}
+			json.NewEncoder(w).Encode(jobResponses[idx])
+		case "/api/enqueue":
+			m.enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(EnqueueResponse{ID: 99})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	m.Server = httptest.NewServer(handler)
+	t.Cleanup(m.Close)
+	return m
+}
+
 func TestEnqueueIfNeeded(t *testing.T) {
 	// Constants used across tests
 	const sha = "abc123def456"
 
 	tests := []struct {
 		name             string
-		jobResponses     []any
-		expectedChecks   int32
+		jobResponses     []JobResponse
 		expectedEnqueues int32
-		minChecks        int32
-		checkExact       bool
+		validateChecks   func(t *testing.T, calls int32)
 	}{
 		{
 			name: "SkipsWhenJobAppearsAfterWait",
-			jobResponses: []any{
-				map[string]any{"jobs": []any{}},                         // First call
-				map[string]any{"jobs": []any{map[string]any{"id": 42}}}, // Second call
+			jobResponses: []JobResponse{
+				{Jobs: []Job{}},         // First call
+				{Jobs: []Job{{ID: 42}}}, // Second call
 			},
-			expectedChecks:   2,
 			expectedEnqueues: 0,
-			checkExact:       true,
+			validateChecks: func(t *testing.T, calls int32) {
+				if calls != 2 {
+					t.Errorf("expected 2 job checks, got %d", calls)
+				}
+			},
 		},
 		{
 			name: "EnqueuesWhenNoJobExists",
-			jobResponses: []any{
-				map[string]any{"jobs": []any{}},
+			jobResponses: []JobResponse{
+				{Jobs: []Job{}},
 			},
-			minChecks:        1,
 			expectedEnqueues: 1,
-			checkExact:       false,
+			validateChecks: func(t *testing.T, calls int32) {
+				if calls < 1 {
+					t.Errorf("expected at least 1 job check, got %d", calls)
+				}
+			},
 		},
 	}
 
-	tmpDir := initTestGitRepo(t)
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var jobCheckCalls atomic.Int32
-			var enqueueCalls atomic.Int32
-
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/jobs":
-					n := jobCheckCalls.Add(1)
-					if len(tt.jobResponses) == 0 {
-						t.Errorf("jobResponses must not be empty")
-						http.Error(w, "jobResponses empty", http.StatusInternalServerError)
-						return
-					}
-					// Return the response corresponding to the call sequence, or the last one
-					idx := int(n - 1)
-					if idx >= len(tt.jobResponses) {
-						idx = len(tt.jobResponses) - 1
-					}
-					json.NewEncoder(w).Encode(tt.jobResponses[idx])
-				case "/api/enqueue":
-					enqueueCalls.Add(1)
-					w.WriteHeader(http.StatusCreated)
-					json.NewEncoder(w).Encode(map[string]any{"id": 99})
-				default:
-					w.WriteHeader(http.StatusNotFound)
-				}
-			})
-			ts := httptest.NewServer(handler)
-			defer ts.Close()
+			tmpDir := initTestGitRepo(t)
+			ts := newFixMockServer(t, tt.jobResponses)
 
 			err := enqueueIfNeeded(context.Background(), ts.URL, tmpDir, sha)
 			if err != nil {
 				t.Fatalf("enqueueIfNeeded: %v", err)
 			}
 
-			if tt.checkExact {
-				if jobCheckCalls.Load() != tt.expectedChecks {
-					t.Errorf("expected %d job checks, got %d", tt.expectedChecks, jobCheckCalls.Load())
-				}
-			} else {
-				if jobCheckCalls.Load() < tt.minChecks {
-					t.Errorf("expected at least %d job checks, got %d", tt.minChecks, jobCheckCalls.Load())
-				}
+			if tt.validateChecks != nil {
+				tt.validateChecks(t, ts.jobCheckCalls.Load())
 			}
 
-			if enqueueCalls.Load() != tt.expectedEnqueues {
-				t.Errorf("expected %d enqueues, got %d", tt.expectedEnqueues, enqueueCalls.Load())
+			if ts.enqueueCalls.Load() != tt.expectedEnqueues {
+				t.Errorf("expected %d enqueues, got %d", tt.expectedEnqueues, ts.enqueueCalls.Load())
 			}
 		})
 	}

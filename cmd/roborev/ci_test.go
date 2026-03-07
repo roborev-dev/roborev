@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -53,20 +54,19 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 		name      string
 		args      []string
 		wantError string
-		clearEnv  bool
+		envPath   string
+		envRef    string
 	}{
-		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type", false},
-		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning", false},
-		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity", false},
-		{"RequiresRef", []string{"review"}, "auto-detection", true},
+		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type", "", ""},
+		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning", "", ""},
+		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity", "", ""},
+		{"RequiresRef", []string{"review"}, "auto-detection", "", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.clearEnv {
-				t.Setenv("GITHUB_EVENT_PATH", "")
-				t.Setenv("GITHUB_REF", "")
-			}
+			t.Setenv("GITHUB_EVENT_PATH", tt.envPath)
+			t.Setenv("GITHUB_REF", tt.envRef)
 			cmd := ciCmd()
 			cmd.SetArgs(tt.args)
 			err := cmd.Execute()
@@ -84,7 +84,10 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 func setupFakeGitHubEvent(t *testing.T, event map[string]any) {
 	t.Helper()
 	eventFile := filepath.Join(t.TempDir(), "event.json")
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("failed to marshal event data: %v", err)
+	}
 	if err := os.WriteFile(eventFile, data, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -92,72 +95,96 @@ func setupFakeGitHubEvent(t *testing.T, event map[string]any) {
 }
 
 func TestDetectGitRef(t *testing.T) {
-	setupFakeGitHubEvent(t, map[string]any{
-		"pull_request": map[string]any{
-			"base": map[string]string{
-				"sha": "aaa111",
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T)
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "EventJSON",
+			setup: func(t *testing.T) {
+				setupFakeGitHubEvent(t, map[string]any{
+					"pull_request": map[string]any{
+						"base": map[string]string{
+							"sha": "aaa111",
+						},
+						"head": map[string]string{
+							"sha": "bbb222",
+						},
+					},
+				})
 			},
-			"head": map[string]string{
-				"sha": "bbb222",
+			want: "aaa111..bbb222",
+		},
+		{
+			name: "NoEnv",
+			setup: func(t *testing.T) {
+				t.Setenv("GITHUB_EVENT_PATH", "")
 			},
+			wantErr: true,
 		},
-	})
-
-	ref, err := detectGitRef()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
-	if ref != "aaa111..bbb222" {
-		t.Errorf("ref = %q, want %q",
-			ref, "aaa111..bbb222")
-	}
-}
-
-func TestDetectGitRef_NoEnv(t *testing.T) {
-	t.Setenv("GITHUB_EVENT_PATH", "")
-
-	_, err := detectGitRef()
-	if err == nil {
-		t.Fatal("expected error when no env set")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup(t)
+			got, err := detectGitRef()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("detectGitRef() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("detectGitRef() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestDetectPRNumber_EventJSON(t *testing.T) {
-	setupFakeGitHubEvent(t, map[string]any{
-		"pull_request": map[string]any{
-			"number": 42,
+func TestDetectPRNumber(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T)
+		want    int
+		wantErr bool
+	}{
+		{
+			name: "EventJSON",
+			setup: func(t *testing.T) {
+				setupFakeGitHubEvent(t, map[string]any{
+					"pull_request": map[string]any{
+						"number": 42,
+					},
+				})
+			},
+			want: 42,
 		},
-	})
-
-	pr, err := detectPRNumber()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		{
+			name: "GitHubRef",
+			setup: func(t *testing.T) {
+				t.Setenv("GITHUB_EVENT_PATH", "")
+				t.Setenv("GITHUB_REF", "refs/pull/123/merge")
+			},
+			want: 123,
+		},
+		{
+			name: "NoEnv",
+			setup: func(t *testing.T) {
+				t.Setenv("GITHUB_EVENT_PATH", "")
+				t.Setenv("GITHUB_REF", "")
+			},
+			wantErr: true,
+		},
 	}
-	if pr != 42 {
-		t.Errorf("pr = %d, want 42", pr)
-	}
-}
-
-func TestDetectPRNumber_GitHubRef(t *testing.T) {
-	t.Setenv("GITHUB_EVENT_PATH", "")
-	t.Setenv("GITHUB_REF", "refs/pull/123/merge")
-
-	pr, err := detectPRNumber()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pr != 123 {
-		t.Errorf("pr = %d, want 123", pr)
-	}
-}
-
-func TestDetectPRNumber_NoEnv(t *testing.T) {
-	t.Setenv("GITHUB_EVENT_PATH", "")
-	t.Setenv("GITHUB_REF", "")
-
-	_, err := detectPRNumber()
-	if err == nil {
-		t.Fatal("expected error when no env set")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup(t)
+			got, err := detectPRNumber()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("detectPRNumber() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("detectPRNumber() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -184,17 +211,17 @@ func TestResolveAgentList(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
 		agents := resolveAgentList(
 			"codex,gemini", nil, nil)
-		if len(agents) != 2 ||
-			agents[0] != "codex" ||
-			agents[1] != "gemini" {
-			t.Errorf("got %v", agents)
+		want := []string{"codex", "gemini"}
+		if !slices.Equal(agents, want) {
+			t.Errorf("got %v, want %v", agents, want)
 		}
 	})
 
 	t.Run("default", func(t *testing.T) {
 		agents := resolveAgentList("", nil, nil)
-		if len(agents) != 1 || agents[0] != "" {
-			t.Errorf("got %v, want [\"\"]", agents)
+		want := []string{""}
+		if !slices.Equal(agents, want) {
+			t.Errorf("got %v, want %v", agents, want)
 		}
 	})
 }
@@ -203,16 +230,17 @@ func TestResolveReviewTypes(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
 		types := resolveReviewTypes(
 			"security,design", nil, nil)
-		if len(types) != 2 {
-			t.Errorf("got %v", types)
+		want := []string{"security", "design"}
+		if !slices.Equal(types, want) {
+			t.Errorf("got %v, want %v", types, want)
 		}
 	})
 
 	t.Run("default", func(t *testing.T) {
 		types := resolveReviewTypes("", nil, nil)
-		if len(types) != 1 || types[0] != "security" {
-			t.Errorf(
-				"got %v, want [security]", types)
+		want := []string{"security"}
+		if !slices.Equal(types, want) {
+			t.Errorf("got %v, want %v", types, want)
 		}
 	})
 }
@@ -309,19 +337,8 @@ func TestSplitTrimmed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := splitTrimmed(tt.in)
-		if len(got) != len(tt.want) {
-			t.Errorf(
-				"splitTrimmed(%q) = %v, want %v",
-				tt.in, got, tt.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf(
-					"splitTrimmed(%q)[%d] = %q, "+
-						"want %q",
-					tt.in, i, got[i], tt.want[i])
-			}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("splitTrimmed(%q) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -198,13 +197,6 @@ func TestIsSourceFile(t *testing.T) {
 	}
 }
 
-func assertContains(t *testing.T, s, substr, msg string) {
-	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Errorf("%s: expected string to contain %q\nDocument content:\n%s", msg, substr, s)
-	}
-}
-
 func TestBuildFixPrompt(t *testing.T) {
 	analysisType := &analyze.AnalysisType{
 		Name:        "refactor",
@@ -257,10 +249,6 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 		JobIDStart:     43,
 		DoneAfterPolls: 999,
 	})
-	// patchServerAddr not strictly needed as we pass ts.URL to waitForAnalysisJob,
-	// but good practice if waitForAnalysisJob used the global.
-	// Here waitForAnalysisJob takes the url arg.
-
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -268,37 +256,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	if !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Errorf("expected context deadline error, got: %v", err)
-	}
-}
-
-func mockCloseServer(t *testing.T, expectedID int64, statusCode int) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/close" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-
-		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode body: %v", err)
-		}
-		gotJobID := int64(req["job_id"].(float64))
-		gotClosed := req["closed"].(bool)
-
-		if gotJobID != expectedID {
-			t.Errorf("job_id = %d, want %d", gotJobID, expectedID)
-		}
-		if !gotClosed {
-			t.Error("closed should be true")
-		}
-
-		w.WriteHeader(statusCode)
-	}))
+	assertContains(t, err.Error(), "context deadline exceeded", "expected context deadline error")
 }
 
 func TestMarkJobClosed(t *testing.T) {
@@ -314,8 +272,27 @@ func TestMarkJobClosed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts := mockCloseServer(t, 123, tt.statusCode)
-			defer ts.Close()
+			ts, _ := newMockServer(t, MockServerOpts{
+				OnClose: func(w http.ResponseWriter, r *http.Request) {
+					var req map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						t.Errorf("failed to decode body: %v", err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					gotJobID := int64(req["job_id"].(float64))
+					gotClosed := req["closed"].(bool)
+
+					if gotJobID != 123 {
+						t.Errorf("job_id = %d, want %d", gotJobID, 123)
+					}
+					if !gotClosed {
+						t.Error("closed should be true")
+					}
+
+					w.WriteHeader(tt.statusCode)
+				},
+			})
 
 			err := markJobClosed(context.Background(), ts.URL, 123)
 
@@ -339,7 +316,7 @@ func TestRunFixAgent(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, "")
 
 	// Use the built-in test agent
 	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false)
@@ -362,23 +339,17 @@ func TestBuildCommitPrompt(t *testing.T) {
 	prompt := buildCommitPrompt(analysisType)
 
 	// Should mention the analysis type
-	if !strings.Contains(prompt, "duplication") {
-		t.Error("prompt should reference the analysis type")
-	}
+	assertContains(t, prompt, "duplication", "prompt should reference the analysis type")
 
 	// Should have instructions for committing
-	if !strings.Contains(prompt, "git commit") {
-		t.Error("prompt should mention git commit")
-	}
+	assertContains(t, prompt, "git commit", "prompt should mention git commit")
 
 	// Should ask for a descriptive message
-	if !strings.Contains(prompt, "descriptive") {
-		t.Error("prompt should request a descriptive message")
-	}
+	assertContains(t, prompt, "descriptive", "prompt should request a descriptive message")
 }
 
 func TestListAnalysisTypes(t *testing.T) {
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, "")
 
 	err := listAnalysisTypes(cmd)
 	if err != nil {
@@ -406,7 +377,7 @@ func TestListAnalysisTypes(t *testing.T) {
 }
 
 func TestShowAnalysisPrompt(t *testing.T) {
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, "")
 
 	err := showAnalysisPrompt(cmd, "test-fixtures")
 	if err != nil {
@@ -431,7 +402,7 @@ func TestShowAnalysisPrompt(t *testing.T) {
 }
 
 func TestShowAnalysisPromptUnknown(t *testing.T) {
-	cmd, _ := newTestCmd(t)
+	cmd, _ := newTestCmd(t, "")
 
 	err := showAnalysisPrompt(cmd, "unknown-type")
 	if err == nil {
@@ -464,7 +435,7 @@ func TestPerFileAnalysis(t *testing.T) {
 		t.Fatalf("expandAndReadFiles: %v", err)
 	}
 
-	cmd, output := newTestCmd(t)
+	cmd, output := newTestCmd(t, "")
 
 	analysisType := analyze.GetType("refactor")
 	err = runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
@@ -472,16 +443,15 @@ func TestPerFileAnalysis(t *testing.T) {
 		t.Fatalf("runPerFileAnalysis: %v", err)
 	}
 
-	// Should have created 3 jobs (one per file)
-	if atomic.LoadInt32(&state.EnqueueCount) != 3 {
-		t.Errorf("expected 3 jobs, got %d", atomic.LoadInt32(&state.EnqueueCount))
+	// Should have created one job per file
+	expected := int32(len(files))
+	if state.EnqueueCount.Load() != expected {
+		t.Errorf("Expected %d enqueue, got %d", expected, state.EnqueueCount.Load())
 	}
 
 	// Output should mention all job IDs
 	outputStr := output.String()
-	if !strings.Contains(outputStr, "Created 3 jobs") {
-		t.Error("output should mention 3 jobs created")
-	}
+	assertContains(t, outputStr, "Created 3 jobs", "output should mention 3 jobs created")
 }
 
 func TestEnqueueAnalysisJob(t *testing.T) {
@@ -489,7 +459,11 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		JobIDStart: 42,
 		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
 			var req daemon.EnqueueRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
 			if req.Agentic != true {
 				t.Error("agentic should be true for analysis")
@@ -529,7 +503,10 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 		ts, _ := newMockServer(t, MockServerOpts{
 			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
 				var req daemon.EnqueueRequest
-				_ = json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				branch = req.Branch
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
@@ -588,7 +565,7 @@ func setupBranchTestRepo(t *testing.T) *TestGitRepo {
 }
 
 func TestGetBranchFiles(t *testing.T) {
-	cmd, _ := newTestCmd(t)
+	cmd, _ := newTestCmd(t, "")
 
 	t.Run("filters to code files only", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
@@ -657,9 +634,7 @@ func TestGetBranchFiles(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for no code files")
 		}
-		if !strings.Contains(err.Error(), "no code files changed") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assertContains(t, err.Error(), "no code files changed", "unexpected error")
 	})
 
 	t.Run("on base branch returns error", func(t *testing.T) {
@@ -673,9 +648,7 @@ func TestGetBranchFiles(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error when on base branch")
 		}
-		if !strings.Contains(err.Error(), "already on main") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assertContains(t, err.Error(), "already on main", "unexpected error")
 	})
 }
 
@@ -688,9 +661,7 @@ func TestAnalyzeBranchSpaceSeparated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "--branch=<name>") {
-		t.Errorf("error should suggest --branch=<name> syntax, got: %v", err)
-	}
+	assertContains(t, err.Error(), "--branch=<name>", "error should suggest --branch=<name> syntax")
 }
 
 func TestAnalyzeJSONOutput(t *testing.T) {
@@ -702,7 +673,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		files := map[string]string{"test.go": "package main"}
 		analysisType := analyze.GetType("refactor")
 
-		cmd, output := newTestCmd(t)
+		cmd, output := newTestCmd(t, "")
 
 		err := runSingleAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		if err != nil {
@@ -714,21 +685,12 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
 		}
 
-		if len(result.Jobs) != 1 {
-			t.Errorf("expected 1 job, got %d", len(result.Jobs))
+		want := AnalyzeResult{
+			AnalysisType: "refactor",
+			Files:        []string{"test.go"},
+			Jobs:         []AnalyzeJobInfo{{ID: 1, Agent: "test-agent"}},
 		}
-		if result.Jobs[0].ID != 1 {
-			t.Errorf("expected job ID 1, got %d", result.Jobs[0].ID)
-		}
-		if result.Jobs[0].Agent != "test-agent" {
-			t.Errorf("expected agent 'test-agent', got %q", result.Jobs[0].Agent)
-		}
-		if result.AnalysisType != "refactor" {
-			t.Errorf("expected analysis type 'refactor', got %q", result.AnalysisType)
-		}
-		if len(result.Files) != 1 || result.Files[0] != "test.go" {
-			t.Errorf("expected files ['test.go'], got %v", result.Files)
-		}
+		assertEqual(t, want, result, "AnalyzeResult mismatch")
 	})
 
 	t.Run("per-file analysis JSON output", func(t *testing.T) {
@@ -743,7 +705,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 
 		analysisType := analyze.GetType("complexity")
 
-		cmd, output := newTestCmd(t)
+		cmd, output := newTestCmd(t, "")
 
 		err := runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		if err != nil {
@@ -755,25 +717,16 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
 		}
 
-		if len(result.Jobs) != 3 {
-			t.Errorf("expected 3 jobs, got %d", len(result.Jobs))
+		want := AnalyzeResult{
+			AnalysisType: "complexity",
+			Files:        []string{"a.go", "b.go", "c.go"},
+			Jobs: []AnalyzeJobInfo{
+				{ID: 1, File: "a.go", Agent: "test-agent"},
+				{ID: 2, File: "b.go", Agent: "test-agent"},
+				{ID: 3, File: "c.go", Agent: "test-agent"},
+			},
 		}
-		// Jobs should be in sorted file order
-		expectedFiles := []string{"a.go", "b.go", "c.go"}
-		for i, info := range result.Jobs {
-			if info.File != expectedFiles[i] {
-				t.Errorf("job %d: expected file %q, got %q", i, expectedFiles[i], info.File)
-			}
-			if info.ID != int64(i+1) {
-				t.Errorf("job %d: expected ID %d, got %d", i, i+1, info.ID)
-			}
-		}
-		if result.AnalysisType != "complexity" {
-			t.Errorf("expected analysis type 'complexity', got %q", result.AnalysisType)
-		}
-		if len(result.Files) != 3 {
-			t.Errorf("expected 3 files, got %d", len(result.Files))
-		}
+		assertEqual(t, want, result, "AnalyzeResult mismatch")
 	})
 }
 
@@ -831,9 +784,7 @@ func TestAnalyzeBranchFlagValidation(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "--branch requires an analysis type") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assertContains(t, err.Error(), "--branch requires an analysis type", "unexpected error")
 	})
 
 	t.Run("branch cannot be combined with file patterns", func(t *testing.T) {
@@ -843,9 +794,7 @@ func TestAnalyzeBranchFlagValidation(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "cannot specify file patterns with --branch") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assertContains(t, err.Error(), "cannot specify file patterns with --branch", "unexpected error")
 	})
 
 	t.Run("branch with only analysis type is accepted by arg validation", func(t *testing.T) {

@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,7 @@ func initTestRepo(t *testing.T, initArgs ...string) *testRepo {
 
 func (r *testRepo) configure() {
 	r.t.Helper()
+	r.git("config", "core.hooksPath", os.DevNull)
 	r.git("config", "user.email", testGitEmail)
 	r.git("config", "user.name", testGitUser)
 }
@@ -61,6 +63,20 @@ func (r *testRepo) git(args ...string) string {
 		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func (r *testRepo) WriteFile(name, content string) {
+	r.t.Helper()
+	if err := os.WriteFile(filepath.Join(r.dir, name), []byte(content), 0644); err != nil {
+		r.t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+func (r *testRepo) CommitAll(msg string) string {
+	r.t.Helper()
+	r.git("add", "-A")
+	r.git("commit", "-m", msg)
+	return r.git("rev-parse", "HEAD")
 }
 
 func assertContains(t *testing.T, doc, substring, msg string) {
@@ -88,15 +104,9 @@ func setupTestRepo(t *testing.T) (string, []string) {
 
 	// Create 6 commits so we can test with 5 previous commits
 	for i := 1; i <= 6; i++ {
-		filename := filepath.Join(r.dir, "file.txt")
 		content := strings.Repeat("x", i) // Different content each time
-		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		r.git("add", "file.txt")
-		r.git("commit", "-m", "commit "+string(rune('0'+i)))
-
-		sha := r.git("rev-parse", "HEAD")
+		r.WriteFile("file.txt", content)
+		sha := r.CommitAll("commit " + string(rune('0'+i)))
 		commits = append(commits, sha)
 	}
 
@@ -124,6 +134,17 @@ type guidelinesRepoContext struct {
 	FeatureSHA string
 }
 
+type GuidelinesRepoOpts struct {
+	DefaultBranch    string
+	BaseGuidelines   string
+	BranchGuidelines string
+	SetupGitOverride func(t *testing.T, r *testRepo)
+}
+
+func formatGuidelinesTOML(guidelines string) string {
+	return fmt.Sprintf("review_guidelines = \"\"\"\n%s\n\"\"\"\n", guidelines)
+}
+
 // setupGuidelinesRepo creates a git repo with .roborev.toml on the
 // default branch and optionally a feature branch with different
 // guidelines. Returns guidelinesRepoContext.
@@ -132,11 +153,11 @@ type guidelinesRepoContext struct {
 // and remote setup (the caller must set up origin/fetch/symbolic-ref
 // if needed). This avoids running git fetch on a repo where setupGit
 // may have corrupted objects.
-func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuidelines string, setupGit func(t *testing.T, r *testRepo)) guidelinesRepoContext {
+func setupGuidelinesRepo(t *testing.T, opts GuidelinesRepoOpts) guidelinesRepoContext {
 	t.Helper()
-	r := newTestRepoWithBranch(t, defaultBranch)
-	if setupGit != nil {
-		setupGit(t, r)
+	r := newTestRepoWithBranch(t, opts.DefaultBranch)
+	if opts.SetupGitOverride != nil {
+		opts.SetupGitOverride(t, r)
 		return guidelinesRepoContext{
 			Dir:     r.dir,
 			BaseSHA: r.git("rev-parse", "HEAD"),
@@ -144,38 +165,26 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	}
 
 	// Initial commit with base guidelines
-	if baseGuidelines != "" {
-		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644); err != nil {
-			t.Fatalf("write .roborev.toml: %v", err)
-		}
+	if opts.BaseGuidelines != "" {
+		r.WriteFile(".roborev.toml", formatGuidelinesTOML(opts.BaseGuidelines))
 	} else {
-		if err := os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644); err != nil {
-			t.Fatalf("write README.md: %v", err)
-		}
+		r.WriteFile("README.md", "init")
 	}
-	r.git("add", "-A")
-	r.git("commit", "-m", "initial")
-	baseSHA := r.git("rev-parse", "HEAD")
+	baseSHA := r.CommitAll("initial")
 
 	// Set up origin pointing to itself so origin/<branch> exists
 	r.git("remote", "add", "origin", r.dir)
 	r.git("fetch", "origin")
 	// Set origin/HEAD to point to the default branch
-	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+opts.DefaultBranch)
 
 	// Create feature branch with different guidelines
 	var featureSHA string
-	if branchGuidelines != "" {
+	if opts.BranchGuidelines != "" {
 		r.git("checkout", "-b", "feature-branch")
-		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644); err != nil {
-			t.Fatalf("write .roborev.toml: %v", err)
-		}
-		r.git("add", ".roborev.toml")
-		r.git("commit", "-m", "update guidelines on branch")
-		featureSHA = r.git("rev-parse", "HEAD")
-		r.git("checkout", defaultBranch)
+		r.WriteFile(".roborev.toml", formatGuidelinesTOML(opts.BranchGuidelines))
+		featureSHA = r.CommitAll("update guidelines on branch")
+		r.git("checkout", opts.DefaultBranch)
 	}
 
 	return guidelinesRepoContext{

@@ -10,14 +10,14 @@ import (
 	"strconv"
 )
 
-// isPIDAliveForUpdateDefault returns true when pid exists.
+// isPIDAliveDefault returns true when pid exists.
 // Uses tasklist CSV output which is locale-independent.
-func isPIDAliveForUpdateDefault(pid int) bool {
+func isPIDAliveDefault(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 
-	exists, err := processExistsForUpdate(pid)
+	exists, err := processExists(pid)
 	if err != nil {
 		// Be conservative when existence cannot be determined.
 		return true
@@ -28,7 +28,7 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 
 	// PID exists. If identity lookup confirms it's not roborev daemon
 	// anymore, treat as exited (covers PID reuse after shutdown).
-	switch identifyPIDForUpdate(pid) {
+	switch identifyPID(pid) {
 	case updatePIDNotRoborev:
 		return false
 	case updatePIDRoborev:
@@ -39,7 +39,7 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 	}
 }
 
-func processExistsForUpdate(pid int) (bool, error) {
+func processExists(pid int) (bool, error) {
 	pidStr := strconv.Itoa(pid)
 	// Use an absolute path to avoid PATH/CWD binary hijacking.
 	cmd := exec.Command(tasklistPath(), "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
@@ -52,22 +52,22 @@ func processExistsForUpdate(pid int) (bool, error) {
 	return len(out) > 0 && bytes.Contains(out, quotedPID), nil
 }
 
-func identifyPIDForUpdate(pid int) updatePIDIdentity {
+func identifyPID(pid int) updatePIDIdentity {
 	pidStr := strconv.Itoa(pid)
 
 	// Try WMIC first for older Windows environments.
-	if cmdLine := getCommandLineWmicForUpdate(pidStr); cmdLine != "" {
-		return classifyCommandLineForUpdate(cmdLine)
+	if cmdLine := getCommandLineWmic(pidStr); cmdLine != "" {
+		return classifyCommandLine(cmdLine)
 	}
 	// Fall back to PowerShell CIM query on newer systems.
-	if cmdLine := getCommandLinePowerShellForUpdate(pidStr); cmdLine != "" {
-		return classifyCommandLineForUpdate(cmdLine)
+	if cmdLine := getCommandLinePowerShell(pidStr); cmdLine != "" {
+		return classifyCommandLine(cmdLine)
 	}
 
 	return updatePIDUnknown
 }
 
-func getCommandLineWmicForUpdate(pidStr string) string {
+func getCommandLineWmic(pidStr string) string {
 	cmd := exec.Command(
 		wmicPath(), "process", "where", "ProcessId="+pidStr, "get", "commandline",
 	)
@@ -75,10 +75,10 @@ func getCommandLineWmicForUpdate(pidStr string) string {
 	if err != nil {
 		return ""
 	}
-	return parseWmicOutputForUpdate(output)
+	return parseWmicOutput(output)
 }
 
-func getCommandLinePowerShellForUpdate(pidStr string) string {
+func getCommandLinePowerShell(pidStr string) string {
 	// Force UTF-8 output to avoid UTF-16LE capture issues.
 	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
 		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
@@ -89,21 +89,21 @@ func getCommandLinePowerShellForUpdate(pidStr string) string {
 	if err != nil {
 		return ""
 	}
-	return normalizeCommandLineBytesForUpdate(output)
+	return normalizeCommandLineBytes(output)
 }
 
-func classifyCommandLineForUpdate(cmdLine string) updatePIDIdentity {
-	cmdLine = normalizeCommandLineForUpdate(cmdLine)
+func classifyCommandLine(cmdLine string) updatePIDIdentity {
+	cmdLine = normalizeCommandLine(cmdLine)
 	if cmdLine == "" {
 		return updatePIDUnknown
 	}
-	if isRoborevDaemonCommandForUpdate(cmdLine) {
+	if isRoborevDaemonCommand(cmdLine) {
 		return updatePIDRoborev
 	}
 	return updatePIDNotRoborev
 }
 
-func systemRootForUpdate() string {
+func systemRoot() string {
 	systemRoot := os.Getenv("SystemRoot")
 	if systemRoot == "" {
 		systemRoot = os.Getenv("WINDIR")
@@ -115,16 +115,16 @@ func systemRootForUpdate() string {
 }
 
 func tasklistPath() string {
-	return filepath.Join(systemRootForUpdate(), "System32", "tasklist.exe")
+	return filepath.Join(systemRoot(), "System32", "tasklist.exe")
 }
 
 func wmicPath() string {
-	return filepath.Join(systemRootForUpdate(), "System32", "wbem", "wmic.exe")
+	return filepath.Join(systemRoot(), "System32", "wbem", "wmic.exe")
 }
 
 func powershellPath() string {
 	return filepath.Join(
-		systemRootForUpdate(),
+		systemRoot(),
 		"System32", "WindowsPowerShell", "v1.0", "powershell.exe",
 	)
 }

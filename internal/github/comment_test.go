@@ -104,8 +104,77 @@ func setExecCommand(t *testing.T, fn func(context.Context, string, ...string) *e
 	t.Cleanup(func() { execCommand = orig })
 }
 
+func mockGHSequence(t *testing.T, actions ...string) {
+	t.Helper()
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if callCount < len(actions) {
+			action := actions[callCount]
+			callCount++
+			return helperCmd(action)(ctx, name, args...)
+		}
+		t.Fatalf("unexpected extra gh call: %v", args)
+		return nil
+	})
+	t.Cleanup(func() {
+		if callCount != len(actions) {
+			t.Errorf("expected %d gh calls, got %d", len(actions), callCount)
+		}
+	})
+}
+
+// setupCaptureMock configures the exec mock to execute prefixActions and then capture stdin.
+// It returns a function that can be called to read the captured data.
+func setupCaptureMock(t *testing.T, prefixActions ...string) func() string {
+	t.Helper()
+	captureFile := filepath.Join(t.TempDir(), "capture.txt")
+
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if callCount < len(prefixActions) {
+			action := prefixActions[callCount]
+			callCount++
+			return helperCmd(action)(ctx, name, args...)
+		}
+		callCount++
+		if callCount == len(prefixActions)+1 {
+			return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+		}
+		t.Fatalf("unexpected extra gh call: %v", args)
+		return nil
+	})
+
+	t.Cleanup(func() {
+		if callCount != len(prefixActions)+1 {
+			t.Errorf("expected %d gh calls, got %d", len(prefixActions)+1, callCount)
+		}
+	})
+
+	return func() string {
+		t.Helper()
+		data, err := os.ReadFile(captureFile)
+		if err != nil {
+			t.Fatalf("read capture file: %v", err)
+		}
+		return string(data)
+	}
+}
+
+func assertTruncatedBody(t *testing.T, body string) {
+	t.Helper()
+	if !strings.HasPrefix(body, CommentMarker) {
+		t.Fatal("marker lost after truncation")
+	}
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation suffix")
+	}
+	if len(body) > review.MaxCommentLen {
+		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d", len(body), review.MaxCommentLen)
+	}
+}
+
 func TestFindExistingComment_NoMatch(t *testing.T) {
-	setExecCommand(t, helperCmd("find_none"))
+	mockGHSequence(t, "find_none")
 
 	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
 	if err != nil {
@@ -117,7 +186,7 @@ func TestFindExistingComment_NoMatch(t *testing.T) {
 }
 
 func TestFindExistingComment_Found(t *testing.T) {
-	setExecCommand(t, helperCmd("find_existing"))
+	mockGHSequence(t, "find_existing")
 
 	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
 	if err != nil {
@@ -129,7 +198,7 @@ func TestFindExistingComment_Found(t *testing.T) {
 }
 
 func TestFindExistingComment_Error(t *testing.T) {
-	setExecCommand(t, helperCmd("find_fail"))
+	mockGHSequence(t, "find_fail")
 
 	_, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
 	if err == nil {
@@ -138,113 +207,51 @@ func TestFindExistingComment_Error(t *testing.T) {
 }
 
 func TestUpsertPRComment_Create(t *testing.T) {
-	// Two-phase: find returns nothing, then create succeeds.
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_none")(ctx, name, args...)
-		}
-		return helperCmd("create_ok")(ctx, name, args...)
-	})
+	mockGHSequence(t, "find_none", "create_ok")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "review body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 2 {
-		t.Fatalf("expected 2 gh calls, got %d", callCount)
-	}
 }
 
 func TestUpsertPRComment_Update(t *testing.T) {
-	// Two-phase: find returns ID, then patch succeeds.
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_existing")(ctx, name, args...)
-		}
-		return helperCmd("patch_ok")(ctx, name, args...)
-	})
+	mockGHSequence(t, "find_existing", "patch_ok")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "updated body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 2 {
-		t.Fatalf("expected 2 gh calls, got %d", callCount)
-	}
 }
 
 func TestUpsertPRComment_MarkerPrepended(t *testing.T) {
-	// Exercise UpsertPRComment and capture the stdin sent to "gh pr comment"
-	// to verify the marker is prepended.
-	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_none")(ctx, name, args...)
-		}
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t, "find_none")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "test review", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
-	body := string(data)
+
+	body := readCapture()
 	if !strings.HasPrefix(body, CommentMarker+"\n") {
 		t.Fatalf("marker not at start of body: %q", body[:min(80, len(body))])
 	}
 }
 
 func TestUpsertPRComment_Truncation(t *testing.T) {
-	// Exercise UpsertPRComment with an oversized body and verify the
-	// marker survives and the body is truncated.
-	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_none")(ctx, name, args...)
-		}
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t, "find_none")
 
 	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, bigBody, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
-	body := string(data)
-	if !strings.HasPrefix(body, CommentMarker) {
-		t.Fatal("marker lost after truncation")
-	}
-	if !strings.Contains(body, "truncated") {
-		t.Fatal("expected truncation suffix")
-	}
-	// Verify total length does not exceed MaxCommentLen.
-	if len(body) > review.MaxCommentLen {
-		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
-			len(body), review.MaxCommentLen)
-	}
-	if !strings.Contains(body, "truncated") {
-		t.Fatal("expected truncation suffix in body")
-	}
+
+	assertTruncatedBody(t, readCapture())
 }
 
 func TestUpsertPRComment_FindError(t *testing.T) {
-	setExecCommand(t, helperCmd("find_fail"))
+	mockGHSequence(t, "find_fail")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err == nil {
@@ -256,7 +263,7 @@ func TestUpsertPRComment_FindError(t *testing.T) {
 }
 
 func TestUpsertPRComment_EnvPassthrough(t *testing.T) {
-	setExecCommand(t, helperCmd("check_env"))
+	mockGHSequence(t, "check_env")
 
 	env := append(os.Environ(), "GH_TOKEN=test-token-123")
 	id, err := FindExistingComment(context.Background(), "owner/repo", 1, env)
@@ -271,7 +278,7 @@ func TestUpsertPRComment_EnvPassthrough(t *testing.T) {
 func TestFindExistingComment_MultiLineOutput(t *testing.T) {
 	// When --paginate produces multiple IDs across pages, the last
 	// non-empty line (newest comment) should be used.
-	setExecCommand(t, helperCmd("find_multi_line"))
+	mockGHSequence(t, "find_multi_line")
 
 	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
 	if err != nil {
@@ -283,17 +290,7 @@ func TestFindExistingComment_MultiLineOutput(t *testing.T) {
 }
 
 func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
-	// Exercise the update path and verify the PATCH stdin is valid JSON
-	// with a "body" key containing the marker.
-	captureFile := filepath.Join(t.TempDir(), "patch.json")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_existing")(ctx, name, args...)
-		}
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t, "find_existing")
 
 	// Include control characters (\v, \a) that strconv.Quote would escape
 	// with Go-specific sequences invalid in JSON.
@@ -303,13 +300,10 @@ func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
+	data := readCapture()
 
 	var payload map[string]string
-	if err := json.Unmarshal(data, &payload); err != nil {
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		t.Fatalf("PATCH payload is not valid JSON: %v\npayload: %s", err, string(data))
 	}
 	body, ok := payload["body"]
@@ -327,14 +321,7 @@ func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
 }
 
 func TestUpsertPRComment_CreateFail(t *testing.T) {
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_none")(ctx, name, args...)
-		}
-		return helperCmd("create_fail")(ctx, name, args...)
-	})
+	mockGHSequence(t, "find_none", "create_fail")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err == nil {
@@ -346,64 +333,25 @@ func TestUpsertPRComment_CreateFail(t *testing.T) {
 }
 
 func TestUpsertPRComment_PatchFail403FallsBackToCreate(t *testing.T) {
-	// When PATCH fails with 403, UpsertPRComment should fall back
-	// to creating a new comment.
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		switch callCount {
-		case 1:
-			return helperCmd("find_existing")(ctx, name, args...)
-		case 2:
-			return helperCmd("patch_fail_403")(ctx, name, args...)
-		default:
-			return helperCmd("create_ok")(ctx, name, args...)
-		}
-	})
+	mockGHSequence(t, "find_existing", "patch_fail_403", "create_ok")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if callCount != 3 {
-		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
 	}
 }
 
 func TestUpsertPRComment_PatchFail404FallsBackToCreate(t *testing.T) {
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		switch callCount {
-		case 1:
-			return helperCmd("find_existing")(ctx, name, args...)
-		case 2:
-			return helperCmd("patch_fail_404")(ctx, name, args...)
-		default:
-			return helperCmd("create_ok")(ctx, name, args...)
-		}
-	})
+	mockGHSequence(t, "find_existing", "patch_fail_404", "create_ok")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 3 {
-		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
-	}
 }
 
 func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
-	// Non-ownership PATCH errors (e.g. network/rate-limit) should
-	// propagate instead of silently creating a duplicate.
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_existing")(ctx, name, args...)
-		}
-		return helperCmd("patch_fail")(ctx, name, args...)
-	})
+	mockGHSequence(t, "find_existing", "patch_fail")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err == nil {
@@ -412,60 +360,26 @@ func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
 	if !strings.Contains(err.Error(), "patch comment") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 2 {
-		t.Fatalf("expected 2 gh calls (find+patch), got %d", callCount)
-	}
 }
 
 func TestUpsertPRComment_MultipleIDs_PatchNewestFails403(t *testing.T) {
-	// When multiple marker comments exist and the newest one can't be
-	// patched (403 — different owner), fall back to creating a new comment.
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		switch callCount {
-		case 1:
-			// Find returns multiple IDs; newest (30) is selected.
-			return helperCmd("find_multi_line")(ctx, name, args...)
-		case 2:
-			// PATCH on ID 30 fails with 403.
-			return helperCmd("patch_fail_403")(ctx, name, args...)
-		default:
-			// Falls back to create.
-			return helperCmd("create_ok")(ctx, name, args...)
-		}
-	})
+	mockGHSequence(t, "find_multi_line", "patch_fail_403", "create_ok")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 3 {
-		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
-	}
 }
 
 func TestCreatePRComment_AlwaysCreates(t *testing.T) {
-	// CreatePRComment should always call create (never find/patch).
-	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t)
 
 	err := CreatePRComment(context.Background(), "owner/repo", 1, "test body", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if callCount != 1 {
-		t.Fatalf("expected 1 gh call (create only), got %d", callCount)
-	}
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
-	body := string(data)
+
+	body := readCapture()
 	if !strings.HasPrefix(body, CommentMarker+"\n") {
 		t.Fatalf("marker not at start of body: %q", body[:min(80, len(body))])
 	}
@@ -475,76 +389,34 @@ func TestCreatePRComment_AlwaysCreates(t *testing.T) {
 }
 
 func TestCreatePRComment_Truncation(t *testing.T) {
-	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t)
 
 	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
 	err := CreatePRComment(context.Background(), "owner/repo", 1, bigBody, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
-	body := string(data)
-	if !strings.HasPrefix(body, CommentMarker) {
-		t.Fatal("marker lost after truncation")
-	}
-	if !strings.Contains(body, "truncated") {
-		t.Fatal("expected truncation suffix")
-	}
-	if len(body) > review.MaxCommentLen {
-		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
-			len(body), review.MaxCommentLen)
-	}
+
+	assertTruncatedBody(t, readCapture())
 }
 
 func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
-	// Place a 4-byte emoji (😀) so it straddles the actual cut
-	// boundary (maxBody = MaxCommentLen - len(truncSuffix)).
-	// After marker prepend the full body is:
-	//   CommentMarker + "\n" + input
-	// The cut point in the full body is at byte offset maxBody.
 	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 	maxBody := review.MaxCommentLen - len(truncSuffix)
 	markerOverhead := len(CommentMarker) + 1 // marker + "\n"
-	// We want the emoji to start 2 bytes before the cut point
-	// so a naive byte slice would land inside the 4-byte emoji.
 	paddingLen := maxBody - markerOverhead - 2
 	input := strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100)
 
-	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		if callCount == 1 {
-			return helperCmd("find_none")(ctx, name, args...)
-		}
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
+	readCapture := setupCaptureMock(t, "find_none")
 
 	err := UpsertPRComment(context.Background(), "owner/repo", 1, input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	data, err := os.ReadFile(captureFile)
-	if err != nil {
-		t.Fatalf("read capture file: %v", err)
-	}
-	body := string(data)
+
+	body := readCapture()
 	if !utf8.ValidString(body) {
 		t.Fatal("truncated body is not valid UTF-8")
 	}
-	if len(body) > review.MaxCommentLen {
-		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
-			len(body), review.MaxCommentLen)
-	}
-	if !strings.Contains(body, "truncated") {
-		t.Fatal("expected truncation suffix")
-	}
+	assertTruncatedBody(t, body)
 }

@@ -35,6 +35,8 @@ type Broadcaster interface {
 	SubscriberCount() int
 }
 
+const DefaultBufferSize = 10
+
 // EventBroadcaster implements the Broadcaster interface
 type EventBroadcaster struct {
 	mu          sync.RWMutex
@@ -59,7 +61,7 @@ func (b *EventBroadcaster) Subscribe(repoPath string) (int, <-chan Event) {
 	id := b.nextID
 	b.nextID++
 
-	ch := make(chan Event, 10) // Buffer to prevent blocking
+	ch := make(chan Event, DefaultBufferSize) // Buffer to prevent blocking
 	sub := &Subscriber{
 		ID:       id,
 		RepoPath: repoPath,

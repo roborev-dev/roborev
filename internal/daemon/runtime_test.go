@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -72,37 +73,39 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 }
 
 func TestFindAvailablePort(t *testing.T) {
-	// Test finding an available port
-	addr, port, err := FindAvailablePort(defaultTestAddr)
-	if err != nil {
-		t.Fatalf("FindAvailablePort failed: %v", err)
-	}
+	t.Run("Default", func(t *testing.T) {
+		// Test finding an available port
+		addr, port, err := FindAvailablePort(defaultTestAddr)
+		if err != nil {
+			t.Fatalf("FindAvailablePort failed: %v", err)
+		}
 
-	if addr == "" {
-		t.Error("Expected non-empty address")
-	}
-	if port < defaultTestPort {
-		t.Errorf("Expected port >= %d, got %d", defaultTestPort, port)
-	}
-}
+		if addr == "" {
+			t.Error("Expected non-empty address")
+		}
+		if port < defaultTestPort {
+			t.Errorf("Expected port >= %d, got %d", defaultTestPort, port)
+		}
+	})
 
-func TestFindAvailablePort_Ephemeral(t *testing.T) {
-	// Test finding an available port with ephemeral :0
-	addr, port, err := FindAvailablePort("127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("FindAvailablePort failed for ephemeral port: %v", err)
-	}
+	t.Run("Ephemeral", func(t *testing.T) {
+		// Test finding an available port with ephemeral :0
+		addr, port, err := FindAvailablePort("127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("FindAvailablePort failed for ephemeral port: %v", err)
+		}
 
-	if addr == "" {
-		t.Error("Expected non-empty address")
-	}
-	if port == 0 {
-		t.Error("Expected non-zero port assigned by OS")
-	}
-	expectedAddr := fmt.Sprintf("127.0.0.1:%d", port)
-	if addr != expectedAddr {
-		t.Errorf("Expected address %q, got %q", expectedAddr, addr)
-	}
+		if addr == "" {
+			t.Error("Expected non-empty address")
+		}
+		if port == 0 {
+			t.Error("Expected non-zero port assigned by OS")
+		}
+		expectedAddr := fmt.Sprintf("127.0.0.1:%d", port)
+		if addr != expectedAddr {
+			t.Errorf("Expected address %q, got %q", expectedAddr, addr)
+		}
+	})
 }
 
 func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
@@ -130,9 +133,9 @@ func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
 }
 
 func TestRuntimeInfoReadWrite(t *testing.T) {
-	testenv.SetDataDir(t)
-
 	t.Run("WriteAndRead", func(t *testing.T) {
+		testenv.SetDataDir(t)
+
 		// Write runtime info
 		err := WriteRuntime(defaultTestAddr, defaultTestPort, "test-version")
 		if err != nil {
@@ -160,11 +163,19 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 	})
 
 	t.Run("Remove", func(t *testing.T) {
+		testenv.SetDataDir(t)
+
+		// Write runtime info so it exists to be removed
+		err := WriteRuntime(defaultTestAddr, defaultTestPort, "test-version")
+		if err != nil {
+			t.Fatalf("WriteRuntime failed: %v", err)
+		}
+
 		// Remove it
 		RemoveRuntime()
 
 		// Should fail to read now
-		_, err := ReadRuntime()
+		_, err = ReadRuntime()
 		if err == nil {
 			t.Error("Expected error after RemoveRuntime")
 		}
@@ -172,12 +183,6 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 }
 
 func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
-	// Verify that isLoopbackAddr correctly rejects non-loopback addresses,
-	// which prevents KillDaemon from making HTTP requests to them.
-	if isLoopbackAddr("192.168.1.100:7373") {
-		t.Fatal("192.168.1.100:7373 should not be identified as loopback")
-	}
-
 	// Mock identifyProcess so we don't have to rely on actual OS PID behavior
 	mockIdentifyProcess(t, func(pid int) processIdentity {
 		return processNotRoborev
@@ -191,7 +196,7 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 		Addr: "192.168.1.100:7373", // Non-loopback address
 	}
 
-	result := KillDaemon(info)
+	result := KillDaemon(context.Background(), info)
 
 	// killProcess confirms the process is not roborev, so KillDaemon returns true
 	if !result {
@@ -263,34 +268,36 @@ func TestIdentifyProcessTriState(t *testing.T) {
 	}
 }
 
-func TestKillProcessConservativeOnUnknown(t *testing.T) {
-	// Test that killProcess is conservative when process identity is unknown
-	// Using a very high PID that almost certainly doesn't exist
-	nonExistentPID := math.MaxInt32
+func TestKillProcess(t *testing.T) {
+	t.Run("ConservativeOnNonExistentPID", func(t *testing.T) {
+		// Test that killProcess is conservative when process identity is unknown
+		// Using a very high PID that almost certainly doesn't exist
+		nonExistentPID := math.MaxInt32
 
-	// killProcess should return true for non-existent PID (process is dead)
-	// This is safe because the process doesn't exist at all
-	result := killProcess(nonExistentPID)
-	if !result {
-		t.Error("killProcess should return true for non-existent PID")
-	}
-}
-
-func TestKillProcessUnknownIdentityIsConservative(t *testing.T) {
-	// Mock identifyProcess to always return unknown
-	mockIdentifyProcess(t, func(pid int) processIdentity {
-		return processUnknown
+		// killProcess should return true for non-existent PID (process is dead)
+		// This is safe because the process doesn't exist at all
+		result := killProcess(nonExistentPID)
+		if !result {
+			t.Error("killProcess should return true for non-existent PID")
+		}
 	})
 
-	// Use current process PID (definitely exists)
-	currentPID := os.Getpid()
+	t.Run("ConservativeOnUnknownIdentity", func(t *testing.T) {
+		// Mock identifyProcess to always return unknown
+		mockIdentifyProcess(t, func(pid int) processIdentity {
+			return processUnknown
+		})
 
-	// killProcess should return false (conservative - don't clean up)
-	// when identity is unknown for a live process
-	result := killProcess(currentPID)
-	if result {
-		t.Error("killProcess should return false (conservative) when identity is unknown for live process")
-	}
+		// Use current process PID (definitely exists)
+		currentPID := os.Getpid()
+
+		// killProcess should return false (conservative - don't clean up)
+		// when identity is unknown for a live process
+		result := killProcess(currentPID)
+		if result {
+			t.Error("killProcess should return false (conservative) when identity is unknown for live process")
+		}
+	})
 }
 
 func TestIsLoopbackAddr(t *testing.T) {
@@ -427,7 +434,7 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	}
 
 	// Set ROBOREV_DATA_DIR to the directory with metacharacters
-	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	testenv.SetDataDirWithPath(t, dataDir)
 
 	// Create a valid runtime file
 	createRuntimeFile(t, dataDir, math.MaxInt32, nil)

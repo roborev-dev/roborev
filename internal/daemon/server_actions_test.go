@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -116,174 +117,92 @@ func TestHandlePing(t *testing.T) {
 	})
 }
 
-func TestHandleCancelJob(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
-
-	// Create a repo and job
-	job := createTestJob(t, db, tmpDir, "canceltest", "test")
-
-	t.Run("cancel queued job", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		updated, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusCanceled {
-			t.Errorf("Expected status 'canceled', got '%s'", updated.Status)
-		}
-	})
-
-	t.Run("cancel already canceled job fails", func(t *testing.T) {
-		// Job is already canceled from previous test
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for already canceled job, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel nonexistent job fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: 99999})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for nonexistent job, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel with missing job_id fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]any{})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing job_id, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel with wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/cancel", nil)
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for GET, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel running job", func(t *testing.T) {
-		// Create a new job and claim it
-		commit2, err := db.GetOrCreateCommit(job.RepoID, "cancelrunning", "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		job2, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: job.RepoID, CommitID: commit2.ID, GitRef: "cancelrunning", Agent: "test"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		if _, err := db.ClaimJob("worker-1"); err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job2.ID})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		updated, err := db.GetJobByID(job2.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusCanceled {
-			t.Errorf("Expected status 'canceled', got '%s'", updated.Status)
-		}
-	})
+func assertHandlerStatus(t *testing.T, handler http.HandlerFunc, req *http.Request, wantCode int) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != wantCode {
+		t.Fatalf("Expected status %d, got %d: %s", wantCode, w.Code, w.Body.String())
+	}
+	return w
 }
 
-func TestHandleRerunJob(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
-
-	// Create a repo
-	repo, err := db.GetOrCreateRepo(tmpDir)
+func createJobWithStatus(t *testing.T, db *storage.DB, repoID int64, ref string, status storage.JobStatus) *storage.ReviewJob {
+	t.Helper()
+	commit, err := db.GetOrCreateCommit(repoID, ref, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repoID, CommitID: commit.ID, GitRef: ref, Agent: "test"})
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
 	}
 
-	t.Run("rerun failed job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "test"})
-		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "", "some error")
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
-
-		server.handleRerunJob(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		updated, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
-		}
-	})
-
-	t.Run("rerun canceled job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-canceled", Agent: "test"})
-		db.CancelJob(job.ID)
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
-
-		server.handleRerunJob(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		updated, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
-		}
-	})
-
-	t.Run("rerun done job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-done", Agent: "test"})
-		// Claim and complete job
+	switch status {
+	case storage.JobStatusRunning:
+		var skipped []int64
 		var claimed *storage.ReviewJob
+		workerIdx := 1
 		for {
-			claimed, _ = db.ClaimJob("worker-1")
+			var err error
+			workerID := fmt.Sprintf("worker-%d", workerIdx)
+			workerIdx++
+			claimed, err = db.ClaimJob(workerID)
+			if err != nil {
+				t.Fatalf("ClaimJob failed: %v", err)
+			}
 			if claimed == nil {
-				t.Fatal("No job to claim")
+				t.Fatalf("ClaimJob found no jobs but wanted %v", job.ID)
+			}
+			if claimed.ID == job.ID {
+				break
+			}
+			skipped = append(skipped, claimed.ID)
+		}
+		for _, id := range skipped {
+			if err := db.CancelJob(id); err != nil {
+				t.Fatalf("CancelJob before ReenqueueJob failed: %v", err)
+			}
+			if err := db.ReenqueueJob(id); err != nil {
+				t.Fatalf("ReenqueueJob failed: %v", err)
+			}
+		}
+	case storage.JobStatusFailed:
+		var skipped []int64
+		var claimed *storage.ReviewJob
+		workerIdx := 1
+		for {
+			var err error
+			workerID := fmt.Sprintf("worker-%d", workerIdx)
+			workerIdx++
+			claimed, err = db.ClaimJob(workerID)
+			if err != nil {
+				t.Fatalf("ClaimJob failed: %v", err)
+			}
+			if claimed == nil {
+				t.Fatalf("ClaimJob found no jobs but wanted %v", job.ID)
+			}
+			if claimed.ID == job.ID {
+				break
+			}
+			skipped = append(skipped, claimed.ID)
+		}
+		for _, id := range skipped {
+			if err := db.CancelJob(id); err != nil {
+				t.Fatalf("CancelJob before ReenqueueJob failed: %v", err)
+			}
+			if err := db.ReenqueueJob(id); err != nil {
+				t.Fatalf("ReenqueueJob failed: %v", err)
+			}
+		}
+		db.FailJob(job.ID, "", "some error")
+	case storage.JobStatusCanceled:
+		db.CancelJob(job.ID)
+	case storage.JobStatusDone:
+		for {
+			claimed, err := db.ClaimJob("worker-1")
+			if err != nil || claimed == nil {
+				t.Fatalf("ClaimJob failed: %v", err)
 			}
 			if claimed.ID == job.ID {
 				break
@@ -291,71 +210,238 @@ func TestHandleRerunJob(t *testing.T) {
 			db.CompleteJob(claimed.ID, "test", "prompt", "output")
 		}
 		db.CompleteJob(job.ID, "test", "prompt", "output")
+	}
 
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
+	return job
+}
 
-		server.handleRerunJob(w, req)
+func TestHandleCancelJob(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		setupJob   func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob
+		payloadFn  func(jobID int64) any
+		wantStatus int
+	}{
+		{
+			"cancel queued job",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "cancelqueued", storage.JobStatusQueued)
+			},
+			func(id int64) any { return CancelJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"cancel already canceled job fails",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "cancelcanceled", storage.JobStatusCanceled)
+			},
+			func(id int64) any { return CancelJobRequest{JobID: id} },
+			http.StatusNotFound,
+		},
+		{
+			"cancel nonexistent job fails",
+			http.MethodPost,
+			nil,
+			func(id int64) any { return CancelJobRequest{JobID: 99999} },
+			http.StatusNotFound,
+		},
+		{
+			"cancel with missing job_id fails",
+			http.MethodPost,
+			nil,
+			func(id int64) any { return map[string]any{} },
+			http.StatusBadRequest,
+		},
+		{
+			"cancel with wrong method fails",
+			http.MethodGet,
+			nil,
+			func(id int64) any { return nil },
+			http.StatusMethodNotAllowed,
+		},
+		{
+			"cancel running job",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "cancelrunning", storage.JobStatusRunning)
+			},
+			func(id int64) any { return CancelJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"cancel running job with older queued job present",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				createJobWithStatus(t, db, repoID, "olderqueued", storage.JobStatusQueued)
+				return createJobWithStatus(t, db, repoID, "cancelrunning-multi", storage.JobStatusRunning)
+			},
+			func(id int64) any { return CancelJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+	}
 
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
 
-		updated, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
-		}
-	})
+			repo, err := db.GetOrCreateRepo(tmpDir)
+			if err != nil {
+				t.Fatalf("GetOrCreateRepo failed: %v", err)
+			}
 
-	t.Run("rerun queued job fails", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-queued", Agent: "test"})
+			var checkJob *storage.ReviewJob
+			if tt.setupJob != nil {
+				checkJob = tt.setupJob(t, db, repo.ID)
+			}
 
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
+			var payload any
+			if checkJob != nil {
+				payload = tt.payloadFn(checkJob.ID)
+			} else {
+				payload = tt.payloadFn(0)
+			}
 
-		server.handleRerunJob(w, req)
+			var req *http.Request
+			if payload != nil {
+				req = testutil.MakeJSONRequest(t, tt.method, "/api/job/cancel", payload)
+			} else {
+				req = httptest.NewRequest(tt.method, "/api/job/cancel", nil)
+			}
+			assertHandlerStatus(t, server.handleCancelJob, req, tt.wantStatus)
 
-		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for queued job, got %d", w.Code)
-		}
-	})
+			if checkJob != nil && tt.wantStatus == http.StatusOK {
+				updated, err := db.GetJobByID(checkJob.ID)
+				if err != nil {
+					t.Fatalf("GetJobByID failed: %v", err)
+				}
+				if updated.Status != storage.JobStatusCanceled {
+					t.Errorf("Expected status 'canceled', got '%s'", updated.Status)
+				}
+			}
+		})
+	}
+}
 
-	t.Run("rerun nonexistent job fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: 99999})
-		w := httptest.NewRecorder()
+func TestHandleRerunJob(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		setupJob   func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob
+		payloadFn  func(jobID int64) any
+		wantStatus int
+	}{
+		{
+			"rerun failed job",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "rerun-failed", storage.JobStatusFailed)
+			},
+			func(id int64) any { return RerunJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"rerun failed job with older queued job present",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				createJobWithStatus(t, db, repoID, "olderqueued", storage.JobStatusQueued)
+				return createJobWithStatus(t, db, repoID, "rerun-failed-multi", storage.JobStatusFailed)
+			},
+			func(id int64) any { return RerunJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"rerun canceled job",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "rerun-canceled", storage.JobStatusCanceled)
+			},
+			func(id int64) any { return RerunJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"rerun done job",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "rerun-done", storage.JobStatusDone)
+			},
+			func(id int64) any { return RerunJobRequest{JobID: id} },
+			http.StatusOK,
+		},
+		{
+			"rerun queued job fails",
+			http.MethodPost,
+			func(t *testing.T, db *storage.DB, repoID int64) *storage.ReviewJob {
+				return createJobWithStatus(t, db, repoID, "rerun-queued", storage.JobStatusQueued)
+			},
+			func(id int64) any { return RerunJobRequest{JobID: id} },
+			http.StatusNotFound,
+		},
+		{
+			"rerun nonexistent job fails",
+			http.MethodPost,
+			nil,
+			func(id int64) any { return RerunJobRequest{JobID: 99999} },
+			http.StatusNotFound,
+		},
+		{
+			"rerun with missing job_id fails",
+			http.MethodPost,
+			nil,
+			func(id int64) any { return map[string]any{} },
+			http.StatusBadRequest,
+		},
+		{
+			"rerun with invalid method fails",
+			http.MethodGet,
+			nil,
+			func(id int64) any { return nil },
+			http.StatusMethodNotAllowed,
+		},
+	}
 
-		server.handleRerunJob(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
 
-		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for nonexistent job, got %d", w.Code)
-		}
-	})
+			repo, err := db.GetOrCreateRepo(tmpDir)
+			if err != nil {
+				t.Fatalf("GetOrCreateRepo failed: %v", err)
+			}
 
-	t.Run("rerun with missing job_id fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", map[string]any{})
-		w := httptest.NewRecorder()
+			var checkJob *storage.ReviewJob
+			if tt.setupJob != nil {
+				checkJob = tt.setupJob(t, db, repo.ID)
+			}
 
-		server.handleRerunJob(w, req)
+			var payload any
+			if checkJob != nil {
+				payload = tt.payloadFn(checkJob.ID)
+			} else {
+				payload = tt.payloadFn(0)
+			}
 
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing job_id, got %d", w.Code)
-		}
-	})
+			var req *http.Request
+			if payload != nil {
+				req = testutil.MakeJSONRequest(t, tt.method, "/api/job/rerun", payload)
+			} else {
+				req = httptest.NewRequest(tt.method, "/api/job/rerun", nil)
+			}
+			assertHandlerStatus(t, server.handleRerunJob, req, tt.wantStatus)
 
-	t.Run("rerun with invalid method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/rerun", nil)
-		w := httptest.NewRecorder()
-
-		server.handleRerunJob(w, req)
-
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for GET, got %d", w.Code)
-		}
-	})
+			if checkJob != nil && tt.wantStatus == http.StatusOK {
+				updated, err := db.GetJobByID(checkJob.ID)
+				if err != nil {
+					t.Fatalf("GetJobByID failed: %v", err)
+				}
+				if updated.Status != storage.JobStatusQueued {
+					t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+				}
+			}
+		})
+	}
 }
 
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs

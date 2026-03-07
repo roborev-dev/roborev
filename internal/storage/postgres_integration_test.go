@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,6 +162,47 @@ func (e *integrationEnv) pgQueryString(query string, args ...interface{}) string
 	return val
 }
 
+func assertHasJobUUIDs(t *testing.T, jobs []ReviewJob, expectedUUIDs ...string) {
+	t.Helper()
+	found := make(map[string]bool)
+	for _, j := range jobs {
+		found[j.UUID] = true
+	}
+
+	for _, id := range expectedUUIDs {
+		if !found[id] {
+			t.Errorf("Missing expected job UUID: %s", id)
+		}
+	}
+}
+
+func createWorkerConfig(pgURL, machineName, interval string) config.SyncConfig {
+	if interval == "" {
+		interval = "100ms"
+	}
+	return config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    pgURL,
+		Interval:       interval,
+		MachineName:    machineName,
+		ConnectTimeout: "5s",
+	}
+}
+
+func enqueueAndComplete(db *DB, opts EnqueueOpts, prompt, output string) (*ReviewJob, error) {
+	job, err := db.EnqueueJob(opts)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+		return nil, err
+	}
+	if err := db.CompleteJob(job.ID, opts.Agent, prompt, output); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 // tryCreateCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
 // Returns the job, review, and any error. Safe to call from goroutines (does not call t.Fatalf).
 func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review, error) {
@@ -168,15 +210,9 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 	if err != nil {
 		return nil, nil, fmt.Errorf("GetOrCreateCommit failed: %w", err)
 	}
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
+	job, err := enqueueAndComplete(db, EnqueueOpts{RepoID: repoID, CommitID: commit.ID, GitRef: sha, Agent: "test"}, prompt, output)
 	if err != nil {
-		return nil, nil, fmt.Errorf("EnqueueJob failed: %w", err)
-	}
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-		return nil, nil, fmt.Errorf("failed to set job running: %w", err)
-	}
-	if err := db.CompleteJob(job.ID, "test", prompt, output); err != nil {
-		return nil, nil, fmt.Errorf("CompleteJob failed: %w", err)
+		return nil, nil, fmt.Errorf("enqueueAndComplete failed: %w", err)
 	}
 	review, err := db.GetReviewByJobID(job.ID)
 	if err != nil {
@@ -198,15 +234,9 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 
 // tryCreateCompletedReviewWithoutCommit creates a job and completes it without an underlying commit.
 func tryCreateCompletedReviewWithoutCommit(db *DB, repoID int64) (*ReviewJob, error) {
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
+	job, err := enqueueAndComplete(db, EnqueueOpts{RepoID: repoID, CommitID: 0, GitRef: "HEAD", Agent: "test"}, "prompt", "output")
 	if err != nil {
-		return nil, fmt.Errorf("EnqueueJob failed: %w", err)
-	}
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-		return nil, fmt.Errorf("failed to set job running: %w", err)
-	}
-	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
-		return nil, fmt.Errorf("CompleteJob failed: %w", err)
+		return nil, fmt.Errorf("enqueueAndComplete failed: %w", err)
 	}
 	return job, nil
 }
@@ -226,16 +256,7 @@ func createCompletedReview(t *testing.T, db *DB, repoID int64, sha, author, subj
 // and registers cleanup. Returns the worker.
 func startSyncWorker(t *testing.T, db *DB, pgURL, machineName, interval string) *SyncWorker {
 	t.Helper()
-	if interval == "" {
-		interval = "100ms"
-	}
-	cfg := config.SyncConfig{
-		Enabled:        true,
-		PostgresURL:    pgURL,
-		Interval:       interval,
-		MachineName:    machineName,
-		ConnectTimeout: "5s",
-	}
+	cfg := createWorkerConfig(pgURL, machineName, interval)
 	worker := NewSyncWorker(db, cfg)
 	if err := worker.Start(); err != nil {
 		t.Fatalf("SyncWorker.Start failed for %s: %v", machineName, err)
@@ -276,16 +297,7 @@ func startSyncWorkerNoSync(
 	pgURL, machineName, interval string,
 ) *SyncWorker {
 	t.Helper()
-	if interval == "" {
-		interval = "100ms"
-	}
-	cfg := config.SyncConfig{
-		Enabled:        true,
-		PostgresURL:    pgURL,
-		Interval:       interval,
-		MachineName:    machineName,
-		ConnectTimeout: "5s",
-	}
+	cfg := createWorkerConfig(pgURL, machineName, interval)
 	worker := NewSyncWorker(db, cfg)
 	if err := worker.SetSkipInitialSync(true); err != nil {
 		t.Fatalf("SetSkipInitialSync failed for %s: %v", machineName, err)
@@ -614,17 +626,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 	if len(jobsA) != 2 {
 		t.Errorf("Machine A should see 2 jobs (own + pulled), got %d", len(jobsA))
 	}
-
-	var foundBinA bool
-	for _, j := range jobsA {
-		if j.UUID == jobB.UUID {
-			foundBinA = true
-			break
-		}
-	}
-	if !foundBinA {
-		t.Error("Machine A should have pulled Machine B's job")
-	}
+	assertHasJobUUIDs(t, jobsA, jobA.UUID, jobB.UUID)
 
 	// Verify Machine B can see Machine A's review
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
@@ -634,17 +636,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 	if len(jobsB) != 2 {
 		t.Errorf("Machine B should see 2 jobs (own + pulled), got %d", len(jobsB))
 	}
-
-	var foundAinB bool
-	for _, j := range jobsB {
-		if j.UUID == jobA.UUID {
-			foundAinB = true
-			break
-		}
-	}
-	if !foundAinB {
-		t.Error("Machine B should have pulled Machine A's job")
-	}
+	assertHasJobUUIDs(t, jobsB, jobA.UUID, jobB.UUID)
 
 	// Verify review content was pulled correctly
 	reviewBinA, err := dbA.GetReviewByCommitSHA("bbbb2222")
@@ -721,22 +713,8 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Errorf("Machine B should have 2 jobs, got %d", len(jobsB))
 	}
 
-	// Verify both job UUIDs are present in each machine's database
-	jobsAMap := make(map[string]bool)
-	for _, j := range jobsA {
-		jobsAMap[j.UUID] = true
-	}
-	if !jobsAMap[jobA.UUID] || !jobsAMap[jobB.UUID] {
-		t.Errorf("Machine A missing expected job UUIDs: has A=%v, has B=%v", jobsAMap[jobA.UUID], jobsAMap[jobB.UUID])
-	}
-
-	jobsBMap := make(map[string]bool)
-	for _, j := range jobsB {
-		jobsBMap[j.UUID] = true
-	}
-	if !jobsBMap[jobA.UUID] || !jobsBMap[jobB.UUID] {
-		t.Errorf("Machine B missing expected job UUIDs: has A=%v, has B=%v", jobsBMap[jobA.UUID], jobsBMap[jobB.UUID])
-	}
+	assertHasJobUUIDs(t, jobsA, jobA.UUID, jobB.UUID)
+	assertHasJobUUIDs(t, jobsB, jobA.UUID, jobB.UUID)
 
 	// Verify reviews are present on both machines
 	reviewAonA, err := dbA.GetReviewByJobID(jobA.ID)
@@ -792,24 +770,22 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
 }
 
-func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- string, errs chan<- error, done chan<- bool) {
-	go func() {
-		defer func() { done <- true }()
-		for i := 0; i < count; i++ {
-			job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
-			if err != nil {
-				errs <- err
-				continue
-			}
-			results <- job.UUID
-			if i%3 == 0 {
-				if _, err := worker.SyncNow(); err != nil {
-					errs <- fmt.Errorf("%s sync at job %d: %w", author, i, err)
-				}
-			}
-			time.Sleep(10 * time.Millisecond)
+func runConcurrentBatch(db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int) ([]string, error) {
+	var uuids []string
+	for i := 0; i < count; i++ {
+		job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
+		if err != nil {
+			return uuids, err
 		}
-	}()
+		uuids = append(uuids, job.UUID)
+		if i%3 == 0 {
+			if _, err := worker.SyncNow(); err != nil {
+				return uuids, fmt.Errorf("%s sync at job %d: %w", author, i, err)
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return uuids, nil
 }
 
 func TestIntegration_MultiplayerRealistic(t *testing.T) {
@@ -825,8 +801,6 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 	dbB, repoB, workerB := nodeB.DB, nodeB.Repo, nodeB.Worker
 	dbC, repoC, workerC := nodeC.DB, nodeC.Repo, nodeC.Worker
 
-	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
-
 	syncAll := func(t *testing.T) {
 		t.Helper()
 		if _, err := workerA.SyncNow(); err != nil {
@@ -840,11 +814,14 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		}
 	}
 
+	var expectedUUIDs []string
+	var mu sync.Mutex
+
 	t.Run("Round 1: Sequential", func(t *testing.T) {
 		t.Log("Round 1: Each machine creates 10 reviews (no sync yet)")
-		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 10, "a1", "Alice", "Alice commit")...)
-		jobsCreatedByB = append(jobsCreatedByB, createBatchReviews(t, dbB, repoB.ID, 10, "b1", "Bob", "Bob commit")...)
-		jobsCreatedByC = append(jobsCreatedByC, createBatchReviews(t, dbC, repoC.ID, 10, "c1", "Carol", "Carol commit")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbA, repoA.ID, 10, "a1", "Alice", "Alice commit")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbB, repoB.ID, 10, "b1", "Bob", "Bob commit")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbC, repoC.ID, 10, "c1", "Carol", "Carol commit")...)
 
 		// Sync twice to push and pull
 		syncAll(t)
@@ -856,17 +833,17 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 	t.Run("Round 2: Interleaved", func(t *testing.T) {
 		t.Log("Round 2: Interleaved creation and syncing")
-		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 5, "a2", "Alice", "Alice round2")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbA, repoA.ID, 5, "a2", "Alice", "Alice round2")...)
 		if _, err := workerA.SyncNow(); err != nil {
 			t.Fatalf("Machine A round 2: SyncNow failed: %v", err)
 		}
 
-		jobsCreatedByB = append(jobsCreatedByB, createBatchReviews(t, dbB, repoB.ID, 5, "b2", "Bob", "Bob round2")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbB, repoB.ID, 5, "b2", "Bob", "Bob round2")...)
 		if _, err := workerB.SyncNow(); err != nil {
 			t.Fatalf("Machine B round 2: SyncNow failed: %v", err)
 		}
 
-		jobsCreatedByC = append(jobsCreatedByC, createBatchReviews(t, dbC, repoC.ID, 5, "c2", "Carol", "Carol round2")...)
+		expectedUUIDs = append(expectedUUIDs, createBatchReviews(t, dbC, repoC.ID, 5, "c2", "Carol", "Carol round2")...)
 		if _, err := workerC.SyncNow(); err != nil {
 			t.Fatalf("Machine C round 2: SyncNow failed: %v", err)
 		}
@@ -881,47 +858,50 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 	t.Run("Round 3: Concurrent", func(t *testing.T) {
 		t.Log("Round 3: Concurrent creation during sync")
 
-		jobResultsA := make(chan string, 10)
-		jobResultsB := make(chan string, 10)
-		jobResultsC := make(chan string, 10)
-		syncErrsA := make(chan error, 4)
-		syncErrsB := make(chan error, 4)
-		syncErrsC := make(chan error, 4)
-		done := make(chan bool, 3)
+		var wg sync.WaitGroup
+		var errs []error
 
-		runConcurrentReviewsAndSync(dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
-		runConcurrentReviewsAndSync(dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
-		runConcurrentReviewsAndSync(dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			uuids, err := runConcurrentBatch(dbA, repoA.ID, workerA, "a3", "Alice", 10)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				expectedUUIDs = append(expectedUUIDs, uuids...)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			uuids, err := runConcurrentBatch(dbB, repoB.ID, workerB, "b3", "Bob", 10)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				expectedUUIDs = append(expectedUUIDs, uuids...)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			uuids, err := runConcurrentBatch(dbC, repoC.ID, workerC, "c3", "Carol", 10)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				expectedUUIDs = append(expectedUUIDs, uuids...)
+			}
+		}()
 
-		<-done
-		<-done
-		<-done
+		wg.Wait()
 
-		close(jobResultsA)
-		close(jobResultsB)
-		close(jobResultsC)
-		close(syncErrsA)
-		close(syncErrsB)
-		close(syncErrsC)
-
-		for uuid := range jobResultsA {
-			jobsCreatedByA = append(jobsCreatedByA, uuid)
-		}
-		for uuid := range jobResultsB {
-			jobsCreatedByB = append(jobsCreatedByB, uuid)
-		}
-		for uuid := range jobResultsC {
-			jobsCreatedByC = append(jobsCreatedByC, uuid)
-		}
-
-		for err := range syncErrsA {
-			t.Errorf("%v", err)
-		}
-		for err := range syncErrsB {
-			t.Errorf("%v", err)
-		}
-		for err := range syncErrsC {
-			t.Errorf("%v", err)
+		if len(errs) > 0 {
+			for _, err := range errs {
+				t.Errorf("%v", err)
+			}
 		}
 
 		expectedTotal := 75
@@ -983,55 +963,24 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 			t.Errorf("Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
 		}
 
-		// Verify each machine has the others' specific jobs
-		jobsAMap := make(map[string]bool)
-		for _, j := range jobsA {
-			jobsAMap[j.UUID] = true
-		}
-		jobsBMap := make(map[string]bool)
-		for _, j := range jobsB {
-			jobsBMap[j.UUID] = true
-		}
-		jobsCMap := make(map[string]bool)
-		for _, j := range jobsC {
-			jobsCMap[j.UUID] = true
-		}
+		assertHasJobUUIDs(t, jobsA, expectedUUIDs...)
+		assertHasJobUUIDs(t, jobsB, expectedUUIDs...)
+		assertHasJobUUIDs(t, jobsC, expectedUUIDs...)
 
-		for _, uuid := range jobsCreatedByB {
-			if !jobsAMap[uuid] {
-				t.Errorf("Machine A missing job %s created by B", uuid)
-			}
+		// Verify uniqueness of gathered UUIDs
+		if len(expectedUUIDs) != expectedTotal {
+			t.Errorf("Expected %d UUIDs to be created, got %d", expectedTotal, len(expectedUUIDs))
 		}
-		for _, uuid := range jobsCreatedByC {
-			if !jobsAMap[uuid] {
-				t.Errorf("Machine A missing job %s created by C", uuid)
-			}
+		uniqueUUIDs := make(map[string]bool)
+		for _, u := range expectedUUIDs {
+			uniqueUUIDs[u] = true
 		}
-		for _, uuid := range jobsCreatedByA {
-			if !jobsBMap[uuid] {
-				t.Errorf("Machine B missing job %s created by A", uuid)
-			}
-		}
-		for _, uuid := range jobsCreatedByC {
-			if !jobsBMap[uuid] {
-				t.Errorf("Machine B missing job %s created by C", uuid)
-			}
-		}
-		for _, uuid := range jobsCreatedByA {
-			if !jobsCMap[uuid] {
-				t.Errorf("Machine C missing job %s created by A", uuid)
-			}
-		}
-		for _, uuid := range jobsCreatedByB {
-			if !jobsCMap[uuid] {
-				t.Errorf("Machine C missing job %s created by B", uuid)
-			}
+		if len(uniqueUUIDs) != expectedTotal {
+			t.Errorf("Expected %d unique UUIDs, got %d", expectedTotal, len(uniqueUUIDs))
 		}
 	})
 
 	t.Logf("Realistic multiplayer test passed")
-	t.Logf("  Machine A created: %d, Machine B created: %d, Machine C created: %d",
-		len(jobsCreatedByA), len(jobsCreatedByB), len(jobsCreatedByC))
 }
 
 func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
@@ -1046,13 +995,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	createCompletedReview(t, dbA, repoA.ID, "dddd4444", "Dave", "Commit 1", "prompt", "Online review")
 
 	// Start worker, sync, then stop (simulate going offline)
-	cfgA := config.SyncConfig{
-		Enabled:        true,
-		PostgresURL:    env.pgURL,
-		Interval:       "100ms",
-		MachineName:    "machine-a",
-		ConnectTimeout: "5s",
-	}
+	cfgA := createWorkerConfig(env.pgURL, "machine-a", "100ms")
 	workerA := NewSyncWorker(dbA, cfgA)
 	if err := workerA.Start(); err != nil {
 		t.Fatalf("Machine A: SyncWorker.Start failed: %v", err)

@@ -6,7 +6,7 @@ import (
 	"unicode/utf16"
 )
 
-func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
+func TestIsRoborevDaemonCommand(t *testing.T) {
 	tests := []struct {
 		name    string
 		cmdLine string
@@ -51,42 +51,85 @@ func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isRoborevDaemonCommandForUpdate(tt.cmdLine)
+			got := isRoborevDaemonCommand(tt.cmdLine)
 			if got != tt.want {
-				t.Fatalf("isRoborevDaemonCommandForUpdate(%q)=%v, want %v", tt.cmdLine, got, tt.want)
+				t.Errorf("isRoborevDaemonCommand(%q)=%v, want %v", tt.cmdLine, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestNormalizeCommandLineForUpdate(t *testing.T) {
-	raw := "\xff\xferoborev\x00daemon\x00run\r\n"
-	got := normalizeCommandLineForUpdate(raw)
-	if got != "roborev daemon run" {
-		t.Fatalf("normalizeCommandLineForUpdate(%q)=%q, want %q", raw, got, "roborev daemon run")
+func TestNormalizeCommandLine(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "utf16 with null byte separators",
+			raw:  "\xff\xferoborev\x00daemon\x00run\r\n",
+			want: "roborev daemon run",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeCommandLine(tt.raw)
+			if got != tt.want {
+				t.Errorf("normalizeCommandLine(%q)=%q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
-func TestParseWmicOutputForUpdateUTF16LE(t *testing.T) {
-	raw := encodeUTF16LE(
-		"CommandLine\r\nC:\\Tools\\roborev.exe daemon run --port 7373\r\n", true,
-	)
-	got := parseWmicOutputForUpdate(raw)
-	want := `C:\Tools\roborev.exe daemon run --port 7373`
-	if got != want {
-		t.Fatalf("parseWmicOutputForUpdate()=%q, want %q", got, want)
+func TestParseWmicOutputUTF16LE(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+		want string
+	}{
+		{
+			name: "wmic output with utf16-le BOM",
+			raw: encodeUTF16LE(
+				"CommandLine\r\nC:\\Tools\\roborev.exe daemon run --port 7373\r\n", true,
+			),
+			want: `C:\Tools\roborev.exe daemon run --port 7373`,
+		},
 	}
-	if !isRoborevDaemonCommandForUpdate(got) {
-		t.Fatalf("expected parsed WMIC output to classify as daemon command, got %q", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseWmicOutput(tt.raw)
+			if got != tt.want {
+				t.Errorf("parseWmicOutput()=%q, want %q", got, tt.want)
+			}
+			if !isRoborevDaemonCommand(got) {
+				t.Errorf("expected parsed WMIC output to classify as daemon command, got %q", got)
+			}
+		})
 	}
 }
 
-func TestNormalizeCommandLineBytesForUpdateUTF16LENoBOM(t *testing.T) {
-	raw := encodeUTF16LE("roborev.exe daemon run --port 7373\r\n", false)
-	got := normalizeCommandLineBytesForUpdate(raw)
-	want := "roborev.exe daemon run --port 7373"
-	if got != want {
-		t.Fatalf("normalizeCommandLineBytesForUpdate()=%q, want %q", got, want)
+func TestNormalizeCommandLineBytesUTF16LENoBOM(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+		want string
+	}{
+		{
+			name: "utf16-le without BOM",
+			raw:  encodeUTF16LE("roborev.exe daemon run --port 7373\r\n", false),
+			want: "roborev.exe daemon run --port 7373",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeCommandLineBytes(tt.raw)
+			if got != tt.want {
+				t.Errorf("normalizeCommandLineBytes()=%q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

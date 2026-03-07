@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spf13/cobra"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -32,7 +35,7 @@ var (
 	updateRestartPollInterval = 200 * time.Millisecond
 	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
 	listAllRuntimes           = daemon.ListAllRuntimes
-	isPIDAliveForUpdate       = isPIDAliveForUpdateDefault
+	isPIDAlive                = isPIDAliveDefault
 	restartDaemonForEnsure    = restartDaemon
 	stopDaemonForUpdate       = stopDaemon
 	killAllDaemonsForUpdate   = killAllDaemons
@@ -65,11 +68,14 @@ var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)
 var ErrJobNotFound = fmt.Errorf("job not found")
 
 // getDaemonAddr returns the daemon address from runtime file or default
-func getDaemonAddr() string {
-	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
+func getDaemonAddr(cmd *cobra.Command) string {
+	if addr, ok := getExplicitServerAddr(cmd); ok {
+		return addr
+	}
+	if info, err := getAnyRunningDaemon(); err == nil {
 		return fmt.Sprintf("http://%s", info.Addr)
 	}
-	return serverAddr
+	return "http://127.0.0.1:7373"
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -105,13 +111,13 @@ func isTransportError(err error) bool {
 
 // registerRepo tells the daemon to persist a repo to the DB so that the
 // CI poller (and other components) can find it after a daemon restart.
-func registerRepo(repoPath string) error {
+func registerRepo(cmd *cobra.Command, repoPath string) error {
 	body, err := json.Marshal(map[string]string{"repo_path": repoPath})
 	if err != nil {
 		return err
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(getDaemonAddr(cmd)+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err // connection error (*url.Error wrapping net.Error)
 	}
@@ -127,7 +133,7 @@ func registerRepo(repoPath string) error {
 // If daemon is running but has different version, restart it.
 // Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
 // restarting (useful for development with go run).
-func ensureDaemon() error {
+func ensureDaemon(cmd *cobra.Command) (string, error) {
 	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 
 	// First check runtime files for any running daemon
@@ -138,52 +144,52 @@ func ensureDaemon() error {
 				if verbose {
 					fmt.Printf("Daemon probe failed, restarting...\n")
 				}
-				return restartDaemonForEnsure()
+				return restartDaemonForEnsure(cmd)
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
 					fmt.Printf("Daemon version unknown, restarting...\n")
 				}
-				return restartDaemonForEnsure()
+				return restartDaemonForEnsure(cmd)
 			}
 			if daemonVersion != version.Version {
 				if verbose {
 					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
 				}
-				return restartDaemonForEnsure()
+				return restartDaemonForEnsure(cmd)
 			}
 		}
 
-		serverAddr = fmt.Sprintf("http://%s", info.Addr)
-		return nil
+		return fmt.Sprintf("http://%s", info.Addr), nil
 	}
 
 	// Try the configured default address for manual/legacy daemon runs that do
 	// not have a runtime file yet.
-	if probe, err := probeDaemonServerURL(serverAddr, 2*time.Second); err == nil {
+	defaultAddr := getDaemonAddr(cmd)
+	if probe, err := probeDaemonServerURL(defaultAddr, 2*time.Second); err == nil {
 		if !skipVersionCheck {
 			if probe.Version == "" {
 				if verbose {
 					fmt.Printf("Daemon version unknown, restarting...\n")
 				}
-				return restartDaemonForEnsure()
+				return restartDaemonForEnsure(cmd)
 			}
 			if probe.Version != version.Version {
 				if verbose {
 					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", probe.Version, version.Version)
 				}
-				return restartDaemonForEnsure()
+				return restartDaemonForEnsure(cmd)
 			}
 		}
-		return nil
+		return defaultAddr, nil
 	}
 
 	// Start daemon in background
-	return startDaemon()
+	return startDaemon(cmd)
 }
 
-func startDaemon() error {
+func startDaemon(cmd *cobra.Command) (string, error) {
 	if verbose {
 		fmt.Println("Starting daemon...")
 	}
@@ -191,34 +197,33 @@ func startDaemon() error {
 	// Use the current executable with "daemon run" subcommand
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("failed to find executable: %w", err)
+		return "", fmt.Errorf("failed to find executable: %w", err)
 	}
 	if shouldRefuseAutoStartDaemon(exe) {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"refusing to auto-start daemon from ephemeral binary (%s); "+
 				"use the installed roborev binary instead",
 			filepath.Base(exe),
 		)
 	}
 
-	cmd := exec.Command(exe, "daemon", "run")
-	cmd.Env = filterGitEnv(os.Environ())
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start daemon: %w", err)
+	startCmd := exec.Command(exe, "daemon", "run")
+	startCmd.Env = filterGitEnv(os.Environ())
+	startCmd.Stdout = nil
+	startCmd.Stderr = nil
+	if err := startCmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start daemon: %w", err)
 	}
 
 	// Wait for daemon to publish a responsive runtime entry.
 	for range 30 {
 		time.Sleep(100 * time.Millisecond)
 		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
-			serverAddr = fmt.Sprintf("http://%s", info.Addr)
-			return nil
+			return fmt.Sprintf("http://%s", info.Addr), nil
 		}
 	}
 
-	return fmt.Errorf("daemon failed to start")
+	return "", fmt.Errorf("daemon failed to start")
 }
 
 func probeDaemonServerURL(serverURL string, timeout time.Duration) (*daemon.PingInfo, error) {
@@ -251,7 +256,7 @@ func stopDaemon() error {
 	// Kill all found daemons, track failures
 	var lastErr error
 	for _, info := range runtimes {
-		if !daemon.KillDaemon(info) {
+		if !daemon.KillDaemon(context.Background(), info) {
 			lastErr = fmt.Errorf("failed to kill daemon (pid %d)", info.PID)
 		}
 	}
@@ -280,7 +285,7 @@ func killAllDaemons() {
 }
 
 // restartDaemon stops the running daemon and starts a new one
-func restartDaemon() error {
+func restartDaemon(cmd *cobra.Command) (string, error) {
 	_ = stopDaemon() // Ignore error - killAllDaemons is the fallback
 	// Also kill any orphaned daemon processes from old binaries
 	killAllDaemons()
@@ -311,5 +316,5 @@ func restartDaemon() error {
 		}
 	}
 
-	return startDaemon()
+	return startDaemon(cmd)
 }

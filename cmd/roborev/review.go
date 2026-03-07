@@ -136,10 +136,15 @@ Examples:
 			}
 
 			// Ensure daemon is running (skip for --local mode)
+			var serverAddr string
 			if !local {
-				if err := ensureDaemon(); err != nil {
+				var err error
+				serverAddr, err = ensureDaemon(cmd)
+				if err != nil {
 					return err // Return error (quiet mode silences output, not exit code)
 				}
+			} else {
+				serverAddr = getDaemonAddr(cmd) // Fallback for local mode if needed, though daemon won't be used
 			}
 
 			var gitRef string

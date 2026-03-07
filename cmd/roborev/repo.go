@@ -17,12 +17,20 @@ import (
 // If the identifier is ".", "..", or an existing path on disk, it will try to
 // resolve it to the git repository root. This allows display names like "org/project"
 // to be treated as names rather than paths.
-func resolveRepoIdentifier(identifier string) string {
+func resolveRepoIdentifier(wd, identifier string) string {
+	// Helper to resolve against wd
+	resolveAgainstWd := func(p string) string {
+		if filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(wd, p)
+	}
+
 	// Special cases that are always paths
 	if identifier == "." || identifier == ".." ||
 		strings.HasPrefix(identifier, "./") ||
 		strings.HasPrefix(identifier, "../") {
-		return resolvePathToGitRoot(identifier)
+		return resolvePathToGitRoot(resolveAgainstWd(identifier))
 	}
 
 	// Check if it's an absolute path (works on both Unix and Windows)
@@ -35,9 +43,10 @@ func resolveRepoIdentifier(identifier string) string {
 	// Since explicit path prefixes (./, ../, absolute) are handled above, these are
 	// ambiguous - only treat as path if the path actually exists and is accessible.
 	if strings.ContainsAny(identifier, "/\\") {
-		if _, err := os.Stat(identifier); err == nil {
+		resolved := resolveAgainstWd(identifier)
+		if _, err := os.Stat(resolved); err == nil {
 			// Path exists on disk, treat as path
-			return resolvePathToGitRoot(identifier)
+			return resolvePathToGitRoot(resolved)
 		}
 		// Path doesn't exist or isn't accessible (permission denied, etc.)
 		// Treat as a name since user didn't use explicit path syntax
@@ -176,7 +185,11 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			wd, err := getWorkDir(cmd)
+			if err != nil {
+				return err
+			}
+			identifier := resolveRepoIdentifier(wd, args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -260,7 +273,11 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			wd, err := getWorkDir(cmd)
+			if err != nil {
+				return err
+			}
+			identifier := resolveRepoIdentifier(wd, args[0])
 			newName := args[1]
 
 			if newName == "" {
@@ -315,7 +332,11 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			wd, err := getWorkDir(cmd)
+			if err != nil {
+				return err
+			}
+			identifier := resolveRepoIdentifier(wd, args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -422,8 +443,12 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sourceIdent := resolveRepoIdentifier(args[0])
-			targetIdent := resolveRepoIdentifier(args[1])
+			wd, err := getWorkDir(cmd)
+			if err != nil {
+				return err
+			}
+			sourceIdent := resolveRepoIdentifier(wd, args[0])
+			targetIdent := resolveRepoIdentifier(wd, args[1])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {

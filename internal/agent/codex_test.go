@@ -9,10 +9,20 @@ import (
 	"testing"
 )
 
+const dummyCommit = "deadbeef"
+const dummyPrompt = "prompt"
+
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
 	withUnsafeAgents(t, unsafe)
 	mock := mockAgentCLI(t, opts)
 	return NewCodexAgent(mock.CmdPath), mock
+}
+
+func runMockReview(t *testing.T, opts MockCLIOpts, prompt string) (*MockCLIResult, error) {
+	t.Helper()
+	a, mock := setupMockCodex(t, false, opts)
+	_, err := a.Review(context.Background(), t.TempDir(), dummyCommit, prompt, nil)
+	return mock, err
 }
 
 func buildStream(events ...string) string {
@@ -85,7 +95,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	a, _ := setupMockCodex(t, true, MockCLIOpts{
 		HelpOutput: "usage",
 	})
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(context.Background(), t.TempDir(), dummyCommit, dummyPrompt, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -95,15 +105,15 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 }
 
 func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
-	a, mock := setupMockCodex(t, false, MockCLIOpts{
+	mock, err := runMockReview(t, MockCLIOpts{
 		HelpOutput:  "usage " + codexAutoApproveFlag,
 		CaptureArgs: true,
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
 		},
-	})
+	}, dummyPrompt)
 
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
+	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
@@ -159,15 +169,17 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			want:  "",
 		},
 		{
-			name:       "TurnFailedReturnsError",
-			input:      buildStream(`{"type":"turn.failed","error":{"message":"something broke"}}`),
-			wantErr:    errCodexStreamFailed,
+			name:    "TurnFailedReturnsError",
+			input:   buildStream(`{"type":"turn.failed","error":{"message":"something broke"}}`),
+			wantErr: errCodexStreamFailed,
+			// Explicit negative assertion to ensure we don't accidentally satisfy errNoCodexJSON
 			notWantErr: errNoCodexJSON,
 		},
 		{
-			name:       "ErrorEventReturnsError",
-			input:      buildStream(`{"type":"error","message":"stream error"}`),
-			wantErr:    errCodexStreamFailed,
+			name:    "ErrorEventReturnsError",
+			input:   buildStream(`{"type":"error","message":"stream error"}`),
+			wantErr: errCodexStreamFailed,
+			// Explicit negative assertion to ensure we don't accidentally satisfy errNoCodexJSON
 			notWantErr: errNoCodexJSON,
 		},
 		{
@@ -211,18 +223,20 @@ func TestCodexParseStreamJSON(t *testing.T) {
 				if !errors.Is(err, tt.wantErr) {
 					t.Errorf("parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
 				}
+				if tt.notWantErr != nil && errors.Is(err, tt.notWantErr) {
+					t.Errorf("parseStreamJSON() error = %v, must not be %v", err, tt.notWantErr)
+				}
 				if result != "" {
 					t.Errorf("parseStreamJSON() result = %q, want empty string on error", result)
 				}
-			} else if err != nil {
+				return // Early return on expected error
+			}
+
+			if err != nil {
 				t.Fatalf("parseStreamJSON() unexpected error: %v", err)
 			}
 
-			if tt.notWantErr != nil && errors.Is(err, tt.notWantErr) {
-				t.Errorf("got unwanted error: %v", err)
-			}
-
-			if err == nil && result != tt.want {
+			if result != tt.want {
 				t.Errorf("parseStreamJSON() = %q, want %q", result, tt.want)
 			}
 
@@ -234,16 +248,16 @@ func TestCodexParseStreamJSON(t *testing.T) {
 }
 
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
-	a, mock := setupMockCodex(t, false, MockCLIOpts{
+	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
+	mock, err := runMockReview(t, MockCLIOpts{
 		HelpOutput:   "usage " + codexAutoApproveFlag,
 		CaptureStdin: true,
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
 		},
-	})
+	}, testPrompt)
 
-	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
+	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
@@ -257,12 +271,11 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 }
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
-	a, _ := setupMockCodex(t, false, MockCLIOpts{
+	_, err := runMockReview(t, MockCLIOpts{
 		HelpOutput:  "usage " + codexAutoApproveFlag,
 		StdoutLines: []string{"plain text output"},
-	})
+	}, dummyPrompt)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

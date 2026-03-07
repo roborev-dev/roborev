@@ -13,29 +13,33 @@ type normalizeTestCase struct {
 	notWantType string
 }
 
+func assertNormalizedOutput(t *testing.T, input string, result *OutputLine, tc normalizeTestCase) {
+	t.Helper()
+	if tc.wantNil {
+		if result != nil {
+			t.Errorf("input %q: expected nil, got %+v", input, result)
+		}
+		return
+	}
+	if result == nil {
+		t.Fatalf("input %q: expected non-nil result", input)
+	}
+	if result.Text != tc.wantText {
+		t.Errorf("input %q: text = %q, want %q", input, result.Text, tc.wantText)
+	}
+	if tc.wantType != "" && result.Type != tc.wantType {
+		t.Errorf("input %q: type = %q, want %q", input, result.Type, tc.wantType)
+	}
+	if tc.notWantType != "" && result.Type == tc.notWantType {
+		t.Errorf("input %q: type = %q, should not be %q", input, result.Type, tc.notWantType)
+	}
+}
+
 func runNormalizeTests(t *testing.T, fn func(string) *OutputLine, cases []normalizeTestCase) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := fn(tc.input)
-			if tc.wantNil {
-				if result != nil {
-					t.Errorf("input %q: expected nil, got %+v", tc.input, result)
-				}
-				return
-			}
-			if result == nil {
-				t.Fatalf("input %q: expected non-nil result", tc.input)
-			}
-			if result.Text != tc.wantText {
-				t.Errorf("input %q: text = %q, want %q", tc.input, result.Text, tc.wantText)
-			}
-			if tc.wantType != "" && result.Type != tc.wantType {
-				t.Errorf("input %q: type = %q, want %q", tc.input, result.Type, tc.wantType)
-			}
-			if tc.notWantType != "" && result.Type == tc.notWantType {
-				t.Errorf("input %q: type = %q, should not be %q", tc.input, result.Type, tc.notWantType)
-			}
+			assertNormalizedOutput(t, tc.input, fn(tc.input), tc)
 		})
 	}
 }
@@ -96,11 +100,6 @@ func TestNormalizeClaudeOutput(t *testing.T) {
 			input:   "   ",
 			wantNil: true,
 		},
-	})
-}
-
-func TestNormalizeClaudeOutput_SkipsLifecycleEvents(t *testing.T) {
-	runNormalizeTests(t, NormalizeClaudeOutput, []normalizeTestCase{
 		{name: "MessageStart", input: `{"type":"message_start"}`, wantNil: true},
 		{name: "MessageDelta", input: `{"type":"message_delta"}`, wantNil: true},
 		{name: "MessageStop", input: `{"type":"message_stop"}`, wantNil: true},
@@ -159,59 +158,57 @@ func TestNormalizeGenericOutput(t *testing.T) {
 
 func TestGetNormalizer(t *testing.T) {
 	cases := []struct {
-		agent    string
-		input    string
-		wantText string
-		wantType string
+		agent string
+		tc    normalizeTestCase
 	}{
 		{
-			agent:    "claude-code",
-			input:    `{"type":"assistant","message":{"content":"hi"}}`,
-			wantText: "hi",
-			wantType: "text",
+			agent: "claude-code",
+			tc: normalizeTestCase{
+				input:    `{"type":"assistant","message":{"content":"hi"}}`,
+				wantText: "hi",
+				wantType: "text",
+			},
 		},
 		{
-			agent:    "opencode",
-			input:    `{"name":"read","arguments":{}}`,
-			wantText: "[Tool call]",
-			wantType: "tool",
+			agent: "opencode",
+			tc: normalizeTestCase{
+				input:    `{"name":"read","arguments":{}}`,
+				wantText: "[Tool call]",
+				wantType: "tool",
+			},
 		},
 		{
-			agent:    "codex",
-			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`,
-			wantText: "hello",
-			wantType: "text",
+			agent: "codex",
+			tc: normalizeTestCase{
+				input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`,
+				wantText: "hello",
+				wantType: "text",
+			},
 		},
 		{
-			agent:    "gemini",
-			input:    `{"type":"assistant","message":{"content":"hi"}}`,
-			wantText: `{"type":"assistant","message":{"content":"hi"}}`, // Generic treats JSON as plain text
+			agent: "gemini",
+			tc: normalizeTestCase{
+				input:    `{"type":"assistant","message":{"content":"hi"}}`,
+				wantText: `{"type":"assistant","message":{"content":"hi"}}`, // Generic treats JSON as plain text
+			},
 		},
 		{
-			agent:    "unknown",
-			input:    `{"type":"assistant","message":{"content":"hi"}}`,
-			wantText: `{"type":"assistant","message":{"content":"hi"}}`,
+			agent: "unknown",
+			tc: normalizeTestCase{
+				input:    `{"type":"assistant","message":{"content":"hi"}}`,
+				wantText: `{"type":"assistant","message":{"content":"hi"}}`,
+			},
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.agent, func(t *testing.T) {
-			fn := GetNormalizer(tc.agent)
+	for _, c := range cases {
+		t.Run(c.agent, func(t *testing.T) {
+			fn := GetNormalizer(c.agent)
 			if fn == nil {
-				t.Fatalf("GetNormalizer(%q) returned nil", tc.agent)
+				t.Fatalf("GetNormalizer(%q) returned nil", c.agent)
 			}
 
-			result := fn(tc.input)
-			if result == nil {
-				t.Fatalf("Normalizer for %q returned nil for input %q", tc.agent, tc.input)
-			}
-
-			if result.Text != tc.wantText {
-				t.Errorf("Normalizer for %q: got text %q, want %q", tc.agent, result.Text, tc.wantText)
-			}
-			if tc.wantType != "" && result.Type != tc.wantType {
-				t.Errorf("Normalizer for %q: got type %q, want %q", tc.agent, result.Type, tc.wantType)
-			}
+			assertNormalizedOutput(t, c.tc.input, fn(c.tc.input), c.tc)
 		})
 	}
 }

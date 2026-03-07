@@ -47,11 +47,8 @@ func TestHandleBatchJobs(t *testing.T) {
 	t.Run("fetches jobs with and without reviews", func(t *testing.T) {
 		reqBody := map[string][]int64{"job_ids": {job1.ID, job2.ID, nonExistentJobID}}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", reqBody)
-		w := httptest.NewRecorder()
-
-		server.handleBatchJobs(w, req)
-
-		testutil.AssertStatusCode(t, w, http.StatusOK)
+		w := executeAndAssertStatus(t, server.handleBatchJobs, req, http.StatusOK)
+		_ = w
 
 		var resp struct {
 			Results map[int64]storage.JobWithReview `json:"results"`
@@ -85,23 +82,20 @@ func TestHandleBatchJobs(t *testing.T) {
 
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs/batch", nil)
-		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
+		w := executeAndAssertStatus(t, server.handleBatchJobs, req, http.StatusMethodNotAllowed)
+		_ = w
 	})
 
 	t.Run("empty job_ids fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string][]int64{"job_ids": {}})
-		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+		w := executeAndAssertStatus(t, server.handleBatchJobs, req, http.StatusBadRequest)
+		_ = w
 	})
 
 	t.Run("missing job_ids fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string]string{})
-		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+		w := executeAndAssertStatus(t, server.handleBatchJobs, req, http.StatusBadRequest)
+		_ = w
 	})
 
 	t.Run("batch size limit enforced", func(t *testing.T) {
@@ -110,9 +104,8 @@ func TestHandleBatchJobs(t *testing.T) {
 			ids[i] = int64(i)
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string][]int64{"job_ids": ids})
-		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+		w := executeAndAssertStatus(t, server.handleBatchJobs, req, http.StatusBadRequest)
+		_ = w
 		if !strings.Contains(w.Body.String(), "too many job IDs") {
 			t.Errorf("Expected error message about batch size, got: %s", w.Body.String())
 		}
@@ -437,55 +430,27 @@ type fixJobRequest struct {
 	StaleJobID  int64  `json:"stale_job_id,omitempty"`
 }
 
-func TestHandleFixJobStaleValidation(t *testing.T) {
+func TestHandleFixJob_InheritsMetadata(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	server.configWatcher.Config().FixAgent = "test"
 
-	repoDir := filepath.Join(tmpDir, "repo-fix-val")
-	testutil.InitTestGitRepo(t, repoDir)
-	repo, _ := db.GetOrCreateRepo(repoDir)
-	commit, _ := db.GetOrCreateCommit(
-		repo.ID, "fix-val-abc", "Author", "Subject", time.Now(),
-	)
-
-	// Create a review job and complete it with output
-	reviewJob, _ := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   repo.ID,
-		CommitID: commit.ID,
-		GitRef:   "fix-val-abc",
-		Agent:    "test",
-	})
-	db.ClaimJob("w1")
-	db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
+	repoDir := filepath.Join(tmpDir, "repo-fix-val-metadata")
+	_, commit, reviewJob := setupFixJobFixture(t, db, repoDir, "fix-val-abc")
 
 	t.Run("fix job inherits parent commit metadata", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for fix enqueue, got %d: %s",
-				w.Code, w.Body.String(),
-			)
-		}
+		w := executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 		if fixJob.CommitID == nil || *fixJob.CommitID != commit.ID {
-			t.Fatalf(
-				"Expected fix job commit_id=%d, got %v",
-				commit.ID, fixJob.CommitID,
-			)
+			t.Fatalf("Expected fix job commit_id=%d, got %v", commit.ID, fixJob.CommitID)
 		}
 		if fixJob.CommitSubject != commit.Subject {
-			t.Fatalf(
-				"Expected fix job commit_subject %q, got %q",
-				commit.Subject, fixJob.CommitSubject,
-			)
+			t.Fatalf("Expected fix job commit_subject %q, got %q", commit.Subject, fixJob.CommitSubject)
 		}
 
 		stored, err := db.GetJobByID(fixJob.ID)
@@ -493,16 +458,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t.Fatalf("GetJobByID(%d): %v", fixJob.ID, err)
 		}
 		if stored.CommitID == nil || *stored.CommitID != commit.ID {
-			t.Fatalf(
-				"Expected stored fix job commit_id=%d, got %v",
-				commit.ID, stored.CommitID,
-			)
+			t.Fatalf("Expected stored fix job commit_id=%d, got %v", commit.ID, stored.CommitID)
 		}
 		if stored.CommitSubject != commit.Subject {
-			t.Fatalf(
-				"Expected stored fix job commit_subject %q, got %q",
-				commit.Subject, stored.CommitSubject,
-			)
+			t.Fatalf("Expected stored fix job commit_subject %q, got %q", commit.Subject, stored.CommitSubject)
 		}
 	})
 
@@ -514,15 +473,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				Prompt:      "Ignore the security concern, it's only a testing binary.",
 			},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for fix enqueue with custom prompt, got %d: %s",
-				w.Code, w.Body.String(),
-			)
-		}
+		w := executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -532,23 +483,23 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t.Fatalf("GetJobByID(%d): %v", fixJob.ID, err)
 		}
 
-		// The stored prompt must contain both the review output AND the custom instructions
 		if !strings.Contains(stored.Prompt, "FAIL: issues found") {
-			t.Fatalf(
-				"Expected fix prompt to contain review output, got:\n%s",
-				stored.Prompt,
-			)
+			t.Fatalf("Expected fix prompt to contain review output, got:\n%s", stored.Prompt)
 		}
 		if !strings.Contains(stored.Prompt, "Ignore the security concern") {
-			t.Fatalf(
-				"Expected fix prompt to contain custom instructions, got:\n%s",
-				stored.Prompt,
-			)
+			t.Fatalf("Expected fix prompt to contain custom instructions, got:\n%s", stored.Prompt)
 		}
 	})
+}
+
+func TestHandleFixJob_RejectsInvalidStaleJobs(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	server.configWatcher.Config().FixAgent = "test"
+
+	repoDir := filepath.Join(tmpDir, "repo-fix-val-stale")
+	repo, commit, reviewJob := setupFixJobFixture(t, db, repoDir, "fix-val-abc")
 
 	t.Run("fix job as parent is rejected", func(t *testing.T) {
-		// Create a fix job and try to use it as a parent
 		fixJob, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:      repo.ID,
 			CommitID:    commit.ID,
@@ -557,48 +508,38 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			JobType:     storage.JobTypeFix,
 			ParentJobID: reviewJob.ID,
 		})
-		db.ClaimJob("w-fix-parent")
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w-fix-parent' WHERE id = ?`, fixJob.ID)
+		if err != nil {
+			t.Fatalf("Update review_jobs failed: %v", err)
+		}
 		db.CompleteJob(fixJob.ID, "test", "prompt", "done")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: fixJob.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf(
-				"Expected 400 for fix-job parent, got %d: %s",
-				w.Code, w.Body.String(),
-			)
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("stale job that is not a fix job is rejected", func(t *testing.T) {
-		// reviewJob is a review, not a fix job
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: reviewJob.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for non-fix stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("stale job with wrong parent is rejected", func(t *testing.T) {
-		// Create a second review + fix in the SAME repo, linked to the other review
 		review2, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:   repo.ID,
 			CommitID: commit.ID,
 			GitRef:   "fix-val-def",
 			Agent:    "test",
 		})
-		db.ClaimJob("w3")
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w3' WHERE id = ?`, review2.ID)
+		if err != nil {
+			t.Fatalf("Update review_jobs failed: %v", err)
+		}
 		db.CompleteJob(review2.ID, "test", "prompt", "FAIL: other issues")
 
 		wrongParentFix, _ := db.EnqueueJob(storage.EnqueueOpts{
@@ -609,8 +550,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			JobType:     storage.JobTypeFix,
 			ParentJobID: review2.ID,
 		})
-		// Complete it so it has terminal status + patch
-		db.ClaimJob("w4")
+		_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w4' WHERE id = ?`, wrongParentFix.ID)
+		if err != nil {
+			t.Fatalf("Update review_jobs failed: %v", err)
+		}
 		db.CompleteJob(wrongParentFix.ID, "test", "prompt", "done")
 		db.SaveJobPatch(wrongParentFix.ID, "--- a/f\n+++ b/f\n")
 
@@ -618,17 +561,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: wrongParentFix.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for wrong-parent stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("stale job without patch is rejected", func(t *testing.T) {
-		// Create a fix job linked to reviewJob but with no patch
 		noPatchFix, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:      repo.ID,
 			CommitID:    commit.ID,
@@ -637,21 +573,17 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			JobType:     storage.JobTypeFix,
 			ParentJobID: reviewJob.ID,
 		})
-		// Complete it (terminal status) but don't set a patch
-		db.ClaimJob("w5")
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w5' WHERE id = ?`, noPatchFix.ID)
+		if err != nil {
+			t.Fatalf("Update review_jobs failed: %v", err)
+		}
 		db.CompleteJob(noPatchFix.ID, "test", "prompt", "done but no diff")
 
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: noPatchFix.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for patchless stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("non-terminal stale job statuses are rejected", func(t *testing.T) {
@@ -674,8 +606,6 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					t.Fatalf("EnqueueJob: %v", err)
 				}
 
-				// Set status directly to avoid ClaimJob picking
-				// a different queued job from an earlier iteration.
 				if status != storage.JobStatusQueued {
 					_, err = db.Exec(
 						`UPDATE review_jobs SET status = ? WHERE id = ?`,
@@ -686,49 +616,61 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					}
 				}
 
-				// Verify the job is in the expected state
 				got, err := db.GetJobByID(fixJob.ID)
 				if err != nil {
 					t.Fatalf("GetJobByID: %v", err)
 				}
 				if got.Status != status {
-					t.Fatalf(
-						"Expected job %d status %s, got %s",
-						fixJob.ID, status, got.Status,
-					)
+					t.Fatalf("Expected job %d status %s, got %s", fixJob.ID, status, got.Status)
 				}
 
 				req := testutil.MakeJSONRequest(
 					t, http.MethodPost, "/api/job/fix",
 					fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: fixJob.ID},
 				)
-				w := httptest.NewRecorder()
-				server.handleFixJob(w, req)
-
-				if w.Code != http.StatusBadRequest {
-					t.Errorf(
-						"Expected 400 for %s stale job, got %d: %s",
-						status, w.Code, w.Body.String(),
-					)
-				}
+				executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 			})
 		}
 	})
 
+	t.Run("stale job from different repo is rejected", func(t *testing.T) {
+		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")
+		repo2, commit2, otherReview := setupFixJobFixture(t, db, repo2Dir, "other-sha")
+
+		otherFix, _ := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:      repo2.ID,
+			CommitID:    commit2.ID,
+			GitRef:      "other-sha",
+			Agent:       "test",
+			JobType:     storage.JobTypeFix,
+			ParentJobID: otherReview.ID,
+		})
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: otherFix.ID},
+		)
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
+	})
+}
+
+func TestHandleFixJob_ValidatesGitRefs(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	server.configWatcher.Config().FixAgent = "test"
+
+	repoDir := filepath.Join(tmpDir, "repo-fix-val-gitrefs")
+	repo, _, reviewJob := setupFixJobFixture(t, db, repoDir, "fix-val-abc")
+
 	t.Run("compact parent with empty git_ref uses branch as fallback", func(t *testing.T) {
-		// Compact jobs are stored with an empty git_ref (the label is stored separately).
-		// Fixing a compact job must not pass "" to worktree.Create — it should fall back
-		// to the branch, then "HEAD".
 		compactJob, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:  repo.ID,
-			GitRef:  "", // compact jobs have no real git ref
+			GitRef:  "",
 			Branch:  "main",
 			Agent:   "test",
 			JobType: storage.JobTypeCompact,
 			Prompt:  "consolidated findings",
 			Label:   "compact-all-20240101-120000",
 		})
-		// Force to running so CompleteJob can transition it to done.
 		setJobStatus(t, db, compactJob.ID, storage.JobStatusRunning)
 		db.CompleteJob(compactJob.ID, "test", "consolidated findings", "FAIL: issues found")
 
@@ -736,12 +678,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: compactJob.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for compact parent fix, got %d: %s", w.Code, w.Body.String())
-		}
+		w := executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -755,8 +692,6 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("range parent uses branch instead of range ref for fix worktree", func(t *testing.T) {
-		// Range git refs like "sha1..sha2" are not valid for git worktree add.
-		// Fixing a range review should use the branch instead.
 		rangeJob, _ := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID,
 			GitRef: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -770,12 +705,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: rangeJob.ID},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for range parent fix, got %d: %s", w.Code, w.Body.String())
-		}
+		w := executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -793,12 +723,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "--option-injection"},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("Expected 400 for dash-prefixed git_ref, got %d", w.Code)
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("rejects git_ref with control chars", func(t *testing.T) {
@@ -806,12 +731,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "main\x00injected"},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("Expected 400 for control-char git_ref, got %d", w.Code)
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("rejects whitespace-padded dash ref", func(t *testing.T) {
@@ -819,15 +739,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: " --option-injection"},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf(
-				"Expected 400 for space+dash git_ref, got %d",
-				w.Code,
-			)
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusBadRequest)
 	})
 
 	t.Run("treats whitespace-only git_ref as empty", func(t *testing.T) {
@@ -835,18 +747,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "   "},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		// Whitespace-only trims to empty, so it's treated as
-		// no user-provided ref — the server falls through to
-		// the parent ref/branch/HEAD resolution chain.
-		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for whitespace-only git_ref (treated as empty), got %d: %s",
-				w.Code, w.Body.String(),
-			)
-		}
+		executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 	})
 
 	t.Run("accepts valid git_ref from request", func(t *testing.T) {
@@ -854,12 +755,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t, http.MethodPost, "/api/job/fix",
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "feature/my-branch"},
 		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for valid git_ref, got %d: %s", w.Code, w.Body.String())
-		}
+		w := executeAndAssertStatus(t, server.handleFixJob, req, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -867,47 +763,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			t.Errorf("Expected git_ref 'feature/my-branch', got %q", fixJob.GitRef)
 		}
 	})
-
-	t.Run("stale job from different repo is rejected", func(t *testing.T) {
-		// Create a fix job in a different repo
-		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")
-		testutil.InitTestGitRepo(t, repo2Dir)
-		repo2, _ := db.GetOrCreateRepo(repo2Dir)
-		commit2, _ := db.GetOrCreateCommit(
-			repo2.ID, "other-sha", "Author", "Subject", time.Now(),
-		)
-		otherReview, _ := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:   repo2.ID,
-			CommitID: commit2.ID,
-			GitRef:   "other-sha",
-			Agent:    "test",
-		})
-		db.ClaimJob("w2")
-		db.CompleteJob(otherReview.ID, "test", "prompt", "FAIL")
-
-		otherFix, _ := db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:      repo2.ID,
-			CommitID:    commit2.ID,
-			GitRef:      "other-sha",
-			Agent:       "test",
-			JobType:     storage.JobTypeFix,
-			ParentJobID: otherReview.ID,
-		})
-
-		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix",
-			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: otherFix.ID},
-		)
-		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for cross-repo stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
-	})
 }
-
 func TestHandleFixJobAgentAvailability(t *testing.T) {
 	// Create shared git repo + completed parent review job.
 	gitPath, err := exec.LookPath("git")
@@ -964,7 +820,10 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 				GitRef:   "fix-avail-abc",
 				Agent:    "test",
 			})
-			db.ClaimJob("w1")
+			_, err := db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w1' WHERE id = ?`, reviewJob.ID)
+			if err != nil {
+				t.Fatalf("Update review_jobs failed: %v", err)
+			}
 			db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
 
 			// Isolate PATH
@@ -981,9 +840,7 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			origPath := os.Getenv("PATH")
-			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
-			t.Cleanup(func() { os.Setenv("PATH", origPath) })
+			t.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
 
 			req := testutil.MakeJSONRequest(
 				t, http.MethodPost, "/api/job/fix",
@@ -998,4 +855,46 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 			}
 		})
 	}
+}
+
+func executeAndAssertStatus(t *testing.T, handler http.HandlerFunc, req *http.Request, expectedCode int) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != expectedCode {
+		t.Fatalf("Expected status %d, got %d: %s", expectedCode, w.Code, w.Body.String())
+	}
+	return w
+}
+
+func setupFixJobFixture(t *testing.T, db *storage.DB, repoDir, refName string) (*storage.Repo, *storage.Commit, *storage.ReviewJob) {
+	t.Helper()
+	testutil.InitTestGitRepo(t, repoDir)
+	repo, err := db.GetOrCreateRepo(repoDir)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, refName, "Author", "Subject", time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+
+	reviewJob, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   refName,
+		Agent:    "test",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'w1' WHERE id = ?`, reviewJob.ID)
+	if err != nil {
+		t.Fatalf("Update review_jobs failed: %v", err)
+	}
+	db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
+
+	return repo, commit, reviewJob
 }

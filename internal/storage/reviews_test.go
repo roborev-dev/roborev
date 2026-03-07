@@ -27,7 +27,10 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			job := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "codex"})
+			if err != nil {
+				t.Fatalf("Failed to enqueue job: %v", err)
+			}
 			setJobStatus(t, db, job.ID, tc.status)
 
 			// Verify job is in expected state
@@ -90,7 +93,12 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "codex"})
+	if err != nil {
+		t.Fatalf("Failed to enqueue job: %v", err)
+	}
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 
 	// Add multiple comments from different users
@@ -131,10 +139,15 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "codex"})
+	if err != nil {
+		t.Fatalf("Failed to enqueue job: %v", err)
+	}
 
 	// Verify no review exists for this job
-	_, err := db.GetReviewByJobID(job.ID)
+	_, err = db.GetReviewByJobID(job.ID)
 	if err == nil {
 		t.Fatal("Expected error getting review for job with no review")
 	}
@@ -208,7 +221,10 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 	job3 := createCompletedJobWithOptions(t, db, EnqueueOpts{RepoID: repo.ID, GitRef: "ghi789"}, "output3")
 
 	// Job 2: no review (still queued)
-	job2 := enqueueJob(t, db, repo.ID, 0, "def456")
+	job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "def456", Agent: "codex"})
+	if err != nil {
+		t.Fatalf("Failed to enqueue job: %v", err)
+	}
 
 	// Job 4: does not exist
 	nonExistentJobID := int64(9999)
@@ -224,41 +240,32 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 			t.Errorf("Expected 3 results, got %d", len(results))
 		}
 
-		// Check job 1 (with review)
-		res1, ok := results[job1.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job1.ID)
-		}
-		if res1.Job.ID != job1.ID {
-			t.Errorf("Expected job ID %d, got %d", job1.ID, res1.Job.ID)
-		}
-		if res1.Review == nil {
-			t.Error("Expected review for job 1, but got nil")
-		} else if res1.Review.Output != "output1" {
-			t.Errorf("Expected review output 'output1', got %q", res1.Review.Output)
+		expected := []struct {
+			jobID      int64
+			wantReview bool
+			wantOutput string
+		}{
+			{job1.ID, true, "output1"},
+			{job2.ID, false, ""},
+			{job3.ID, true, "output3"},
 		}
 
-		// Check job 2 (no review)
-		res2, ok := results[job2.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job2.ID)
-		}
-		if res2.Job.ID != job2.ID {
-			t.Errorf("Expected job ID %d, got %d", job2.ID, res2.Job.ID)
-		}
-		if res2.Review != nil {
-			t.Errorf("Expected no review for job 2, but got one: %+v", res2.Review)
-		}
-
-		// Check job 3 (with review)
-		res3, ok := results[job3.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job3.ID)
-		}
-		if res3.Review == nil {
-			t.Error("Expected review for job 3, but got nil")
-		} else if res3.Review.Output != "output3" {
-			t.Errorf("Expected review output 'output3', got %q", res3.Review.Output)
+		for _, tc := range expected {
+			res, ok := results[tc.jobID]
+			if !ok {
+				t.Errorf("Expected result for job ID %d", tc.jobID)
+				continue
+			}
+			if res.Job.ID != tc.jobID {
+				t.Errorf("Expected job ID %d, got %d", tc.jobID, res.Job.ID)
+			}
+			if tc.wantReview && res.Review == nil {
+				t.Errorf("Expected review for job %d", tc.jobID)
+			} else if tc.wantReview && res.Review.Output != tc.wantOutput {
+				t.Errorf("Expected output %q, got %q", tc.wantOutput, res.Review.Output)
+			} else if !tc.wantReview && res.Review != nil {
+				t.Errorf("Expected no review for job %d", tc.jobID)
+			}
 		}
 
 		// Check non-existent job
@@ -379,9 +386,7 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 		}, "No issues found.")
 
 		// Simulate legacy row by setting verdict_bool to NULL
-		if _, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID); err != nil {
-			t.Fatalf("nullify verdict_bool: %v", err)
-		}
+		simulateLegacyReviewVerdict(t, db, job.ID)
 
 		review, err := db.GetReviewByJobID(job.ID)
 		if err != nil {
@@ -469,5 +474,13 @@ func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg stri
 	}
 	if actual.Response != expectedMsg {
 		t.Errorf("Expected response %q, got %q", expectedMsg, actual.Response)
+	}
+}
+
+// simulateLegacyReviewVerdict simulates a legacy review row by setting verdict_bool to NULL.
+func simulateLegacyReviewVerdict(t *testing.T, db *DB, jobID int64) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, jobID); err != nil {
+		t.Fatalf("Failed to nullify verdict_bool: %v", err)
 	}
 }

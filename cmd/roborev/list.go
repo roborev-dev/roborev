@@ -45,11 +45,10 @@ Examples:
   roborev list --closed               # Only closed reviews
   roborev list --limit 5              # Show at most 5 jobs`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
-
-			addr := getDaemonAddr()
 
 			// Auto-resolve repo from cwd when not specified.
 			// Use worktree root for branch detection, main repo root for API queries

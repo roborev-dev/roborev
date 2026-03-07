@@ -83,6 +83,13 @@ func setupMockProvider(t *testing.T, handler http.HandlerFunc) (*GitHubAppTokenP
 	return tp, srv
 }
 
+func setupMockProviderWithResponses(t *testing.T, responses []mockResponse) (*GitHubAppTokenProvider, *mockServer) {
+	t.Helper()
+	mock := &mockServer{t: t, responses: responses}
+	tp, _ := setupMockProvider(t, mock.ServeHTTP)
+	return tp, mock
+}
+
 func parseInsecureJWT(t *testing.T, token string) (map[string]any, map[string]any) {
 	t.Helper()
 	parts := strings.Split(token, ".")
@@ -110,35 +117,36 @@ func parseInsecureJWT(t *testing.T, token string) (map[string]any, map[string]an
 	return header, payload
 }
 
-func TestParsePrivateKey_PKCS1(t *testing.T) {
-	_, pemData := testKey(t)
-	key, err := parsePrivateKey([]byte(pemData))
-	if err != nil {
-		t.Fatalf("parse PKCS1: %v", err)
-	}
-	if key == nil {
-		t.Fatal("expected non-nil key")
-	}
-}
+func TestParsePrivateKey(t *testing.T) {
+	_, pkcs1PEM := testKey(t)
+	_, pkcs8PEM := generateTestKeyPKCS8(t)
 
-func TestParsePrivateKey_PKCS8(t *testing.T) {
-	_, pemData := generateTestKeyPKCS8(t)
-	key, err := parsePrivateKey([]byte(pemData))
-	if err != nil {
-		t.Fatalf("parse PKCS8: %v", err)
+	tests := []struct {
+		name    string
+		pemData []byte
+		wantErr string
+	}{
+		{"PKCS1", []byte(pkcs1PEM), ""},
+		{"PKCS8", []byte(pkcs8PEM), ""},
+		{"Invalid", []byte("not a PEM"), "no PEM block"},
 	}
-	if key == nil {
-		t.Fatal("expected non-nil key")
-	}
-}
 
-func TestParsePrivateKey_Invalid(t *testing.T) {
-	_, err := parsePrivateKey([]byte("not a PEM"))
-	if err == nil {
-		t.Fatal("expected error for invalid PEM")
-	}
-	if !strings.Contains(err.Error(), "no PEM block") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, err := parsePrivateKey(tt.pemData)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if key == nil {
+				t.Fatal("expected non-nil key")
+			}
+		})
 	}
 }
 
@@ -148,6 +156,9 @@ func TestSignJWT_Structure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
+
+	fixedTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	tp.now = func() time.Time { return fixedTime }
 
 	jwt, err := tp.signJWT()
 	if err != nil {
@@ -182,12 +193,50 @@ func TestSignJWT_Structure(t *testing.T) {
 		t.Errorf("expected duration (exp-iat) to be 660s, got %v", exp-iat)
 	}
 
-	now := float64(time.Now().Unix())
-	if iat > now+60 || iat < now-600 {
-		t.Errorf("iat %v out of bounds (now: %v)", iat, now)
+	expectedIat := float64(fixedTime.Add(-60 * time.Second).Unix())
+	expectedExp := float64(fixedTime.Add(10 * time.Minute).Unix())
+
+	if iat != expectedIat {
+		t.Errorf("expected iat %v, got %v", expectedIat, iat)
 	}
-	if exp > now+660 || exp < now+60 {
-		t.Errorf("exp %v out of bounds (now: %v)", exp, now)
+	if exp != expectedExp {
+		t.Errorf("expected exp %v, got %v", expectedExp, exp)
+	}
+}
+
+func TestGitHubAppTokenProvider_NilNow(t *testing.T) {
+	_, pemData := testKey(t)
+
+	// Construct the provider directly to simulate missing 'now' as if by a struct literal
+	key, err := parsePrivateKey([]byte(pemData))
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	tp := &GitHubAppTokenProvider{
+		appID:  testAppID,
+		key:    key,
+		tokens: make(map[int64]*cachedToken),
+	}
+
+	// This should not panic
+	_, err = tp.signJWT()
+	if err != nil {
+		t.Fatalf("sign JWT with nil now: %v", err)
+	}
+
+	// Test cached token path which also calls getNow()
+	tp.tokens[123] = &cachedToken{
+		token:   "test-token",
+		expires: time.Now().Add(1 * time.Hour),
+	}
+
+	token, err := tp.TokenForInstallation(123)
+	if err != nil {
+		t.Fatalf("TokenForInstallation with nil now: %v", err)
+	}
+	if token != "test-token" {
+		t.Errorf("expected test-token, got %s", token)
 	}
 }
 
@@ -232,19 +281,15 @@ func (m *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestTokenCaching(t *testing.T) {
-	mock := &mockServer{
-		t: t,
-		responses: []mockResponse{
-			{
-				path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
-				body: map[string]any{
-					"token":      "ghs_test_token_123",
-					"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-				},
+	tp, mock := setupMockProviderWithResponses(t, []mockResponse{
+		{
+			path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
+			body: map[string]any{
+				"token":      "ghs_test_token_123",
+				"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 			},
 		},
-	}
-	tp, _ := setupMockProvider(t, mock.ServeHTTP)
+	})
 
 	// First call should hit the server
 	token1, err := tp.TokenForInstallation(testInstallationID)
@@ -271,26 +316,26 @@ func TestTokenCaching(t *testing.T) {
 	}
 }
 func TestTokenRefreshOnExpiry(t *testing.T) {
-	mock := &mockServer{
-		t: t,
-		responses: []mockResponse{
-			{
-				path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
-				body: map[string]any{
-					"token":      "ghs_old",
-					"expires_at": time.Now().Add(1 * time.Second).Format(time.RFC3339),
-				},
-			},
-			{
-				path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
-				body: map[string]any{
-					"token":      "ghs_refreshed",
-					"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-				},
+	// Set fixed time to easily control boundaries
+	fixedTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tp, mock := setupMockProviderWithResponses(t, []mockResponse{
+		{
+			path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
+			body: map[string]any{
+				"token":      "ghs_old",
+				"expires_at": fixedTime.Add(1 * time.Second).Format(time.RFC3339),
 			},
 		},
-	}
-	tp, _ := setupMockProvider(t, mock.ServeHTTP)
+		{
+			path: fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID),
+			body: map[string]any{
+				"token":      "ghs_refreshed",
+				"expires_at": fixedTime.Add(1 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	})
+	tp.now = func() time.Time { return fixedTime }
 
 	// First call caches expiring token
 	token1, err := tp.TokenForInstallation(testInstallationID)
@@ -329,26 +374,22 @@ func TestTokenExchangeError(t *testing.T) {
 }
 
 func TestTokenCaching_MultipleInstallations(t *testing.T) {
-	mock := &mockServer{
-		t: t,
-		responses: []mockResponse{
-			{
-				path: "/app/installations/111/access_tokens",
-				body: map[string]any{
-					"token":      "ghs_token_for_111",
-					"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-				},
-			},
-			{
-				path: "/app/installations/222/access_tokens",
-				body: map[string]any{
-					"token":      "ghs_token_for_222",
-					"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
-				},
+	tp, mock := setupMockProviderWithResponses(t, []mockResponse{
+		{
+			path: "/app/installations/111/access_tokens",
+			body: map[string]any{
+				"token":      "ghs_token_for_111",
+				"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 			},
 		},
-	}
-	tp, _ := setupMockProvider(t, mock.ServeHTTP)
+		{
+			path: "/app/installations/222/access_tokens",
+			body: map[string]any{
+				"token":      "ghs_token_for_222",
+				"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	})
 
 	// Get token for installation 111
 	token1, err := tp.TokenForInstallation(111)

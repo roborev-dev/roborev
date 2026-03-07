@@ -190,14 +190,24 @@ func IsAvailable(name string) bool {
 // before the hardcoded fallback chain. This lets callers honor
 // default_backup_agent config without changing the global chain order.
 func GetAvailable(preferred string, backups ...string) (Agent, error) {
+	return GetAvailableFromRegistry(registry, preferred, backups...)
+}
+
+// GetAvailableFromRegistry returns an available agent from the provided
+// registry, trying the requested one first, then falling back to
+// alternatives. Returns error only if no agents available.
+func GetAvailableFromRegistry(reg map[string]Agent, preferred string, backups ...string) (Agent, error) {
 	// Resolve alias upfront for consistent comparisons
 	preferred = resolveAlias(preferred)
 
 	// Reject unknown agent names (typos, config mistakes).
 	// Known-but-unavailable agents still fall back below.
 	if preferred != "" {
-		if _, ok := registry[preferred]; !ok {
-			known := Available()
+		if _, ok := reg[preferred]; !ok {
+			var known []string
+			for name := range reg {
+				known = append(known, name)
+			}
 			sort.Strings(known)
 			return nil, &UnknownAgentError{
 				Name:  preferred,
@@ -206,9 +216,31 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		}
 	}
 
+	isAvail := func(name string) bool {
+		name = resolveAlias(name)
+		a, ok := reg[name]
+		if !ok {
+			return false
+		}
+		if ca, ok := a.(CommandAgent); ok {
+			_, err := exec.LookPath(ca.CommandName())
+			return err == nil
+		}
+		return true
+	}
+
+	get := func(name string) (Agent, error) {
+		name = resolveAlias(name)
+		a, ok := reg[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown agent: %s", name)
+		}
+		return a, nil
+	}
+
 	// Try preferred agent first
-	if preferred != "" && IsAvailable(preferred) {
-		return Get(preferred)
+	if preferred != "" && isAvail(preferred) {
+		return get(preferred)
 	}
 
 	// Try backup agents before the hardcoded fallback chain.
@@ -217,23 +249,23 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		if b == "" || b == preferred {
 			continue
 		}
-		if _, ok := registry[b]; ok && IsAvailable(b) {
-			return Get(b)
+		if isAvail(b) {
+			return get(b)
 		}
 	}
 
 	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi
 	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi"}
 	for _, name := range fallbacks {
-		if name != preferred && IsAvailable(name) {
-			return Get(name)
+		if name != preferred && isAvail(name) {
+			return get(name)
 		}
 	}
 
 	// List what's actually available for error message (exclude test agent)
 	var available []string
-	for name := range registry {
-		if name != "test" && IsAvailable(name) {
+	for name := range reg {
+		if name != "test" && isAvail(name) {
 			available = append(available, name)
 		}
 	}
@@ -242,7 +274,7 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents")
 	}
 
-	return Get(available[0])
+	return get(available[0])
 }
 
 // syncWriter wraps an io.Writer with mutex protection for concurrent writes.

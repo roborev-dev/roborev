@@ -5,7 +5,6 @@ package main
 import (
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/githook"
@@ -18,13 +17,15 @@ func setupHookTest(t *testing.T) *testutil.TestRepo {
 		t.Skip("test uses shell script stub, skipping on Windows")
 	}
 
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", t.TempDir())
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	repo := testutil.NewTestRepo(t)
 
-	t.Cleanup(testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n"))
+	testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")
 	t.Cleanup(repo.Chdir())
 
 	return repo
@@ -58,13 +59,6 @@ fi
 "$ROBOREV" enqueue --quiet 2>/dev/null
 `
 
-func assertNotContains(t *testing.T, content, substr, msg string) {
-	t.Helper()
-	if strings.Contains(content, substr) {
-		t.Errorf("%s. Expected NOT to find %q in:\n%s", msg, substr, content)
-	}
-}
-
 func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	repo := setupHookTest(t)
 	repo.RemoveHooksDir()
@@ -79,17 +73,14 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 		t.Error("hooks directory was not created")
 	}
 
-	if _, err := os.Stat(repo.HookPath); os.IsNotExist(err) {
-		t.Error("post-commit hook was not created")
-	}
-
 	info, err := os.Stat(repo.HookPath)
-	if err != nil {
+	if os.IsNotExist(err) {
+		t.Fatal("post-commit hook was not created")
+	} else if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0111 == 0 {
-		t.Error("post-commit hook is not executable")
-	}
+
+	assertIsExecutable(t, info)
 }
 
 func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
@@ -141,17 +132,7 @@ func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
 	contentStr := readHookContent(t, repo.HookPath)
 
 	// Roborev snippet should appear before exit 0
-	snippetIdx := strings.Index(contentStr, "_roborev_hook")
-	exitIdx := strings.Index(contentStr, "exit 0")
-	if snippetIdx < 0 {
-		t.Fatal("roborev snippet should be present")
-	}
-	if exitIdx < 0 {
-		t.Fatal("exit 0 should be preserved")
-	}
-	if snippetIdx > exitIdx {
-		t.Error("roborev snippet should appear before exit 0")
-	}
+	assertAppearsBefore(t, contentStr, "_roborev_hook", "exit 0")
 
 	// All original content should be preserved
 	assertContains(t, contentStr, "husky.sh", "husky.sh reference should be preserved")

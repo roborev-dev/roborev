@@ -14,17 +14,13 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-type repoSetupResult struct {
-	workingDir string
-	repo       *TestGitRepo
-	extraArgs  []string
-}
+type repoSetupFunc func(t *testing.T, baseArgs []string) (wd string, repo *TestGitRepo, finalArgs []string)
 
 type listTestCase struct {
 	name          string
 	args          []string
 	handler       http.HandlerFunc
-	repoSetup     func(t *testing.T) repoSetupResult
+	repoSetup     repoSetupFunc
 	check         func(t *testing.T, output string, query string, repo *TestGitRepo, wd string)
 	wantOutput    []string
 	notWantOutput []string
@@ -51,11 +47,11 @@ func assertListNotContainsAny(t *testing.T, name, subject string, notWants []str
 	}
 }
 
-func TestListCommand(t *testing.T) {
-	now := time.Now()
-	started := now.Add(-10 * time.Second)
-	finished := now.Add(-5 * time.Second)
-	testJobs := []storage.ReviewJob{
+var (
+	now             = time.Now()
+	started         = now.Add(-10 * time.Second)
+	finished        = now.Add(-5 * time.Second)
+	defaultTestJobs = []storage.ReviewJob{
 		{
 			ID:         1,
 			GitRef:     "abc1234567890",
@@ -73,40 +69,48 @@ func TestListCommand(t *testing.T) {
 			Status:   storage.JobStatusQueued,
 		},
 	}
+)
 
-	// Helper to create a handler that returns a specific list of jobs
-	jobsHandler := func(jobs []storage.ReviewJob, hasMore bool) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs":     jobs,
-					"has_more": hasMore,
-				})
-			}
+// Helper to create a handler that returns a specific list of jobs
+func jobsHandler(jobs []storage.ReviewJob, hasMore bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobs":     jobs,
+				"has_more": hasMore,
+			})
 		}
 	}
+}
 
-	// Helper to create a handler that returns an error
-	errorHandler := func(code int, body string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				w.WriteHeader(code)
-				w.Write([]byte(body))
-			}
+// Helper to create a handler that returns an error
+func errorHandler(code int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			w.WriteHeader(code)
+			w.Write([]byte(body))
 		}
 	}
+}
 
+func defaultRepoSetup(t *testing.T, baseArgs []string) (wd string, repo *TestGitRepo, finalArgs []string) {
+	repo = newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+	return repo.Dir, repo, baseArgs
+}
+
+func TestListCommand(t *testing.T) {
 	tests := []listTestCase{
 		{
 			name:       "tabular output shows jobs",
 			args:       []string{},
-			handler:    jobsHandler(testJobs, false),
+			handler:    jobsHandler(defaultTestJobs, false),
 			wantOutput: []string{"abc1234", "myrepo", "test", "done"},
 		},
 		{
 			name:    "json output passes through raw response",
 			args:    []string{"--json"},
-			handler: jobsHandler(testJobs, true),
+			handler: jobsHandler(defaultTestJobs, true),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				var parsed []storage.ReviewJob
 				if err := json.Unmarshal([]byte(output), &parsed); err != nil {
@@ -120,7 +124,7 @@ func TestListCommand(t *testing.T) {
 		{
 			name:       "has_more shows hint in tabular mode",
 			args:       []string{},
-			handler:    jobsHandler(testJobs, true),
+			handler:    jobsHandler(defaultTestJobs, true),
 			wantOutput: []string{"more results available"},
 		},
 		{
@@ -158,24 +162,24 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "explicit --repo to cwd repo still auto-resolves branch",
-			repoSetup: func(t *testing.T) repoSetupResult {
+			repoSetup: func(t *testing.T, baseArgs []string) (string, *TestGitRepo, []string) {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				// We want to pass repo.Dir as --repo arg
-				return repoSetupResult{workingDir: repo.Dir, repo: repo, extraArgs: []string{"--repo", repo.Dir}}
+				return repo.Dir, repo, append(baseArgs, "--repo", repo.Dir)
 			},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
 			wantQuery: []string{"branch="},
 		},
 		{
 			name: "worktree sends main repo path as repo param",
-			repoSetup: func(t *testing.T) repoSetupResult {
+			repoSetup: func(t *testing.T, baseArgs []string) (string, *TestGitRepo, []string) {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				worktreeDir := t.TempDir()
 				os.Remove(worktreeDir)
 				repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
-				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: nil}
+				return worktreeDir, repo, baseArgs
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
@@ -222,13 +226,13 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "explicit --repo with worktree path normalizes to main repo",
-			repoSetup: func(t *testing.T) repoSetupResult {
+			repoSetup: func(t *testing.T, baseArgs []string) (string, *TestGitRepo, []string) {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				worktreeDir := t.TempDir()
 				os.Remove(worktreeDir)
 				repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
-				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: []string{"--repo", worktreeDir}}
+				return worktreeDir, repo, append(baseArgs, "--repo", worktreeDir)
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
@@ -242,14 +246,10 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "workspace mode suppresses auto-detected branch",
-			repoSetup: func(t *testing.T) repoSetupResult {
+			repoSetup: func(t *testing.T, baseArgs []string) (string, *TestGitRepo, []string) {
 				// Create a non-git parent dir (workspace mode)
 				parent := t.TempDir()
-				return repoSetupResult{
-					workingDir: parent,
-					repo:       nil,
-					extraArgs:  nil,
-				}
+				return parent, nil, baseArgs
 			},
 			handler:      jobsHandler([]storage.ReviewJob{}, false),
 			wantQuery:    []string{"repo_prefix="},
@@ -257,13 +257,9 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "workspace mode honors explicit --branch",
-			repoSetup: func(t *testing.T) repoSetupResult {
+			repoSetup: func(t *testing.T, baseArgs []string) (string, *TestGitRepo, []string) {
 				parent := t.TempDir()
-				return repoSetupResult{
-					workingDir: parent,
-					repo:       nil,
-					extraArgs:  []string{"--branch", "main"},
-				}
+				return parent, nil, append(baseArgs, "--branch", "main")
 			},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
 			wantQuery: []string{"repo_prefix=", "branch=main", "branch_include_empty=true"},
@@ -291,24 +287,16 @@ func runListTest(t *testing.T, tc listTestCase) {
 	daemonFromHandler(t, wrapperHandler)
 
 	// Setup repo and cwd
-	var wd string
-	var repo *TestGitRepo
-	var extraArgs []string
-	if tc.repoSetup != nil {
-		res := tc.repoSetup(t)
-		wd, repo, extraArgs = res.workingDir, res.repo, res.extraArgs
-	} else {
-		repo = newTestGitRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
-		wd = repo.Dir
+	if tc.repoSetup == nil {
+		tc.repoSetup = defaultRepoSetup
 	}
+	wd, repo, args := tc.repoSetup(t, tc.args)
 	chdir(t, wd)
 
 	// Execute command
 	var cmdErr error
 	output := captureStdout(t, func() {
 		cmd := listCmd()
-		args := append(tc.args, extraArgs...)
 		cmd.SetArgs(args)
 		cmdErr = cmd.Execute()
 	})

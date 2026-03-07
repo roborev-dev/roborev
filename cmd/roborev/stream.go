@@ -30,7 +30,8 @@ Examples:
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -44,7 +45,6 @@ Examples:
 			}
 
 			// Build URL with optional repo filter
-			addr := getDaemonAddr()
 			streamURL := addr + "/api/stream/events"
 			if repoFilter != "" {
 				streamURL += "?" + url.Values{"repo": {repoFilter}}.Encode()

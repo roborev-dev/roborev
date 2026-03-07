@@ -147,8 +147,7 @@ func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error 
 }
 
 // findJobForCommit finds a job for the given commit SHA in the specified repo
-func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
-	addr := getDaemonAddr()
+func findJobForCommit(serverAddr, repoPath, sha string) (*storage.ReviewJob, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Normalize repo path to handle symlinks/relative paths consistently
@@ -162,7 +161,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
 	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
-		addr, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
+		serverAddr, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
 	resp, err := client.Get(queryURL)
 	if err != nil {
 		return nil, err
@@ -189,7 +188,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	// Fetch jobs and filter client-side to avoid cross-repo mismatch
 	// Use high limit since we're filtering client-side; in practice same SHA
 	// across many repos is rare
-	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", addr, url.QueryEscape(sha))
+	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", serverAddr, url.QueryEscape(sha))
 	fallbackResp, err := client.Get(fallbackURL)
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
@@ -227,16 +226,15 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 }
 
 // waitForReview waits for a review to complete and returns it
-func waitForReview(jobID int64) (*storage.Review, error) {
-	return waitForReviewWithInterval(jobID, pollStartInterval)
+func waitForReview(serverAddr string, jobID int64) (*storage.Review, error) {
+	return waitForReviewWithInterval(serverAddr, jobID, pollStartInterval)
 }
 
-func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
-	addr := getDaemonAddr()
+func waitForReviewWithInterval(serverAddr string, jobID int64, pollInterval time.Duration) (*storage.Review, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
 		if err != nil {
 			return nil, fmt.Errorf("polling job %d: %w", jobID, err)
 		}
@@ -263,7 +261,7 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 		switch job.Status {
 		case storage.JobStatusDone:
 			// Get the review
-			reviewResp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
+			reviewResp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID))
 			if err != nil {
 				return nil, err
 			}
@@ -287,16 +285,14 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 }
 
 // enqueueReview enqueues a review job and returns the job ID
-func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
-	addr := getDaemonAddr()
-
+func enqueueReview(serverAddr string, repoPath, gitRef, agentName string) (int64, error) {
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath: repoPath,
 		GitRef:   gitRef,
 		Agent:    agentName,
 	})
 
-	resp, err := http.Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -316,11 +312,10 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 }
 
 // getCommentsForJob fetches comments for a job
-func getCommentsForJob(jobID int64) ([]storage.Response, error) {
-	addr := getDaemonAddr()
+func getCommentsForJob(serverAddr string, jobID int64) ([]storage.Response, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	resp, err := client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID))
+	resp, err := client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", serverAddr, jobID))
 	if err != nil {
 		return nil, err
 	}

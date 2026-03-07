@@ -113,7 +113,8 @@ Examples:
 			}
 
 			// All local validation passed — now ensure daemon is running
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -123,7 +124,7 @@ Examples:
 				if mainRoot == "" {
 					mainRoot, _ = git.GetRepoRoot(".")
 				}
-				job, err := findJobForCommit(mainRoot, sha)
+				job, err := findJobForCommit(addr, mainRoot, sha)
 				if err != nil {
 					return err
 				}
@@ -138,8 +139,7 @@ Examples:
 				jobID = job.ID
 			}
 
-			addr := getDaemonAddr()
-			err := waitForJob(cmd, addr, jobID, quiet)
+			err = waitForJob(cmd, addr, jobID, quiet)
 			if err != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -216,7 +216,8 @@ func waitMultiple(
 	}
 
 	// Phase 2: Ensure daemon is running.
-	if err := ensureDaemon(); err != nil {
+	addr, err := ensureDaemon(cmd)
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 
@@ -231,7 +232,7 @@ func waitMultiple(
 		if mainRoot == "" {
 			mainRoot = repoRoot
 		}
-		job, err := findJobForCommit(mainRoot, r.sha)
+		job, err := findJobForCommit(addr, mainRoot, r.sha)
 		if err != nil {
 			return err
 		}
@@ -245,8 +246,6 @@ func waitMultiple(
 		}
 		jobIDs = append(jobIDs, job.ID)
 	}
-
-	addr := getDaemonAddr()
 
 	// Wait for all jobs concurrently.
 	// Always poll in quiet mode to avoid interleaved output from

@@ -21,14 +21,13 @@ func statusCmd() *cobra.Command {
 		Short: "Show daemon and queue status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				fmt.Println("Daemon: not running")
 				fmt.Println()
 				fmt.Println("Start with: roborev daemon start")
 				return nil
 			}
-
-			addr := getDaemonAddr()
 			client := &http.Client{Timeout: 2 * time.Second}
 			resp, err := client.Get(addr + "/api/status")
 			if err != nil {

@@ -341,3 +341,14 @@ func (a *FakeAgent) WithReasoning(level ReasoningLevel) Agent { return a }
 func (a *FakeAgent) WithAgentic(agentic bool) Agent           { return a }
 func (a *FakeAgent) WithModel(model string) Agent             { return a }
 func (a *FakeAgent) CommandLine() string                      { return "" }
+
+// assertErrorContains fails the test if err is nil or its message doesn't contain want.
+func assertErrorContains(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("expected error containing %q, got %q", want, err.Error())
+	}
+}

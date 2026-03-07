@@ -7,9 +7,8 @@ import (
 )
 
 // AddSubmodule adds a submodule to the test repository.
-func (r *TestRepo) AddSubmodule(t *testing.T, sourceDir, path string) {
-	t.Helper()
-	r.Run("config", "protocol.file.allow", "always")
+func (r *TestRepo) AddSubmodule(sourceDir, path string) {
+	r.T.Helper()
 	r.Run("-c", "protocol.file.allow=always", "submodule", "add", sourceDir, path)
 }
 

@@ -29,6 +29,7 @@ var postCommitWaitDelay = 1 * time.Second
 // refineOptions groups all CLI parameters for the refine command.
 type refineOptions struct {
 	agentName         string
+	agentFactory      func(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, backupAgent string) (agent.Agent, error)
 	model             string
 	reasoning         string
 	maxIterations     int
@@ -120,12 +121,12 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				return runRefineAllBranches(cmd, opts)
 			}
 
-			cwd, err := os.Getwd()
+			cwd, err := getWorkDir(cmd)
 			if err != nil {
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			return runRefine(RunContext{WorkingDir: cwd}, opts)
+			return runRefine(cmd, RunContext{WorkingDir: cwd}, opts)
 		},
 	}
 
@@ -310,7 +311,7 @@ type RunContext struct {
 	PostCommitDelay time.Duration
 }
 
-func runRefine(ctx RunContext, opts refineOptions) error {
+func runRefine(cmd *cobra.Command, ctx RunContext, opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(
 		ctx.WorkingDir, opts.since, opts.branch,
@@ -320,7 +321,8 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	}
 
 	// 2. Connect to daemon (only after all validation passes)
-	if err := ensureDaemon(); err != nil {
+	_, err = ensureDaemon(cmd)
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 
@@ -365,9 +367,17 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	// Get the agent with configured reasoning level (model applied after
 	// backup determination to avoid baking the primary model into a
 	// backup agent).
-	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, backupAgent)
-	if err != nil {
-		return fmt.Errorf("no agent available: %w", err)
+	var addressAgent agent.Agent
+	if opts.agentFactory != nil {
+		addressAgent, err = opts.agentFactory(cfg, resolvedAgent, reasoningLevel, backupAgent)
+		if err != nil {
+			return fmt.Errorf("agent factory failed: %w", err)
+		}
+	} else {
+		addressAgent, err = selectRefineAgent(cfg, resolvedAgent, reasoningLevel, backupAgent)
+		if err != nil {
+			return fmt.Errorf("no agent available: %w", err)
+		}
 	}
 	addressAgent, _ = applyModelForAgent(
 		addressAgent, resolvedAgent, backupAgent,
@@ -659,7 +669,8 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 func runRefineList(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	ctx := cmd.Context()
@@ -667,7 +678,7 @@ func runRefineList(
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -697,7 +708,7 @@ func runRefineList(
 		queryBranch = ""
 	}
 
-	jobs, err := queryOpenJobs(ctx, apiRoot, queryBranch)
+	jobs, err := queryOpenJobs(ctx, serverAddr, apiRoot, queryBranch)
 	if err != nil {
 		return err
 	}
@@ -791,7 +802,8 @@ func runRefineAllBranches(
 		)
 	}
 
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	ctx := cmd.Context()
@@ -822,7 +834,7 @@ func runRefineAllBranches(
 	}
 
 	// Query all open jobs (no branch filter)
-	jobs, err := queryOpenJobs(ctx, apiRepoRoot, "")
+	jobs, err := queryOpenJobs(ctx, serverAddr, apiRepoRoot, "")
 	if err != nil {
 		return err
 	}
@@ -887,7 +899,7 @@ func runRefineAllBranches(
 		branchOpts.branch = b
 		branchOpts.allBranches = false
 
-		if err := runRefine(RunContext{WorkingDir: repoPath}, branchOpts); err != nil {
+		if err := runRefine(cmd, RunContext{WorkingDir: repoPath}, branchOpts); err != nil {
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)

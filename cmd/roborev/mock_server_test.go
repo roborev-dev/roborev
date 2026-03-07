@@ -7,9 +7,7 @@ import (
 )
 
 func TestMockServerHandler_HandleEnqueue_MethodRouting(t *testing.T) {
-	h := &mockServerHandler{
-		state: &MockServerState{},
-	}
+	t.Parallel()
 
 	tests := []struct {
 		method     string
@@ -24,6 +22,12 @@ func TestMockServerHandler_HandleEnqueue_MethodRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.method, func(t *testing.T) {
+			t.Parallel()
+
+			h := &mockServerHandler{
+				state: &MockServerState{},
+			}
+
 			req := httptest.NewRequest(tt.method, "/api/enqueue", nil)
 			w := httptest.NewRecorder()
 

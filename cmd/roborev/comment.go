@@ -72,7 +72,8 @@ Examples:
 			}
 
 			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -134,7 +135,6 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqData)
 
-			addr := getDaemonAddr()
 			resp, err := http.Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
@@ -176,7 +176,8 @@ func closeCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
@@ -191,7 +192,6 @@ func closeCmd() *cobra.Command {
 				"closed": closed,
 			})
 
-			addr := getDaemonAddr()
 			resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)

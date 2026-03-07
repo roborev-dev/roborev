@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func toMap(kvs []KeyValue) map[string]string {
@@ -97,116 +99,124 @@ func TestGetConfigValue(t *testing.T) {
 	cfg := newComplexTestConfig()
 
 	tests := []struct {
-		key  string
-		want string
+		key     string
+		want    string
+		wantErr bool
 	}{
-		{"default_agent", "codex"},
-		{"max_workers", "4"},
-		{"review_context_count", "3"},
-		{"sync.enabled", "true"},
-		{"sync.postgres_url", "postgres://localhost/test"},
-		{"ci.poll_interval", "10m"},
-		{"ci.github_app_id", "12345"},
-		{"ci.github_app_private_key", "test-private-key"},
+		{"default_agent", "codex", false},
+		{"max_workers", "4", false},
+		{"review_context_count", "3", false},
+		{"sync.enabled", "true", false},
+		{"sync.postgres_url", "postgres://localhost/test", false},
+		{"ci.poll_interval", "10m", false},
+		{"ci.github_app_id", "12345", false},
+		{"ci.github_app_private_key", "test-private-key", false},
+		{"nonexistent", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
 			got, err := GetConfigValue(cfg, tt.key)
-			if err != nil {
-				t.Fatalf("GetConfigValue(%q) error: %v", tt.key, err)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetConfigValue(%q) error = %v, wantErr %v", tt.key, err, tt.wantErr)
 			}
-			if got != tt.want {
+			if !tt.wantErr && got != tt.want {
 				t.Errorf("GetConfigValue(%q) = %q, want %q", tt.key, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestGetConfigValueUnknownKey(t *testing.T) {
-	cfg := &Config{}
-	_, err := GetConfigValue(cfg, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for unknown key")
-	}
-}
-
 func TestSetConfigValue(t *testing.T) {
+	boolTrue := true
 	tests := []struct {
-		name   string
-		key    string
-		val    string
-		init   func() *Config
-		verify func(*testing.T, *Config)
+		name    string
+		key     string
+		val     string
+		init    func() *Config
+		want    *Config
+		wantErr bool
 	}{
 		{
 			name: "set string field",
 			key:  "default_agent",
 			val:  "claude-code",
-			verify: func(t *testing.T, c *Config) {
-				if c.DefaultAgent != "claude-code" {
-					t.Errorf("DefaultAgent = %q, want claude-code", c.DefaultAgent)
-				}
+			want: &Config{
+				DefaultAgent: "claude-code",
+				CI: CIConfig{
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set int field",
 			key:  "max_workers",
 			val:  "8",
-			verify: func(t *testing.T, c *Config) {
-				if c.MaxWorkers != 8 {
-					t.Errorf("MaxWorkers = %d, want 8", c.MaxWorkers)
-				}
+			want: &Config{
+				MaxWorkers: 8,
+				CI: CIConfig{
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set nested bool",
 			key:  "sync.enabled",
 			val:  "true",
-			verify: func(t *testing.T, c *Config) {
-				if !c.Sync.Enabled {
-					t.Errorf("Sync.Enabled = %v, want true", c.Sync.Enabled)
-				}
+			want: &Config{
+				Sync: SyncConfig{
+					Enabled: true,
+				},
+				CI: CIConfig{
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set embedded github app id",
 			key:  "ci.github_app_id",
 			val:  "98765",
-			verify: func(t *testing.T, c *Config) {
-				if c.CI.GitHubAppID != 98765 {
-					t.Errorf("CI.GitHubAppID = %d, want 98765", c.CI.GitHubAppID)
-				}
+			want: &Config{
+				CI: CIConfig{
+					GitHubAppConfig: GitHubAppConfig{
+						GitHubAppID: 98765,
+					},
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set embedded github app private key",
 			key:  "ci.github_app_private_key",
 			val:  "private-key-data",
-			verify: func(t *testing.T, c *Config) {
-				if c.CI.GitHubAppPrivateKey != "private-key-data" {
-					t.Errorf("CI.GitHubAppPrivateKey = %q, want private-key-data", c.CI.GitHubAppPrivateKey)
-				}
+			want: &Config{
+				CI: CIConfig{
+					GitHubAppConfig: GitHubAppConfig{
+						GitHubAppPrivateKey: "private-key-data",
+					},
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set bool ptr",
 			key:  "allow_unsafe_agents",
 			val:  "true",
-			verify: func(t *testing.T, c *Config) {
-				if c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents {
-					t.Errorf("AllowUnsafeAgents = %v, want true", c.AllowUnsafeAgents)
-				}
+			want: &Config{
+				AllowUnsafeAgents: &boolTrue,
+				CI: CIConfig{
+					Repos: []string{"initial"},
+				},
 			},
 		},
 		{
 			name: "set slice",
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
-			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
-					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
-				}
+			want: &Config{
+				CI: CIConfig{
+					Repos: []string{"org/repo1", "org/repo2"},
+				},
 			},
 		},
 		{
@@ -214,21 +224,28 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
 			init: func() *Config { return &Config{} },
-			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
-					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
-				}
+			want: &Config{
+				CI: CIConfig{
+					Repos: []string{"org/repo1", "org/repo2"},
+				},
 			},
 		},
 		{
 			name: "set slice empty",
 			key:  "ci.repos",
 			val:  "",
-			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 0 {
-					t.Errorf("CI.Repos = %v, want empty", c.CI.Repos)
-				}
+			want: &Config{
+				CI: CIConfig{
+					Repos: []string{},
+				},
 			},
+		},
+		{
+			name:    "invalid type",
+			key:     "max_workers",
+			val:     "notanumber",
+			init:    func() *Config { return &Config{} },
+			wantErr: true,
 		},
 	}
 
@@ -245,10 +262,14 @@ func TestSetConfigValue(t *testing.T) {
 				}
 			}
 			err := SetConfigValue(cfg, tt.key, tt.val)
-			if err != nil {
-				t.Fatalf("SetConfigValue(%q, %q) error: %v", tt.key, tt.val, err)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("SetConfigValue(%q, %q) error = %v, wantErr %v", tt.key, tt.val, err, tt.wantErr)
 			}
-			tt.verify(t, cfg)
+			if !tt.wantErr && tt.want != nil {
+				if diff := cmp.Diff(tt.want, cfg); diff != "" {
+					t.Errorf("SetConfigValue() mismatch (-want +got):\n%s", diff)
+				}
+			}
 		})
 	}
 }
@@ -279,13 +300,6 @@ func TestSetConfigValueMultipleKeys(t *testing.T) {
 		"ci.github_app_id":          "98765",
 		"ci.github_app_private_key": "private-key-data",
 	})
-}
-
-func TestSetConfigValueInvalidType(t *testing.T) {
-	cfg := &Config{}
-	if err := SetConfigValue(cfg, "max_workers", "notanumber"); err == nil {
-		t.Fatal("expected error for invalid integer")
-	}
 }
 
 func TestListConfigKeys(t *testing.T) {
@@ -376,14 +390,7 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 			want: map[string]expectedOrigin{
 				"default_agent": {Value: "gemini", Origin: "global"},
 				"agent":         {Value: "claude-code", Origin: "local"},
-			},
-			verify: func(t *testing.T, kvos []KeyValueOrigin) {
-				found := toOriginMap(kvos)
-				if kvo, ok := found["max_workers"]; ok {
-					if kvo.Origin != "default" {
-						t.Errorf("max_workers origin = %q, want default", kvo.Origin)
-					}
-				}
+				"max_workers":   {Value: "4", Origin: "default"},
 			},
 		},
 		{
@@ -410,12 +417,7 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 			rawGlobal: map[string]any{"default_agent": "gemini"},
 			want: map[string]expectedOrigin{
 				"default_agent": {Value: "gemini", Origin: "global"},
-			},
-			verify: func(t *testing.T, kvos []KeyValueOrigin) {
-				found := toOriginMap(kvos)
-				if found["max_workers"].Origin != "default" {
-					t.Errorf("max_workers origin = %q, want default", found["max_workers"].Origin)
-				}
+				"max_workers":   {Value: "4", Origin: "default"},
 			},
 		},
 		{
@@ -459,13 +461,8 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 			name:      "explicit global matching default shows global origin",
 			global:    DefaultConfig(),
 			rawGlobal: map[string]any{"max_workers": int64(4)}, // Explicitly set to default value
-			verify: func(t *testing.T, kvos []KeyValueOrigin) {
-				found := toOriginMap(kvos)
-				if kvo, ok := found["max_workers"]; !ok {
-					t.Error("expected max_workers in output")
-				} else if kvo.Origin != "global" {
-					t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
-				}
+			want: map[string]expectedOrigin{
+				"max_workers": {Value: "4", Origin: "global"},
 			},
 		},
 	}
@@ -488,18 +485,21 @@ func TestIsConfigValueSet(t *testing.T) {
 		DefaultAgent: "codex",
 		MaxWorkers:   4,
 	}
-
-	if !IsConfigValueSet(cfg, "default_agent") {
-		t.Error("expected default_agent to be set")
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"default_agent", true},
+		{"max_workers", true},
+		{"cursor_cmd", false},
+		{"nonexistent", false},
 	}
-	if !IsConfigValueSet(cfg, "max_workers") {
-		t.Error("expected max_workers to be set")
-	}
-	if IsConfigValueSet(cfg, "cursor_cmd") {
-		t.Error("expected cursor_cmd to not be set")
-	}
-	if IsConfigValueSet(cfg, "nonexistent") {
-		t.Error("expected nonexistent to not be set")
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			if got := IsConfigValueSet(cfg, tt.key); got != tt.want {
+				t.Errorf("IsConfigValueSet(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
 	}
 }
 

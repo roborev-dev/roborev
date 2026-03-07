@@ -20,118 +20,92 @@ func requireGit(t *testing.T) {
 func TestValidateRefineContext(t *testing.T) {
 	requireGit(t)
 
-	// Helper to create a standard test repo
-	// Returns repo, baseSHA
-	createStandardRepo := func(t *testing.T) (*testutil.TestRepo, string) {
-		repo := testutil.InitTestRepo(t)
-		baseSHA := repo.RevParse("HEAD")
-		return repo, baseSHA
-	}
-
-	type refineTestSetup struct {
-		repo              *testutil.TestRepo
-		since             string
-		expectedMergeBase string
-	}
-
 	tests := []struct {
-		name      string
-		setup     func(t *testing.T) refineTestSetup
-		sinceArg  string // Overrides setup if not empty
-		branchArg string
-		wantErr   string
-		wantBr    string
+		name           string
+		setup          func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (since string, expectedBase string)
+		branchArg      string
+		wantErr        string
+		expectedBranch string
 	}{
 		{
 			name: "refuses main without since",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, _ := createStandardRepo(t)
-				return refineTestSetup{repo: repo, since: "", expectedMergeBase: ""}
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
+				return "", ""
 			},
 			wantErr: "refusing to refine on main branch without --since flag",
 		},
 		{
 			name: "allows main with since",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, baseSHA := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.CommitFile("second.txt", "second", "second commit")
-				return refineTestSetup{repo: repo, since: baseSHA, expectedMergeBase: baseSHA}
+				return baseSHA, baseSHA
 			},
-			wantBr: "main",
+			expectedBranch: "main",
 		},
 		{
 			name: "since works on feature branch",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, baseSHA := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feature.txt", "feature", "feature commit")
-				return refineTestSetup{repo: repo, since: baseSHA, expectedMergeBase: baseSHA}
+				return baseSHA, baseSHA
 			},
-			wantBr: "feature",
+			expectedBranch: "feature",
 		},
 		{
 			name: "invalid since ref",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, _ := createStandardRepo(t)
-				return refineTestSetup{repo: repo, since: "nonexistent-ref-abc123", expectedMergeBase: ""}
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
+				return "nonexistent-ref-abc123", ""
 			},
 			wantErr: "cannot resolve --since",
 		},
 		{
 			name: "since not ancestor of HEAD",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, _ := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.Checkout("-b", "other-branch")
 				otherBranchSHA := repo.CommitFile("other.txt", "other", "commit on other branch")
 				repo.Checkout("main")
 				repo.CommitFile("main2.txt", "main2", "second commit on main")
-				return refineTestSetup{repo: repo, since: otherBranchSHA, expectedMergeBase: ""}
+				return otherBranchSHA, ""
 			},
 			wantErr: "is not an ancestor of HEAD",
 		},
 		{
 			name: "feature branch without since works",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, baseSHA := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feature.txt", "feature", "feature commit")
-				return refineTestSetup{repo: repo, since: "", expectedMergeBase: baseSHA}
+				return "", baseSHA
 			},
-			wantBr: "feature",
+			expectedBranch: "feature",
 		},
 		{
 			name: "branch mismatch",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, _ := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feat.txt", "f", "feat")
-				return refineTestSetup{repo: repo, since: "", expectedMergeBase: ""}
+				return "", ""
 			},
 			branchArg: "other",
 			wantErr:   "not on branch",
 		},
 		{
 			name: "branch match",
-			setup: func(t *testing.T) refineTestSetup {
-				repo, baseSHA := createStandardRepo(t)
+			setup: func(t *testing.T, repo *testutil.TestRepo, baseSHA string) (string, string) {
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feat.txt", "f", "feat")
-				return refineTestSetup{repo: repo, since: "", expectedMergeBase: baseSHA}
+				return "", baseSHA
 			},
-			branchArg: "feature",
-			wantBr:    "feature",
+			branchArg:      "feature",
+			expectedBranch: "feature",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setup := tt.setup(t)
-			repo := setup.repo
-			expectedBase := setup.expectedMergeBase
-			since := setup.since
-			if tt.sinceArg != "" {
-				since = tt.sinceArg
-			}
+			repo := testutil.InitTestRepo(t)
+			baseSHA := repo.RevParse("HEAD")
+
+			since, expectedBase := tt.setup(t, repo, baseSHA)
 
 			repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repo.Root, since, tt.branchArg)
 
@@ -151,8 +125,8 @@ func TestValidateRefineContext(t *testing.T) {
 			if repoPath == "" {
 				t.Error("expected non-empty repoPath")
 			}
-			if tt.wantBr != "" && currentBranch != tt.wantBr {
-				t.Errorf("expected branch %q, got %q", tt.wantBr, currentBranch)
+			if tt.expectedBranch != "" && currentBranch != tt.expectedBranch {
+				t.Errorf("expected branch %q, got %q", tt.expectedBranch, currentBranch)
 			}
 			if expectedBase != "" && mergeBase != expectedBase {
 				t.Errorf("expected merge base %q, got %q", expectedBase, mergeBase)

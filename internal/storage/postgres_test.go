@@ -36,8 +36,8 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 	}
 }
 
-func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
-	requiredStatements := []string{
+func TestPgSchemaStatements(t *testing.T) {
+	required := []string{
 		"CREATE SCHEMA IF NOT EXISTS roborev",
 		"CREATE TABLE IF NOT EXISTS roborev.schema_version",
 		"CREATE TABLE IF NOT EXISTS roborev.machines",
@@ -46,20 +46,6 @@ func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS roborev.review_jobs",
 		"CREATE TABLE IF NOT EXISTS roborev.reviews",
 		"CREATE TABLE IF NOT EXISTS roborev.responses",
-	}
-
-	// Join all statements to search across the actual executed schema
-	allStatements := strings.Join(pgSchemaStatements(), "\n")
-
-	for _, required := range requiredStatements {
-		if !strings.Contains(allStatements, required) {
-			t.Errorf("Schema missing: %s", required)
-		}
-	}
-}
-
-func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
-	requiredIndexes := []string{
 		"idx_review_jobs_source",
 		"idx_review_jobs_updated",
 		"idx_reviews_job_uuid",
@@ -71,9 +57,9 @@ func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 	// Join all statements to search across the actual executed schema
 	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
-	for _, idx := range requiredIndexes {
-		if !strings.Contains(allStatements, idx) {
-			t.Errorf("Schema missing index: %s", idx)
+	for _, req := range required {
+		if !strings.Contains(allStatements, req) {
+			t.Errorf("Schema missing: %s", req)
 		}
 	}
 }
@@ -108,20 +94,20 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	// Create a repo using the helper
 	repoIdentity := "test-repo-" + time.Now().Format("20060102150405")
-	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: repoIdentity})
+	repoID := WrapTestEnv(t, pool.Pool()).CreateRepo(TestRepoOpts{Identity: repoIdentity})
 	repoIDs = append(repoIDs, repoID)
 
 	// Create a commit using the helper
-	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "abc123456789"})
+	commitID := WrapTestEnv(t, pool.Pool()).CreateCommit(TestCommitOpts{RepoID: repoID, SHA: "abc123456789"})
 
 	// Create two jobs with different UUIDs using explicit timestamps
-	createTestJob(t, pool.pool, TestJobOpts{
+	WrapTestEnv(t, pool.pool).CreateJob(TestJobOpts{
 		UUID:            jobUUID1,
 		RepoID:          repoID,
 		CommitID:        commitID,
 		SourceMachineID: machineID,
 	})
-	createTestJob(t, pool.pool, TestJobOpts{
+	WrapTestEnv(t, pool.pool).CreateJob(TestJobOpts{
 		UUID:            jobUUID2,
 		RepoID:          repoID,
 		CommitID:        commitID,
@@ -130,7 +116,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	baseTime := time.Now().Truncate(time.Millisecond)
 	// Create reviews with explicit timestamps to ensure ordering
-	createTestReview(t, pool.pool, TestReviewOpts{
+	WrapTestEnv(t, pool.pool).CreateReview(TestReviewOpts{
 		UUID:               reviewUUID1,
 		JobUUID:            jobUUID1,
 		UpdatedByMachineID: otherMachineID,
@@ -138,7 +124,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 		UpdatedAt:          baseTime,
 	})
 
-	createTestReview(t, pool.pool, TestReviewOpts{
+	WrapTestEnv(t, pool.pool).CreateReview(TestReviewOpts{
 		UUID:               reviewUUID2,
 		JobUUID:            jobUUID2,
 		UpdatedByMachineID: otherMachineID,
@@ -250,140 +236,444 @@ func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID strin
 	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, otherMachineID)
 }
 
-func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) {
-	// This test verifies that EnsureSchema auto-initializes when schema_version table is empty
-	pool := openTestPgPool(t)
-	ctx := t.Context()
-
-	// Clear schema_version to simulate empty table
-	_, _ = pool.pool.Exec(ctx, `DELETE FROM schema_version`)
-
-	// EnsureSchema should succeed and auto-initialize
-	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
+func assertTableExists(t *testing.T, pool *PgPool, schema, table string, expected bool) {
+	t.Helper()
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2)`
+	if err := pool.pool.QueryRow(t.Context(), query, schema, table).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
 	}
-
-	// Verify version was inserted
-	var version int
-	if err := pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil {
-		t.Fatalf("Failed to query version: %v", err)
-	}
-	if version != pgSchemaVersion {
-		t.Errorf("Expected schema version %d, got %d", pgSchemaVersion, version)
+	if exists != expected {
+		t.Errorf("Expected %s.%s existence to be %v", schema, table, expected)
 	}
 }
 
-func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
-	// This test verifies that EnsureSchema returns error when schema version is newer than supported
-	pool := openTestPgPool(t)
-	ctx := t.Context()
-
-	// Insert a newer version
-	futureVersion := pgSchemaVersion + 10
-	_, err := pool.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, futureVersion)
-	if err != nil {
-		t.Fatalf("Failed to insert future version: %v", err)
-	}
-	defer func() {
-		// Clean up - remove future version
-		pool.pool.Exec(ctx, `DELETE FROM schema_version WHERE version = $1`, futureVersion)
-	}()
-
-	// EnsureSchema should fail with clear error
-	err = pool.EnsureSchema(ctx)
-	if err == nil {
-		t.Fatal("Expected error for newer schema version, but got nil")
-	}
-	if !strings.Contains(err.Error(), "newer than supported") {
-		t.Errorf("Expected 'newer than supported' error, got: %v", err)
-	}
-}
-
-func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
-	// This test verifies that a fresh database (no roborev schema) can be initialized
-	connString := getTestPostgresURL(t)
-	ctx := t.Context()
-
-	// First, check if schema exists
-	env := NewMigrationTestEnv(t)
-	var schemaExists bool
-	if err := env.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists); err != nil {
-		t.Fatalf("Failed to check if schema exists: %v", err)
-	}
-
-	if schemaExists {
-		// Don't actually drop if it has data - just verify the bootstrap works
+func TestIntegration_EnsureSchema(t *testing.T) {
+	t.Run("AutoInitializesVersion", func(t *testing.T) {
+		// This test verifies that EnsureSchema auto-initializes when schema_version table is empty
 		pool := openTestPgPool(t)
+		ctx := t.Context()
 
-		// Verify schema_version table is accessible
+		// Clear schema_version to simulate empty table
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM schema_version`)
+
+		// EnsureSchema should succeed and auto-initialize
+		if err := pool.EnsureSchema(ctx); err != nil {
+			t.Fatalf("EnsureSchema failed: %v", err)
+		}
+
+		// Verify version was inserted
 		var version int
-		err := pool.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version)
-		if err != nil {
-			t.Fatalf("Failed to query schema_version: %v", err)
+		if err := pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil {
+			t.Fatalf("Failed to query version: %v", err)
 		}
-		t.Logf("Schema version: %d", version)
+		if version != pgSchemaVersion {
+			t.Errorf("Expected schema version %d, got %d", pgSchemaVersion, version)
+		}
+	})
 
-		// Verify branch index exists (created by migration or fresh install)
-		var indexExists bool
-		err = pool.pool.QueryRow(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM pg_indexes
-				WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
-			)
-		`).Scan(&indexExists)
-		if err != nil {
-			t.Fatalf("Failed to check branch index: %v", err)
-		}
-		if !indexExists {
-			t.Errorf("Expected idx_review_jobs_branch to exist after EnsureSchema")
-		}
-	} else {
-		env.DropSchema("roborev")
-		env.CleanupDropSchema("roborev")
+	t.Run("RejectsNewerVersion", func(t *testing.T) {
+		// This test verifies that EnsureSchema returns error when schema version is newer than supported
+		pool := openTestPgPool(t)
+		ctx := t.Context()
 
-		// Fresh database - NewPgPool should succeed with AfterConnect bootstrap
-		pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+		// Insert a newer version
+		futureVersion := pgSchemaVersion + 10
+		_, err := pool.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, futureVersion)
 		if err != nil {
-			t.Fatalf("Failed to connect on fresh database: %v", err)
+			t.Fatalf("Failed to insert future version: %v", err)
 		}
-		t.Cleanup(func() { pool.Close() })
+		defer func() {
+			// Clean up - remove future version
+			pool.pool.Exec(ctx, `DELETE FROM schema_version WHERE version = $1`, futureVersion)
+		}()
+
+		// EnsureSchema should fail with clear error
+		err = pool.EnsureSchema(ctx)
+		if err == nil {
+			t.Fatal("Expected error for newer schema version, but got nil")
+		}
+		if !strings.Contains(err.Error(), "newer than supported") {
+			t.Errorf("Expected 'newer than supported' error, got: %v", err)
+		}
+	})
+
+	t.Run("FreshDatabase", func(t *testing.T) {
+		// This test verifies that a fresh database (no roborev schema) can be initialized
+		connString := getTestPostgresURL(t)
+		ctx := t.Context()
+
+		// First, check if schema exists
+		env := NewTestEnv(t)
+		var schemaExists bool
+		if err := env.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists); err != nil {
+			t.Fatalf("Failed to check if schema exists: %v", err)
+		}
+
+		if schemaExists {
+			// Don't actually drop if it has data - just verify the bootstrap works
+			pool := openTestPgPool(t)
+
+			// Verify schema_version table is accessible
+			var version int
+			err := pool.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version)
+			if err != nil {
+				t.Fatalf("Failed to query schema_version: %v", err)
+			}
+			t.Logf("Schema version: %d", version)
+
+			// Verify branch index exists (created by migration or fresh install)
+			var indexExists bool
+			err = pool.pool.QueryRow(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM pg_indexes
+					WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
+				)
+			`).Scan(&indexExists)
+			if err != nil {
+				t.Fatalf("Failed to check branch index: %v", err)
+			}
+			if !indexExists {
+				t.Errorf("Expected idx_review_jobs_branch to exist after EnsureSchema")
+			}
+		} else {
+			env.DropSchema("roborev")
+			env.CleanupDropSchema("roborev")
+
+			// Fresh database - NewPgPool should succeed with AfterConnect bootstrap
+			pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+			if err != nil {
+				t.Fatalf("Failed to connect on fresh database: %v", err)
+			}
+			t.Cleanup(func() { pool.Close() })
+
+			if err := pool.EnsureSchema(ctx); err != nil {
+				t.Fatalf("EnsureSchema failed on fresh database: %v", err)
+			}
+
+			// Verify tables were created in roborev schema
+			var tableCount int
+			err = pool.pool.QueryRow(ctx, `
+				SELECT COUNT(*) FROM information_schema.tables
+				WHERE table_schema = 'roborev'
+			`).Scan(&tableCount)
+			if err != nil {
+				t.Fatalf("Failed to count tables: %v", err)
+			}
+			if tableCount < 5 {
+				t.Errorf("Expected at least 5 tables in roborev schema, got %d", tableCount)
+			}
+
+			// Verify branch index was created for fresh install
+			var indexExists bool
+			err = pool.pool.QueryRow(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM pg_indexes
+					WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
+				)
+			`).Scan(&indexExists)
+			if err != nil {
+				t.Fatalf("Failed to check branch index: %v", err)
+			}
+			if !indexExists {
+				t.Errorf("Expected idx_review_jobs_branch to exist on fresh install")
+			}
+		}
+	})
+
+	t.Run("MigratesLegacyTables", func(t *testing.T) {
+		// This test verifies that tables in public schema are migrated to roborev
+		ctx := t.Context()
+
+		env := setupMigrationEnv(t)
+		env.SkipIfTableInSchema("roborev", "schema_version")
+		env.SkipIfTableInSchema("public", "schema_version")
+
+		// Create legacy table in public schema
+		env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
+		env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
+
+		// Now connect with the normal pool and run EnsureSchema
+		pool := openRawTestPool(t)
 
 		if err := pool.EnsureSchema(ctx); err != nil {
-			t.Fatalf("EnsureSchema failed on fresh database: %v", err)
+			t.Fatalf("EnsureSchema failed: %v", err)
 		}
 
-		// Verify tables were created in roborev schema
-		var tableCount int
-		err = pool.pool.QueryRow(ctx, `
-			SELECT COUNT(*) FROM information_schema.tables
-			WHERE table_schema = 'roborev'
-		`).Scan(&tableCount)
+		// Verify legacy table was migrated (no longer in public)
+		assertTableExists(t, pool, "public", "schema_version", false)
+
+		// Verify data is accessible in roborev schema
+		var version int
+		err := pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
 		if err != nil {
-			t.Fatalf("Failed to count tables: %v", err)
+			t.Fatalf("Failed to query migrated data: %v", err)
 		}
-		if tableCount < 5 {
-			t.Errorf("Expected at least 5 tables in roborev schema, got %d", tableCount)
+		if version != 1 {
+			t.Errorf("Expected migrated version 1, got %d", version)
+		}
+	})
+
+	t.Run("MigratesMultipleTablesAndMixedState", func(t *testing.T) {
+		// This test verifies migration with multiple tables in public and mixed state
+		// (some tables already in roborev, some in public)
+		ctx := t.Context()
+
+		env := setupMigrationEnv(t)
+
+		env.SkipIfTableInSchema("roborev", "schema_version")
+		env.SkipIfTableInSchema("public", "schema_version")
+
+		// Create roborev schema for mixed state test
+		env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+
+		// Create legacy tables in public schema (simulating old installation)
+		env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
+		env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
+
+		// Create repos table in public (second legacy table)
+		env.Exec(`CREATE TABLE IF NOT EXISTS public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+		env.Exec(`INSERT INTO public.repos (identity) VALUES ('test-repo-legacy') ON CONFLICT DO NOTHING`)
+
+		// Create machines table directly in roborev (simulating partial migration)
+		env.Exec(`CREATE TABLE IF NOT EXISTS roborev.machines (id SERIAL PRIMARY KEY, machine_id UUID UNIQUE NOT NULL, name TEXT)`)
+
+		// Now connect with the normal pool and run EnsureSchema
+		pool := openRawTestPool(t)
+
+		if err := pool.EnsureSchema(ctx); err != nil {
+			t.Fatalf("EnsureSchema failed: %v", err)
 		}
 
-		// Verify branch index was created for fresh install
-		var indexExists bool
+		// Verify public tables gone
+		assertTableExists(t, pool, "public", "schema_version", false)
+		assertTableExists(t, pool, "public", "repos", false)
+
+		// Verify roborev.machines exists
+		assertTableExists(t, pool, "roborev", "machines", true)
+
+		// Verify data is accessible
+		var version int
+		err := pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
+		if err != nil {
+			t.Fatalf("Failed to query migrated schema_version: %v", err)
+		}
+		if version != 1 {
+			t.Errorf("Expected migrated version 1, got %d", version)
+		}
+
+		var repoIdentity string
+		err = pool.pool.QueryRow(ctx, `SELECT identity FROM repos WHERE identity = 'test-repo-legacy'`).Scan(&repoIdentity)
+		if err != nil {
+			t.Fatalf("Failed to query migrated repo: %v", err)
+		}
+		if repoIdentity != "test-repo-legacy" {
+			t.Errorf("Expected repo identity 'test-repo-legacy', got %q", repoIdentity)
+		}
+	})
+
+	t.Run("DualSchemaWithDataErrors", func(t *testing.T) {
+		// This test verifies that having a table in both schemas with data in public
+		// causes an error requiring manual reconciliation.
+		ctx := t.Context()
+
+		env := setupMigrationEnv(t)
+
+		// Create roborev schema with repos table
+		env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+		env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+
+		// Create public.schema_version so migrateLegacyTables detects the legacy schema
+		env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+
+		// Create public.repos table with data
+		env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+		env.Exec(`INSERT INTO public.repos (identity) VALUES ('legacy-repo')`)
+
+		// Now connect and try EnsureSchema - should fail
+		pool := openRawTestPool(t)
+
+		err := pool.EnsureSchema(ctx)
+		if err == nil {
+			t.Fatal("Expected EnsureSchema to fail with dual-schema data, but it succeeded")
+		}
+		if !strings.Contains(err.Error(), "manual reconciliation required") {
+			t.Errorf("Expected error about manual reconciliation, got: %v", err)
+		}
+	})
+
+	t.Run("EmptyPublicTableDropped", func(t *testing.T) {
+		// This test verifies that an empty table in public is dropped when the same
+		// table exists in roborev schema.
+		ctx := t.Context()
+
+		env := setupMigrationEnv(t)
+
+		// Create roborev schema with repos table containing data
+		env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+		env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+		env.Exec(`INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
+
+		// Create public.schema_version so migrateLegacyTables detects the legacy schema
+		env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+
+		// Create empty public.repos table
+		env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+		// Note: no data inserted - empty table
+
+		// Now connect and run EnsureSchema - should succeed and drop empty public.repos
+		pool := openRawTestPool(t)
+
+		err := pool.EnsureSchema(ctx)
+		if err != nil {
+			t.Fatalf("EnsureSchema failed: %v", err)
+		}
+
+		assertTableExists(t, pool, "public", "repos", false)
+
+		// Verify roborev.repos still exists with data
+		var repoIdentity string
+		err = pool.pool.QueryRow(ctx, `SELECT identity FROM roborev.repos`).Scan(&repoIdentity)
+		if err != nil {
+			t.Fatalf("Failed to query roborev.repos: %v", err)
+		}
+		if repoIdentity != "new-repo" {
+			t.Errorf("Expected identity 'new-repo', got %q", repoIdentity)
+		}
+	})
+
+	t.Run("MigratesPublicTableWithData", func(t *testing.T) {
+		// This test verifies that a public table with data is properly migrated
+		// to roborev schema when roborev doesn't have that table yet.
+		// This is the normal migration path and also what the 42P01 fallback uses.
+		ctx := t.Context()
+
+		env := setupMigrationEnv(t)
+
+		// Create roborev schema but NOT the repos table
+		env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+
+		// Create public.schema_version so migrateLegacyTables detects the legacy schema
+		env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+
+		// Create public.repos table with data
+		env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+		env.Exec(`INSERT INTO public.repos (identity) VALUES ('migrated-repo-1'), ('migrated-repo-2')`)
+
+		// Now connect and run EnsureSchema - should migrate public.repos to roborev.repos
+		pool := openRawTestPool(t)
+
+		err := pool.EnsureSchema(ctx)
+		if err != nil {
+			t.Fatalf("EnsureSchema failed: %v", err)
+		}
+
+		assertTableExists(t, pool, "public", "repos", false)
+
+		// Verify data is accessible in roborev.repos
+		var count int
+		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM roborev.repos WHERE identity IN ('migrated-repo-1', 'migrated-repo-2')`).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to count migrated repos: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("Expected 2 migrated repos, got %d", count)
+		}
+	})
+
+	t.Run("MigratesV1ToV2", func(t *testing.T) {
+		// This test verifies that a v1 schema (without model column) gets migrated to v2
+		ctx := t.Context()
+
+		env := NewTestEnv(t)
+		// Clean up after test
+		env.CleanupDropSchema("roborev")
+
+		// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
+		env.DropSchema("roborev")
+
+		// Load and execute v1 schema from embedded SQL file
+		// Use helper to parse and execute statements
+		for _, stmt := range parseSQLStatements(postgresV1Schema) {
+			env.Exec(stmt)
+		}
+
+		// Insert a test job to verify data survives migration
+		testJobUUID := uuid.NewString()
+		var repoID int64
+		err := env.QueryRow(`
+			INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
+		`).Scan(&repoID)
+		if err != nil {
+			t.Fatalf("Failed to insert test repo: %v", err)
+		}
+
+		env.Exec(`
+			INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at)
+			VALUES ($1, $2, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
+		`, testJobUUID, repoID)
+
+		// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
+		pool := openRawTestPool(t)
+
+		if err := pool.EnsureSchema(ctx); err != nil {
+			t.Fatalf("EnsureSchema failed: %v", err)
+		}
+
+		// Verify schema version advanced to 2
+		var version int
+		err = pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version)
+		if err != nil {
+			t.Fatalf("Failed to query schema version: %v", err)
+		}
+		if version != pgSchemaVersion {
+			t.Errorf("Expected schema version %d, got %d", pgSchemaVersion, version)
+		}
+
+		// Verify model column was added
+		var hasModelColumn bool
 		err = pool.pool.QueryRow(ctx, `
 			SELECT EXISTS(
-				SELECT 1 FROM pg_indexes
-				WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'model'
 			)
-		`).Scan(&indexExists)
+		`).Scan(&hasModelColumn)
 		if err != nil {
-			t.Fatalf("Failed to check branch index: %v", err)
+			t.Fatalf("Failed to check for model column: %v", err)
 		}
-		if !indexExists {
-			t.Errorf("Expected idx_review_jobs_branch to exist on fresh install")
+		if !hasModelColumn {
+			t.Error("Expected model column to exist after v1→v2 migration")
 		}
-	}
+
+		// Verify pre-existing job survived migration with model=NULL
+		var jobAgent string
+		var jobModel *string
+		err = pool.pool.QueryRow(ctx, `SELECT agent, model FROM review_jobs WHERE uuid = $1`, testJobUUID).Scan(&jobAgent, &jobModel)
+		if err != nil {
+			t.Fatalf("Failed to query test job after migration: %v", err)
+		}
+		if jobAgent != "test-agent" {
+			t.Errorf("Expected agent 'test-agent', got %q", jobAgent)
+		}
+		if jobModel != nil {
+			t.Errorf("Expected model to be NULL for pre-migration job, got %q", *jobModel)
+		}
+	})
+
 }
 
-func setupMigrationEnv(t *testing.T) *MigrationTestEnv {
-	env := NewMigrationTestEnv(t)
+func openRawTestPool(t *testing.T) *PgPool {
+	t.Helper()
+	pool, err := NewPgPool(t.Context(), getTestPostgresURL(t), DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	return pool
+}
+
+func setupMigrationEnv(t *testing.T) *TestEnv {
+	env := NewTestEnv(t)
 	// Clean up after test
 	env.CleanupDropSchema("roborev")
 	env.CleanupDropTable("public", "schema_version")
@@ -403,270 +693,6 @@ func countSuccesses(success []bool) int {
 		}
 	}
 	return count
-}
-
-func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
-	// This test verifies that tables in public schema are migrated to roborev
-	ctx := t.Context()
-
-	env := setupMigrationEnv(t)
-	env.SkipIfTableInSchema("roborev", "schema_version")
-	env.SkipIfTableInSchema("public", "schema_version")
-
-	// Create legacy table in public schema
-	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
-	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
-
-	// Now connect with the normal pool and run EnsureSchema
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	t.Cleanup(func() { pool.Close() })
-
-	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
-	}
-
-	// Verify legacy table was migrated (no longer in public)
-	var publicExists bool
-	if err := pool.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = 'public' AND table_name = 'schema_version'
-		)
-	`).Scan(&publicExists); err != nil {
-		t.Fatalf("Failed to check if public.schema_version exists: %v", err)
-	}
-	if publicExists {
-		t.Error("Expected public.schema_version to NOT exist")
-	}
-
-	// Verify data is accessible in roborev schema
-	var version int
-	err = pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
-	if err != nil {
-		t.Fatalf("Failed to query migrated data: %v", err)
-	}
-	if version != 1 {
-		t.Errorf("Expected migrated version 1, got %d", version)
-	}
-}
-
-func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing.T) {
-	// This test verifies migration with multiple tables in public and mixed state
-	// (some tables already in roborev, some in public)
-	ctx := t.Context()
-
-	env := setupMigrationEnv(t)
-
-	env.SkipIfTableInSchema("roborev", "schema_version")
-	env.SkipIfTableInSchema("public", "schema_version")
-
-	// Create roborev schema for mixed state test
-	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
-
-	// Create legacy tables in public schema (simulating old installation)
-	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
-	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
-
-	// Create repos table in public (second legacy table)
-	env.Exec(`CREATE TABLE IF NOT EXISTS public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	env.Exec(`INSERT INTO public.repos (identity) VALUES ('test-repo-legacy') ON CONFLICT DO NOTHING`)
-
-	// Create machines table directly in roborev (simulating partial migration)
-	env.Exec(`CREATE TABLE IF NOT EXISTS roborev.machines (id SERIAL PRIMARY KEY, machine_id UUID UNIQUE NOT NULL, name TEXT)`)
-
-	// Now connect with the normal pool and run EnsureSchema
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer pool.Close()
-
-	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
-	}
-
-	// Verify public tables gone
-	var exists bool
-	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_version')`).Scan(&exists); err != nil {
-		t.Fatalf("Failed to check public.schema_version: %v", err)
-	}
-	if exists {
-		t.Error("Expected public.schema_version to be gone")
-	}
-	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
-		t.Fatalf("Failed to check public.repos: %v", err)
-	}
-	if exists {
-		t.Error("Expected public.repos to be gone")
-	}
-
-	// Verify roborev.machines exists
-	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='roborev' AND table_name='machines')`).Scan(&exists); err != nil {
-		t.Fatalf("Failed to check roborev.machines: %v", err)
-	}
-	if !exists {
-		t.Error("Expected roborev.machines to exist")
-	}
-
-	// Verify data is accessible
-	var version int
-	err = pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
-	if err != nil {
-		t.Fatalf("Failed to query migrated schema_version: %v", err)
-	}
-	if version != 1 {
-		t.Errorf("Expected migrated version 1, got %d", version)
-	}
-
-	var repoIdentity string
-	err = pool.pool.QueryRow(ctx, `SELECT identity FROM repos WHERE identity = 'test-repo-legacy'`).Scan(&repoIdentity)
-	if err != nil {
-		t.Fatalf("Failed to query migrated repo: %v", err)
-	}
-	if repoIdentity != "test-repo-legacy" {
-		t.Errorf("Expected repo identity 'test-repo-legacy', got %q", repoIdentity)
-	}
-}
-
-func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
-	// This test verifies that having a table in both schemas with data in public
-	// causes an error requiring manual reconciliation.
-	ctx := t.Context()
-
-	env := setupMigrationEnv(t)
-
-	// Create roborev schema with repos table
-	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
-	env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-
-	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-
-	// Create public.repos table with data
-	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	env.Exec(`INSERT INTO public.repos (identity) VALUES ('legacy-repo')`)
-
-	// Now connect and try EnsureSchema - should fail
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer pool.Close()
-
-	err = pool.EnsureSchema(ctx)
-	if err == nil {
-		t.Fatal("Expected EnsureSchema to fail with dual-schema data, but it succeeded")
-	}
-	if !strings.Contains(err.Error(), "manual reconciliation required") {
-		t.Errorf("Expected error about manual reconciliation, got: %v", err)
-	}
-}
-
-func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
-	// This test verifies that an empty table in public is dropped when the same
-	// table exists in roborev schema.
-	ctx := t.Context()
-
-	env := setupMigrationEnv(t)
-
-	// Create roborev schema with repos table containing data
-	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
-	env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	env.Exec(`INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
-
-	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-
-	// Create empty public.repos table
-	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	// Note: no data inserted - empty table
-
-	// Now connect and run EnsureSchema - should succeed and drop empty public.repos
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer pool.Close()
-
-	err = pool.EnsureSchema(ctx)
-	if err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
-	}
-
-	var exists bool
-	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
-		t.Fatalf("Failed to check public.repos: %v", err)
-	}
-	if exists {
-		t.Error("Expected public.repos to be gone")
-	}
-
-	// Verify roborev.repos still exists with data
-	var repoIdentity string
-	err = pool.pool.QueryRow(ctx, `SELECT identity FROM roborev.repos`).Scan(&repoIdentity)
-	if err != nil {
-		t.Fatalf("Failed to query roborev.repos: %v", err)
-	}
-	if repoIdentity != "new-repo" {
-		t.Errorf("Expected identity 'new-repo', got %q", repoIdentity)
-	}
-}
-
-func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
-	// This test verifies that a public table with data is properly migrated
-	// to roborev schema when roborev doesn't have that table yet.
-	// This is the normal migration path and also what the 42P01 fallback uses.
-	ctx := t.Context()
-
-	env := setupMigrationEnv(t)
-
-	// Create roborev schema but NOT the repos table
-	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
-
-	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-
-	// Create public.repos table with data
-	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	env.Exec(`INSERT INTO public.repos (identity) VALUES ('migrated-repo-1'), ('migrated-repo-2')`)
-
-	// Now connect and run EnsureSchema - should migrate public.repos to roborev.repos
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer pool.Close()
-
-	err = pool.EnsureSchema(ctx)
-	if err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
-	}
-
-	var exists bool
-	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
-		t.Fatalf("Failed to check public.repos: %v", err)
-	}
-	if exists {
-		t.Error("Expected public.repos to be gone")
-	}
-
-	// Verify data is accessible in roborev.repos
-	var count int
-	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM roborev.repos WHERE identity IN ('migrated-repo-1', 'migrated-repo-2')`).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count migrated repos: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("Expected 2 migrated repos, got %d", count)
-	}
 }
 
 func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
@@ -809,12 +835,12 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	ctx := t.Context()
 
 	// Create a test repo
-	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-jobs-test.git"})
+	repoID := WrapTestEnv(t, pool.Pool()).CreateRepo(TestRepoOpts{Identity: "https://github.com/test/batch-jobs-test.git"})
 
 	// Create multiple jobs with prepared IDs
 	var jobs []JobWithPgIDs
 	for i := range 5 {
-		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: fmt.Sprintf("batch-jobs-sha-%d", i)})
+		commitID := WrapTestEnv(t, pool.Pool()).CreateCommit(TestCommitOpts{RepoID: repoID, SHA: fmt.Sprintf("batch-jobs-sha-%d", i)})
 		jobs = append(jobs, JobWithPgIDs{
 			Job: SyncableJob{
 				UUID:            uuid.NewString(),
@@ -864,11 +890,11 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
-	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-reviews-test.git"})
-	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-reviews-sha"})
+	repoID := WrapTestEnv(t, pool.Pool()).CreateRepo(TestRepoOpts{Identity: "https://github.com/test/batch-reviews-test.git"})
+	commitID := WrapTestEnv(t, pool.Pool()).CreateCommit(TestCommitOpts{RepoID: repoID, SHA: "batch-reviews-sha"})
 	jobUUID := uuid.NewString()
 
-	createTestJob(t, pool.pool, TestJobOpts{
+	WrapTestEnv(t, pool.pool).CreateJob(TestJobOpts{
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,
@@ -969,11 +995,11 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
-	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-responses-test.git"})
-	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-responses-sha"})
+	repoID := WrapTestEnv(t, pool.Pool()).CreateRepo(TestRepoOpts{Identity: "https://github.com/test/batch-responses-test.git"})
+	commitID := WrapTestEnv(t, pool.Pool()).CreateCommit(TestCommitOpts{RepoID: repoID, SHA: "batch-responses-sha"})
 	jobUUID := uuid.NewString()
 
-	createTestJob(t, pool.pool, TestJobOpts{
+	WrapTestEnv(t, pool.pool).CreateJob(TestJobOpts{
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,
@@ -1060,90 +1086,6 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			t.Error("Expected success[1]=false (invalid FK)")
 		}
 	})
-}
-
-func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
-	// This test verifies that a v1 schema (without model column) gets migrated to v2
-	ctx := t.Context()
-
-	env := NewMigrationTestEnv(t)
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-
-	// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
-	env.DropSchema("roborev")
-
-	// Load and execute v1 schema from embedded SQL file
-	// Use helper to parse and execute statements
-	for _, stmt := range parseSQLStatements(postgresV1Schema) {
-		env.Exec(stmt)
-	}
-
-	// Insert a test job to verify data survives migration
-	testJobUUID := uuid.NewString()
-	var repoID int64
-	err := env.QueryRow(`
-		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
-	`).Scan(&repoID)
-	if err != nil {
-		t.Fatalf("Failed to insert test repo: %v", err)
-	}
-
-	env.Exec(`
-		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at)
-		VALUES ($1, $2, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
-	`, testJobUUID, repoID)
-
-	// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
-	connString := getTestPostgresURL(t)
-	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer pool.Close()
-
-	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("EnsureSchema failed: %v", err)
-	}
-
-	// Verify schema version advanced to 2
-	var version int
-	err = pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version)
-	if err != nil {
-		t.Fatalf("Failed to query schema version: %v", err)
-	}
-	if version != pgSchemaVersion {
-		t.Errorf("Expected schema version %d, got %d", pgSchemaVersion, version)
-	}
-
-	// Verify model column was added
-	var hasModelColumn bool
-	err = pool.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'model'
-		)
-	`).Scan(&hasModelColumn)
-	if err != nil {
-		t.Fatalf("Failed to check for model column: %v", err)
-	}
-	if !hasModelColumn {
-		t.Error("Expected model column to exist after v1→v2 migration")
-	}
-
-	// Verify pre-existing job survived migration with model=NULL
-	var jobAgent string
-	var jobModel *string
-	err = pool.pool.QueryRow(ctx, `SELECT agent, model FROM review_jobs WHERE uuid = $1`, testJobUUID).Scan(&jobAgent, &jobModel)
-	if err != nil {
-		t.Fatalf("Failed to query test job after migration: %v", err)
-	}
-	if jobAgent != "test-agent" {
-		t.Errorf("Expected agent 'test-agent', got %q", jobAgent)
-	}
-	if jobModel != nil {
-		t.Errorf("Expected model to be NULL for pre-migration job, got %q", *jobModel)
-	}
 }
 
 func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {

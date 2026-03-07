@@ -7,34 +7,34 @@ import (
 	"strconv"
 )
 
-func acpTestEchoCommand(args ...string) (string, []string) {
+func acpTestEchoCommand(args ...string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		cmdArgs := append([]string{"/c", "echo"}, args...)
-		return "cmd", cmdArgs
+		return exec.Command("cmd", cmdArgs...)
 	}
 
-	return "echo", args
+	return exec.Command("echo", args...)
 }
 
-func acpTestSleepCommand(seconds int) (string, []string, bool) {
+func acpTestSleepCommand(seconds int) (*exec.Cmd, error) {
 	if seconds < 1 {
 		seconds = 1
 	}
 
 	if runtime.GOOS == "windows" {
 		powerShellCommand := fmt.Sprintf("Start-Sleep -Seconds %d", seconds)
+		args := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", powerShellCommand}
 
-		if _, err := exec.LookPath("pwsh"); err == nil {
-			return "pwsh", []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", powerShellCommand}, true
+		for _, bin := range []string{"pwsh", "powershell"} {
+			if _, err := exec.LookPath(bin); err == nil {
+				return exec.Command(bin, args...), nil
+			}
 		}
-		if _, err := exec.LookPath("powershell"); err == nil {
-			return "powershell", []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", powerShellCommand}, true
-		}
-		return "", nil, false
+		return nil, fmt.Errorf("neither pwsh nor powershell found in PATH")
 	}
 
 	if _, err := exec.LookPath("sleep"); err != nil {
-		return "", nil, false
+		return nil, fmt.Errorf("sleep command not found in PATH")
 	}
-	return "sleep", []string{strconv.Itoa(seconds)}, true
+	return exec.Command("sleep", strconv.Itoa(seconds)), nil
 }

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"slices"
 	"testing"
 	"time"
 )
@@ -34,15 +35,10 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 		}
 
 		// Verify the UUIDs are the ones we created
-		uuidMap := make(map[string]bool)
-		for _, u := range uuids {
-			uuidMap[u] = true
-		}
-
-		if !uuidMap[job1.UUID] {
+		if !slices.Contains(uuids, job1.UUID) {
 			t.Errorf("Expected to find job1 UUID %s", job1.UUID)
 		}
-		if !uuidMap[job2.UUID] {
+		if !slices.Contains(uuids, job2.UUID) {
 			t.Errorf("Expected to find job2 UUID %s", job2.UUID)
 		}
 	})
@@ -112,324 +108,184 @@ func TestParseSQLiteTime(t *testing.T) {
 	}
 }
 
-func TestGetJobsToSync_TimestampComparison(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("sync-test-sha")
+// testSyncTimestampComparison runs a standard set of subtests for timestamp comparison logic
+func testSyncTimestampComparison(
+	t *testing.T,
+	setup func(h *syncTestHelper) (
+		id int64,
+		markSynced func() error,
+		setTime func(id int64, syncedAt sql.NullString, updatedAt string),
+		getSync func() (bool, error),
+	),
+) {
+	t.Run("with null synced_at is returned", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		_, _, _, getSync := setup(h)
 
-	t.Run("job with null synced_at is returned", func(t *testing.T) {
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+		found, err := getSync()
 		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		found := false
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				break
-			}
+			t.Fatalf("getSync failed: %v", err)
 		}
 		if !found {
-			t.Error("Expected job with NULL synced_at to be returned for sync")
+			t.Error("Expected item with NULL synced_at to be returned for sync")
 		}
 	})
 
-	t.Run("job after MarkJobSynced is not returned", func(t *testing.T) {
-		err := h.db.MarkJobSynced(job.ID)
+	t.Run("after marked synced is not returned", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		_, markSynced, _, getSync := setup(h)
+
+		err := markSynced()
 		if err != nil {
-			t.Fatalf("MarkJobSynced failed: %v", err)
+			t.Fatalf("markSynced failed: %v", err)
 		}
 
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+		found, err := getSync()
 		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
+			t.Fatalf("getSync failed: %v", err)
 		}
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				t.Error("Expected synced job to NOT be returned")
-			}
+		if found {
+			t.Error("Expected synced item to NOT be returned")
 		}
 	})
 
-	t.Run("job with updated_at after synced_at is returned", func(t *testing.T) {
-		// Update the job's updated_at to be after synced_at
-		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setJobTimestamps(job.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
+	tests := []struct {
+		name      string
+		syncedAt  sql.NullString
+		updatedAt string
+		wantFound bool
+	}{
+		{
+			name:      "updated_at after synced_at is returned",
+			syncedAt:  sql.NullString{String: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339), Valid: true},
+			updatedAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+			wantFound: true,
+		},
+		{
+			name:      "mixed format timestamps (updated_at > synced_at)",
+			syncedAt:  sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+			updatedAt: "2024-06-15T14:30:00+02:00",
+			wantFound: true,
+		},
+		{
+			name:      "mixed format timestamps (synced_at > updated_at)",
+			syncedAt:  sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
+			updatedAt: "2024-06-15T10:30:00Z",
+			wantFound: false,
+		},
+	}
 
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		found := false
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				break
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newSyncTestHelper(t)
+			id, _, setTime, getSync := setup(h)
+
+			setTime(id, tt.syncedAt, tt.updatedAt)
+
+			found, err := getSync()
+			if err != nil {
+				t.Fatalf("getSync failed: %v", err)
 			}
-		}
-		if !found {
-			t.Error("Expected job with updated_at > synced_at to be returned for sync")
-		}
-	})
-
-	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
-		// Create a new job for this subtest
-		job2 := h.createCompletedJob("mixed-format-sha")
-
-		// Set synced_at in SQLite datetime format (legacy format) - 10:30 UTC
-		// Set updated_at in RFC3339 with offset: 14:30+02:00 = 12:30 UTC (later than 10:30 UTC)
-		h.setJobTimestamps(job2.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T14:30:00+02:00")
-
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		found := false
-		for _, j := range jobs {
-			if j.ID == job2.ID {
-				found = true
-				break
+			if found != tt.wantFound {
+				t.Errorf("got found=%v, want %v", found, tt.wantFound)
 			}
-		}
-		if !found {
-			t.Error("Expected job with mixed format timestamps (updated_at > synced_at) to be returned")
-		}
-
-		// Now test the opposite: synced_at is later than updated_at
-		// synced_at: 2024-06-15 20:00:00 (8pm UTC)
-		// updated_at: 2024-06-15T10:30:00Z (10:30am UTC)
-		h.setJobTimestamps(job2.ID,
-			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
-			"2024-06-15T10:30:00Z")
-
-		jobs, err = h.db.GetJobsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		for _, j := range jobs {
-			if j.ID == job2.ID {
-				t.Error("Expected job with synced_at > updated_at to NOT be returned")
-			}
-		}
-	})
+		})
+	}
 
 	t.Run("mixed format timestamps work correctly in non-UTC timezone", func(t *testing.T) {
-		// Set TZ to a non-UTC timezone BEFORE opening the DB to ensure
-		// SQLite/Go uses the non-UTC timezone for localtime operations
 		t.Setenv("TZ", "America/New_York")
 
-		// Create a NEW helper which opens a new DB
-		hTZ := newSyncTestHelper(t)
-		job3 := hTZ.createCompletedJob("tz-test-sha")
-
-		// synced_at: legacy format 10:30 (should be treated as UTC)
-		// updated_at: 12:30 UTC (later than synced_at)
-		hTZ.setJobTimestamps(job3.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T12:30:00Z")
-
-		jobs, err := hTZ.db.GetJobsToSync(hTZ.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		found := false
-		for _, j := range jobs {
-			if j.ID == job3.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected job with updated_at > synced_at to be returned regardless of local timezone")
+		testsTZ := []struct {
+			name      string
+			syncedAt  sql.NullString
+			updatedAt string
+			wantFound bool
+		}{
+			{
+				name:      "updated_at > synced_at regardless of local timezone",
+				syncedAt:  sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+				updatedAt: "2024-06-15T12:30:00Z",
+				wantFound: true,
+			},
+			{
+				name:      "synced_at > updated_at regardless of local timezone",
+				syncedAt:  sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
+				updatedAt: "2024-06-15T12:30:00Z",
+				wantFound: false,
+			},
 		}
 
-		// synced_at: legacy format 14:00 (should be treated as UTC)
-		// updated_at: 12:30 UTC (earlier than synced_at)
-		hTZ.setJobTimestamps(job3.ID,
-			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
-			"2024-06-15T12:30:00Z")
+		for _, tt := range testsTZ {
+			t.Run(tt.name, func(t *testing.T) {
+				hTZ := newSyncTestHelper(t)
+				id, _, setTime, getSync := setup(hTZ)
 
-		jobs, err = hTZ.db.GetJobsToSync(hTZ.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		for _, j := range jobs {
-			if j.ID == job3.ID {
-				t.Error("Expected job with synced_at > updated_at to NOT be returned regardless of local timezone")
-			}
+				setTime(id, tt.syncedAt, tt.updatedAt)
+
+				found, err := getSync()
+				if err != nil {
+					t.Fatalf("getSync failed: %v", err)
+				}
+				if found != tt.wantFound {
+					t.Errorf("got found=%v, want %v", found, tt.wantFound)
+				}
+			})
 		}
 	})
 }
 
+func TestGetJobsToSync_TimestampComparison(t *testing.T) {
+	testSyncTimestampComparison(t, func(h *syncTestHelper) (int64, func() error, func(int64, sql.NullString, string), func() (bool, error)) {
+		job := h.createCompletedJob("sync-test-sha")
+
+		markSynced := func() error {
+			return h.db.MarkJobSynced(job.ID)
+		}
+
+		setTime := func(id int64, s sql.NullString, u string) {
+			h.setJobTimestamps(id, s, u)
+		}
+
+		getSync := func() (bool, error) {
+			jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+			found := slices.ContainsFunc(jobs, func(j SyncableJob) bool { return j.ID == job.ID })
+			return found, err
+		}
+
+		return job.ID, markSynced, setTime, getSync
+	})
+}
+
 func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("review-sync-sha")
-
-	// Mark job as synced (required before reviews can sync due to FK ordering)
-	err := h.db.MarkJobSynced(job.ID)
-	if err != nil {
-		t.Fatalf("MarkJobSynced failed: %v", err)
-	}
-
-	// Get the review ID
-	review, err := h.db.GetReviewByJobID(job.ID)
-	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
-	}
-
-	t.Run("review with null synced_at is returned", func(t *testing.T) {
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected review with NULL synced_at to be returned for sync")
-		}
-	})
-
-	t.Run("review after MarkReviewSynced is not returned", func(t *testing.T) {
-		err := h.db.MarkReviewSynced(review.ID)
-		if err != nil {
-			t.Fatalf("MarkReviewSynced failed: %v", err)
-		}
-
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				t.Error("Expected synced review to NOT be returned")
-			}
-		}
-	})
-
-	t.Run("review with updated_at after synced_at is returned", func(t *testing.T) {
-		// Update the review's updated_at to be after synced_at
-		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setReviewTimestamps(review.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
-
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected review with updated_at > synced_at to be returned for sync")
-		}
-	})
-
-	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
-		// Set synced_at in SQLite datetime format (legacy format) - 10:30 UTC
-		// Set updated_at in RFC3339 with offset: 14:30+02:00 = 12:30 UTC (later than 10:30 UTC)
-		h.setReviewTimestamps(review.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T14:30:00+02:00")
-
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected review with mixed format timestamps (updated_at > synced_at) to be returned")
-		}
-
-		// Now test the opposite: synced_at is later than updated_at
-		h.setReviewTimestamps(review.ID,
-			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
-			"2024-06-15T10:30:00Z")
-
-		reviews, err = h.db.GetReviewsToSync(h.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				t.Error("Expected review with synced_at > updated_at to NOT be returned")
-			}
-		}
-	})
-
-	t.Run("mixed format timestamps work correctly in non-UTC timezone", func(t *testing.T) {
-		// Set TZ to a non-UTC timezone BEFORE opening the DB to ensure
-		// SQLite/Go uses the non-UTC timezone for localtime operations
-		t.Setenv("TZ", "America/New_York")
-
-		// Create a NEW helper which opens a new DB
-		hTZ := newSyncTestHelper(t)
-		tzJob := hTZ.createCompletedJob("tz-review-sha")
+	testSyncTimestampComparison(t, func(h *syncTestHelper) (int64, func() error, func(int64, sql.NullString, string), func() (bool, error)) {
+		job := h.createCompletedJob("review-sync-sha")
 
 		// Mark job as synced (required before reviews can sync due to FK ordering)
-		err := hTZ.db.MarkJobSynced(tzJob.ID)
+		err := h.db.MarkJobSynced(job.ID)
 		if err != nil {
-			t.Fatalf("MarkJobSynced failed: %v", err)
+			h.t.Fatalf("MarkJobSynced failed: %v", err)
 		}
 
-		// Get the review ID
-		tzReview, err := hTZ.db.GetReviewByJobID(tzJob.ID)
+		review, err := h.db.GetReviewByJobID(job.ID)
 		if err != nil {
-			t.Fatalf("GetReviewByJobID failed: %v", err)
+			h.t.Fatalf("GetReviewByJobID failed: %v", err)
 		}
 
-		// synced_at: legacy format 10:30 (should be treated as UTC)
-		// updated_at: 12:30 UTC (later than synced_at)
-		hTZ.setReviewTimestamps(tzReview.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T12:30:00Z")
-
-		reviews, err := hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		found := false
-		for _, r := range reviews {
-			if r.ID == tzReview.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("Expected review with updated_at > synced_at to be returned regardless of local timezone")
+		markSynced := func() error {
+			return h.db.MarkReviewSynced(review.ID)
 		}
 
-		// synced_at: legacy format 14:00 (should be treated as UTC)
-		// updated_at: 12:30 UTC (earlier than synced_at)
-		hTZ.setReviewTimestamps(tzReview.ID,
-			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
-			"2024-06-15T12:30:00Z")
+		setTime := func(id int64, s sql.NullString, u string) {
+			h.setReviewTimestamps(id, s, u)
+		}
 
-		reviews, err = hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
+		getSync := func() (bool, error) {
+			reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+			found := slices.ContainsFunc(reviews, func(r SyncableReview) bool { return r.ID == review.ID })
+			return found, err
 		}
-		for _, r := range reviews {
-			if r.ID == tzReview.ID {
-				t.Error("Expected review with synced_at > updated_at to NOT be returned regardless of local timezone")
-			}
-		}
+
+		return review.ID, markSynced, setTime, getSync
 	})
 }
 
@@ -515,18 +371,14 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 }
 
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
-	// This test verifies that legacy responses with job_id IS NULL (tied only to commit_id)
-	// are excluded from sync since they cannot be synced via job_uuid.
 	h := newSyncTestHelper(t)
 	job := h.createCompletedJob("legacy-resp-sha")
 
-	// Need commit ID for the legacy response
 	commit, err := h.db.GetCommitBySHA("legacy-resp-sha")
 	if err != nil {
 		t.Fatalf("GetCommitBySHA failed: %v", err)
 	}
 
-	// Mark job as synced (required before responses can sync due to FK ordering)
 	err = h.db.MarkJobSynced(job.ID)
 	if err != nil {
 		t.Fatalf("MarkJobSynced failed: %v", err)
@@ -537,7 +389,6 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
-	// Create a legacy commit-only response by directly inserting with job_id IS NULL
 	result, err := h.db.Exec(`
 		INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		VALUES (?, 'human', 'This is a legacy response', ?, ?, datetime('now'))
@@ -547,22 +398,13 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	}
 	legacyRespID, _ := result.LastInsertId()
 
-	// Get responses to sync - should only include the job-based response
 	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
 		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 
-	foundJobResp := false
-	foundLegacyResp := false
-	for _, r := range responses {
-		if r.ID == jobResp.ID {
-			foundJobResp = true
-		}
-		if r.ID == legacyRespID {
-			foundLegacyResp = true
-		}
-	}
+	foundJobResp := slices.ContainsFunc(responses, func(r SyncableResponse) bool { return r.ID == jobResp.ID })
+	foundLegacyResp := slices.ContainsFunc(responses, func(r SyncableResponse) bool { return r.ID == legacyRespID })
 
 	if !foundJobResp {
 		t.Error("Expected job-based response to be included in sync")

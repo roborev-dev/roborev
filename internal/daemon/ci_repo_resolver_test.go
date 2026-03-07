@@ -5,163 +5,159 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
-func TestRepoResolver_ExactOnly(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return nil, fmt.Errorf("should not be called")
+func TestRepoResolver_Matching(t *testing.T) {
+	tests := []struct {
+		name          string
+		repos         []string
+		exclude       []string
+		maxRepos      int
+		mockAPI       func(ctx context.Context, owner string, repos []string) ([]string, error)
+		expectedCalls int
+		expected      []string
+		expectErr     bool
+	}{
+		{
+			name:  "ExactOnly",
+			repos: []string{"acme/api", "acme/web"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return nil, fmt.Errorf("should not be called")
+			},
+			expectedCalls: 0,
+			expected:      []string{"acme/api", "acme/web"},
+		},
+		{
+			name:  "WildcardExpansion",
+			repos: []string{"acme/api-*"},
+			mockAPI: func(_ context.Context, owner string, _ []string) ([]string, error) {
+				if owner == "acme" {
+					return []string{"acme/api", "acme/web", "acme/docs", "acme/api-gateway"}, nil
+				}
+				return nil, fmt.Errorf("unknown owner: %s", owner)
+			},
+			expectedCalls: 1,
+			expected:      []string{"acme/api-gateway"},
+		},
+		{
+			name:  "WildcardStar",
+			repos: []string{"myorg/*"},
+			mockAPI: func(_ context.Context, owner string, _ []string) ([]string, error) {
+				if owner == "myorg" {
+					return []string{"myorg/api", "myorg/web", "myorg/docs"}, nil
+				}
+				return nil, fmt.Errorf("unknown owner: %s", owner)
+			},
+			expectedCalls: 1,
+			expected:      []string{"myorg/api", "myorg/docs", "myorg/web"},
+		},
+		{
+			name:    "ExclusionPatterns",
+			repos:   []string{"acme/*"},
+			exclude: []string{"acme/internal-*", "acme/archived-*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"acme/api", "acme/web", "acme/internal-tools", "acme/internal-docs", "acme/archived-v1"}, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"acme/api", "acme/web"},
+		},
+		{
+			name:    "ExclusionAppliesToExact",
+			repos:   []string{"acme/api", "acme/internal-tools"},
+			exclude: []string{"acme/internal-*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return nil, fmt.Errorf("should not be called")
+			},
+			expectedCalls: 0,
+			expected:      []string{"acme/api"},
+		},
+		{
+			name:     "MaxRepos",
+			repos:    []string{"acme/*"},
+			maxRepos: 5,
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				repos := make([]string, 200)
+				for i := range repos {
+					repos[i] = fmt.Sprintf("acme/repo-%03d", i)
+				}
+				return repos, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"acme/repo-000", "acme/repo-001", "acme/repo-002", "acme/repo-003", "acme/repo-004"},
+		},
+		{
+			name:  "Deduplication",
+			repos: []string{"acme/api", "acme/*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"acme/api", "acme/web"}, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"acme/api", "acme/web"},
+		},
+		{
+			name:  "CaseInsensitiveWildcard",
+			repos: []string{"acme/*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"Acme/API", "Acme/Docs", "Acme/Web"},
+		},
+		{
+			name:    "CaseInsensitiveExclusion",
+			repos:   []string{"acme/*"},
+			exclude: []string{"acme/internal-*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"Acme/API", "Acme/Web"},
+		},
+		{
+			name:  "CaseInsensitiveDedup",
+			repos: []string{"acme/api", "acme/*"},
+			mockAPI: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/Api", "Acme/Web"}, nil
+			},
+			expectedCalls: 1,
+			expected:      []string{"Acme/Web", "acme/api"},
 		},
 	}
 
-	ci := &config.CIConfig{
-		Repos: []string{"acme/api", "acme/web"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if calls != 0 {
-		t.Errorf("expected 0 API calls for exact-only config, got %d", calls)
-	}
-	if len(repos) != 2 {
-		t.Fatalf("expected 2 repos, got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_WildcardExpansion(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, owner string, _ []string) ([]string, error) {
-			if owner == "acme" {
-				return []string{"acme/api", "acme/web", "acme/docs", "acme/api-gateway"}, nil
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			mockFn := func(ctx context.Context, owner string, repos []string) ([]string, error) {
+				calls++
+				if tt.mockAPI != nil {
+					return tt.mockAPI(ctx, owner, repos)
+				}
+				return nil, nil
 			}
-			return nil, fmt.Errorf("unknown owner: %s", owner)
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/api-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	// path.Match("acme/api-*", "acme/api") is false because "api" doesn't match "api-*"
-	// Only acme/api-gateway matches
-	if len(repos) != 1 {
-		t.Fatalf("expected 1 repo matching api-*, got %d: %v", len(repos), repos)
-	}
-	if repos[0] != "acme/api-gateway" {
-		t.Errorf("expected acme/api-gateway, got %s", repos[0])
-	}
-}
-
-func TestRepoResolver_WildcardStar(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, owner string, _ []string) ([]string, error) {
-			if owner == "myorg" {
-				return []string{"myorg/api", "myorg/web", "myorg/docs"}, nil
+			r := &RepoResolver{listReposFn: mockFn}
+			ci := &config.CIConfig{
+				Repos:        tt.repos,
+				ExcludeRepos: tt.exclude,
+				MaxRepos:     tt.maxRepos,
 			}
-			return nil, fmt.Errorf("unknown owner: %s", owner)
-		},
-	}
 
-	ci := &config.CIConfig{
-		Repos: []string{"myorg/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 3 {
-		t.Fatalf("expected 3 repos for myorg/*, got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_ExclusionPatterns(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"acme/api", "acme/web", "acme/internal-tools", "acme/internal-docs", "acme/archived-v1"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/*"},
-		ExcludeRepos: []string{"acme/internal-*", "acme/archived-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 2 {
-		t.Fatalf("expected 2 repos after exclusions, got %d: %v", len(repos), repos)
-	}
-	found := make(map[string]bool)
-	for _, r := range repos {
-		found[r] = true
-	}
-	if !found["acme/api"] || !found["acme/web"] {
-		t.Errorf("expected acme/api and acme/web, got %v", repos)
-	}
-}
-
-func TestRepoResolver_ExclusionAppliesToExact(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/api", "acme/internal-tools"},
-		ExcludeRepos: []string{"acme/internal-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 1 || repos[0] != "acme/api" {
-		t.Errorf("expected [acme/api], got %v", repos)
-	}
-}
-
-func TestRepoResolver_MaxRepos(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			repos := make([]string, 200)
-			for i := range repos {
-				repos[i] = fmt.Sprintf("acme/repo-%03d", i)
+			got, err := r.Resolve(context.Background(), ci, nil)
+			if (err != nil) != tt.expectErr {
+				t.Fatalf("expected error: %v, got: %v", tt.expectErr, err)
 			}
-			return repos, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:    []string{"acme/*"},
-		MaxRepos: 5,
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 5 {
-		t.Fatalf("expected 5 repos (max_repos cap), got %d", len(repos))
+			if !slices.Equal(got, tt.expected) {
+				t.Errorf("got %v, want %v", got, tt.expected)
+			}
+			if calls != tt.expectedCalls {
+				t.Errorf("expected %d API calls, got %d", tt.expectedCalls, calls)
+			}
+		})
 	}
 }
-
 func TestRepoResolver_CacheHit(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
@@ -398,108 +394,6 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 	}
 }
 
-func TestRepoResolver_Deduplication(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"acme/api", "acme/web"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		// "acme/api" appears as both exact and would match wildcard
-		Repos: []string{"acme/api", "acme/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	// acme/api should appear only once
-	count := 0
-	for _, r := range repos {
-		if r == "acme/api" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected acme/api to appear once, got %d times in %v", count, repos)
-	}
-}
-
-func TestRepoResolver_CaseInsensitiveWildcard(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			// GitHub API returns canonical casing
-			return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"}, // lowercase config
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 3 {
-		t.Fatalf("expected 3 repos (case-insensitive match), got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_CaseInsensitiveExclusion(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/*"},
-		ExcludeRepos: []string{"acme/internal-*"}, // lowercase excludes canonical case
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(repos) != 2 {
-		t.Fatalf("expected 2 repos after case-insensitive exclusion, got %d: %v", len(repos), repos)
-	}
-	for _, r := range repos {
-		if strings.EqualFold(r, "Acme/Internal-Tools") {
-			t.Errorf("excluded repo should not appear: %v", repos)
-		}
-	}
-}
-
-func TestRepoResolver_CaseInsensitiveDedup(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"Acme/Api", "Acme/Web"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		// Explicit entry with different case should dedup with wildcard match
-		Repos: []string{"acme/api", "acme/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	count := 0
-	for _, r := range repos {
-		if strings.EqualFold(r, "acme/api") {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected api to appear once (case-insensitive dedup), got %d in %v", count, repos)
-	}
-}
-
 func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	callCount := 0
 	r := &RepoResolver{
@@ -572,18 +466,13 @@ func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
 		Repos: []string{"acme/*"},
 	}
 
-	ctx, cancel := context.WithTimeout(
-		context.Background(), 0,
-	)
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
 	defer cancel()
-	// Allow timeout to fire
-	time.Sleep(time.Millisecond)
+	<-ctx.Done()
 
 	_, err := r.Resolve(ctx, ci, nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf(
-			"expected context.DeadlineExceeded, got: %v", err,
-		)
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
 
@@ -627,13 +516,8 @@ func TestExactReposOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ExactReposOnly(tt.repos)
-			if len(got) != len(tt.expect) {
+			if !slices.Equal(got, tt.expect) {
 				t.Fatalf("got %v, want %v", got, tt.expect)
-			}
-			for i := range got {
-				if got[i] != tt.expect[i] {
-					t.Errorf("got[%d] = %q, want %q", i, got[i], tt.expect[i])
-				}
 			}
 		})
 	}
@@ -710,13 +594,8 @@ func TestApplyExclusions(t *testing.T) {
 			input := make([]string, len(tt.repos))
 			copy(input, tt.repos)
 			got := applyExclusions(input, tt.patterns)
-			if len(got) != len(tt.expect) {
+			if !slices.Equal(got, tt.expect) {
 				t.Fatalf("got %v, want %v", got, tt.expect)
-			}
-			for i := range got {
-				if got[i] != tt.expect[i] {
-					t.Errorf("got[%d] = %q, want %q", i, got[i], tt.expect[i])
-				}
 			}
 		})
 	}

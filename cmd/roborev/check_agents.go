@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -45,7 +44,7 @@ Examples:
 			}
 
 			// Use current directory as repo path for the smoke test
-			repoPath, err := os.Getwd()
+			repoPath, err := getWorkDir(cmd)
 			if err != nil {
 				repoPath = "."
 			}

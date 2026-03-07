@@ -27,13 +27,36 @@ func completeTestJob(t *testing.T, db *DB, jobID int64, output string) {
 	}
 }
 
+func findJobByID(jobs []ReviewJob, id int64) *ReviewJob {
+	for i := range jobs {
+		if jobs[i].ID == id {
+			return &jobs[i]
+		}
+	}
+	return nil
+}
+
+func countCommits(t *testing.T, db *DB, repoID int64) int {
+	t.Helper()
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repoID).Scan(&count)
+	return count
+}
+
+func countResponses(t *testing.T, db *DB, commitID int64) int {
+	t.Helper()
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commitID).Scan(&count)
+	return count
+}
+
 func TestEnqueuePromptJob(t *testing.T) {
 	tests := []struct {
 		name        string
 		opts        EnqueueOpts
-		wantJob     func(*testing.T, *ReviewJob)
+		wantJob     map[string]any
 		checkClaim  bool
-		wantClaimed func(*testing.T, *ReviewJob)
+		wantClaimed map[string]any
 		checkSQL    func(*testing.T, *DB, int64)
 	}{
 		{
@@ -43,22 +66,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Reasoning: "thorough",
 				Prompt:    "Explain the architecture of this codebase",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
-				if j.Agent != "claude-code" {
-					t.Errorf("got agent %q, want 'claude-code'", j.Agent)
-				}
-				if j.Reasoning != "thorough" {
-					t.Errorf("got reasoning %q, want 'thorough'", j.Reasoning)
-				}
-				if j.Prompt != "Explain the architecture of this codebase" {
-					t.Errorf("got prompt %q, want 'Explain the architecture of this codebase'", j.Prompt)
-				}
-				if j.Status != JobStatusQueued {
-					t.Errorf("got status %q, want 'queued'", j.Status)
-				}
+			wantJob: map[string]any{
+				"GitRef":    "prompt",
+				"Agent":     "claude-code",
+				"Reasoning": "thorough",
+				"Prompt":    "Explain the architecture of this codebase",
+				"Status":    JobStatusQueued,
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
@@ -77,10 +90,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Agent:  "codex",
 				Prompt: "test prompt",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.Reasoning != "thorough" {
-					t.Errorf("got default reasoning %q, want 'thorough'", j.Reasoning)
-				}
+			wantJob: map[string]any{
+				"Reasoning": "thorough",
 			},
 		},
 		{
@@ -91,13 +102,9 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt:    "Find security issues in the codebase",
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
-				if j.Prompt != "Find security issues in the codebase" {
-					t.Errorf("got prompt %q, want 'Find security issues in the codebase'", j.Prompt)
-				}
+			wantClaimed: map[string]any{
+				"GitRef": "prompt",
+				"Prompt": "Find security issues in the codebase",
 			},
 		},
 		{
@@ -107,16 +114,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt:  "Test agentic prompt",
 				Agentic: true,
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if !j.Agentic {
-					t.Error("Expected Agentic to be true on returned job")
-				}
+			wantJob: map[string]any{
+				"Agentic": true,
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if !j.Agentic {
-					t.Error("Expected Agentic to be true on claimed job")
-				}
+			wantClaimed: map[string]any{
+				"Agentic": true,
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
@@ -136,16 +139,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Reasoning: "standard",
 				Prompt:    "Non-agentic prompt",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.Agentic {
-					t.Error("Expected Agentic to be false")
-				}
+			wantJob: map[string]any{
+				"Agentic": false,
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.Agentic {
-					t.Error("Expected Agentic to be false on claimed job")
-				}
+			wantClaimed: map[string]any{
+				"Agentic": false,
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
@@ -166,11 +165,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 				OutputPrefix: "## Compact Analysis\n\n---\n\n",
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				want := "## Compact Analysis\n\n---\n\n"
-				if j.OutputPrefix != want {
-					t.Errorf("got OutputPrefix %q, want %q", j.OutputPrefix, want)
-				}
+			wantClaimed: map[string]any{
+				"OutputPrefix": "## Compact Analysis\n\n---\n\n",
 			},
 		},
 		{
@@ -180,10 +176,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt: "plain prompt",
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.OutputPrefix != "" {
-					t.Errorf("got OutputPrefix %q, want empty", j.OutputPrefix)
-				}
+			wantClaimed: map[string]any{
+				"OutputPrefix": "",
 			},
 		},
 		{
@@ -193,16 +187,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt: "Test prompt",
 				Label:  "test-fixtures",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "test-fixtures" {
-					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
-				}
+			wantJob: map[string]any{
+				"GitRef": "test-fixtures",
 			},
 			checkClaim: true,
-			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "test-fixtures" {
-					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
-				}
+			wantClaimed: map[string]any{
+				"GitRef": "test-fixtures",
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
@@ -221,10 +211,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Agent:  "test",
 				Prompt: "Test prompt",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
+			wantJob: map[string]any{
+				"GitRef": "prompt",
 			},
 		},
 		{
@@ -234,12 +222,51 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt: "Test prompt",
 				Label:  "run",
 			},
-			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "run" {
-					t.Errorf("got git_ref %q, want 'run'", j.GitRef)
-				}
+			wantJob: map[string]any{
+				"GitRef": "run",
 			},
 		},
+	}
+
+	checkProps := func(t *testing.T, j *ReviewJob, want map[string]any) {
+		t.Helper()
+		if want == nil {
+			return
+		}
+		for k, v := range want {
+			switch k {
+			case "GitRef":
+				if j.GitRef != v.(string) {
+					t.Errorf("got git_ref %q, want %q", j.GitRef, v)
+				}
+			case "Agent":
+				if j.Agent != v.(string) {
+					t.Errorf("got agent %q, want %q", j.Agent, v)
+				}
+			case "Reasoning":
+				if j.Reasoning != v.(string) {
+					t.Errorf("got reasoning %q, want %q", j.Reasoning, v)
+				}
+			case "Prompt":
+				if j.Prompt != v.(string) {
+					t.Errorf("got prompt %q, want %q", j.Prompt, v)
+				}
+			case "Status":
+				if j.Status != v.(JobStatus) {
+					t.Errorf("got status %q, want %q", j.Status, v)
+				}
+			case "Agentic":
+				if j.Agentic != v.(bool) {
+					t.Errorf("got agentic %v, want %v", j.Agentic, v)
+				}
+			case "OutputPrefix":
+				if j.OutputPrefix != v.(string) {
+					t.Errorf("got OutputPrefix %q, want %q", j.OutputPrefix, v)
+				}
+			default:
+				t.Fatalf("unknown field %q in want map", k)
+			}
+		}
 	}
 
 	for _, tt := range tests {
@@ -252,7 +279,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			job := mustEnqueuePromptJob(t, db, opts)
 
 			if tt.wantJob != nil {
-				tt.wantJob(t, job)
+				checkProps(t, job, tt.wantJob)
 			}
 
 			if tt.checkSQL != nil {
@@ -262,13 +289,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 			if tt.checkClaim {
 				claimed := claimJob(t, db, "test-worker")
 				if tt.wantClaimed != nil {
-					tt.wantClaimed(t, claimed)
+					checkProps(t, claimed, tt.wantClaimed)
 				}
 			}
 		})
 	}
 }
-
 func TestPromptJobOutputProcessing(t *testing.T) {
 	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "output-prefix-test")
@@ -374,10 +400,9 @@ func TestRenameRepo(t *testing.T) {
 }
 
 func TestListRepos(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
 	t.Run("empty database", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
 		repos, err := db.ListRepos()
 		if err != nil {
 			t.Fatalf("ListRepos failed: %v", err)
@@ -387,11 +412,10 @@ func TestListRepos(t *testing.T) {
 		}
 	})
 
-	// Create repos
-	createRepo(t, db, filepath.Join(t.TempDir(), "repo-a"))
-	createRepo(t, db, filepath.Join(t.TempDir(), "repo-b"))
-
 	t.Run("lists repos in order", func(t *testing.T) {
+		db, _ := setupDBAndRepo(t, "repo-a")
+		createRepo(t, db, filepath.Join(t.TempDir(), "repo-b"))
+
 		repos, err := db.ListRepos()
 		if err != nil {
 			t.Fatalf("ListRepos failed: %v", err)
@@ -718,8 +742,7 @@ func TestDeleteRepo(t *testing.T) {
 	})
 
 	t.Run("delete nonexistent repo", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
+		db, _ := setupDBAndRepo(t, "delete-nonexistent")
 
 		err := db.DeleteRepo(99999, false)
 		if err == nil {
@@ -733,10 +756,7 @@ func TestDeleteRepo(t *testing.T) {
 
 func TestMergeRepos(t *testing.T) {
 	t.Run("merge repos moves jobs", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-source"))
+		db, source := setupDBAndRepo(t, "merge-source")
 		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-target"))
 
 		// Create jobs in source
@@ -789,10 +809,7 @@ func TestMergeRepos(t *testing.T) {
 	})
 
 	t.Run("merge empty source", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-empty-source"))
+		db, source := setupDBAndRepo(t, "merge-empty-source")
 		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-empty-target"))
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
@@ -811,10 +828,7 @@ func TestMergeRepos(t *testing.T) {
 	})
 
 	t.Run("merge moves commits to target", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-commits-source"))
+		db, source := setupDBAndRepo(t, "merge-commits-source")
 		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-commits-target"))
 
 		// Create commits in source
@@ -824,10 +838,8 @@ func TestMergeRepos(t *testing.T) {
 		enqueueJob(t, db, source.ID, commit2.ID, "commit-sha-2")
 
 		// Verify commits belong to source before merge
-		var sourceCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
-		if sourceCommitCount != 2 {
-			t.Fatalf("Expected 2 commits in source, got %d", sourceCommitCount)
+		if count := countCommits(t, db, source.ID); count != 2 {
+			t.Fatalf("Expected 2 commits in source, got %d", count)
 		}
 
 		_, err := db.MergeRepos(source.ID, target.ID)
@@ -836,17 +848,13 @@ func TestMergeRepos(t *testing.T) {
 		}
 
 		// Verify commits now belong to target
-		var targetCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
-		if targetCommitCount != 2 {
-			t.Errorf("Expected 2 commits in target after merge, got %d", targetCommitCount)
+		if count := countCommits(t, db, target.ID); count != 2 {
+			t.Errorf("Expected 2 commits in target after merge, got %d", count)
 		}
 
 		// Verify no commits remain with source ID (source is deleted)
-		var orphanedCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
-		if orphanedCount != 0 {
-			t.Errorf("Expected 0 orphaned commits, got %d", orphanedCount)
+		if count := countCommits(t, db, source.ID); count != 0 {
+			t.Errorf("Expected 0 orphaned commits, got %d", count)
 		}
 	})
 }
@@ -859,10 +867,8 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	enqueueJob(t, db, repo.ID, commit2.ID, "del-commit-2")
 
 	// Verify commits exist before delete
-	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
-	if beforeCount != 2 {
-		t.Fatalf("Expected 2 commits before delete, got %d", beforeCount)
+	if count := countCommits(t, db, repo.ID); count != 2 {
+		t.Fatalf("Expected 2 commits before delete, got %d", count)
 	}
 
 	err := db.DeleteRepo(repo.ID, true)
@@ -871,10 +877,8 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	}
 
 	// Verify commits are deleted
-	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
-	if afterCount != 0 {
-		t.Errorf("Expected 0 commits after cascade delete, got %d", afterCount)
+	if count := countCommits(t, db, repo.ID); count != 0 {
+		t.Errorf("Expected 0 commits after cascade delete, got %d", count)
 	}
 }
 
@@ -889,10 +893,8 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	}
 
 	// Verify comment exists
-	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
-	if beforeCount != 1 {
-		t.Fatalf("Expected 1 legacy response before delete, got %d", beforeCount)
+	if count := countResponses(t, db, commit.ID); count != 1 {
+		t.Fatalf("Expected 1 legacy response before delete, got %d", count)
 	}
 
 	err = db.DeleteRepo(repo.ID, true)
@@ -901,10 +903,8 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	}
 
 	// Verify legacy responses are deleted (by checking all responses - commit is gone)
-	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
-	if afterCount != 0 {
-		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", afterCount)
+	if count := countResponses(t, db, commit.ID); count != 0 {
+		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", count)
 	}
 }
 
@@ -919,13 +919,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		// Fetch via ListJobs and check verdict is nil
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
-		var found *ReviewJob
-		for i := range jobs {
-			if jobs[i].ID == promptJob.ID {
-				found = &jobs[i]
-				break
-			}
-		}
+		found := findJobByID(jobs, promptJob.ID)
 
 		if found == nil {
 			t.Fatal("Prompt job not found in ListJobs")
@@ -948,13 +942,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		// Fetch via ListJobs and check verdict is set
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
-		var found *ReviewJob
-		for i := range jobs {
-			if jobs[i].ID == job.ID {
-				found = &jobs[i]
-				break
-			}
-		}
+		found := findJobByID(jobs, job.ID)
 
 		if found == nil {
 			t.Fatal("Regular job not found in ListJobs")
@@ -983,13 +971,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
-		var found *ReviewJob
-		for i := range jobs {
-			if jobs[i].ID == jobID {
-				found = &jobs[i]
-				break
-			}
-		}
+		found := findJobByID(jobs, jobID)
 
 		if found == nil {
 			t.Fatal("Branch 'prompt' job not found in ListJobs")

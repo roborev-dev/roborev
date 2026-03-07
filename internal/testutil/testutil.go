@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -33,15 +32,21 @@ type TestRepo struct {
 	t        *testing.T
 }
 
-// NewTestRepo creates a temporary git repository.
+// NewTestRepo creates a temporary git repository with hooks suppressed
+// to prevent global post-commit hooks from leaking test data into the
+// production daemon.
 func NewTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	tmpDir := t.TempDir()
 
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "core.hooksPath", filepath.Join(tmpDir, ".git", "hooks")},
+	} {
+		cmd := newIsolatedGitCmd(tmpDir, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
 	}
 
 	return &TestRepo{
@@ -60,14 +65,7 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	repo := NewTestRepo(t)
 
 	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo.Root
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME="+GitUserName,
-			"GIT_AUTHOR_EMAIL="+GitUserEmail,
-			"GIT_COMMITTER_NAME="+GitUserName,
-			"GIT_COMMITTER_EMAIL="+GitUserEmail,
-		)
+		cmd := newIsolatedGitCmd(repo.Root, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %v\n%s", args, err, out)
 		}
@@ -101,8 +99,7 @@ func InitTestRepo(t *testing.T) *TestRepo {
 // RunGit runs a git command in the repo directory.
 func (r *TestRepo) RunGit(args ...string) {
 	r.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Root
+	cmd := newIsolatedGitCmd(r.Root, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
@@ -111,8 +108,7 @@ func (r *TestRepo) RunGit(args ...string) {
 // RevParse runs git rev-parse and returns the trimmed output.
 func (r *TestRepo) RevParse(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", append([]string{"rev-parse"}, args...)...)
-	cmd.Dir = r.Root
+	cmd := newIsolatedGitCmd(r.Root, append([]string{"rev-parse"}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("git rev-parse %v failed: %v\n%s", args, err, out)
@@ -168,6 +164,16 @@ func (r *TestRepo) Chdir() func() {
 	}
 }
 
+// getActiveHooksDir resolves the current hooks path using git.
+func (r *TestRepo) getActiveHooksDir() string {
+	r.t.Helper()
+	hooksDir := r.RevParse("--git-path", "hooks")
+	if !filepath.IsAbs(hooksDir) {
+		hooksDir = filepath.Join(r.Root, hooksDir)
+	}
+	return hooksDir
+}
+
 // WriteHook writes a post-commit hook with the given content.
 func (r *TestRepo) WriteHook(content string) {
 	r.t.Helper()
@@ -177,10 +183,11 @@ func (r *TestRepo) WriteHook(content string) {
 // WriteNamedHook writes a hook with the given name and content.
 func (r *TestRepo) WriteNamedHook(name, content string) {
 	r.t.Helper()
-	if err := os.MkdirAll(r.HooksDir, 0755); err != nil {
+	hooksDir := r.getActiveHooksDir()
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		r.t.Fatal(err)
 	}
-	hookPath := filepath.Join(r.HooksDir, name)
+	hookPath := filepath.Join(hooksDir, name)
 	if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
 		r.t.Fatal(err)
 	}
@@ -189,20 +196,24 @@ func (r *TestRepo) WriteNamedHook(name, content string) {
 // GetHookPath returns the path to a specific hook in the test repository.
 func (r *TestRepo) GetHookPath(name string) string {
 	r.t.Helper()
-	return filepath.Join(r.HooksDir, name)
+	return filepath.Join(r.getActiveHooksDir(), name)
 }
 
-// RemoveHooksDir removes the .git/hooks directory.
+// RemoveHooksDir removes the active hooks directory.
 func (r *TestRepo) RemoveHooksDir() {
 	r.t.Helper()
-	if err := os.RemoveAll(r.HooksDir); err != nil {
+	hooksDir := r.getActiveHooksDir()
+	// Don't try to remove /dev/null
+	if hooksDir == os.DevNull {
+		return
+	}
+	if err := os.RemoveAll(hooksDir); err != nil {
 		r.t.Fatal(err)
 	}
 }
 
 // MockExecutable creates a fake executable in PATH that exits with the given code.
-// Returns a cleanup function.
-func MockExecutable(t *testing.T, binName string, exitCode int) func() {
+func MockExecutable(t *testing.T, binName string, exitCode int) {
 	t.Helper()
 	tmpBin := t.TempDir()
 	var path string
@@ -223,14 +234,13 @@ func MockExecutable(t *testing.T, binName string, exitCode int) func() {
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
 
-	return func() {
+	t.Cleanup(func() {
 		os.Setenv("PATH", origPath)
-	}
+	})
 }
 
 // MockExecutableIsolated creates a fake executable in a new directory and sets PATH to ONLY that directory.
-// Returns a cleanup function.
-func MockExecutableIsolated(t *testing.T, binName string, exitCode int) func() {
+func MockExecutableIsolated(t *testing.T, binName string, exitCode int) {
 	t.Helper()
 	tmpBin := t.TempDir()
 	var path string
@@ -251,13 +261,13 @@ func MockExecutableIsolated(t *testing.T, binName string, exitCode int) func() {
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", tmpBin)
 
-	return func() {
+	t.Cleanup(func() {
 		os.Setenv("PATH", origPath)
-	}
+	})
 }
 
-// MockBinaryInPath creates a fake executable in PATH and returns a cleanup function.
-func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
+// MockBinaryInPath creates a fake executable in PATH.
+func MockBinaryInPath(t *testing.T, binName, scriptContent string) {
 	t.Helper()
 	tmpBin := t.TempDir()
 
@@ -269,9 +279,9 @@ func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
 
-	return func() {
+	t.Cleanup(func() {
 		os.Setenv("PATH", origPath)
-	}
+	})
 }
 
 // OpenTestDB creates a test database in a temporary directory.
@@ -311,7 +321,7 @@ func AssertStatusCode(t *testing.T, w *httptest.ResponseRecorder, expected int) 
 	t.Helper()
 
 	if w.Code != expected {
-		t.Errorf("Expected status %d, got %d: %s", expected, w.Code, w.Body.String())
+		t.Fatalf("Expected status %d, got %d: %s", expected, w.Code, w.Body.String())
 	}
 }
 
@@ -383,12 +393,13 @@ func InitTestGitRepo(t *testing.T, dir string) {
 	}
 
 	cmds := [][]string{
-		{"git", "-C", dir, "init"},
-		{"git", "-C", dir, "config", "user.email", GitUserEmail},
-		{"git", "-C", dir, "config", "user.name", GitUserName},
+		{"init"},
+		{"config", "core.hooksPath", filepath.Join(dir, ".git", "hooks")},
+		{"config", "user.email", GitUserEmail},
+		{"config", "user.name", GitUserName},
 	}
 	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := newIsolatedGitCmd(dir, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
 		}
@@ -398,11 +409,11 @@ func InitTestGitRepo(t *testing.T, dir string) {
 	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
-	addCmd := exec.Command("git", "-C", dir, "add", ".")
+	addCmd := newIsolatedGitCmd(dir, "add", ".")
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git add failed: %v\n%s", err, out)
 	}
-	commitCmd := exec.Command("git", "-C", dir, "commit", "-m", "initial commit")
+	commitCmd := newIsolatedGitCmd(dir, "commit", "-m", "initial commit")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit failed: %v\n%s", err, out)
 	}
@@ -411,7 +422,7 @@ func InitTestGitRepo(t *testing.T, dir string) {
 // GetHeadSHA returns the HEAD commit SHA for the git repo at dir.
 func GetHeadSHA(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	cmd := newIsolatedGitCmd(dir, "rev-parse", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("git rev-parse HEAD failed: %v", err)

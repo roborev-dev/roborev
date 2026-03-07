@@ -22,22 +22,49 @@ func createTestActivityLog(t *testing.T) (*ActivityLog, string) {
 	return al, path
 }
 
+func assertEntryEqual(t *testing.T, i int, got, want ActivityEntry) {
+	t.Helper()
+	if got.Event != want.Event || got.Component != want.Component || got.Message != want.Message {
+		t.Errorf("entry %d: basic fields mismatch: got %+v, want %+v", i, got, want)
+	}
+	if len(got.Details) > 0 || len(want.Details) > 0 {
+		if !maps.Equal(got.Details, want.Details) {
+			t.Errorf("entry %d details = %v, want %v", i, got.Details, want.Details)
+		}
+	}
+}
+
+func readLogEntries(t *testing.T, path string) []ActivityEntry {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	var entries []ActivityEntry
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	for decoder.More() {
+		var entry ActivityEntry
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatalf("decode error: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 func TestActivityLog_WriteAndRecent(t *testing.T) {
 	al, _ := createTestActivityLog(t)
 
-	tests := []struct {
-		event     string
-		component string
-		message   string
-	}{
-		{"daemon.started", "server", "daemon started on :7373"},
-		{"job.enqueued", "server", "job 1 enqueued"},
-		{"job.started", "worker", "job 1 started"},
-		{"job.completed", "worker", "job 1 completed"},
+	tests := []ActivityEntry{
+		{Event: "daemon.started", Component: "server", Message: "daemon started on :7373"},
+		{Event: "job.enqueued", Component: "server", Message: "job 1 enqueued"},
+		{Event: "job.started", Component: "worker", Message: "job 1 started"},
+		{Event: "job.completed", Component: "worker", Message: "job 1 completed"},
 	}
 
 	for _, tt := range tests {
-		al.Log(tt.event, tt.component, tt.message, nil)
+		al.Log(tt.Event, tt.Component, tt.Message, nil)
 	}
 
 	recent := al.Recent()
@@ -48,15 +75,7 @@ func TestActivityLog_WriteAndRecent(t *testing.T) {
 	// Newest first
 	for i, tt := range tests {
 		got := recent[len(tests)-1-i]
-		if got.Event != tt.event {
-			t.Errorf("entry %d: event = %q, want %q", i, got.Event, tt.event)
-		}
-		if got.Component != tt.component {
-			t.Errorf("entry %d: component = %q, want %q", i, got.Component, tt.component)
-		}
-		if got.Message != tt.message {
-			t.Errorf("entry %d: message = %q, want %q", i, got.Message, tt.message)
-		}
+		assertEntryEqual(t, i, got, tt)
 	}
 }
 
@@ -126,33 +145,17 @@ func TestActivityLog_FileFormat(t *testing.T) {
 	)
 	al.Close()
 
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(content))
-
 	want := []ActivityEntry{
 		{Event: "daemon.started", Component: "server", Message: "started"},
 		{Event: "job.enqueued", Component: "server", Message: "job enqueued", Details: map[string]string{"job_id": "42", "agent": "test"}},
 	}
 
+	gotEntries := readLogEntries(t, path)
+	if len(gotEntries) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(gotEntries), len(want))
+	}
 	for i, w := range want {
-		var got ActivityEntry
-		if err := decoder.Decode(&got); err != nil {
-			t.Fatalf("decode entry %d: %v", i, err)
-		}
-		if got.Event != w.Event || got.Component != w.Component || got.Message != w.Message {
-			t.Errorf("entry %d = %+v, want %+v", i, got, w)
-		}
-		// If both are empty (nil or len 0), we consider them equal.
-		if len(got.Details) == 0 && len(w.Details) == 0 {
-			continue
-		}
-		if !maps.Equal(got.Details, w.Details) {
-			t.Errorf("entry %d details = %v, want %v", i, got.Details, w.Details)
-		}
+		assertEntryEqual(t, i, gotEntries[i], w)
 	}
 }
 
@@ -209,14 +212,10 @@ func TestActivityLog_RecentN_Negative(t *testing.T) {
 	al, _ := createTestActivityLog(t)
 	al.Log("test", "test", "msg", nil)
 
-	got := al.RecentN(-1)
-	if got != nil {
-		t.Errorf("RecentN(-1) = %v, want nil", got)
-	}
-
-	got = al.RecentN(0)
-	if got != nil {
-		t.Errorf("RecentN(0) = %v, want nil", got)
+	for _, n := range []int{-1, 0} {
+		if got := al.RecentN(n); got != nil {
+			t.Errorf("RecentN(%d) = %v, want nil", n, got)
+		}
 	}
 }
 

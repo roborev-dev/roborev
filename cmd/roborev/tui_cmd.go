@@ -31,12 +31,9 @@ to the current branch. Use = syntax for explicit values:
   roborev tui --repo --branch         # current repo + branch`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			addr, err := ensureDaemon(cmd)
+			if err != nil {
 				return fmt.Errorf("daemon error: %w", err)
-			}
-
-			if addr == "" {
-				addr = getDaemonAddr()
 			} else if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
 				addr = "http://" + addr
 			}

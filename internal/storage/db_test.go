@@ -14,7 +14,11 @@ func TestOpenAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	})
 
 	// Verify file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {

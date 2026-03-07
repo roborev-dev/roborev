@@ -54,11 +54,10 @@ func (s *safeRecorder) bodyString() string {
 	return s.Body.String()
 }
 
-// waitForSubscriberIncrease polls until subscriber count increases from initialCount
-func waitForSubscriberIncrease(b Broadcaster, initialCount int, timeout time.Duration) bool {
+func waitUntil(timeout time.Duration, condition func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if b.SubscriberCount() > initialCount {
+		if condition() {
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -66,18 +65,14 @@ func waitForSubscriberIncrease(b Broadcaster, initialCount int, timeout time.Dur
 	return false
 }
 
+// waitForSubscriberIncrease polls until subscriber count increases from initialCount
+func waitForSubscriberIncrease(b Broadcaster, initialCount int, timeout time.Duration) bool {
+	return waitUntil(timeout, func() bool { return b.SubscriberCount() > initialCount })
+}
+
 // waitForEvents polls until the response body contains at least minEvents newline-delimited events
 func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		body := w.bodyString()
-		count := strings.Count(body, "\n")
-		if count >= minEvents {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
+	return waitUntil(timeout, func() bool { return strings.Count(w.bodyString(), "\n") >= minEvents })
 }
 
 // newTestServer creates a Server with a test DB and default config.
@@ -85,20 +80,23 @@ func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
 // setJobStatus is a test helper to update a job's status.
 func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobStatus) {
 	t.Helper()
-	var query string
+	finishedAt := "NULL"
+	errStr := "NULL"
+
 	switch status {
-	case storage.JobStatusRunning:
-		query = `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`
-	case storage.JobStatusDone:
-		query = `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+	case storage.JobStatusDone, storage.JobStatusCanceled:
+		finishedAt = "datetime('now')"
 	case storage.JobStatusFailed:
-		query = `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`
-	case storage.JobStatusCanceled:
-		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+		finishedAt = "datetime('now')"
+		errStr = "'test error'"
+	case storage.JobStatusRunning:
+		// default bindings
 	default:
 		t.Fatalf("unsupported status in helper: %v", status)
 	}
-	res, err := db.Exec(query, jobID)
+
+	query := fmt.Sprintf(`UPDATE review_jobs SET status = ?, started_at = datetime('now'), finished_at = %s, error = %s WHERE id = ?`, finishedAt, errStr)
+	res, err := db.Exec(query, string(status), jobID)
 	if err != nil {
 		t.Fatalf("failed to set job status: %v", err)
 	}
@@ -313,63 +311,35 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 }
 
 func TestNewServerAllowUnsafeAgents(t *testing.T) {
-	boolTrue := true
-	boolFalse := false
+	boolTrue, boolFalse := true, false
+	tests := []struct {
+		name     string
+		preSet   bool
+		cfgValue *bool
+		expected bool
+	}{
+		{"config nil keeps agent state false", true, nil, false},
+		{"config false sets agent state false", true, &boolFalse, false},
+		{"config true sets agent state true", false, &boolTrue, true},
+	}
 
-	t.Run("config nil keeps agent state false", func(t *testing.T) {
-		// Save and restore global state
-		prev := agent.AllowUnsafeAgents()
-		t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := agent.AllowUnsafeAgents()
+			t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
+			agent.SetAllowUnsafeAgents(tt.preSet)
 
-		// Pre-set to true to verify it gets reset
-		agent.SetAllowUnsafeAgents(true)
+			db, _ := testutil.OpenTestDBWithDir(t)
+			cfg := config.DefaultConfig()
+			cfg.AllowUnsafeAgents = tt.cfgValue
 
-		db, _ := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		cfg.AllowUnsafeAgents = nil // not set
+			_ = NewServer(db, cfg, "")
 
-		_ = NewServer(db, cfg, "")
-
-		if agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be false when config is nil")
-		}
-	})
-
-	t.Run("config false sets agent state false", func(t *testing.T) {
-		prev := agent.AllowUnsafeAgents()
-		t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
-
-		// Pre-set to true to verify it gets reset
-		agent.SetAllowUnsafeAgents(true)
-
-		db, _ := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		cfg.AllowUnsafeAgents = &boolFalse
-
-		_ = NewServer(db, cfg, "")
-
-		if agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be false when config is false")
-		}
-	})
-
-	t.Run("config true sets agent state true", func(t *testing.T) {
-		prev := agent.AllowUnsafeAgents()
-		t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
-
-		// Pre-set to false to verify it gets set
-		agent.SetAllowUnsafeAgents(false)
-
-		db, _ := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		cfg.AllowUnsafeAgents = &boolTrue
-
-		_ = NewServer(db, cfg, "")
-
-		if !agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be true when config is true")
-		}
-	})
+			if agent.AllowUnsafeAgents() != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, agent.AllowUnsafeAgents())
+			}
+		})
+	}
 }
 
 // seedRepoWithJobs creates a repo and enqueues a number of jobs with predictable SHAs.

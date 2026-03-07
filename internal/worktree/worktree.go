@@ -3,6 +3,7 @@ package worktree
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 )
+
+var ErrEmptyRef = errors.New("ref must not be empty")
 
 // Worktree represents a temporary git worktree for isolated agent work.
 // Call Close to remove the worktree and its directory.
@@ -31,7 +34,7 @@ func (w *Worktree) Close() {
 // for isolated agent work. Pass "HEAD" for the current checkout.
 func Create(repoPath, ref string) (*Worktree, error) {
 	if ref == "" {
-		return nil, fmt.Errorf("ref must not be empty")
+		return nil, ErrEmptyRef
 	}
 	worktreeDir, err := os.MkdirTemp("", "roborev-worktree-")
 	if err != nil {

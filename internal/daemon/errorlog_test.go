@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,9 +25,10 @@ func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
 	return el, path
 }
 
-func seedErrorLog(el *ErrorLog, count int) {
+func seedErrorLog(t *testing.T, el *ErrorLog, count int) {
+	t.Helper()
 	for i := 1; i <= count; i++ {
-		el.Log("error", "worker", "error", int64(i))
+		el.Log("error", "worker", fmt.Sprintf("error %d", i), int64(i))
 	}
 }
 
@@ -91,20 +91,29 @@ func TestErrorLogRecent(t *testing.T) {
 		t.Fatalf("Expected 5 recent errors, got %d", len(recent))
 	}
 
-	// First entry should be the most recent (error 5)
-	if !strings.Contains(recent[0].Message, "error 5") {
-		t.Errorf("Expected first error to be 'error 5', got %q", recent[0].Message)
-	}
-	// Last entry should be the oldest (error 1)
-	if !strings.Contains(recent[4].Message, "error 1") {
-		t.Errorf("Expected last error to be 'error 1', got %q", recent[4].Message)
+	// Verify exact reverse ordering
+	for i, entry := range recent {
+		expectedID := int64(5 - i)
+		if entry.JobID != expectedID {
+			t.Errorf("Index %d: expected JobID %d, got %d", i, expectedID, entry.JobID)
+		}
+		expectedMsg := fmt.Sprintf("error %d", expectedID)
+		if entry.Message != expectedMsg {
+			t.Errorf("Index %d: expected Message %q, got %q", i, expectedMsg, entry.Message)
+		}
+		if entry.Level != "error" {
+			t.Errorf("Index %d: expected Level \"error\", got %q", i, entry.Level)
+		}
+		if entry.Component != "worker" {
+			t.Errorf("Index %d: expected Component \"worker\", got %q", i, entry.Component)
+		}
 	}
 }
 
 func TestErrorLogRecentN(t *testing.T) {
 	el, _ := createTestErrorLog(t)
 
-	seedErrorLog(el, 10)
+	seedErrorLog(t, el, 10)
 
 	// Get only 3 recent errors
 	recent := el.RecentN(3)
@@ -124,7 +133,7 @@ func TestErrorLogRecentN(t *testing.T) {
 func TestErrorLogCount24h(t *testing.T) {
 	el, _ := createTestErrorLog(t)
 
-	seedErrorLog(el, 5)
+	seedErrorLog(t, el, 5)
 
 	count := el.Count24h()
 	if count != 5 {
@@ -136,7 +145,7 @@ func TestErrorLogRingBuffer(t *testing.T) {
 	el, _ := createTestErrorLog(t)
 
 	seedCount := MaxErrorLogEntries + 50
-	seedErrorLog(el, seedCount)
+	seedErrorLog(t, el, seedCount)
 
 	// Should only have the last MaxErrorLogEntries errors
 	recent := el.Recent()
@@ -155,12 +164,15 @@ func TestErrorLogConcurrency(t *testing.T) {
 
 	// Log from multiple goroutines
 	var wg sync.WaitGroup
-	for i := range 10 {
+	goroutines := 10
+	logsPerRoutine := (MaxErrorLogEntries / goroutines) + 5
+
+	for i := range goroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := range 10 {
-				el.Log("error", "worker", "concurrent error", int64(id*10+j))
+			for j := range logsPerRoutine {
+				el.Log("error", "worker", "concurrent error", int64(id*1000+j))
 			}
 		}(i)
 	}

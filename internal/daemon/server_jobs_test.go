@@ -19,6 +19,26 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+type listJobsResponse struct {
+	Jobs    []storage.ReviewJob `json:"jobs"`
+	HasMore bool                `json:"has_more"`
+}
+
+func fetchJobs(t *testing.T, server *Server, path string) listJobsResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	server.handleListJobs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp listJobsResponse
+	testutil.DecodeJSON(t, w, &resp)
+	return resp
+}
+
 func TestHandleListJobsWithFilter(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
@@ -26,183 +46,37 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	repo1, _ := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
 	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
-	t.Run("no filter returns all jobs", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
-		w := httptest.NewRecorder()
+	tests := []struct {
+		name         string
+		query        string
+		expectedLen  int
+		expectedRepo string
+	}{
+		{"no filter returns all jobs", "", 5, ""},
+		{"repo filter returns only matching jobs", "?repo=" + url.QueryEscape(repo1.RootPath), 3, "repo1"},
+		{"limit parameter works", "?limit=2", 2, ""},
+		{"limit=0 returns all jobs", "?limit=0", 5, ""},
+		{"repo filter with limit", "?repo=" + url.QueryEscape(repo1.RootPath) + "&limit=2", 2, "repo1"},
+		{"negative limit treated as unlimited", "?limit=-1", 5, ""},
+		{"very large limit capped to max", "?limit=999999", 5, ""},
+		{"invalid limit uses default", "?limit=abc", 5, ""},
+	}
 
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("repo filter returns only matching jobs", func(t *testing.T) {
-		// Filter by root_path (not name) since repos with same name could exist at different paths
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo="+url.QueryEscape(repo1.RootPath), nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs for repo1, got %d", len(response.Jobs))
-		}
-
-		// Verify all jobs are from repo1
-		for _, job := range response.Jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := fetchJobs(t, server, "/api/jobs"+tt.query)
+			if len(resp.Jobs) != tt.expectedLen {
+				t.Fatalf("Expected %d jobs, got %d", tt.expectedLen, len(resp.Jobs))
 			}
-		}
-	})
-
-	t.Run("limit parameter works", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?limit=2", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs with limit=2, got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("limit=0 returns all jobs", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?limit=0", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("repo filter with limit", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo="+url.QueryEscape(repo1.RootPath)+"&limit=2", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(response.Jobs))
-		}
-
-		// Verify all jobs are from repo1
-		for _, job := range response.Jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
+			if tt.expectedRepo != "" {
+				for _, job := range resp.Jobs {
+					if job.RepoName != tt.expectedRepo {
+						t.Errorf("Expected RepoName '%s', got '%s'", tt.expectedRepo, job.RepoName)
+					}
+				}
 			}
-		}
-	})
-
-	t.Run("negative limit treated as unlimited", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?limit=-1", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		// Negative clamped to 0 (unlimited), should return all 5 jobs
-		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=-1 (clamped to unlimited), got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("very large limit capped to max", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?limit=999999", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		// Large limit capped to 10000, but we only have 5 jobs
-		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs (all available), got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("invalid limit uses default", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?limit=abc", nil)
-		w := httptest.NewRecorder()
-
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		// Invalid limit uses default (50), we have 5 jobs
-		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with invalid limit (uses default), got %d", len(response.Jobs))
-		}
-	})
+		})
+	}
 }
 
 func TestListJobsPagination(t *testing.T) {
@@ -228,7 +102,7 @@ func TestListJobsPagination(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(result.Jobs))
+			t.Fatalf("Expected 5 jobs, got %d", len(result.Jobs))
 		}
 		if !result.HasMore {
 			t.Error("Expected has_more=true when more jobs exist")
@@ -252,7 +126,7 @@ func TestListJobsPagination(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 10 {
-			t.Errorf("Expected 10 jobs, got %d", len(result.Jobs))
+			t.Fatalf("Expected 10 jobs, got %d", len(result.Jobs))
 		}
 		if result.HasMore {
 			t.Error("Expected has_more=false when all jobs returned")
@@ -308,7 +182,7 @@ func TestListJobsPagination(t *testing.T) {
 
 		// Should return all 10 jobs since offset is ignored with limit=0
 		if len(result.Jobs) != 10 {
-			t.Errorf("Expected 10 jobs (offset ignored with limit=0), got %d", len(result.Jobs))
+			t.Fatalf("Expected 10 jobs (offset ignored with limit=0), got %d", len(result.Jobs))
 		}
 	})
 }
@@ -339,7 +213,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 job, got %d", len(result.Jobs))
+			t.Fatalf("Expected 1 job, got %d", len(result.Jobs))
 		}
 		if len(result.Jobs) > 0 && result.Jobs[0].GitRef != "abc123" {
 			t.Errorf("Expected GitRef 'abc123', got '%s'", result.Jobs[0].GitRef)
@@ -357,7 +231,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 0 {
-			t.Errorf("Expected 0 jobs, got %d", len(result.Jobs))
+			t.Fatalf("Expected 0 jobs, got %d", len(result.Jobs))
 		}
 	})
 
@@ -372,7 +246,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 job with range ref, got %d", len(result.Jobs))
+			t.Fatalf("Expected 1 job with range ref, got %d", len(result.Jobs))
 		}
 	})
 }
@@ -394,33 +268,23 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 	db.CompleteJob(job2.ID, "codex", "", "output2")
 	db.MarkReviewClosedByJobID(job2.ID, true)
 
-	t.Run("closed=false", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs?closed=false", nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+	tests := []struct {
+		name        string
+		query       string
+		expectedLen int
+	}{
+		{"closed=false", "?closed=false", 1},
+		{"branch filter", "?branch=main", 2},
+	}
 
-		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &result)
-		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 open job, got %d", len(result.Jobs))
-		}
-	})
-
-	t.Run("branch filter", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs?branch=main", nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
-
-		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &result)
-		if len(result.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := fetchJobs(t, server, "/api/jobs"+tt.query)
+			if len(resp.Jobs) != tt.expectedLen {
+				t.Fatalf("Expected %d jobs, got %d", tt.expectedLen, len(resp.Jobs))
+			}
+		})
+	}
 }
 
 func TestHandleEnqueueExcludedBranch(t *testing.T) {
@@ -862,112 +726,54 @@ func TestHandleListJobsByID(t *testing.T) {
 	job2ID := jobs[1].ID
 	job3ID := jobs[2].ID
 
-	t.Run("fetches specific job by ID", func(t *testing.T) {
-		// Request job 1 specifically
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job1ID), nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+	tests := []struct {
+		name        string
+		query       string
+		expectedLen int
+		expectedIDs []int64
+		status      int
+	}{
+		{"fetches specific job by ID", fmt.Sprintf("?id=%d", job1ID), 1, []int64{job1ID}, http.StatusOK},
+		{"fetches middle job correctly", fmt.Sprintf("?id=%d", job2ID), 1, []int64{job2ID}, http.StatusOK},
+		{"returns empty for non-existent job ID", "?id=99999", 0, nil, http.StatusOK},
+		{"returns error for invalid job ID", "?id=notanumber", 0, nil, http.StatusBadRequest},
+		{"without id param returns all jobs", "", 3, []int64{job1ID, job2ID, job3ID}, http.StatusOK},
+	}
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/jobs"+tt.query, nil)
+			w := httptest.NewRecorder()
+			server.handleListJobs(w, req)
 
-		var response struct {
-			Jobs    []storage.ReviewJob `json:"jobs"`
-			HasMore bool                `json:"has_more"`
-		}
-		testutil.DecodeJSON(t, w, &response)
+			if w.Code != tt.status {
+				t.Fatalf("Expected %d, got %d: %s", tt.status, w.Code, w.Body.String())
+			}
 
-		if len(response.Jobs) != 1 {
-			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
-		}
-		if response.Jobs[0].ID != job1ID {
-			t.Errorf("Expected job ID %d, got %d", job1ID, response.Jobs[0].ID)
-		}
-	})
+			if w.Code != http.StatusOK {
+				return // Skip parsing for errors
+			}
 
-	t.Run("fetches middle job correctly", func(t *testing.T) {
-		// Request job 2 specifically (the middle job)
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job2ID), nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+			var resp listJobsResponse
+			testutil.DecodeJSON(t, w, &resp)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
-		}
+			if len(resp.Jobs) != tt.expectedLen {
+				t.Fatalf("Expected %d jobs, got %d", tt.expectedLen, len(resp.Jobs))
+			}
 
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 1 {
-			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
-		}
-		if response.Jobs[0].ID != job2ID {
-			t.Errorf("Expected job ID %d, got %d", job2ID, response.Jobs[0].ID)
-		}
-	})
-
-	t.Run("returns empty for non-existent job ID", func(t *testing.T) {
-		// Request a job ID that doesn't exist
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=99999", nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		if len(response.Jobs) != 0 {
-			t.Errorf("Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
-		}
-	})
-
-	t.Run("returns error for invalid job ID", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=notanumber", nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("without id param returns all jobs", func(t *testing.T) {
-		// Request without id param should return all jobs
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
-		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var response struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		testutil.DecodeJSON(t, w, &response)
-
-		// Should have all 3 jobs
-		if len(response.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs, got %d", len(response.Jobs))
-		}
-
-		// Verify all job IDs are present (order may vary due to same-second timestamps)
-		foundIDs := make(map[int64]bool)
-		for _, job := range response.Jobs {
-			foundIDs[job.ID] = true
-		}
-		if !foundIDs[job1ID] || !foundIDs[job2ID] || !foundIDs[job3ID] {
-			t.Errorf("Expected jobs %d, %d, %d but found %v", job1ID, job2ID, job3ID, foundIDs)
-		}
-	})
+			if len(tt.expectedIDs) > 0 {
+				foundIDs := make(map[int64]bool)
+				for _, job := range resp.Jobs {
+					foundIDs[job.ID] = true
+				}
+				for _, expectedID := range tt.expectedIDs {
+					if !foundIDs[expectedID] {
+						t.Errorf("Expected job ID %d, but not found", expectedID)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestHandleEnqueuePromptJob(t *testing.T) {
@@ -1532,7 +1338,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs total, got %d", len(resp.Jobs))
+			t.Fatalf("Expected 2 jobs total, got %d", len(resp.Jobs))
 		}
 	})
 
@@ -1583,7 +1389,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
+			t.Fatalf("Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
 		}
 		wsSlash := filepath.ToSlash(workspace) + "/"
 		for _, j := range resp.Jobs {
@@ -1608,7 +1414,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 
 		// Should still be 5 (not 6) - the exact workspace path match is excluded
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs (excluding exact path match), got %d", len(resp.Jobs))
+			t.Fatalf("Expected 5 jobs (excluding exact path match), got %d", len(resp.Jobs))
 		}
 	})
 
@@ -1625,7 +1431,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
+			t.Fatalf("Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
 		}
 	})
 
@@ -1641,7 +1447,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with trailing-slash prefix, got %d", len(resp.Jobs))
+			t.Fatalf("Expected 5 jobs with trailing-slash prefix, got %d", len(resp.Jobs))
 		}
 	})
 
@@ -1659,7 +1465,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with dot-dot prefix, got %d", len(resp.Jobs))
+			t.Fatalf("Expected 5 jobs with dot-dot prefix, got %d", len(resp.Jobs))
 		}
 	})
 }

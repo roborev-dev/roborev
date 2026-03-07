@@ -254,7 +254,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Get working directory and repo root
-	workDir, err := os.Getwd()
+	workDir, err := getWorkDir(cmd)
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
@@ -287,7 +287,8 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	serverAddr, err := ensureDaemon(cmd)
+	if err != nil {
 		return err
 	}
 
@@ -367,7 +368,7 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 
 	// If --wait, poll until job completes and show result
 	if opts.wait {
-		return waitForPromptJob(cmd, serverAddr, job.ID, opts.quiet, promptPollInterval)
+		return waitForPromptJob(cmd, serverAddr, job.ID, opts.quiet, 500*time.Millisecond)
 	}
 
 	return nil
@@ -470,7 +471,7 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 			if !opts.quiet {
 				cmd.Printf("\n=== Job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			if err := waitForPromptJob(cmd, serverAddr, info.ID, opts.quiet, promptPollInterval); err != nil {
+			if err := waitForPromptJob(cmd, serverAddr, info.ID, opts.quiet, 500*time.Millisecond); err != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: job %d failed: %v\n", info.ID, err)
 				}
@@ -800,12 +801,8 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	// Resolve agent and model via fix workflow config.
-	// When the agent is explicitly overridden but the model is not,
-	// skip generic default_model (it's paired with default_agent).
-	configAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
-	cliAgentChanged := agentName != "" &&
-		agent.CanonicalName(agentName) != agent.CanonicalName(configAgent)
-	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
+	cliAgent := agentName
+	agentName = config.ResolveAgentForWorkflow(cliAgent, repoPath, cfg, "fix", reasoning)
 	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
 
 	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
@@ -815,14 +812,24 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 
 	// Use backup model when the backup agent was selected and no
 	// explicit model was passed via CLI.
-	preferredForAnalyze := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
+	preferredForAnalyze := config.ResolveAgentForWorkflow(cliAgent, repoPath, cfg, "fix", reasoning)
 	usingBackup := backupAgent != "" &&
 		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
 		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredForAnalyze)
+	
 	if usingBackup && model == "" {
 		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
-	} else if cliAgentChanged && model == "" {
-		model = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
+	} else if model == "" {
+		workflowAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
+		fallbackAgent := config.ResolveGenericFallbackAgent(repoPath, cfg)
+
+		if cliAgent == "" || agent.CanonicalName(cliAgent) == agent.CanonicalName(workflowAgent) {
+			model = config.ResolveModelForWorkflow("", repoPath, cfg, "fix", reasoning)
+		} else if agent.CanonicalName(cliAgent) == agent.CanonicalName(fallbackAgent) {
+			model = config.ResolveGenericFallbackModel(repoPath, cfg)
+		} else {
+			model = ""
+		}
 	} else {
 		model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
 	}

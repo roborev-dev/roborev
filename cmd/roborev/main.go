@@ -7,9 +7,38 @@ import (
 )
 
 var (
-	serverAddr string
-	verbose    bool
+	verbose bool
 )
+
+type serverAddrKey struct{}
+type workDirKey struct{}
+
+func getWorkDir(cmd *cobra.Command) (string, error) {
+	if ctx := cmd.Context(); ctx != nil {
+		if dir, ok := ctx.Value(workDirKey{}).(string); ok {
+			return dir, nil
+		}
+	}
+	return os.Getwd()
+}
+
+func getExplicitServerAddr(cmd *cobra.Command) (string, bool) {
+	if ctx := cmd.Context(); ctx != nil {
+		if addr, ok := ctx.Value(serverAddrKey{}).(string); ok {
+			return addr, true
+		}
+	}
+	if f := cmd.Flag("server"); f != nil {
+		val := f.Value.String()
+		if val != "http://127.0.0.1:7373" {
+			return val, true
+		}
+	}
+	if testAddr := os.Getenv("ROBOREV_TEST_SERVER_ADDR"); testAddr != "" {
+		return testAddr, true
+	}
+	return "", false
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -18,7 +47,7 @@ func main() {
 		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Pi)",
 	}
 
-	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "http://127.0.0.1:7373", "daemon server address")
+	rootCmd.PersistentFlags().String("server", "http://127.0.0.1:7373", "daemon server address")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 
 	rootCmd.AddCommand(initCmd())

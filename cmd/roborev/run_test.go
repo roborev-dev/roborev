@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -31,16 +32,65 @@ func createRepoWithConfig(t *testing.T, configContent string) string {
 }
 
 type mockServerConfig struct {
+	status      int
 	jobs        []storage.ReviewJob
+	jobsFunc    func() []storage.ReviewJob // Dynamic jobs for polling
 	review      *storage.Review
-	status      int // Default 200
 	receivedRef *string
 }
 
-// newRunTestServer creates a unified test server for run command tests.
-func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
+func newTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	t.Helper()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"version": version.Version})
+	})
+
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		jobs := cfg.jobs
+		if cfg.jobsFunc != nil {
+			jobs = cfg.jobsFunc()
+		}
+		if jobs == nil {
+			jobs = []storage.ReviewJob{}
+		}
+		writeJSON(w, map[string][]storage.ReviewJob{"jobs": jobs})
+	})
+
+	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.review != nil {
+			writeJSON(w, *cfg.review)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			var req daemon.EnqueueRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if cfg.receivedRef != nil {
+				*cfg.receivedRef = req.GitRef
+			}
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(w, storage.ReviewJob{
+				ID:     1,
+				Agent:  "test",
+				GitRef: req.GitRef,
+			})
+		}
+	})
+
+	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, daemon.PingInfo{Service: "roborev", Version: version.Version})
+	})
+
+	// Wrap with status middleware
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg.status != 0 && cfg.status != 200 {
 			w.WriteHeader(cfg.status)
 			if cfg.status == http.StatusInternalServerError {
@@ -48,42 +98,10 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 			}
 			return
 		}
+		mux.ServeHTTP(w, r)
+	})
 
-		switch r.URL.Path {
-		case "/api/ping":
-			writeJSON(w, daemon.PingInfo{Service: "roborev", Version: version.Version})
-		case "/api/status":
-			// Required for ensureDaemon()
-			writeJSON(w, map[string]string{"version": version.Version})
-		case "/api/jobs":
-			writeJSON(w, map[string][]storage.ReviewJob{"jobs": cfg.jobs})
-		case "/api/review":
-			if cfg.review != nil {
-				writeJSON(w, *cfg.review)
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-		case "/api/enqueue":
-			if r.Method == "POST" {
-				var req daemon.EnqueueRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				if cfg.receivedRef != nil {
-					*cfg.receivedRef = req.GitRef
-				}
-				w.WriteHeader(http.StatusCreated)
-				writeJSON(w, storage.ReviewJob{
-					ID:     1,
-					Agent:  "test",
-					GitRef: req.GitRef,
-				})
-			}
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	s := httptest.NewServer(handler)
 	t.Cleanup(s.Close)
 	return s
 }
@@ -184,9 +202,9 @@ func TestBuildPromptWithContext(t *testing.T) {
 func TestShowPromptResult(t *testing.T) {
 	t.Run("displays result without verdict exit code", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Paris")
-		server := newRunTestServer(t, mockServerConfig{review: &review})
+		server := newTestServer(t, mockServerConfig{review: &review})
 
-		cmd, out := newTestCmd(t)
+		cmd, out := newTestCmd(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err != nil {
@@ -204,9 +222,9 @@ func TestShowPromptResult(t *testing.T) {
 
 	t.Run("returns nil for output that would be FAIL verdict in review", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Found several issues:\n1. Bug in line 5\n2. Missing error handling")
-		server := newRunTestServer(t, mockServerConfig{review: &review})
+		server := newTestServer(t, mockServerConfig{review: &review})
 
-		cmd, _ := newTestCmd(t)
+		cmd, _ := newTestCmd(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err != nil {
@@ -216,9 +234,9 @@ func TestShowPromptResult(t *testing.T) {
 
 	t.Run("quiet mode suppresses output", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Some output")
-		server := newRunTestServer(t, mockServerConfig{review: &review})
+		server := newTestServer(t, mockServerConfig{review: &review})
 
-		cmd, out := newTestCmd(t)
+		cmd, out := newTestCmd(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
 
 		if err != nil {
@@ -236,7 +254,7 @@ func TestShowPromptResult(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 
-		cmd, _ := newTestCmd(t)
+		cmd, _ := newTestCmd(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 999, false, "")
 
 		if err == nil {
@@ -248,8 +266,8 @@ func TestShowPromptResult(t *testing.T) {
 	})
 
 	t.Run("handles server error", func(t *testing.T) {
-		server := newRunTestServer(t, mockServerConfig{status: http.StatusInternalServerError})
-		cmd, _ := newTestCmd(t)
+		server := newTestServer(t, mockServerConfig{status: http.StatusInternalServerError})
+		cmd, _ := newTestCmd(t, server.URL)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err == nil {
@@ -287,10 +305,11 @@ func TestRunLabelFlag(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedRef string
-			server := newRunTestServer(t, mockServerConfig{receivedRef: &receivedRef})
-			patchServerAddr(t, server.URL)
+			server := newTestServer(t, mockServerConfig{receivedRef: &receivedRef})
 
 			cmd := runCmd()
+			ctx := context.WithValue(context.Background(), serverAddrKey{}, server.URL)
+			cmd.SetContext(ctx)
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
 
@@ -312,28 +331,7 @@ func TestRunLabelFlag(t *testing.T) {
 	}
 }
 
-func newPollingTestServer(t *testing.T, statuses []storage.JobStatus) (*httptest.Server, *int) {
-	t.Helper()
-	pollCount := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/jobs":
-			status := statuses[len(statuses)-1] // Default to last
-			if pollCount < len(statuses) {
-				status = statuses[pollCount]
-			}
-			pollCount++
-
-			writeJSON(w, map[string][]storage.ReviewJob{"jobs": {{ID: 123, Status: status}}})
-		case "/api/review":
-			writeJSON(w, stubReview(123, "test-agent", "Final result"))
-		}
-	}))
-	t.Cleanup(s.Close)
-	return s, &pollCount
-}
-
-func TestWaitForPromptJob(t *testing.T) {
+func TestWaitForPromptJob_Status(t *testing.T) {
 	review := stubReview(123, "test-agent", "Result")
 
 	tests := []struct {
@@ -378,8 +376,8 @@ func TestWaitForPromptJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := newRunTestServer(t, mockServerConfig{jobs: tt.jobs, review: tt.review})
-			cmd, out := newTestCmd(t)
+			server := newTestServer(t, mockServerConfig{jobs: tt.jobs, review: tt.review})
+			cmd, out := newTestCmd(t, server.URL)
 
 			// Use small poll interval for tests
 			err := waitForPromptJob(cmd, server.URL, 123, tt.quiet, 1*time.Millisecond)
@@ -406,57 +404,81 @@ func TestWaitForPromptJob(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestWaitForPromptJob_Polling(t *testing.T) {
 	t.Run("polls while job is running", func(t *testing.T) {
-		server, pollCount := newPollingTestServer(t, []storage.JobStatus{
+		statuses := []storage.JobStatus{
 			storage.JobStatusRunning,
 			storage.JobStatusRunning,
 			storage.JobStatusDone,
+		}
+		pollCount := 0
+		review := stubReview(123, "test-agent", "Final result")
+
+		server := newTestServer(t, mockServerConfig{
+			jobsFunc: func() []storage.ReviewJob {
+				status := statuses[len(statuses)-1] // Default to last
+				if pollCount < len(statuses) {
+					status = statuses[pollCount]
+				}
+				pollCount++
+				return []storage.ReviewJob{{ID: 123, Status: status}}
+			},
+			review: &review,
 		})
 
-		cmd, _ := newTestCmd(t)
+		cmd, _ := newTestCmd(t, server.URL)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if *pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
+		if pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
 		}
 	})
 
 	t.Run("retries on unknown status", func(t *testing.T) {
-		server, pollCount := newPollingTestServer(t, []storage.JobStatus{
+		statuses := []storage.JobStatus{
 			"unknown_status",
 			"unknown_status",
 			storage.JobStatusDone,
+		}
+		pollCount := 0
+		review := stubReview(123, "test-agent", "Final result")
+
+		server := newTestServer(t, mockServerConfig{
+			jobsFunc: func() []storage.ReviewJob {
+				status := statuses[len(statuses)-1] // Default to last
+				if pollCount < len(statuses) {
+					status = statuses[pollCount]
+				}
+				pollCount++
+				return []storage.ReviewJob{{ID: 123, Status: status}}
+			},
+			review: &review,
 		})
 
-		cmd, _ := newTestCmd(t)
+		cmd, _ := newTestCmd(t, server.URL)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if *pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
+		if pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
 		}
 	})
 
 	t.Run("fails after max unknown retries", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: "unknown_status"}},
-				})
-			}
-		}))
-		t.Cleanup(server.Close)
+		server := newTestServer(t, mockServerConfig{
+			jobs: []storage.ReviewJob{{ID: 123, Status: "unknown_status"}},
+		})
 
-		cmd, _ := newTestCmd(t)
+		cmd, _ := newTestCmd(t, server.URL)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err == nil {
@@ -475,30 +497,21 @@ func TestWaitForPromptJob(t *testing.T) {
 		{"negative", -1 * time.Millisecond},
 	} {
 		t.Run("falls back to default interval when pollInterval is "+tt.name, func(t *testing.T) {
-			// Override the fallback interval to a known value
-			origInterval := promptPollInterval
-			promptPollInterval = 5 * time.Millisecond
-			t.Cleanup(func() { promptPollInterval = origInterval })
-
 			var pollTimes []time.Time
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/jobs":
+			review := stubReview(123, "test-agent", "Result")
+			server := newTestServer(t, mockServerConfig{
+				jobsFunc: func() []storage.ReviewJob {
 					pollTimes = append(pollTimes, time.Now())
 					status := storage.JobStatusRunning
 					if len(pollTimes) >= 3 {
 						status = storage.JobStatusDone
 					}
-					writeJSON(w, map[string][]storage.ReviewJob{
-						"jobs": {{ID: 123, Status: status}},
-					})
-				case "/api/review":
-					writeJSON(w, stubReview(123, "test-agent", "Result"))
-				}
-			}))
-			t.Cleanup(server.Close)
+					return []storage.ReviewJob{{ID: 123, Status: status}}
+				},
+				review: &review,
+			})
 
-			cmd, _ := newTestCmd(t)
+			cmd, _ := newTestCmd(t, server.URL)
 			err := waitForPromptJob(cmd, server.URL, 123, true, tt.interval)
 
 			if err != nil {
@@ -507,13 +520,13 @@ func TestWaitForPromptJob(t *testing.T) {
 			if len(pollTimes) < 3 {
 				t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
 			}
-			// Verify polls are spaced by at least 3ms (fallback is 5ms;
-			// allow slack for scheduling jitter but reject busy-polling)
+			// With default 500ms fallback, gap should be >= ~500ms
 			for i := 1; i < len(pollTimes); i++ {
 				gap := pollTimes[i].Sub(pollTimes[i-1])
-				if gap < 3*time.Millisecond {
+				// Allow small variance for scheduling, check >= 400ms
+				if gap < 400*time.Millisecond {
 					t.Errorf(
-						"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
+						"Poll gap %d→%d was %v, expected ~500ms (fallback interval)",
 						i-1, i, gap,
 					)
 				}
@@ -528,17 +541,30 @@ func TestWaitForPromptJob(t *testing.T) {
 			"unknown_status", "unknown_status", "unknown_status", "unknown_status", "unknown_status", "unknown_status",
 			storage.JobStatusDone,
 		}
-		server, pollCount := newPollingTestServer(t, statuses)
+		pollCount := 0
+		review := stubReview(123, "test-agent", "Final result")
 
-		cmd, _ := newTestCmd(t)
+		server := newTestServer(t, mockServerConfig{
+			jobsFunc: func() []storage.ReviewJob {
+				status := statuses[len(statuses)-1] // Default to last
+				if pollCount < len(statuses) {
+					status = statuses[pollCount]
+				}
+				pollCount++
+				return []storage.ReviewJob{{ID: 123, Status: status}}
+			},
+			review: &review,
+		})
+
+		cmd, _ := newTestCmd(t, server.URL)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if *pollCount < 13 {
-			t.Errorf("Expected at least 13 polls, got: %d", *pollCount)
+		if pollCount < 13 {
+			t.Errorf("Expected at least 13 polls, got: %d", pollCount)
 		}
 	})
 }

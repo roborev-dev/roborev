@@ -227,17 +227,20 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 	}
 }
 
-func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
+func createFakeBinary(t *testing.T, binName string) {
 	fakeBin := t.TempDir()
-	binName := defaultACPCommand
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
-	acpPath := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
+	binPath := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake binary %q: %v", binName, err)
 	}
 	t.Setenv("PATH", fakeBin)
+}
+
+func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
+	createFakeBinary(t, defaultACPCommand)
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
@@ -264,16 +267,7 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 }
 
 func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissing(t *testing.T) {
-	fakeBin := t.TempDir()
-	binName := "acp-agent"
-	if runtime.GOOS == "windows" {
-		binName += ".exe"
-	}
-	acpPath := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
-	}
-	t.Setenv("PATH", fakeBin)
+	createFakeBinary(t, "acp-agent")
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
@@ -303,16 +297,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	}
 	t.Cleanup(func() { registry = originalRegistry })
 
-	fakeBin := t.TempDir()
-	binName := defaultACPCommand
-	if runtime.GOOS == "windows" {
-		binName += ".exe"
-	}
-	acpPath := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
-	}
-	t.Setenv("PATH", fakeBin)
+	createFakeBinary(t, defaultACPCommand)
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
@@ -353,11 +338,30 @@ func terminalExists(client *acpClient, terminalID string) bool {
 	return exists
 }
 
+func createTestTerminal(t *testing.T, client *acpClient, req acp.CreateTerminalRequest) string {
+	resp, err := client.CreateTerminal(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Failed to create terminal: %v", err)
+	}
+	t.Cleanup(func() {
+		_, err := client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+			SessionId:  req.SessionId,
+			TerminalId: resp.TerminalId,
+		})
+		if err != nil {
+			t.Errorf("Cleanup: failed to release terminal: %v", err)
+		}
+	})
+	return resp.TerminalId
+}
+
+const testSessionID = "test-session"
+
 func TestACPAgentTerminalFunctionality(t *testing.T) {
 	// Create agent and client for testing
 	// Set agent to auto-approve mode to allow terminal creation
 	agent := &ACPAgent{
-		SessionId:       "test-session",
+		SessionId:       testSessionID,
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
 		Mode:            "auto-approve", // Set to auto-approve mode for testing
@@ -369,11 +373,11 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	}
 
 	t.Run("Terminal creation and storage", func(t *testing.T) {
-		cmd, args := acpTestEchoCommand("test")
+		execCmd := acpTestEchoCommand("test")
 		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
 		if err != nil {
 			t.Fatalf("Failed to create terminal: %v", err)
@@ -387,9 +391,8 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			t.Errorf("Expected 1 terminal, got %d", terminalCount(client))
 		}
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
+			SessionId:  testSessionID,
 			TerminalId: resp.TerminalId,
 		})
 		if err != nil {
@@ -398,11 +401,11 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 
 	t.Run("Output truncation", func(t *testing.T) {
-		cmd, args := acpTestEchoCommand("test output")
+		execCmd := acpTestEchoCommand("test output")
 		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId:       "test-session",
-			Command:         cmd,
-			Args:            args,
+			SessionId:       testSessionID,
+			Command:         execCmd.Args[0],
+			Args:            execCmd.Args[1:],
 			OutputByteLimit: intPtr(5), // Very small limit
 		})
 		if err != nil {
@@ -434,9 +437,8 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			}
 		}
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
+			SessionId:  testSessionID,
 			TerminalId: resp.TerminalId,
 		})
 		if err != nil {
@@ -445,11 +447,11 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 
 	t.Run("Terminal release with context cancellation", func(t *testing.T) {
-		cmd, args := acpTestEchoCommand("test")
+		execCmd := acpTestEchoCommand("test")
 		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
 		if err != nil {
 			t.Fatalf("Failed to create terminal: %v", err)
@@ -457,7 +459,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		// Release should cancel the context
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
+			SessionId:  testSessionID,
 			TerminalId: resp.TerminalId,
 		})
 		if err != nil {
@@ -471,20 +473,17 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 
 	t.Run("Session ID validation", func(t *testing.T) {
-		cmd, args := acpTestEchoCommand("test")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+		execCmd := acpTestEchoCommand("test")
+		termID := createTestTerminal(t, client, acp.CreateTerminalRequest{
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
 
 		// Try to access with wrong session ID
-		_, err = client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
+		_, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
 			SessionId:  "wrong-session",
-			TerminalId: resp.TerminalId,
+			TerminalId: termID,
 		})
 		if err == nil {
 			t.Error("Expected error for wrong session ID")
@@ -492,22 +491,14 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			t.Errorf("Expected session ID mismatch error, got: %v", err)
 		}
 
-		// Clean up
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
-			TerminalId: resp.TerminalId,
-		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
 	})
 
 	t.Run("Terminal lifecycle - persists after command completion", func(t *testing.T) {
-		cmd, args := acpTestEchoCommand("test")
+		execCmd := acpTestEchoCommand("test")
 		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
 		if err != nil {
 			t.Fatalf("Failed to create terminal: %v", err)
@@ -549,9 +540,8 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			t.Fatalf("Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
 		}
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
+			SessionId:  testSessionID,
 			TerminalId: resp.TerminalId,
 		})
 		if err != nil {
@@ -564,19 +554,16 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		client.agent.repoRoot = tempDir
 		client.repoRoot = tempDir
 
-		cmd, args := acpTestEchoCommand("cwd")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+		execCmd := acpTestEchoCommand("cwd")
+		termID := createTestTerminal(t, client, acp.CreateTerminalRequest{
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
 
-		term, exists := client.getTerminal(resp.TerminalId)
+		term, exists := client.getTerminal(termID)
 		if !exists {
-			t.Fatalf("terminal %s not found", resp.TerminalId)
+			t.Fatalf("terminal %s not found", termID)
 		}
 		resolvedTempDir, err := filepath.EvalSymlinks(tempDir)
 		if err != nil {
@@ -586,13 +573,6 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			t.Fatalf("Expected terminal cwd %q to be within %q", term.cmd.Dir, resolvedTempDir)
 		}
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
-			TerminalId: resp.TerminalId,
-		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
 	})
 
 	t.Run("CreateTerminal resolves relative cwd against repo root", func(t *testing.T) {
@@ -605,20 +585,17 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		client.repoRoot = tempDir
 
 		relative := "sub"
-		cmd, args := acpTestEchoCommand("cwd")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+		execCmd := acpTestEchoCommand("cwd")
+		termID := createTestTerminal(t, client, acp.CreateTerminalRequest{
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 			Cwd:       &relative,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
 
-		term, exists := client.getTerminal(resp.TerminalId)
+		term, exists := client.getTerminal(termID)
 		if !exists {
-			t.Fatalf("terminal %s not found", resp.TerminalId)
+			t.Fatalf("terminal %s not found", termID)
 		}
 		resolvedSubdir, err := filepath.EvalSymlinks(subdir)
 		if err != nil {
@@ -628,13 +605,6 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			t.Fatalf("Expected terminal cwd %q, got %q", resolvedSubdir, term.cmd.Dir)
 		}
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
-			TerminalId: resp.TerminalId,
-		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
 	})
 
 	t.Run("CreateTerminal rejects cwd traversal outside repo root", func(t *testing.T) {
@@ -648,11 +618,11 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		}
 
 		relative := "../outside"
-		cmd, args := acpTestEchoCommand("cwd")
+		execCmd := acpTestEchoCommand("cwd")
 		_, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 			Cwd:       &relative,
 		})
 		if err == nil {
@@ -664,18 +634,18 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 
 	t.Run("CreateTerminal lifetime outlives request context", func(t *testing.T) {
-		cmd, args, ok := acpTestSleepCommand(1)
-		if !ok {
-			t.Skip("sleep command not available")
+		execCmd, err := acpTestSleepCommand(1)
+		if err != nil {
+			t.Skip(err.Error())
 		}
 		client.agent.repoRoot = ""
 		client.repoRoot = ""
 
 		reqCtx, reqCancel := context.WithCancel(context.Background())
 		resp, err := client.CreateTerminal(reqCtx, acp.CreateTerminalRequest{
-			SessionId: "test-session",
-			Command:   cmd,
-			Args:      args,
+			SessionId: testSessionID,
+			Command:   execCmd.Args[0],
+			Args:      execCmd.Args[1:],
 		})
 		if err != nil {
 			t.Fatalf("Failed to create terminal: %v", err)
@@ -694,13 +664,6 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			// expected
 		}
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
-			SessionId:  "test-session",
-			TerminalId: resp.TerminalId,
-		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
 	})
 
 	t.Run("WaitForTerminalExit does not block other terminal operations", func(t *testing.T) {
@@ -778,7 +741,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 	// Create agent and client for testing
 	agent := &ACPAgent{
-		SessionId:       "test-session",
+		SessionId:       testSessionID,
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
 		Mode:            "auto-approve", // Set to auto-approve mode for testing
@@ -801,18 +764,21 @@ func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 }
 
 // TestBoundedWriter tests the boundedWriter functionality
+func newTestBoundedWriter(maxSize int) (*bytes.Buffer, *boundedWriter) {
+	buf := &bytes.Buffer{}
+	writer := &boundedWriter{
+		writer: &threadSafeWriter{
+			buf:   buf,
+			mutex: &sync.Mutex{},
+		},
+		maxSize: maxSize,
+	}
+	return buf, writer
+}
+
 func TestBoundedWriter(t *testing.T) {
 	t.Run("Write within limit", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   10,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(10)
 
 		n, err := writer.Write([]byte("hello"))
 		if err != nil {
@@ -830,16 +796,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Write exactly at limit", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   5,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(5)
 
 		n, err := writer.Write([]byte("hello"))
 		if err != nil {
@@ -857,16 +814,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Write exceeding limit with ASCII", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   5,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(5)
 
 		n, err := writer.Write([]byte("hello world"))
 		if err != nil {
@@ -896,16 +844,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Write exceeding limit with UTF-8 characters", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   5,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(5)
 
 		// Write UTF-8 text that would be cut mid-character
 		n, err := writer.Write([]byte("héllo world")) // héllo is 6 bytes (h, é is 2 bytes, l, l, o)
@@ -925,16 +864,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Write exceeding limit inside first UTF-8 rune keeps valid boundary", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   1,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(1)
 
 		n, err := writer.Write([]byte("é"))
 		if err != nil {
@@ -952,16 +882,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Write with zero limit", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   0,
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(0)
 
 		n, err := writer.Write([]byte("hello"))
 		if err != nil {
@@ -979,16 +900,7 @@ func TestBoundedWriter(t *testing.T) {
 	})
 
 	t.Run("Multiple writes within limit", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		mutex := &sync.Mutex{}
-		writer := &boundedWriter{
-			writer: &threadSafeWriter{
-				buf:   buf,
-				mutex: mutex,
-			},
-			maxSize:   11, // "hello world" is 11 bytes
-			truncated: false,
-		}
+		buf, writer := newTestBoundedWriter(11)
 
 		n1, err := writer.Write([]byte("hello"))
 		if err != nil {
@@ -1118,16 +1030,7 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 	// When acp.name = "agent", requesting "cursor" should resolve to the
 	// real cursor agent, not to ACP via the "agent" → "cursor" alias.
 	// The cursor agent's binary is called "agent" (not "cursor").
-	fakeBin := t.TempDir()
-	agentBin := "agent"
-	if runtime.GOOS == "windows" {
-		agentBin += ".exe"
-	}
-	agentPath := filepath.Join(fakeBin, agentBin)
-	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake agent binary: %v", err)
-	}
-	t.Setenv("PATH", fakeBin)
+	createFakeBinary(t, "agent")
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
@@ -1161,16 +1064,7 @@ func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
 func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 	// acp.name = "claude" should match request "claude" but NOT "claude-code".
 	// Requesting the canonical name should go to the real agent, not ACP.
-	fakeBin := t.TempDir()
-	binName := "claude"
-	if runtime.GOOS == "windows" {
-		binName += ".exe"
-	}
-	claudePath := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake claude binary: %v", err)
-	}
-	t.Setenv("PATH", fakeBin)
+	createFakeBinary(t, "claude")
 
 	cfg := &config.Config{
 		ACP: &config.ACPAgentConfig{
