@@ -920,6 +920,7 @@ func (m model) visibleColumns() []int {
 func (m model) saveColumnOptions() tea.Cmd {
 	hidden := hiddenColumnsToNames(m.hiddenColumns)
 	borders := m.colBordersOn
+	mouseEnabled := m.mouseEnabled
 	tasksEnabled := m.tasksWorkflowEnabled()
 	var colOrd []string
 	if !slices.Equal(m.columnOrder, toggleableColumns) {
@@ -936,6 +937,7 @@ func (m model) saveColumnOptions() tea.Cmd {
 		}
 		cfg.HiddenColumns = hidden
 		cfg.ColumnBorders = borders
+		cfg.MouseEnabled = mouseEnabled
 		cfg.ColumnOrder = colOrd
 		cfg.TaskColumnOrder = taskColOrd
 		cfg.Advanced.TasksEnabled = tasksEnabled
@@ -965,7 +967,7 @@ func (m model) renderColumnOptionsView() string {
 			line = selectedStyle.Render(line)
 		}
 		// Separator before settings/toggles
-		if (opt.id == colOptionBorders || opt.id == colOptionTasksWorkflow) && i > 0 {
+		if opt.id == colOptionBorders && i > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(prefix)

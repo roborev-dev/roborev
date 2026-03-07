@@ -24,6 +24,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DefaultAgent != "codex" {
 		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
 	}
+	if !cfg.MouseEnabled {
+		t.Error("Expected MouseEnabled to default to true")
+	}
 }
 
 func TestDataDir(t *testing.T) {
@@ -149,6 +152,43 @@ func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 
 	if !cfg.AutoFilterBranch {
 		t.Error("AutoFilterBranch should be true when loaded from TOML")
+	}
+}
+
+func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := DefaultConfig()
+	cfg.MouseEnabled = false
+
+	if err := SaveGlobal(cfg); err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+
+	if loaded.MouseEnabled {
+		t.Error("MouseEnabled should be false after round-trip")
+	}
+}
+
+func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadGlobalFrom(path)
+	if err != nil {
+		t.Fatalf("LoadGlobalFrom failed: %v", err)
+	}
+
+	if cfg.MouseEnabled {
+		t.Error("MouseEnabled should be false when loaded from TOML")
 	}
 }
 

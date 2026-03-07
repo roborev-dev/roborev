@@ -2108,12 +2108,16 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 		t.Fatal("expected non-empty colOptionsList")
 	}
 	// Trailing items should include the settings toggles.
-	if len(m2.colOptionsList) < 2 {
+	if len(m2.colOptionsList) < 3 {
 		t.Fatalf("expected settings toggles at end of colOptionsList, got %d items", len(m2.colOptionsList))
 	}
-	borders := m2.colOptionsList[len(m2.colOptionsList)-2]
+	borders := m2.colOptionsList[len(m2.colOptionsList)-3]
 	if borders.id != colOptionBorders || borders.name != "Column borders" {
-		t.Errorf("expected penultimate item to be borders toggle, got id=%d name=%q", borders.id, borders.name)
+		t.Errorf("expected third-from-last item to be borders toggle, got id=%d name=%q", borders.id, borders.name)
+	}
+	mouse := m2.colOptionsList[len(m2.colOptionsList)-2]
+	if mouse.id != colOptionMouse || mouse.name != "Mouse interactions" {
+		t.Errorf("expected second-from-last item to be mouse toggle, got id=%d name=%q", mouse.id, mouse.name)
 	}
 	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
 	if tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow" {
@@ -2160,6 +2164,31 @@ func TestColumnOptionsToggle(t *testing.T) {
 	}
 	if m.hiddenColumns[colRef] {
 		t.Fatal("expected colRef removed from hiddenColumns")
+	}
+}
+
+func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.mouseEnabled = false
+	m.width = 120
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
+	if m2.selectedIdx != 0 || m2.selectedJobID != 1 {
+		t.Fatalf("expected click to be ignored when mouse disabled, got idx=%d id=%d", m2.selectedIdx, m2.selectedJobID)
+	}
+
+	m3, _ := updateModel(t, m2, mouseWheelDown())
+	if m3.selectedIdx != 0 || m3.selectedJobID != 1 {
+		t.Fatalf("expected wheel to be ignored when mouse disabled, got idx=%d id=%d", m3.selectedIdx, m3.selectedJobID)
 	}
 }
 

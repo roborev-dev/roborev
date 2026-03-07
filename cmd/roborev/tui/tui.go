@@ -369,6 +369,7 @@ type model struct {
 	distractionFree bool // hide status line, headers, footer, scroll indicator
 	clipboard       ClipboardWriter
 	tasksEnabled    bool // Enables advanced tasks workflow in the TUI
+	mouseEnabled    bool // Enables mouse capture and mouse-driven interactions in the TUI
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -437,6 +438,7 @@ func newModel(serverAddr string, opts ...option) model {
 	hideClosed := false
 	autoFilterRepo := false
 	autoFilterBranch := false
+	mouseEnabled := true
 	tabWidth := 2
 	columnBorders := false
 	tasksEnabled := false
@@ -456,6 +458,7 @@ func newModel(serverAddr string, opts ...option) model {
 			hideClosed = cfg.HideClosedByDefault
 			autoFilterRepo = cfg.AutoFilterRepo
 			autoFilterBranch = cfg.AutoFilterBranch
+			mouseEnabled = cfg.MouseEnabled
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
 			}
@@ -539,6 +542,7 @@ func newModel(serverAddr string, opts ...option) model {
 		clipboard:           &realClipboard{},
 		mdCache:             newMarkdownCache(tabWidth),
 		tasksEnabled:        tasksEnabled,
+		mouseEnabled:        mouseEnabled,
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -659,6 +663,17 @@ func mouseDisabledView(v viewKind) bool {
 	return false
 }
 
+func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
+	return mouseEnabled && !mouseDisabledView(v)
+}
+
+func mouseCaptureCmd(v viewKind, mouseEnabled bool) tea.Cmd {
+	if mouseCaptureEnabled(v, mouseEnabled) {
+		return tea.EnableMouseCellMotion
+	}
+	return tea.DisableMouse
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	prevView := m.currentView
 
@@ -669,6 +684,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
+		if !m.mouseEnabled {
+			return m, nil
+		}
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
 		result, cmd = m.handleWindowSizeMsg(msg)
@@ -750,14 +768,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return result, cmd
 	}
 	newView := updated.currentView
-	if newView != prevView {
-		wasDisabled := mouseDisabledView(prevView)
-		nowDisabled := mouseDisabledView(newView)
-		if nowDisabled && !wasDisabled {
-			cmd = tea.Batch(cmd, tea.DisableMouse)
-		} else if !nowDisabled && wasDisabled {
-			cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
-		}
+	prevCapture := mouseCaptureEnabled(prevView, m.mouseEnabled)
+	newCapture := mouseCaptureEnabled(newView, updated.mouseEnabled)
+	if prevCapture != newCapture {
+		cmd = tea.Batch(cmd, mouseCaptureCmd(newView, updated.mouseEnabled))
 	}
 
 	return result, cmd
@@ -820,10 +834,16 @@ func Run(cfg Config) error {
 	if cfg.BranchFilter != "" {
 		opts = append(opts, withBranchFilter(cfg.BranchFilter))
 	}
-	p := tea.NewProgram(
-		newModel(cfg.ServerAddr, opts...),
+	m := newModel(cfg.ServerAddr, opts...)
+	programOpts := []tea.ProgramOption{
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+	}
+	if m.mouseEnabled {
+		programOpts = append(programOpts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(
+		m,
+		programOpts...,
 	)
 	_, err := p.Run()
 	return err

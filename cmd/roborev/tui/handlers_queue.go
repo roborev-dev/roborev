@@ -186,6 +186,11 @@ func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
 		enabled: m.colBordersOn,
 	})
 	opts = append(opts, columnOption{
+		id:      colOptionMouse,
+		name:    "Mouse interactions",
+		enabled: m.mouseEnabled,
+	})
+	opts = append(opts, columnOption{
 		id:      colOptionTasksWorkflow,
 		name:    "Tasks workflow",
 		enabled: m.tasksWorkflowEnabled(),
@@ -257,6 +262,11 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.colOptionsDirty = true
 				m.queueColGen++
 				m.taskColGen++
+			} else if opt.id == colOptionMouse {
+				opt.enabled = !opt.enabled
+				m.mouseEnabled = opt.enabled
+				m.colOptionsDirty = true
+				return m, mouseCaptureCmd(m.currentView, m.mouseEnabled)
 			} else if opt.id == colOptionTasksWorkflow {
 				opt.enabled = !opt.enabled
 				m.tasksEnabled = opt.enabled

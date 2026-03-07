@@ -143,6 +143,7 @@ type Config struct {
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
 	AutoFilterRepo         bool     `toml:"auto_filter_repo"`
 	AutoFilterBranch       bool     `toml:"auto_filter_branch"`
+	MouseEnabled           bool     `toml:"mouse_enabled"`     // Enable mouse capture and mouse-driven TUI interactions
 	TabWidth               int      `toml:"tab_width"`         // Tab expansion width for TUI rendering (default: 2)
 	HiddenColumns          []string `toml:"hidden_columns"`    // Column names to hide in queue table (e.g. ["branch", "agent"])
 	ColumnBorders          bool     `toml:"column_borders"`    // Show ▕ separators between columns
@@ -639,6 +640,7 @@ func DefaultConfig() *Config {
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
 		PiCmd:              "pi",
+		MouseEnabled:       true,
 	}
 	cfg.CI.ThrottleBypassUsers = []string{
 		"wesm", "mariusvniekerk",

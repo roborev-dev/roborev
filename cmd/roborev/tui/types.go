@@ -83,7 +83,8 @@ type colWidthCache struct {
 // Sentinel IDs for non-column toggles in the column options modal.
 const (
 	colOptionBorders       = -1
-	colOptionTasksWorkflow = -2
+	colOptionMouse         = -2
+	colOptionTasksWorkflow = -3
 )
 
 // columnOption represents an item in the column options modal.
