@@ -825,6 +825,16 @@ type Config struct {
 	BranchFilter string
 }
 
+func programOptionsForModel(m model) []tea.ProgramOption {
+	programOpts := []tea.ProgramOption{
+		tea.WithAltScreen(),
+	}
+	if m.mouseEnabled {
+		programOpts = append(programOpts, tea.WithMouseCellMotion())
+	}
+	return programOpts
+}
+
 // Run starts the interactive TUI.
 func Run(cfg Config) error {
 	var opts []option
@@ -835,15 +845,9 @@ func Run(cfg Config) error {
 		opts = append(opts, withBranchFilter(cfg.BranchFilter))
 	}
 	m := newModel(cfg.ServerAddr, opts...)
-	programOpts := []tea.ProgramOption{
-		tea.WithAltScreen(),
-	}
-	if m.mouseEnabled {
-		programOpts = append(programOpts, tea.WithMouseCellMotion())
-	}
 	p := tea.NewProgram(
 		m,
-		programOpts...,
+		programOptionsForModel(m)...,
 	)
 	_, err := p.Run()
 	return err

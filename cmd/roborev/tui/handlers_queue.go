@@ -266,6 +266,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				opt.enabled = !opt.enabled
 				m.mouseEnabled = opt.enabled
 				m.colOptionsDirty = true
+				return m, mouseCaptureCmd(m.currentView, m.mouseEnabled)
 			} else if opt.id == colOptionTasksWorkflow {
 				opt.enabled = !opt.enabled
 				m.tasksEnabled = opt.enabled
