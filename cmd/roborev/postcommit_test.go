@@ -169,7 +169,11 @@ func (s *stallingRoundTripper) RoundTrip(
 	case s.hit <- struct{}{}:
 	default:
 	}
-	<-req.Context().Done()
+	select {
+	case <-req.Context().Done():
+	case <-time.After(5 * time.Second):
+		return nil, fmt.Errorf("stallingRoundTripper: context was never cancelled")
+	}
 	return nil, fmt.Errorf("request cancelled: %w", req.Context().Err())
 }
 
