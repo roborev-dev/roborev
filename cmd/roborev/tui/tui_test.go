@@ -1547,6 +1547,36 @@ func TestNewTuiModelOptions(t *testing.T) {
 			expectedLockedBranch: true,
 			expectedDaemonVer:    "?",
 		},
+		{
+			name:                 "With AutoFilterBranch",
+			opts:                 []option{withExternalIODisabled(), withAutoFilterBranch("feat/my-worktree")},
+			expectedRepoFilter:   nil,
+			expectedBranchFilter: "feat/my-worktree",
+			expectedFilterStack:  []string{filterTypeBranch},
+			expectedLockedRepo:   false,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "With AutoFilterRepo and AutoFilterBranch",
+			opts:                 []option{withExternalIODisabled(), withAutoFilterRepo("/path/to/repo"), withAutoFilterBranch("feat/my-worktree")},
+			expectedRepoFilter:   []string{"/path/to/repo"},
+			expectedBranchFilter: "feat/my-worktree",
+			expectedFilterStack:  []string{filterTypeRepo, filterTypeBranch},
+			expectedLockedRepo:   false,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "BranchFilter flag overrides AutoFilterBranch",
+			opts:                 []option{withExternalIODisabled(), withAutoFilterBranch("feat/auto"), withBranchFilter("feat/manual")},
+			expectedRepoFilter:   nil,
+			expectedBranchFilter: "feat/manual",
+			expectedFilterStack:  []string{filterTypeBranch},
+			expectedLockedRepo:   false,
+			expectedLockedBranch: true,
+			expectedDaemonVer:    "?",
+		},
 	}
 
 	for _, tc := range tests {

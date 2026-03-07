@@ -268,11 +268,31 @@ func withExternalIODisabled() option {
 	return func(o *options) { o.disableExternalIO = true }
 }
 
+// withAutoFilterBranch simulates auto_filter_branch config in tests.
+func withAutoFilterBranch(branch string) option {
+	return func(o *options) {
+		o.autoFilterBranch = true
+		o.cwdBranch = branch
+	}
+}
+
+// withAutoFilterRepo simulates auto_filter_repo config in tests.
+func withAutoFilterRepo(repo string) option {
+	return func(o *options) {
+		o.autoFilterRepo = true
+		o.cwdRepoRoot = repo
+	}
+}
+
 // options holds optional overrides for the TUI model, set from CLI flags.
 type options struct {
 	repoFilter        string // --repo flag: lock filter to this repo path
 	branchFilter      string // --branch flag: lock filter to this branch
 	disableExternalIO bool   // tests: disable daemon/config/git calls
+	autoFilterRepo    bool   // tests: simulate auto_filter_repo config
+	autoFilterBranch  bool   // tests: simulate auto_filter_branch config
+	cwdRepoRoot       string // tests: simulate detected repo root
+	cwdBranch         string // tests: simulate detected branch
 }
 
 // errNoLog is a sentinel error returned when the job log API

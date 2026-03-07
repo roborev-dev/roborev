@@ -432,6 +432,7 @@ func newModel(serverAddr string, opts ...option) model {
 	daemonVersion := "?"
 	hideClosed := false
 	autoFilterRepo := false
+	autoFilterBranch := false
 	tabWidth := 2
 	columnBorders := false
 	tasksEnabled := false
@@ -450,6 +451,7 @@ func newModel(serverAddr string, opts ...option) model {
 		if cfg, err := config.LoadGlobal(); err == nil {
 			hideClosed = cfg.HideClosedByDefault
 			autoFilterRepo = cfg.AutoFilterRepo
+			autoFilterBranch = cfg.AutoFilterBranch
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
 			}
@@ -474,6 +476,16 @@ func newModel(serverAddr string, opts ...option) model {
 		}
 	}
 
+	// Test overrides for auto-filter simulation
+	if opt.autoFilterRepo {
+		autoFilterRepo = true
+		cwdRepoRoot = opt.cwdRepoRoot
+	}
+	if opt.autoFilterBranch {
+		autoFilterBranch = true
+		cwdBranch = opt.cwdBranch
+	}
+
 	// Determine active filters: CLI flags take priority over auto-filter config
 	var activeRepoFilter []string
 	var filterStack []string
@@ -493,6 +505,9 @@ func newModel(serverAddr string, opts ...option) model {
 		activeBranchFilter = opt.branchFilter
 		filterStack = append(filterStack, filterTypeBranch)
 		lockedBranch = true
+	} else if autoFilterBranch && cwdBranch != "" {
+		activeBranchFilter = cwdBranch
+		filterStack = append(filterStack, filterTypeBranch)
 	}
 
 	return model{
