@@ -44,6 +44,12 @@ func structType(t reflect.Type) (reflect.Type, bool) {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
+	if t.Kind() == reflect.Slice {
+		t = t.Elem()
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+	}
 	return t, t.Kind() == reflect.Struct
 }
 

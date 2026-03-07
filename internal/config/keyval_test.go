@@ -625,6 +625,9 @@ func TestIsSensitiveKey(t *testing.T) {
 	if IsSensitiveKey("ci.github_app_id") {
 		t.Error("expected ci.github_app_id to not be sensitive")
 	}
+	if !IsSensitiveKey("hooks.url") {
+		t.Error("expected hooks.url to be sensitive")
+	}
 }
 
 func TestIsGlobalKey(t *testing.T) {

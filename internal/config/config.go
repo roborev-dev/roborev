@@ -38,10 +38,10 @@ func IsConfigParseError(err error) bool {
 
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
-	Event   string `toml:"event"`   // "review.failed", "review.completed", "review.*"
-	Command string `toml:"command"` // shell command with {var} templates
-	Type    string `toml:"type"`    // "beads" or "webhook"; empty or "command" runs Command
-	URL     string `toml:"url"`     // webhook destination URL when Type is "webhook"
+	Event   string `toml:"event"`                // "review.failed", "review.completed", "review.*"
+	Command string `toml:"command"`              // shell command with {var} templates
+	Type    string `toml:"type"`                 // "beads" or "webhook"; empty or "command" runs Command
+	URL     string `toml:"url" sensitive:"true"` // webhook destination URL when Type is "webhook"
 }
 
 type AdvancedConfig struct {

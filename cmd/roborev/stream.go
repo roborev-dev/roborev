@@ -82,8 +82,11 @@ Examples:
 				return fmt.Errorf("stream failed: %s", body)
 			}
 
-			// Stream events - pass through lines directly to preserve all fields
+			// Stream events - pass through lines directly to preserve all fields.
+			// Use a 1MB buffer because review.completed events can include
+			// large findings payloads that exceed the default 64KB limit.
 			scanner := bufio.NewScanner(resp.Body)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 			for scanner.Scan() {
 				if ctx.Err() != nil {
 					return nil

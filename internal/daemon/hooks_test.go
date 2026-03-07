@@ -673,6 +673,28 @@ func TestRedactWebhookURL(t *testing.T) {
 	}
 }
 
+func TestRedactURLError(t *testing.T) {
+	inner := fmt.Errorf("connection refused")
+	urlErr := &neturl.Error{
+		Op:  "Post",
+		URL: "https://hooks.example.com/secret-token",
+		Err: inner,
+	}
+
+	got := redactURLError(urlErr)
+	if got != inner {
+		t.Fatalf("expected inner error, got %v", got)
+	}
+	if strings.Contains(got.Error(), "secret-token") {
+		t.Fatal("redacted error still contains secret")
+	}
+
+	plain := fmt.Errorf("some other error")
+	if redactURLError(plain) != plain {
+		t.Fatal("non-url.Error should be returned as-is")
+	}
+}
+
 func TestHooksSliceNotAliased(t *testing.T) {
 
 	// Verify that repo hooks don't leak into the global config's Hooks slice

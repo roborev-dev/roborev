@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -300,7 +301,7 @@ func (hr *HookRunner) postWebhook(webhookURL string, event Event) {
 
 	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
-		hr.logger.Printf("Webhook error (url=%q): build request: %v", safeURL, err)
+		hr.logger.Printf("Webhook error (url=%q): build request: %v", safeURL, redactURLError(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -308,7 +309,7 @@ func (hr *HookRunner) postWebhook(webhookURL string, event Event) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		hr.logger.Printf("Webhook error (url=%q): %v", safeURL, err)
+		hr.logger.Printf("Webhook error (url=%q): %v", safeURL, redactURLError(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -339,4 +340,15 @@ func redactWebhookURL(raw string) string {
 	}
 
 	return redacted.String()
+}
+
+// redactURLError unwraps *url.Error to return only its inner
+// error, preventing Go's HTTP client from leaking the raw URL
+// (including secret path segments) in log output.
+func redactURLError(err error) error {
+	var ue *neturl.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
