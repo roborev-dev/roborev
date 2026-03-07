@@ -134,6 +134,23 @@ func TestEnqueueAliasWorksIdentically(t *testing.T) {
 	}
 }
 
+func TestPostCommitRejectsPositionalArgs(t *testing.T) {
+	_, _, err := executePostCommitCmd("abc123")
+	if err == nil {
+		t.Fatal("expected error for positional args")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("expected 'unknown command' error, got: %v", err)
+	}
+}
+
+func TestEnqueueRejectsPositionalArgs(t *testing.T) {
+	_, _, err := executeEnqueueAliasCmd("abc123")
+	if err == nil {
+		t.Fatal("expected error for positional args")
+	}
+}
+
 func TestEnqueueAliasIsHidden(t *testing.T) {
 	cmd := enqueueCmd()
 	if !cmd.Hidden {

@@ -20,6 +20,7 @@ func postCommitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "post-commit",
 		Short:         "Hook entry point: enqueue a review after commit",
+		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
