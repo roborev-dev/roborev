@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -308,6 +309,79 @@ func TestWithFixDaemonRetryContextRetriesClientTimeoutWhenCallerContextActive(t 
 	}
 }
 
+func TestWithFixDaemonRetryContextStopsAfterCancellationDuringRecovery(t *testing.T) {
+	oldRecoveryWait := fixDaemonRecoveryWait
+	oldRecoveryPoll := fixDaemonRecoveryPoll
+	oldEnsure := fixDaemonEnsure
+	oldSleep := fixDaemonSleep
+	fixDaemonRecoveryWait = time.Second
+	fixDaemonRecoveryPoll = time.Millisecond
+	t.Cleanup(func() {
+		fixDaemonRecoveryWait = oldRecoveryWait
+		fixDaemonRecoveryPoll = oldRecoveryPoll
+		fixDaemonEnsure = oldEnsure
+		fixDaemonSleep = oldSleep
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var ensureCalls atomic.Int32
+	fixDaemonEnsure = func() error {
+		ensureCalls.Add(1)
+		return errors.New("daemon still down")
+	}
+	fixDaemonSleep = func(time.Duration) {
+		cancel()
+	}
+
+	var attempts atomic.Int32
+	_, err := withFixDaemonRetryContext(ctx, "http://127.0.0.1:1", func(addr string) (string, error) {
+		attempts.Add(1)
+		return "", &neturl.Error{Op: "Get", URL: addr, Err: syscall.ECONNREFUSED}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("expected no retry after cancellation during recovery, got %d attempts", attempts.Load())
+	}
+	if ensureCalls.Load() == 0 {
+		t.Fatal("expected daemon recovery to be attempted")
+	}
+}
+
+func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
+	oldMaxRetries := fixDaemonMaxRetries
+	oldRecoveryWait := fixDaemonRecoveryWait
+	oldRecoveryPoll := fixDaemonRecoveryPoll
+	oldEnsure := fixDaemonEnsure
+	oldSleep := fixDaemonSleep
+	fixDaemonMaxRetries = 1
+	fixDaemonRecoveryWait = time.Millisecond
+	fixDaemonRecoveryPoll = time.Millisecond
+	recoveryErr := errors.New("refusing to auto-start daemon from ephemeral binary")
+	fixDaemonEnsure = func() error { return recoveryErr }
+	fixDaemonSleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		fixDaemonMaxRetries = oldMaxRetries
+		fixDaemonRecoveryWait = oldRecoveryWait
+		fixDaemonRecoveryPoll = oldRecoveryPoll
+		fixDaemonEnsure = oldEnsure
+		fixDaemonSleep = oldSleep
+	})
+
+	var attempts atomic.Int32
+	_, err := withFixDaemonRetryContext(context.Background(), "http://127.0.0.1:1", func(addr string) (string, error) {
+		attempts.Add(1)
+		return "", &neturl.Error{Op: "Get", URL: addr, Err: syscall.ECONNREFUSED}
+	})
+	if !errors.Is(err, recoveryErr) {
+		t.Fatalf("expected recovery failure, got %v", err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("expected stale request not to be retried after recovery failure, got %d attempts", attempts.Load())
+	}
+}
+
 func TestAddJobResponse(t *testing.T) {
 	var gotJobID int64
 	var gotContent string
@@ -430,6 +504,30 @@ func TestAddJobResponseCanceledContextDoesNotAttemptRecovery(t *testing.T) {
 
 	if err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied"); err == nil {
 		t.Fatal("expected connection error")
+	}
+}
+
+func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("addJobResponse should not attempt daemon recovery after request deadline exceeded")
+		return nil
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/comment" {
+			http.NotFound(w, r)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 }
 
@@ -1609,6 +1707,41 @@ func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *t
 	}
 	if recoveryPostCount.Load() != 0 {
 		t.Fatalf("expected no duplicate enqueue post after verification failure, got %d", recoveryPostCount.Load())
+	}
+}
+
+func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	sha := repo.Run("rev-parse", "HEAD")
+
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("enqueueIfNeeded should not attempt daemon recovery after request deadline exceeded")
+		return nil
+	})
+
+	var enqueueCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			time.Sleep(100 * time.Millisecond)
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err := enqueueIfNeeded(ctx, ts.URL, repo.Dir, sha)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
+	}
+	if enqueueCalls.Load() != 0 {
+		t.Fatalf("expected no enqueue after canceled probe request, got %d", enqueueCalls.Load())
 	}
 }
 

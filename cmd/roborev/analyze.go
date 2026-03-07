@@ -872,7 +872,7 @@ func markJobClosed(ctx context.Context, serverAddr string, jobID int64) error {
 	})
 
 	_, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (struct{}, error) {
-		resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+		resp, err := doFixDaemonRequest(ctx, http.MethodPost, addr+"/api/review/close", reqBody)
 		if err != nil {
 			return struct{}{}, err
 		}

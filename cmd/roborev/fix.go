@@ -1152,7 +1152,7 @@ func addJobResponse(ctx context.Context, serverAddr string, jobID int64, comment
 
 	currentAddr := serverAddr
 	for attempt := 0; ; attempt++ {
-		resp, err := http.Post(currentAddr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+		resp, err := doFixDaemonRequest(ctx, http.MethodPost, currentAddr+"/api/comment", reqBody)
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -1168,11 +1168,14 @@ func addJobResponse(ctx context.Context, serverAddr string, jobID int64, comment
 			return err
 		}
 
-		currentAddr = recoverFixDaemonAddr(ctx)
-		if shouldStopFixDaemonRetry(ctx) {
+		currentAddr, err = recoverFixDaemonAddr(ctx)
+		if err != nil {
 			return err
 		}
-		applied, verifyErr := hasJobResponse(currentAddr, jobID, commenter, response)
+		if shouldStopFixDaemonRetry(ctx) {
+			return ctx.Err()
+		}
+		applied, verifyErr := hasJobResponseContext(ctx, currentAddr, jobID, commenter, response)
 		if verifyErr != nil {
 			return fmt.Errorf("verify response after retryable failure: %w", verifyErr)
 		}
@@ -1195,7 +1198,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 		if shouldStopFixDaemonRetry(ctx) {
 			return ctx.Err()
 		}
-		found, err := hasJobForSHA(serverAddr, sha)
+		found, err := hasJobForSHAContext(ctx, serverAddr, sha)
 		if err == nil && found {
 			return nil
 		}
@@ -1207,7 +1210,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 	if shouldStopFixDaemonRetry(ctx) {
 		return ctx.Err()
 	}
-	found, err := hasJobForSHA(serverAddr, sha)
+	found, err := hasJobForSHAContext(ctx, serverAddr, sha)
 	if err == nil && found {
 		return nil
 	}
@@ -1222,7 +1225,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 
 	currentAddr := serverAddr
 	for attempt := 0; ; attempt++ {
-		resp, err := http.Post(currentAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+		resp, err := doFixDaemonRequest(ctx, http.MethodPost, currentAddr+"/api/enqueue", reqBody)
 		if err == nil {
 			defer resp.Body.Close()
 
@@ -1240,11 +1243,14 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 			return err
 		}
 
-		currentAddr = recoverFixDaemonAddr(ctx)
-		if shouldStopFixDaemonRetry(ctx) {
+		currentAddr, err = recoverFixDaemonAddr(ctx)
+		if err != nil {
 			return err
 		}
-		exists, verifyErr := verifyJobForSHA(currentAddr, sha)
+		if shouldStopFixDaemonRetry(ctx) {
+			return ctx.Err()
+		}
+		exists, verifyErr := verifyJobForSHAContext(ctx, currentAddr, sha)
 		if verifyErr != nil {
 			return fmt.Errorf("verify enqueue after retryable failure: %w", verifyErr)
 		}
@@ -1256,8 +1262,12 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
 func hasJobForSHA(serverAddr, sha string) (bool, error) {
+	return hasJobForSHAContext(context.Background(), serverAddr, sha)
+}
+
+func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
 	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
-	resp, err := http.Get(checkURL)
+	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false, err
 	}
@@ -1274,9 +1284,9 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 	return len(result.Jobs) > 0, nil
 }
 
-func verifyJobForSHA(serverAddr, sha string) (bool, error) {
+func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
 	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
-	resp, err := http.Get(checkURL)
+	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false, err
 	}
@@ -1294,9 +1304,9 @@ func verifyJobForSHA(serverAddr, sha string) (bool, error) {
 	return len(result.Jobs) > 0, nil
 }
 
-func hasJobResponse(serverAddr string, jobID int64, commenter, response string) (bool, error) {
+func hasJobResponseContext(ctx context.Context, serverAddr string, jobID int64, commenter, response string) (bool, error) {
 	checkURL := fmt.Sprintf("%s/api/comments?job_id=%d", serverAddr, jobID)
-	resp, err := http.Get(checkURL)
+	resp, err := doFixDaemonRequest(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false, err
 	}
@@ -1336,7 +1346,13 @@ func withFixDaemonRetryContext[T any](ctx context.Context, addr string, fn func(
 			return zero, err
 		}
 
-		currentAddr = recoverFixDaemonAddr(ctx)
+		currentAddr, err = recoverFixDaemonAddr(ctx)
+		if err != nil {
+			return zero, err
+		}
+		if shouldStopFixDaemonRetry(ctx) {
+			return zero, ctx.Err()
+		}
 	}
 }
 
@@ -1344,26 +1360,49 @@ func shouldStopFixDaemonRetry(ctx context.Context) bool {
 	return ctx != nil && ctx.Err() != nil
 }
 
-func recoverFixDaemonAddr(ctx context.Context) string {
-	waitForFixDaemonRecovery(ctx)
-	return serverAddr
+func recoverFixDaemonAddr(ctx context.Context) (string, error) {
+	return waitForFixDaemonRecovery(ctx)
 }
 
-func waitForFixDaemonRecovery(ctx context.Context) {
+func waitForFixDaemonRecovery(ctx context.Context) (string, error) {
 	deadline := time.Now().Add(fixDaemonRecoveryWait)
+	var lastErr error
 	for {
 		if ctx != nil && ctx.Err() != nil {
-			return
+			return serverAddr, ctx.Err()
 		}
 		if err := fixDaemonEnsure(); err == nil {
-			return
+			return serverAddr, nil
+		} else {
+			lastErr = err
 		}
 		if time.Now().After(deadline) {
-			return
+			if lastErr != nil {
+				return serverAddr, lastErr
+			}
+			return serverAddr, fmt.Errorf("daemon recovery timed out")
 		}
 		if ctx != nil && ctx.Err() != nil {
-			return
+			return serverAddr, ctx.Err()
 		}
 		fixDaemonSleep(fixDaemonRecoveryPoll)
 	}
+}
+
+func doFixDaemonRequest(ctx context.Context, method, requestURL string, body []byte) (*http.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return http.DefaultClient.Do(req)
 }
