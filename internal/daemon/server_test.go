@@ -183,23 +183,42 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, err := waitForServerReady(context.Background(), "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
+	ready, serveExited, err := waitForServerReady(context.Background(), "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
 	if ready {
 		t.Fatal("expected ready=false when serve exits early")
+	}
+	if !serveExited {
+		t.Fatal("expected serveExited=true when serveErrCh was consumed")
 	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
 }
 
-func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenContextCanceled(t *testing.T) {
+func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	serveErrCh := make(chan error, 1)
+	serveErrCh <- http.ErrServerClosed
+
+	ready, serveExited, err := waitForServerReady(ctx, "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
+	if ready {
+		t.Fatal("expected ready=false when startup is canceled")
+	}
+	if serveExited {
+		t.Fatal("expected serveExited=false when waitForServerReady exits before reading serveErrCh")
+	}
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenServeAlreadyExited(t *testing.T) {
 	serveErrCh := make(chan error)
 	done := make(chan error, 1)
 	go func() {
-		done <- awaitServeExitOnUnreadyStartup(ctx, serveErrCh)
+		done <- awaitServeExitOnUnreadyStartup(true, serveErrCh)
 	}()
 
 	select {
@@ -208,7 +227,32 @@ func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenContextCanceled(t *
 			t.Fatalf("expected nil error, got %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("awaitServeExitOnUnreadyStartup blocked on a drained channel")
+		t.Fatal("awaitServeExitOnUnreadyStartup blocked even though serve had already exited")
+	}
+}
+
+func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
+	serveErrCh := make(chan error)
+	done := make(chan error, 1)
+	go func() {
+		done <- awaitServeExitOnUnreadyStartup(false, serveErrCh)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("expected helper to block before serve exit, got %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	serveErrCh <- http.ErrServerClosed
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("awaitServeExitOnUnreadyStartup did not return after serve exited")
 	}
 }
 

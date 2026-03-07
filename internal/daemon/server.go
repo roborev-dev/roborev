@@ -182,7 +182,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 
-	ready, err := waitForServerReady(ctx, addr, 2*time.Second, serveErrCh)
+	ready, serveExited, err := waitForServerReady(ctx, addr, 2*time.Second, serveErrCh)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -190,7 +190,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	if !ready {
-		if err := awaitServeExitOnUnreadyStartup(ctx, serveErrCh); err != nil {
+		if err := awaitServeExitOnUnreadyStartup(serveExited, serveErrCh); err != nil {
 			s.configWatcher.Stop()
 			s.workerPool.Stop()
 			return err
@@ -235,27 +235,27 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-func waitForServerReady(ctx context.Context, addr string, timeout time.Duration, serveErrCh <-chan error) (bool, error) {
+func waitForServerReady(ctx context.Context, addr string, timeout time.Duration, serveErrCh <-chan error) (bool, bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
-			return false, nil
+			return false, false, nil
 		}
 		select {
 		case err := <-serveErrCh:
 			if err == http.ErrServerClosed && ctx.Err() != nil {
-				return false, nil
+				return false, true, nil
 			}
 			if err == nil {
-				return false, fmt.Errorf("daemon server exited before ready")
+				return false, true, fmt.Errorf("daemon server exited before ready")
 			}
-			return false, err
+			return false, true, err
 		default:
 		}
 		if _, err := ProbeDaemon(addr, 200*time.Millisecond); err == nil {
-			return true, nil
+			return true, false, nil
 		} else {
 			lastErr = err
 		}
@@ -263,27 +263,27 @@ func waitForServerReady(ctx context.Context, addr string, timeout time.Duration,
 	}
 
 	if ctx.Err() != nil {
-		return false, nil
+		return false, false, nil
 	}
 	select {
 	case err := <-serveErrCh:
 		if err == http.ErrServerClosed && ctx.Err() != nil {
-			return false, nil
+			return false, true, nil
 		}
 		if err == nil {
-			return false, fmt.Errorf("daemon server exited before ready")
+			return false, true, fmt.Errorf("daemon server exited before ready")
 		}
-		return false, err
+		return false, true, err
 	default:
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("server did not respond before timeout")
 	}
-	return false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", addr, timeout, lastErr)
+	return false, false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", addr, timeout, lastErr)
 }
 
-func awaitServeExitOnUnreadyStartup(ctx context.Context, serveErrCh <-chan error) error {
-	if ctx.Err() != nil {
+func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) error {
+	if serveExited {
 		return nil
 	}
 
