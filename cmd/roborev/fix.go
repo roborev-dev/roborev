@@ -396,6 +396,9 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 
 		err := fixSingleJob(cmd, repoRoot, jobID, opts)
 		if err != nil {
+			if isConnectionError(err) {
+				return fmt.Errorf("daemon connection lost: %w", err)
+			}
 			// In discovery mode (seen != nil), log a warning and
 			// continue best-effort. For explicit job IDs (seen ==
 			// nil), return the error so the CLI exits non-zero.
@@ -1174,7 +1177,10 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	// up to a max wait to avoid both unnecessary delays and duplicates.
 	for range enqueueIfNeededProbeAttempts {
 		found, err := hasJobForSHA(serverAddr, sha)
-		if err == nil && found {
+		if err != nil {
+			break
+		}
+		if found {
 			return nil
 		}
 		fixDaemonSleep(enqueueIfNeededProbeDelay)
@@ -1211,24 +1217,22 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
 func hasJobForSHA(serverAddr, sha string) (bool, error) {
-	return withFixDaemonRetry(serverAddr, func(addr string) (bool, error) {
-		checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha))
-		resp, err := http.Get(checkURL)
-		if err != nil {
-			return false, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return false, nil
-		}
-		var result struct {
-			Jobs []struct{ ID int64 } `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return false, nil
-		}
-		return len(result.Jobs) > 0, nil
-	})
+	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
+	resp, err := http.Get(checkURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+	var result struct {
+		Jobs []struct{ ID int64 } `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, nil
+	}
+	return len(result.Jobs) > 0, nil
 }
 
 func withFixDaemonRetry[T any](addr string, fn func(serverAddr string) (T, error)) (T, error) {

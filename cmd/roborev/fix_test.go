@@ -1288,6 +1288,21 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	}
 }
 
+func TestHasJobForSHADoesNotTriggerDaemonRecovery(t *testing.T) {
+	patchFixDaemonRetryForTest(t, func() error {
+		t.Fatal("hasJobForSHA should not attempt daemon recovery")
+		return nil
+	})
+
+	found, err := hasJobForSHA("http://127.0.0.1:1", "abc123def456")
+	if err == nil {
+		t.Fatal("expected connection error")
+	}
+	if found {
+		t.Fatal("expected no job match on connection failure")
+	}
+}
+
 func TestRunFixList(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
@@ -1887,6 +1902,46 @@ func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
 	// Failed job should be marked as seen
 	if !seen[20] {
 		t.Error("job 20 should be marked as seen even after failure")
+	}
+}
+
+func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+
+	patchFixDaemonRetryForTest(t, func() error {
+		return nil
+	})
+
+	deadURL := "http://127.0.0.1:1"
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{
+					ID:     10,
+					Status: storage.JobStatusDone,
+					Agent:  "test",
+				}},
+			})
+			serverAddr = deadURL
+		}).
+		Build()
+
+	seen := make(map[int64]bool)
+	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixWithSeen(cmd, []int64{10, 20}, fixOptions{
+			agentName: "test",
+			reasoning: "fast",
+		}, seen)
+	})
+
+	if err == nil {
+		t.Fatal("expected connection error in discovery mode")
+	}
+	if !strings.Contains(err.Error(), "daemon connection lost") {
+		t.Fatalf("expected daemon connection lost error, got: %v", err)
+	}
+	if len(seen) != 0 {
+		t.Fatalf("expected no jobs marked as seen after connection failure, got: %v", seen)
 	}
 }
 
