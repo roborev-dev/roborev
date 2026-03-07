@@ -190,7 +190,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	if !ready {
-		if err := <-serveErrCh; err != http.ErrServerClosed {
+		if err := awaitServeExitOnUnreadyStartup(ctx, serveErrCh); err != nil {
 			s.configWatcher.Stop()
 			s.workerPool.Stop()
 			return err
@@ -280,6 +280,17 @@ func waitForServerReady(ctx context.Context, addr string, timeout time.Duration,
 		lastErr = fmt.Errorf("server did not respond before timeout")
 	}
 	return false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", addr, timeout, lastErr)
+}
+
+func awaitServeExitOnUnreadyStartup(ctx context.Context, serveErrCh <-chan error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	if err := <-serveErrCh; err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func logHookWarnings(repos []storage.Repo) {

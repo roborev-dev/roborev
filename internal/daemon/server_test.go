@@ -192,6 +192,26 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	}
 }
 
+func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	serveErrCh := make(chan error)
+	done := make(chan error, 1)
+	go func() {
+		done <- awaitServeExitOnUnreadyStartup(ctx, serveErrCh)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("awaitServeExitOnUnreadyStartup blocked on a drained channel")
+	}
+}
+
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 	ln, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
