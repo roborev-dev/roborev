@@ -1342,3 +1342,68 @@ func TestJobTypeBackfill(t *testing.T) {
 		t.Errorf("got %d rows, want %d", i, len(expected))
 	}
 }
+
+func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "session-race")
+
+	// Worker A claims and saves a session ID while running.
+	claimJob(t, db, "worker-A")
+	err := db.SaveJobSessionID(job.ID, "worker-A", "session-A")
+	if err != nil {
+		t.Fatalf("SaveJobSessionID (worker-A): %v", err)
+	}
+	j, _ := db.GetJobByID(job.ID)
+	if j.SessionID != "session-A" {
+		t.Fatalf("session_id = %q, want session-A", j.SessionID)
+	}
+
+	// Cancel and re-enqueue: clears session_id, resets to queued.
+	if err := db.CancelJob(job.ID); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if err := db.ReenqueueJob(job.ID); err != nil {
+		t.Fatalf("ReenqueueJob: %v", err)
+	}
+	j, _ = db.GetJobByID(job.ID)
+	if j.SessionID != "" {
+		t.Fatalf("session_id after reenqueue = %q, want empty", j.SessionID)
+	}
+
+	// Worker B claims the re-enqueued job.
+	claimJob(t, db, "worker-B")
+
+	// Stale Worker A tries to save its session ID — should be a no-op
+	// because worker_id is now "worker-B".
+	err = db.SaveJobSessionID(job.ID, "worker-A", "stale-session")
+	if err != nil {
+		t.Fatalf("SaveJobSessionID (stale worker-A): %v", err)
+	}
+	j, _ = db.GetJobByID(job.ID)
+	if j.SessionID != "" {
+		t.Fatalf("stale worker wrote session_id = %q, want empty", j.SessionID)
+	}
+
+	// Worker B saves its own session ID — should succeed.
+	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B")
+	if err != nil {
+		t.Fatalf("SaveJobSessionID (worker-B): %v", err)
+	}
+	j, _ = db.GetJobByID(job.ID)
+	if j.SessionID != "session-B" {
+		t.Fatalf("session_id = %q, want session-B", j.SessionID)
+	}
+
+	// Worker B's second call is a no-op (first ID wins).
+	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B2")
+	if err != nil {
+		t.Fatalf("SaveJobSessionID (worker-B second): %v", err)
+	}
+	j, _ = db.GetJobByID(job.ID)
+	if j.SessionID != "session-B" {
+		t.Fatalf("session_id = %q, want session-B (first wins)",
+			j.SessionID)
+	}
+}
