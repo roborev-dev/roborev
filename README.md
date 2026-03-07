@@ -8,8 +8,8 @@
 
 Continuous code review for AI coding agents. roborev runs in the
 background, reviews every commit as agents write code, and surfaces
-issues in seconds -- before they compound. When it finds problems,
-it can fix them automatically.
+issues in seconds -- before they compound. Pull code reviews into
+your agentic loop while context is fresh.
 
 ![roborev TUI](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-hero.svg)
 
