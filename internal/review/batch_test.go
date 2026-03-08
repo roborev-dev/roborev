@@ -293,3 +293,44 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 			defOut)
 	}
 }
+
+func TestRunBatch_BackupKeepsOwnModelWhenBackupModelUnset(t *testing.T) {
+	t.Parallel()
+
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.RevParse("HEAD")
+
+	cfg := BatchConfig{
+		RepoPath:    repo.Root,
+		GitRef:      sha,
+		Agents:      []string{""},
+		ReviewTypes: []string{"review"},
+		GlobalConfig: &config.Config{
+			DefaultAgent:      "default-agent",
+			ReviewAgent:       "primary-agent",
+			ReviewBackupAgent: "backup-agent",
+			ReviewModel:       "primary-model",
+		},
+		AgentRegistry: map[string]agent.Agent{
+			// Simulate the runtime-selected backup agent while keeping
+			// the configured preferred agent name distinct.
+			"primary-agent": &mockAgent{
+				name:   "backup-agent",
+				output: "ok",
+			},
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	result := results[0]
+	if result.Status != ResultDone {
+		t.Fatalf("status=%q err=%q", result.Status, result.Error)
+	}
+	if strings.Contains(result.Output, "model=") {
+		t.Fatalf("backup agent should keep its default model, got %q", result.Output)
+	}
+}

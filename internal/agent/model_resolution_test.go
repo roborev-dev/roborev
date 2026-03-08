@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -244,5 +246,34 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 				t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveWorkflowModelForAgentRepoDefaultACPAgent(t *testing.T) {
+	t.Parallel()
+
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(`
+agent = "custom-acp"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		DefaultAgent: "codex",
+		DefaultModel: "gpt-5.4",
+		ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+	}
+
+	got := ResolveWorkflowModelForAgent(
+		"acp",
+		"",
+		repoPath,
+		cfg,
+		"review",
+		"standard",
+	)
+	if got != "gpt-5.4" {
+		t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, "gpt-5.4")
 	}
 }
