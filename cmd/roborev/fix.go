@@ -903,12 +903,22 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		return err
 	}
 
-	// Resolve minimum severity filter
+	// Resolve minimum severity filter. Suppress if any entry is a
+	// task job — task/analyze output has no severity labels, so the
+	// instruction would confuse the agent for those entries.
 	minSev, err := config.ResolveFixMinSeverity(
 		opts.minSeverity, repoRoot,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve min-severity: %w", err)
+	}
+	if minSev != "" {
+		for _, e := range entries {
+			if e.job.IsTaskJob() {
+				minSev = ""
+				break
+			}
+		}
 	}
 
 	// Split into batches by prompt size (after severity resolution
