@@ -592,6 +592,30 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
 			wt.Close()
+
+			// When severity filtering is active and the agent
+			// signals all findings are below threshold, treat as
+			// resolved rather than a fix failure.
+			if minSev != "" && strings.Contains(
+				output, config.SeverityThresholdMarker,
+			) {
+				fmt.Println(
+					"All findings below severity " +
+						"threshold - closing review",
+				)
+				if err := client.MarkReviewClosed(
+					currentFailedReview.JobID,
+				); err != nil {
+					fmt.Printf(
+						"Warning: failed to close "+
+							"review (job %d): %v\n",
+						currentFailedReview.JobID, err,
+					)
+				}
+				currentFailedReview = nil
+				continue
+			}
+
 			fmt.Println("Agent made no changes - skipping this review")
 			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)

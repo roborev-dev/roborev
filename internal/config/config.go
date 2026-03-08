@@ -989,6 +989,12 @@ var severityAbove = map[string]string{
 	"medium":   "Only include Medium, High, and Critical findings.",
 }
 
+// SeverityThresholdMarker is output by agents when all findings in a
+// review are below the configured minimum severity. The refine loop
+// checks for this marker to distinguish "nothing above threshold"
+// from "agent couldn't fix it."
+const SeverityThresholdMarker = "SEVERITY_THRESHOLD_MET"
+
 // SeverityInstruction returns a prompt instruction telling the agent
 // to focus only on findings at or above minSeverity. Returns "" for
 // empty, "low", or unrecognized input (no filtering needed).
@@ -999,7 +1005,11 @@ func SeverityInstruction(minSeverity string) string {
 	}
 	return "Severity filter: " + instruction +
 		" Ignore any findings below " + minSeverity +
-		" severity.\n"
+		" severity." +
+		" If ALL findings in the review are below " +
+		minSeverity + " severity, output the exact text " +
+		SeverityThresholdMarker +
+		" and make no code changes.\n"
 }
 
 // ResolveReviewReasoning determines reasoning level for reviews.

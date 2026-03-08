@@ -2658,6 +2658,12 @@ func TestSeverityInstruction(t *testing.T) {
 					tt.minSeverity, got, tt.wantSubstr,
 				)
 			}
+			if !strings.Contains(got, SeverityThresholdMarker) {
+				t.Errorf(
+					"SeverityInstruction(%q) missing threshold marker %q",
+					tt.minSeverity, SeverityThresholdMarker,
+				)
+			}
 		})
 	}
 }
