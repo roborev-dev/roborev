@@ -800,11 +800,6 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	// Resolve agent and model via fix workflow config.
-	// When the agent is explicitly overridden but the model is not,
-	// skip generic default_model (it's paired with default_agent).
-	configAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
-	cliAgentChanged := agentName != "" &&
-		agent.CanonicalName(agentName) != agent.CanonicalName(configAgent)
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
 	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
 
@@ -821,10 +816,8 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredForAnalyze)
 	if usingBackup && model == "" {
 		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
-	} else if cliAgentChanged && model == "" {
-		model = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
 	} else {
-		model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
+		model = resolveFixModel(agentName, model, repoPath, cfg, reasoning)
 	}
 
 	// Configure agent: agentic mode, with model and reasoning

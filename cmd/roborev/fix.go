@@ -308,21 +308,29 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 }
 
 // resolveFixModel determines the model for a fix operation, skipping
-// generic default_model when the CLI agent differs from config default.
+// generic default_model when the selected fix agent differs from the
+// generic default agent. In that case, an empty result lets the fix
+// agent keep its own built-in default model unless a fix-specific
+// model override is configured.
 func resolveFixModel(
 	cliAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) string {
-	configAgent := config.ResolveAgentForWorkflow(
-		"", repoPath, cfg, "fix", reasoning,
+	if cliModel != "" {
+		return config.ResolveModelForWorkflow(
+			cliModel, repoPath, cfg, "fix", reasoning,
+		)
+	}
+
+	selectedAgent := config.ResolveAgentForWorkflow(
+		cliAgent, repoPath, cfg, "fix", reasoning,
 	)
-	cliAgentChanged := cliAgent != "" &&
-		agent.CanonicalName(cliAgent) != agent.CanonicalName(configAgent)
-	if cliAgentChanged && cliModel == "" {
+	defaultAgent := config.ResolveAgent("", repoPath, cfg)
+	if agent.CanonicalName(selectedAgent) != agent.CanonicalName(defaultAgent) {
 		return config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
 	}
 	return config.ResolveModelForWorkflow(
-		cliModel, repoPath, cfg, "fix", reasoning,
+		"", repoPath, cfg, "fix", reasoning,
 	)
 }
 

@@ -2597,6 +2597,33 @@ fix_model = "gemini-2.5-pro"
 	}
 }
 
+func TestResolveFixAgentSkipsDefaultModelForConfiguredFixAgent(t *testing.T) {
+	// When fix_agent differs from default_agent and no fix_model is set,
+	// the fix agent should keep its own built-in default model.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+fix_agent = "claude"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+
+	modelStr := resolveFixModel("", "", tmpDir, cfg, "standard")
+	if modelStr != "" {
+		t.Fatalf("expected empty model so claude keeps its default, got %q", modelStr)
+	}
+}
+
 func TestResolveFixAgentUsesRepoWorkflowModel(t *testing.T) {
 	// Repo-level workflow-specific models should be used even when
 	// --agent is overridden on CLI.
