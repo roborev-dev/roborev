@@ -605,7 +605,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		}
 	})
 
-	t.Run("displays mismatch badge in review header when mismatched", func(t *testing.T) {
+	t.Run("does not display daemon status in review view when mismatched", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
@@ -625,14 +625,11 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 		output := m.View()
 
-		if !strings.Contains(output, "Daemon: old-version") {
-			t.Error("Expected review view to show daemon version")
+		if strings.Contains(output, "Daemon: old-version") {
+			t.Error("Expected review view to omit daemon status")
 		}
-		if !strings.Contains(output, "[MISMATCH]") {
-			t.Error("Expected review view to show mismatch badge")
-		}
-		if strings.Contains(output, "VERSION MISMATCH") {
-			t.Error("Expected review view to move mismatch warning out of footer")
+		if strings.Contains(output, "[MISMATCH]") {
+			t.Error("Expected review view to omit mismatch badge")
 		}
 	})
 
@@ -658,10 +655,13 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		output := m.View()
 
 		if !strings.Contains(output, "Saved") {
-			t.Error("Expected review flash message to remain visible with mismatch badge")
+			t.Error("Expected review flash message to remain visible")
 		}
-		if !strings.Contains(output, "[MISMATCH]") {
-			t.Error("Expected mismatch badge to still render alongside review header")
+		if strings.Contains(output, "Daemon: old-version") {
+			t.Error("Expected review view to omit daemon status even when flash is present")
+		}
+		if strings.Contains(output, "[MISMATCH]") {
+			t.Error("Expected review view to omit mismatch badge even when flash is present")
 		}
 	})
 }

@@ -66,6 +66,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains: []string{"on feature/test", "[CLOSED]", "myrepo", "abc1234"},
+			wantAbsent:   []string{"Daemon:"},
 		},
 		{
 			name: "review view with model",
@@ -83,6 +84,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains: []string{"(codex: o3)"},
+			wantAbsent:   []string{"Daemon:"},
 		},
 		{
 			name: "review view without model",
@@ -100,7 +102,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains: []string{"(codex)"},
-			wantAbsent:   []string{"(codex:"},
+			wantAbsent:   []string{"(codex:", "Daemon:"},
 		},
 		{
 			name: "prompt view with model",
@@ -150,7 +152,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains: []string{"abc123..def456"},
-			wantAbsent:   []string{" on "},
+			wantAbsent:   []string{" on ", "Daemon:"},
 		},
 		{
 			name: "review view no blank line without verdict",
@@ -167,6 +169,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains:              []string{"Review", "abc1234"},
+			wantAbsent:                []string{"Daemon:"},
 			checkContentStartsOnLine3: true,
 		},
 		{
@@ -184,6 +187,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains:              []string{"Review", "abc1234", "Verdict"},
+			wantAbsent:                []string{"Daemon:"},
 			checkContentStartsOnLine4: true,
 		},
 		{
@@ -202,6 +206,7 @@ func TestTUIRenderViews(t *testing.T) {
 				},
 			},
 			wantContains:              []string{"Review", "abc1234", "[CLOSED]"},
+			wantAbsent:                []string{"Daemon:"},
 			checkContentStartsOnLine4: true,
 			checkNoVerdictOnLine3:     true,
 		},
@@ -220,7 +225,7 @@ func TestTUIRenderViews(t *testing.T) {
 					Status:   storage.JobStatusFailed,
 				},
 			},
-			wantAbsent: []string{" on "},
+			wantAbsent: []string{" on ", "Daemon:"},
 		},
 	}
 
@@ -299,7 +304,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:                   "abc1234",
 			jobAgent:                 "codex",
 			jobVerdict:               nil,
-			wantVisibleLines:         4, // height 10 - 6 non-content = 4
+			wantVisibleLines:         5, // height 10 - 5 non-content = 5
 			checkVisibleContentCount: true,
 		},
 		{
@@ -309,7 +314,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       &verdictPass,
-			wantVisibleLines: 3, // height 10 - 7 non-content = 3
+			wantVisibleLines: 4, // height 10 - 6 non-content = 4
 		},
 		{
 			name:             "narrow terminal",
@@ -318,7 +323,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       nil,
-			wantVisibleLines: 3, // height 10 - 7 non-content = 3
+			wantVisibleLines: 4, // height 10 - 6 non-content = 4
 		},
 		{
 			name:             "narrow terminal with verdict",
@@ -327,7 +332,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobRef:           "abc1234",
 			jobAgent:         "codex",
 			jobVerdict:       &verdictFail,
-			wantVisibleLines: 2, // height 10 - 8 non-content = 2
+			wantVisibleLines: 3, // height 10 - 7 non-content = 3
 			wantContains:     []string{"Verdict"},
 		},
 		{
@@ -341,7 +346,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobAgent:         "claude-code",
 			jobVerdict:       nil,
 			closed:           true,
-			wantVisibleLines: 2, // height 12 - 10 non-content = 2
+			wantVisibleLines: 3, // height 12 - 9 non-content = 3
 			wantContains:     []string{"very-long-repository-name-here", "feature/very-long-branch-name", "[CLOSED]"},
 		},
 	}

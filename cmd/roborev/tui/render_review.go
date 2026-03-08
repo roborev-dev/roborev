@@ -78,15 +78,11 @@ func (m model) renderReviewView() string {
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
 		b.WriteString("\n")
-		b.WriteString(m.renderDaemonStatus())
-		b.WriteString("\x1b[K\n")
 	} else {
 		title = "Review"
 		titleLen = len(title)
 		b.WriteString(titleStyle.Render(title))
 		b.WriteString("\x1b[K\n") // Clear to end of line
-		b.WriteString(m.renderDaemonStatus())
-		b.WriteString("\x1b[K\n")
 	}
 
 	// Build content: review output + responses
@@ -141,8 +137,8 @@ func (m model) renderReviewView() string {
 		}
 	}
 
-	// Reserve title, location, daemon status, footer status, help, and optional verdict.
-	headerHeight := titleLines + locationLines + 2 + helpLines
+	// Reserve title, location, footer status, help, and optional verdict.
+	headerHeight := titleLines + locationLines + 1 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
 	if hasVerdict || review.Closed {
 		headerHeight++ // Add 1 for verdict/closed line
