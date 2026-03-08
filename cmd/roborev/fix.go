@@ -893,6 +893,11 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		return nil
 	}
 
+	// Split into batches by prompt size
+	cfg, _ := config.LoadGlobal()
+	maxSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+	batches := splitIntoBatches(entries, maxSize)
+
 	// Resolve agent once
 	fixAgent, err := resolveFixAgent(repoRoot, opts)
 	if err != nil {
@@ -906,11 +911,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	if err != nil {
 		return fmt.Errorf("resolve min-severity: %w", err)
 	}
-
-	// Split into batches by prompt size (includes severity overhead)
-	cfg, _ := config.LoadGlobal()
-	maxSize := config.ResolveMaxPromptSize(repoRoot, cfg)
-	batches := splitIntoBatches(entries, maxSize, minSev)
 
 	for i, batch := range batches {
 		batchJobIDs := make([]int64, len(batch))
@@ -1011,13 +1011,7 @@ func batchEntrySize(index int, e batchEntry) int {
 
 // splitIntoBatches groups entries into batches respecting maxSize.
 // Greedily packs reviews; a single oversized review gets its own batch.
-// When minSeverity is non-empty, the severity instruction size is
-// included in the per-batch overhead.
-func splitIntoBatches(
-	entries []batchEntry, maxSize int, minSeverity string,
-) [][]batchEntry {
-	overhead := batchPromptOverhead +
-		len(config.SeverityInstruction(minSeverity))
+func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 	var batches [][]batchEntry
 	var current []batchEntry
 	currentSize := 0
@@ -1034,7 +1028,7 @@ func splitIntoBatches(
 
 		current = append(current, e)
 		if currentSize == 0 {
-			currentSize = overhead
+			currentSize = batchPromptOverhead
 		}
 		currentSize += entrySize
 	}

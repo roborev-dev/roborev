@@ -1408,7 +1408,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(2, 100),
 			makeEntry(3, 100),
 		}
-		batches := splitIntoBatches(entries, 100000, "")
+		batches := splitIntoBatches(entries, 100000)
 		if len(batches) != 1 {
 			t.Errorf("expected 1 batch, got %d", len(batches))
 		}
@@ -1425,7 +1425,7 @@ func TestSplitIntoBatches(t *testing.T) {
 		}
 		// Set limit small enough that not all fit (overhead ~300 bytes + entry ~530 each)
 		maxSize := 1000
-		batches := splitIntoBatches(entries, maxSize, "")
+		batches := splitIntoBatches(entries, maxSize)
 		if len(batches) < 2 {
 			t.Errorf("expected at least 2 batches, got %d", len(batches))
 		}
@@ -1445,7 +1445,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(2, 5000), // oversized
 			makeEntry(3, 100),
 		}
-		batches := splitIntoBatches(entries, 1000, "")
+		batches := splitIntoBatches(entries, 1000)
 		if len(batches) < 2 {
 			t.Errorf("expected at least 2 batches, got %d", len(batches))
 		}
@@ -1464,7 +1464,7 @@ func TestSplitIntoBatches(t *testing.T) {
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		batches := splitIntoBatches(nil, 100000, "")
+		batches := splitIntoBatches(nil, 100000)
 		if len(batches) != 0 {
 			t.Errorf("expected 0 batches for empty input, got %d", len(batches))
 		}
@@ -1480,7 +1480,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(5, 200),
 		}
 		maxSize := 1000
-		batches := splitIntoBatches(entries, maxSize, "")
+		batches := splitIntoBatches(entries, maxSize)
 		for i, batch := range batches {
 			prompt := buildBatchFixPrompt(batch, "")
 			// Single-entry batches that are inherently oversized are allowed to exceed.
@@ -1496,34 +1496,13 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(20, 100),
 			makeEntry(30, 100),
 		}
-		batches := splitIntoBatches(entries, 100000, "")
+		batches := splitIntoBatches(entries, 100000)
 		if len(batches) != 1 {
 			t.Fatalf("expected 1 batch, got %d", len(batches))
 		}
 		for i, want := range []int64{10, 20, 30} {
 			if batches[0][i].jobID != want {
 				t.Errorf("batch[0][%d].jobID = %d, want %d", i, batches[0][i].jobID, want)
-			}
-		}
-	})
-
-	t.Run("severity filter accounts for overhead", func(t *testing.T) {
-		entries := []batchEntry{
-			makeEntry(1, 200),
-			makeEntry(2, 200),
-			makeEntry(3, 200),
-			makeEntry(4, 200),
-			makeEntry(5, 200),
-		}
-		maxSize := 1000
-		batches := splitIntoBatches(entries, maxSize, "high")
-		for i, batch := range batches {
-			prompt := buildBatchFixPrompt(batch, "high")
-			if len(batch) > 1 && len(prompt) > maxSize {
-				t.Errorf(
-					"batch %d prompt size %d exceeds maxSize %d with severity filter",
-					i, len(prompt), maxSize,
-				)
 			}
 		}
 	})
