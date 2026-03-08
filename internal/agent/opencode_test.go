@@ -131,8 +131,7 @@ func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
 
 	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
 
-	assertContains(t, result, "**Review:** Fix the typo.")
-	assertContains(t, result, " Done.")
+	assertEqual(t, result, " Done.")
 	// Tool events should not appear in the result text
 	assertNotContains(t, result, "Read")
 	assertNotContains(t, result, "file_path")
@@ -214,8 +213,8 @@ func TestParseOpenCodeJSON(t *testing.T) {
 
 	lines := strings.Join([]string{
 		makeTextEvent("Part one."),
-		makeOpenCodeEvent("reasoning", map[string]any{
-			"type": "reasoning", "text": "thinking...",
+		makeOpenCodeEvent("tool", map[string]any{
+			"type": "tool", "tool": "Read",
 		}),
 		makeTextEvent(" Part two."),
 	}, "\n") + "\n"
@@ -228,7 +227,7 @@ func TestParseOpenCodeJSON(t *testing.T) {
 		t.Fatalf("parseOpenCodeJSON: %v", err)
 	}
 
-	assertEqual(t, result, "Part one. Part two.")
+	assertEqual(t, result, " Part two.")
 
 	// All raw lines should be written to output
 	out := outputBuf.String()

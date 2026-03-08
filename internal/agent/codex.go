@@ -268,6 +268,20 @@ func isCodexEventType(eventType string) bool {
 		strings.HasPrefix(eventType, "item.")
 }
 
+func isCodexToolEvent(ev codexEvent) bool {
+	if ev.Type != "item.started" &&
+		ev.Type != "item.updated" &&
+		ev.Type != "item.completed" {
+		return false
+	}
+	switch ev.Item.Type {
+	case "command_execution", "file_change":
+		return true
+	default:
+		return false
+	}
+}
+
 func codexFailureEventError(ev codexEvent) error {
 	switch ev.Type {
 	case "turn.failed":
@@ -298,8 +312,7 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 	br := bufio.NewReader(r)
 
 	var validEventsParsed bool
-	var agentMessages []string
-	messageIndexByID := make(map[string]int)
+	agentMessages := newTrailingReviewText()
 	var streamFailure error
 
 	for {
@@ -324,19 +337,16 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 						streamFailure = codexFailureEventError(ev)
 					}
 
+					if isCodexToolEvent(ev) {
+						agentMessages.Reset()
+					}
+
 					// Collect agent_message text from completed/updated items.
 					// For messages with IDs, keep only the latest text per ID to avoid duplicates
 					// from incremental updates while preserving first-seen order.
 					if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
 						ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-						if ev.Item.ID == "" {
-							agentMessages = append(agentMessages, ev.Item.Text)
-						} else if idx, ok := messageIndexByID[ev.Item.ID]; ok {
-							agentMessages[idx] = ev.Item.Text
-						} else {
-							messageIndexByID[ev.Item.ID] = len(agentMessages)
-							agentMessages = append(agentMessages, ev.Item.Text)
-						}
+						agentMessages.AddWithID(ev.Item.ID, ev.Item.Text)
 					}
 				}
 			}
@@ -355,8 +365,8 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 		return "", streamFailure
 	}
 
-	if len(agentMessages) > 0 {
-		return strings.Join(agentMessages, "\n"), nil
+	if result := agentMessages.Join("\n"); result != "" {
+		return result, nil
 	}
 
 	return "", nil

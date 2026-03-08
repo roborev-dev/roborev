@@ -180,6 +180,19 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			want: "Done reviewing.",
 		},
 		{
+			name: "DropsNarrationBeforeToolCalls",
+			input: buildStream(
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"Checking the relevant files before I write the review."}}`,
+				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"sh -lc sed ..."}}`,
+				`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"sh -lc sed ...","exit_code":0}}`,
+				`{"type":"item.completed","item":{"id":"msg2","type":"agent_message","text":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}`,
+				jsonTurnCompleted,
+			),
+			want: "## Review Findings\n- **Severity**: Low; **Problem**: Final finding.",
+		},
+		{
 			name:              "StreamsToWriter",
 			input:             buildStream(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`),
 			want:              "hello",

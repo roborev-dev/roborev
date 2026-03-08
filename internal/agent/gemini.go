@@ -193,7 +193,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	br := bufio.NewReader(r)
 
 	var lastResult string
-	var assistantMessages []string
+	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
 
 	for {
@@ -217,11 +217,14 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 				// Collect assistant messages for the result
 				// Gemini format: type="message", role="assistant", content at top level
 				if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-					assistantMessages = append(assistantMessages, msg.Content)
+					assistantMessages.Add(msg.Content)
 				}
 				// Claude Code format: type="assistant", message.content nested
 				if msg.Type == "assistant" && msg.Message.Content != "" {
-					assistantMessages = append(assistantMessages, msg.Message.Content)
+					assistantMessages.Add(msg.Message.Content)
+				}
+				if msg.Type == "tool" || msg.Type == "tool_result" {
+					assistantMessages.Reset()
 				}
 
 				// The final result message contains the summary
@@ -245,8 +248,8 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	if lastResult != "" {
 		return parseResult{result: lastResult}, nil
 	}
-	if len(assistantMessages) > 0 {
-		return parseResult{result: strings.Join(assistantMessages, "\n")}, nil
+	if result := assistantMessages.Join("\n"); result != "" {
+		return parseResult{result: result}, nil
 	}
 
 	return parseResult{}, nil

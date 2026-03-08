@@ -167,6 +167,20 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			},
 		},
 		{
+			name: "AssistantFallbackDropsNarrationBeforeToolUse",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"I am checking the relevant files first."}}
+{"type":"tool","name":"Read"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
+				if res != want {
+					t.Errorf("expected result %q, got %q", want, res)
+				}
+			},
+		},
+		{
 			name: "NoValidEvents",
 			input: `not json at all
 still not json

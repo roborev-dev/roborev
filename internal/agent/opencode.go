@@ -172,12 +172,12 @@ func parseOpenCodeJSON(
 ) (string, error) {
 	br := bufio.NewReader(r)
 
-	var textParts []string
+	textParts := newTrailingReviewText()
 
 	for {
 		line, err := br.ReadString('\n')
 		if err != nil && err != io.EOF {
-			return strings.Join(textParts, ""), fmt.Errorf(
+			return textParts.Join(""), fmt.Errorf(
 				"read stream: %w", err,
 			)
 		}
@@ -193,11 +193,13 @@ func parseOpenCodeJSON(
 				ev.Part != nil {
 				var part opencodePart
 				if json.Unmarshal(ev.Part, &part) == nil &&
-					part.Type == "text" && part.Text != "" {
-					textParts = append(
-						textParts,
-						stripTerminalControls(part.Text),
-					)
+					part.Type != "" {
+					if part.Type == "tool" {
+						textParts.Reset()
+					}
+					if part.Type == "text" && part.Text != "" {
+						textParts.Add(stripTerminalControls(part.Text))
+					}
 				}
 			}
 		}
@@ -207,7 +209,7 @@ func parseOpenCodeJSON(
 		}
 	}
 
-	return strings.Join(textParts, ""), nil
+	return textParts.Join(""), nil
 }
 
 // ansiPattern matches ANSI CSI and OSC escape sequences.

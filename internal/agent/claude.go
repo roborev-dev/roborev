@@ -211,9 +211,9 @@ type claudeStreamMessage struct {
 	} `json:"error,omitempty"`
 }
 
-// extractContentText extracts text from a Claude message content field.
-// Content can be a plain string or an array of content blocks
-// (e.g. [{"type":"text","text":"..."}]).
+// extractContentText extracts only the text that appears after the last tool-use
+// block in a Claude message content field. Content can be a plain string or an
+// array of content blocks (e.g. [{"type":"text","text":"..."}]).
 func extractContentText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -229,13 +229,16 @@ func extractContentText(raw json.RawMessage) string {
 		Text string `json:"text"`
 	}
 	if json.Unmarshal(raw, &blocks) == nil {
-		var texts []string
+		texts := newTrailingReviewText()
 		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
-				texts = append(texts, b.Text)
+			switch b.Type {
+			case "text":
+				texts.Add(b.Text)
+			case "tool_use", "tool_result":
+				texts.Reset()
 			}
 		}
-		return strings.Join(texts, "\n")
+		return texts.Join("\n")
 	}
 	return ""
 }
@@ -248,7 +251,7 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	br := bufio.NewReader(r)
 
 	var lastResult string
-	var assistantMessages []string
+	assistantMessages := newTrailingReviewText()
 	var errorMessages []string
 	var validEventsParsed bool
 
@@ -274,8 +277,11 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 				// Content can be a string or an array of content blocks.
 				if msg.Type == "assistant" {
 					if text := extractContentText(msg.Message.Content); text != "" {
-						assistantMessages = append(assistantMessages, text)
+						assistantMessages.Add(text)
 					}
+				}
+				if msg.Type == "tool_use" || msg.Type == "tool_result" {
+					assistantMessages.Reset()
 				}
 
 				// The final result message contains the summary.
@@ -315,7 +321,7 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	}
 
 	// Build partial output for error context
-	partial := strings.Join(assistantMessages, "\n")
+	partial := assistantMessages.Join("\n")
 
 	// If error events were received but we got no result, report them with any partial output
 	if len(errorMessages) > 0 && lastResult == "" {
@@ -326,8 +332,8 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	if lastResult != "" {
 		return lastResult, nil
 	}
-	if len(assistantMessages) > 0 {
-		return strings.Join(assistantMessages, "\n"), nil
+	if result := assistantMessages.Join("\n"); result != "" {
+		return result, nil
 	}
 
 	return "", nil
