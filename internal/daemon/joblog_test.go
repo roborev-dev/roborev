@@ -348,6 +348,34 @@ func TestJobLogWriter(t *testing.T) {
 			t.Fatalf("final content = %q, want %q", got, "abcdef")
 		}
 	})
+
+	t.Run("partial_notice_flush_preserves_order_before_buffer", func(t *testing.T) {
+		pw := &partialErrorWriteCloser{partial: 3}
+		w := &jobLogWriter{jobID: 206, f: pw, dropped: 5, noticed: 5}
+		w.notice.WriteString("NOTICE")
+		w.buf.WriteString("tail")
+
+		err := w.flushBufferedLocked()
+		if err == nil {
+			t.Fatal("expected flush error")
+		}
+		if got := pw.String(); got != "NOT" {
+			t.Fatalf("written prefix = %q, want %q", got, "NOT")
+		}
+		if got := w.notice.String(); got != "ICE" {
+			t.Fatalf("remaining notice = %q, want %q", got, "ICE")
+		}
+		if got := w.buf.String(); got != "tail" {
+			t.Fatalf("buffer should remain queued until notice completes, got %q", got)
+		}
+
+		if err := w.flushBufferedLocked(); err != nil {
+			t.Fatalf("second flush: %v", err)
+		}
+		if got := pw.String(); got != "NOTICEtail" {
+			t.Fatalf("final content = %q, want %q", got, "NOTICEtail")
+		}
+	})
 }
 
 type failingWriter struct{}

@@ -76,4 +76,26 @@ func TestContextProcessError(t *testing.T) {
 	if got := contextProcessError(ctx, nil, fs.ErrClosed); !errors.Is(got, context.Canceled) {
 		t.Fatalf("expected context cancellation for closed pipe parse error, got %v", got)
 	}
+	if got := contextProcessError(ctx, errors.New("agent failed"), fs.ErrClosed); got != nil {
+		t.Fatalf("real subprocess error should not be masked by closed pipe parse error, got %v", got)
+	}
+}
+
+func TestContextProcessErrorRunPathCancellation(t *testing.T) {
+	skipIfWindows(t)
+
+	cmdPath := writeTempCommand(t, "#!/bin/sh\nsleep 5\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, cmdPath)
+	configureSubprocess(cmd)
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected command cancellation")
+	}
+	if got := contextProcessError(ctx, err, nil); !errors.Is(got, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v (run err: %v)", got, err)
+	}
 }

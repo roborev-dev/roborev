@@ -204,27 +204,28 @@ func (w *jobLogWriter) flushBufferedLocked() error {
 		if w.f == nil {
 			return nil
 		}
+		if w.notice.Len() > 0 {
+			if err := w.flushBufferLocked(&w.notice); err != nil {
+				return err
+			}
+			w.dropped -= w.noticed
+			if w.dropped < 0 {
+				w.dropped = 0
+			}
+			w.noticed = 0
+			continue
+		}
 		if err := w.flushBufferLocked(&w.buf); err != nil {
 			return err
 		}
-		if w.notice.Len() == 0 && w.dropped > 0 {
-			w.noticed = w.dropped
-			fmt.Fprintf(&w.notice,
-				"[roborev] dropped %d log bytes while disk logging was unavailable\n",
-				w.noticed,
-			)
-		}
-		if w.notice.Len() == 0 {
+		if w.dropped == 0 {
 			return nil
 		}
-		if err := w.flushBufferLocked(&w.notice); err != nil {
-			return err
-		}
-		w.dropped -= w.noticed
-		if w.dropped < 0 {
-			w.dropped = 0
-		}
-		w.noticed = 0
+		w.noticed = w.dropped
+		fmt.Fprintf(&w.notice,
+			"[roborev] dropped %d log bytes while disk logging was unavailable\n",
+			w.noticed,
+		)
 	}
 }
 
