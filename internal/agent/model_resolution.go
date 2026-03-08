@@ -30,7 +30,8 @@ func ResolveWorkflowModelForAgent(
 	}
 
 	defaultAgent := config.ResolveAgent("", repoPath, globalCfg)
-	if CanonicalName(selectedAgent) != CanonicalName(defaultAgent) {
+	if workflowModelComparableAgentName(selectedAgent, globalCfg) !=
+		workflowModelComparableAgentName(defaultAgent, globalCfg) {
 		return config.ResolveWorkflowModel(
 			repoPath, globalCfg, workflow, level,
 		)
@@ -39,4 +40,12 @@ func ResolveWorkflowModelForAgent(
 	return config.ResolveModelForWorkflow(
 		"", repoPath, globalCfg, workflow, level,
 	)
+}
+
+func workflowModelComparableAgentName(name string, cfg *config.Config) string {
+	name = strings.TrimSpace(name)
+	if isConfiguredACPAgentName(name, cfg) {
+		return defaultACPName
+	}
+	return CanonicalName(name)
 }

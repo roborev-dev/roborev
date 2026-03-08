@@ -167,3 +167,82 @@ func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		workflow string
+		cfg      *config.Config
+		want     string
+	}{
+		{
+			name:     "fix keeps default model for acp default alias",
+			workflow: "fix",
+			cfg: &config.Config{
+				DefaultAgent: "custom-acp",
+				DefaultModel: "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+			},
+			want: "gpt-5.4",
+		},
+		{
+			name:     "review keeps default model for acp default alias",
+			workflow: "review",
+			cfg: &config.Config{
+				DefaultAgent: "custom-acp",
+				DefaultModel: "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+			},
+			want: "gpt-5.4",
+		},
+		{
+			name:     "refine keeps default model for acp default alias",
+			workflow: "refine",
+			cfg: &config.Config{
+				DefaultAgent: "custom-acp",
+				DefaultModel: "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+			},
+			want: "gpt-5.4",
+		},
+		{
+			name:     "security keeps default model for acp default alias",
+			workflow: "security",
+			cfg: &config.Config{
+				DefaultAgent: "custom-acp",
+				DefaultModel: "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+			},
+			want: "gpt-5.4",
+		},
+		{
+			name:     "design keeps default model for acp default alias",
+			workflow: "design",
+			cfg: &config.Config{
+				DefaultAgent: "custom-acp",
+				DefaultModel: "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: "custom-acp"},
+			},
+			want: "gpt-5.4",
+		},
+	}
+
+	repoPath := t.TempDir()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveWorkflowModelForAgent(
+				"acp",
+				"",
+				repoPath,
+				tt.cfg,
+				tt.workflow,
+				"standard",
+			)
+			if got != tt.want {
+				t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
