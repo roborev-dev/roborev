@@ -195,7 +195,7 @@ func parseOpenCodeJSON(
 				if json.Unmarshal(ev.Part, &part) == nil &&
 					part.Type != "" {
 					if part.Type == "tool" {
-						textParts.Reset()
+						textParts.ResetAfterTool()
 					}
 					if part.Type == "text" && part.Text != "" {
 						textParts.Add(stripTerminalControls(part.Text))

@@ -2,9 +2,10 @@ package agent
 
 import "strings"
 
-// trailingReviewText keeps only the text emitted after the most recent tool use.
-// This drops progress narration that agents often emit immediately before
-// reading files or running commands.
+// trailingReviewText keeps only the final assistant text segment after the most
+// recent tool event. Under roborev's review contract, any assistant text before
+// a later tool call is provisional working output rather than the persisted
+// review body.
 type trailingReviewText struct {
 	parts     []string
 	indexByID map[string]int
@@ -37,7 +38,7 @@ func (t *trailingReviewText) AddWithID(id, text string) {
 	t.parts = append(t.parts, text)
 }
 
-func (t *trailingReviewText) Reset() {
+func (t *trailingReviewText) ResetAfterTool() {
 	t.parts = nil
 	if len(t.indexByID) > 0 {
 		t.indexByID = make(map[string]int)

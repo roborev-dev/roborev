@@ -204,6 +204,16 @@ still not json
 			expectedResult: "## Review Findings\n- **Severity**: Low; **Problem**: Final finding.",
 		},
 		{
+			name: "AssistantFallbackPrefersFinalPostToolSegment",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}
+{"type":"tool_use","name":"Read","input":{"file_path":"redacted.go"}}
+{"type":"tool_result","content":"redacted"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
+`,
+			expectedResult: "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.",
+		},
+		{
 			name: "ContentBlockArrayWithToolUse",
 			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."},{"type":"tool_use","name":"Read"}]}}

@@ -338,7 +338,9 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 					}
 
 					if isCodexToolEvent(ev) {
-						agentMessages.Reset()
+						// The persisted review is defined as the assistant text
+						// after the last tool event in the stream.
+						agentMessages.ResetAfterTool()
 					}
 
 					// Collect agent_message text from completed/updated items.

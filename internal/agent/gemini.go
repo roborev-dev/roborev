@@ -224,7 +224,9 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 					assistantMessages.Add(msg.Message.Content)
 				}
 				if msg.Type == "tool" || msg.Type == "tool_result" {
-					assistantMessages.Reset()
+					// Treat pre-tool assistant text as provisional; only the
+					// trailing post-tool segment becomes review output.
+					assistantMessages.ResetAfterTool()
 				}
 
 				// The final result message contains the summary

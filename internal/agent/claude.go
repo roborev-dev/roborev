@@ -235,7 +235,7 @@ func extractContentText(raw json.RawMessage) string {
 			case "text":
 				texts.Add(b.Text)
 			case "tool_use", "tool_result":
-				texts.Reset()
+				texts.ResetAfterTool()
 			}
 		}
 		return texts.Join("\n")
@@ -281,7 +281,9 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 					}
 				}
 				if msg.Type == "tool_use" || msg.Type == "tool_result" {
-					assistantMessages.Reset()
+					// Only the trailing post-tool assistant segment is treated
+					// as the review body.
+					assistantMessages.ResetAfterTool()
 				}
 
 				// The final result message contains the summary.

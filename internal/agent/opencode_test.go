@@ -137,6 +137,24 @@ func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
 	assertNotContains(t, result, "file_path")
 }
 
+func TestOpenCodeReviewPrefersFinalPostToolSegment(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	stdoutLines := []string{
+		makeTextEvent("## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."),
+		makeOpenCodeEvent("tool", map[string]any{
+			"type": "tool",
+			"tool": "Read",
+		}),
+		makeTextEvent("## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."),
+	}
+
+	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
+
+	assertEqual(t, result, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.")
+}
+
 func TestOpenCodeReviewStreamsToOutput(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)

@@ -193,6 +193,19 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			want: "## Review Findings\n- **Severity**: Low; **Problem**: Final finding.",
 		},
 		{
+			name: "PrefersFinalPostToolSegment",
+			input: buildStream(
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}`,
+				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"sh -lc rg ..."}}`,
+				`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"sh -lc rg ...","exit_code":0}}`,
+				`{"type":"item.completed","item":{"id":"msg2","type":"agent_message","text":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}`,
+				jsonTurnCompleted,
+			),
+			want: "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.",
+		},
+		{
 			name:              "StreamsToWriter",
 			input:             buildStream(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`),
 			want:              "hello",
