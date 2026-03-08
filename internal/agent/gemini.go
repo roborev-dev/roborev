@@ -146,7 +146,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, waitErr, parseErr); ctxErr != nil {
 			return "", ctxErr
 		}
 		if parseErr != nil {
@@ -155,7 +155,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderr.String()))
 	}
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, nil, parseErr); ctxErr != nil {
 		return "", ctxErr
 	}
 

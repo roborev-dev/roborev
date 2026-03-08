@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -300,6 +301,53 @@ func TestJobLogWriter(t *testing.T) {
 			t.Errorf("contents = %q, want %q", data, "persist me\n")
 		}
 	})
+
+	t.Run("partial_direct_write_buffers_only_suffix", func(t *testing.T) {
+		pw := &partialErrorWriteCloser{partial: 3}
+		w := &jobLogWriter{jobID: 204, f: pw}
+
+		if _, err := w.Write([]byte("abcdef")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if got := pw.String(); got != "abc" {
+			t.Fatalf("written prefix = %q, want %q", got, "abc")
+		}
+		if got := w.buf.String(); got != "def" {
+			t.Fatalf("buffered suffix = %q, want %q", got, "def")
+		}
+
+		w.f = pw
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if got := pw.String(); got != "abcdef" {
+			t.Fatalf("final content = %q, want %q", got, "abcdef")
+		}
+	})
+
+	t.Run("partial_flush_trims_written_prefix", func(t *testing.T) {
+		pw := &partialErrorWriteCloser{partial: 3}
+		w := &jobLogWriter{jobID: 205, f: pw}
+		w.buf.WriteString("abcdef")
+
+		err := w.flushBufferedLocked()
+		if err == nil {
+			t.Fatal("expected flush error")
+		}
+		if got := pw.String(); got != "abc" {
+			t.Fatalf("written prefix = %q, want %q", got, "abc")
+		}
+		if got := w.buf.String(); got != "def" {
+			t.Fatalf("remaining buffer = %q, want %q", got, "def")
+		}
+
+		if err := w.flushBufferedLocked(); err != nil {
+			t.Fatalf("second flush: %v", err)
+		}
+		if got := pw.String(); got != "abcdef" {
+			t.Fatalf("final content = %q, want %q", got, "abcdef")
+		}
+	})
 }
 
 type failingWriter struct{}
@@ -307,6 +355,28 @@ type failingWriter struct{}
 func (failingWriter) Write(_ []byte) (int, error) {
 	return 0, errors.New("boom")
 }
+
+type partialErrorWriteCloser struct {
+	buf     bytes.Buffer
+	partial int
+	failed  bool
+}
+
+func (w *partialErrorWriteCloser) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		n := min(w.partial, len(p))
+		if n > 0 {
+			_, _ = w.buf.Write(p[:n])
+		}
+		return n, errors.New("short write")
+	}
+	return w.buf.Write(p)
+}
+
+func (w *partialErrorWriteCloser) Close() error { return nil }
+
+func (w *partialErrorWriteCloser) String() string { return w.buf.String() }
 
 func TestReadJobLog(t *testing.T) {
 	setupTestEnv(t)

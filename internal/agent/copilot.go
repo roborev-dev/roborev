@@ -97,7 +97,7 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	}
 
 	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}
 		return "", fmt.Errorf("copilot failed: %w\nstderr: %s", err, stderr.String())

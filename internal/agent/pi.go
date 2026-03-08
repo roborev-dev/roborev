@@ -175,7 +175,7 @@ func (a *PiAgent) Review(
 	}
 
 	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}
 		return "", fmt.Errorf("pi failed: %w\nstderr: %s", err, stderrBuf.String())

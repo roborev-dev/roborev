@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,5 +60,20 @@ func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 
 	if got := closer.closed.Load(); got != 0 {
 		t.Fatalf("background context should not close the closer, got %d", got)
+	}
+}
+
+func TestContextProcessError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := contextProcessError(ctx, errors.New("agent failed"), nil); got != nil {
+		t.Fatalf("real subprocess error should be preserved, got context error %v", got)
+	}
+	if got := contextProcessError(ctx, exec.ErrWaitDelay, nil); !errors.Is(got, context.Canceled) {
+		t.Fatalf("expected context cancellation for wait delay, got %v", got)
+	}
+	if got := contextProcessError(ctx, nil, fs.ErrClosed); !errors.Is(got, context.Canceled) {
+		t.Fatalf("expected context cancellation for closed pipe parse error, got %v", got)
 	}
 }

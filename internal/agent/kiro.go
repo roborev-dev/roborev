@@ -158,7 +158,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}
 		return "", fmt.Errorf(

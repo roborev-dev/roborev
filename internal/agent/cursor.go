@@ -131,7 +131,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := a.parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, waitErr, err); ctxErr != nil {
 			return "", ctxErr
 		}
 		if err != nil {
@@ -140,7 +140,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", waitErr, stderr.String())
 	}
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, nil, err); ctxErr != nil {
 		return "", ctxErr
 	}
 

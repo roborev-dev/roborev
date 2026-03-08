@@ -167,7 +167,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := contextProcessError(ctx, waitErr, err); ctxErr != nil {
 			return "", ctxErr
 		}
 		// Build a detailed error including any partial output and stream errors
@@ -190,7 +190,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := contextProcessError(ctx, nil, err); ctxErr != nil {
 		return "", ctxErr
 	}
 

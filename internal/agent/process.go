@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,4 +41,27 @@ func closeOnContextDone(ctx context.Context, c io.Closer) func() {
 			close(done)
 		})
 	}
+}
+
+func contextProcessError(
+	ctx context.Context, runErr error, parseErr error,
+) error {
+	ctxErr := ctx.Err()
+	if ctxErr == nil {
+		return nil
+	}
+	if runErr != nil {
+		if errors.Is(runErr, ctxErr) || errors.Is(runErr, exec.ErrWaitDelay) {
+			return ctxErr
+		}
+	}
+	if parseErr != nil && parseErrIndicatesClosedPipe(parseErr) {
+		return ctxErr
+	}
+	return nil
+}
+
+func parseErrIndicatesClosedPipe(err error) bool {
+	return errors.Is(err, fs.ErrClosed) ||
+		strings.Contains(err.Error(), "file already closed")
 }

@@ -121,10 +121,12 @@ func ParseJobIDFromLogName(name string) (int64, bool) {
 type jobLogWriter struct {
 	mu      sync.Mutex
 	jobID   int64
-	f       *os.File
+	f       io.WriteCloser
 	buf     bytes.Buffer
+	notice  bytes.Buffer
 	lastTry time.Time
 	dropped int
+	noticed int
 }
 
 func newJobLogWriter(jobID int64) *jobLogWriter {
@@ -144,11 +146,17 @@ func (w *jobLogWriter) Write(p []byte) (int, error) {
 	}
 	if w.f != nil {
 		if err := w.flushBufferedLocked(); err == nil {
-			if _, err := w.f.Write(p); err == nil {
+			n, err := w.f.Write(p)
+			if err == nil && n == len(p) {
 				return len(p), nil
-			} else {
-				w.handleWriteFailureLocked(err)
 			}
+			if n > 0 {
+				p = p[n:]
+			}
+			if err == nil {
+				err = io.ErrShortWrite
+			}
+			w.handleWriteFailureLocked(err)
 		} else {
 			w.handleWriteFailureLocked(err)
 		}
@@ -192,26 +200,32 @@ func (w *jobLogWriter) tryOpenLocked(truncate bool) {
 }
 
 func (w *jobLogWriter) flushBufferedLocked() error {
-	if w.f == nil {
-		return nil
-	}
-	if w.buf.Len() > 0 {
-		if _, err := w.f.Write(w.buf.Bytes()); err != nil {
+	for {
+		if w.f == nil {
+			return nil
+		}
+		if err := w.flushBufferLocked(&w.buf); err != nil {
 			return err
 		}
-		w.buf.Reset()
-	}
-	if w.dropped > 0 {
-		msg := fmt.Sprintf(
-			"[roborev] dropped %d log bytes while disk logging was unavailable\n",
-			w.dropped,
-		)
-		if _, err := io.WriteString(w.f, msg); err != nil {
+		if w.notice.Len() == 0 && w.dropped > 0 {
+			w.noticed = w.dropped
+			fmt.Fprintf(&w.notice,
+				"[roborev] dropped %d log bytes while disk logging was unavailable\n",
+				w.noticed,
+			)
+		}
+		if w.notice.Len() == 0 {
+			return nil
+		}
+		if err := w.flushBufferLocked(&w.notice); err != nil {
 			return err
 		}
-		w.dropped = 0
+		w.dropped -= w.noticed
+		if w.dropped < 0 {
+			w.dropped = 0
+		}
+		w.noticed = 0
 	}
-	return nil
 }
 
 func (w *jobLogWriter) handleWriteFailureLocked(err error) {
@@ -223,6 +237,9 @@ func (w *jobLogWriter) handleWriteFailureLocked(err error) {
 }
 
 func (w *jobLogWriter) bufferLocked(p []byte) {
+	if len(p) == 0 {
+		return
+	}
 	if w.buf.Len() >= maxBufferedJobLogBytes {
 		w.dropped += len(p)
 		return
@@ -234,4 +251,20 @@ func (w *jobLogWriter) bufferLocked(p []byte) {
 	}
 	_, _ = w.buf.Write(p[:remaining])
 	w.dropped += len(p) - remaining
+}
+
+func (w *jobLogWriter) flushBufferLocked(buf *bytes.Buffer) error {
+	for buf.Len() > 0 {
+		n, err := w.f.Write(buf.Bytes())
+		if n > 0 {
+			buf.Next(n)
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
