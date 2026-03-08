@@ -597,7 +597,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 			// the agent correctly did nothing — close as passing.
 			// If above-threshold findings exist, the agent failed
 			// to fix them — skip like the unfiltered path.
-			if minSev != "" && !config.HasFindingsAtOrAbove(currentFailedReview.Output, minSev) {
+			if minSev != "" && !storage.HasSeverityAtOrAbove(currentFailedReview.Output, minSev) {
 				fmt.Printf("Agent made no changes - all findings below %s severity, closing review\n", minSev)
 				comment := fmt.Sprintf("All findings are below %s severity — treating as passed", minSev)
 				if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", comment); err != nil {

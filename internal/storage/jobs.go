@@ -149,8 +149,41 @@ func stripFieldLabel(s string) string {
 // Requires separators to be followed by space to avoid "High-level overview".
 // Skips lines that appear to be part of a severity legend/rubric.
 func hasSeverityLabel(output string) bool {
+	return hasSeverityLabelForLevels(
+		output,
+		[]string{"critical", "high", "medium", "low"},
+	)
+}
+
+// allSeverities is the canonical severity order (highest first).
+var allSeverities = []string{"critical", "high", "medium", "low"}
+
+// severityRank maps a level name to its rank (higher = more severe).
+var severityRank = map[string]int{
+	"low": 0, "medium": 1, "high": 2, "critical": 3,
+}
+
+// HasSeverityAtOrAbove checks whether review output contains any
+// structured severity label at or above minSeverity. Uses the same
+// detection logic as ParseVerdict (separator requirements, legend
+// exclusion, markdown stripping). Returns true for empty or
+// unrecognized minSeverity (conservative default).
+func HasSeverityAtOrAbove(output, minSeverity string) bool {
+	minRank, ok := severityRank[strings.ToLower(minSeverity)]
+	if !ok {
+		return true
+	}
+	var levels []string
+	for _, s := range allSeverities {
+		if severityRank[s] >= minRank {
+			levels = append(levels, s)
+		}
+	}
+	return hasSeverityLabelForLevels(output, levels)
+}
+
+func hasSeverityLabelForLevels(output string, severities []string) bool {
 	lc := strings.ToLower(output)
-	severities := []string{"critical", "high", "medium", "low"}
 	lines := strings.Split(lc, "\n")
 
 	for i, line := range lines {

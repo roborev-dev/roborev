@@ -1002,26 +1002,6 @@ func SeverityInstruction(minSeverity string) string {
 		" severity.\n"
 }
 
-// sevLevelsAtOrAbove lists the severity keywords to look for when
-// checking whether review output contains findings at or above a
-// given threshold.
-var sevLevelsAtOrAbove = map[string]*regexp.Regexp{
-	"medium":   regexp.MustCompile(`(?i)\b(?:medium|high|critical)\b`),
-	"high":     regexp.MustCompile(`(?i)\b(?:high|critical)\b`),
-	"critical": regexp.MustCompile(`(?i)\bcritical\b`),
-}
-
-// HasFindingsAtOrAbove scans review output text for severity keywords
-// at or above minSeverity. Returns true if any are found, or if
-// minSeverity is empty/low/unrecognized (conservative default).
-func HasFindingsAtOrAbove(output, minSeverity string) bool {
-	pat, ok := sevLevelsAtOrAbove[minSeverity]
-	if !ok {
-		return true
-	}
-	return pat.MatchString(output)
-}
-
 // ResolveReviewReasoning determines reasoning level for reviews.
 // Priority: explicit > per-repo config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
