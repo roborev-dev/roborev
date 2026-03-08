@@ -41,6 +41,7 @@ func fixCmd() *cobra.Command {
 		agentName   string
 		model       string
 		reasoning   string
+		minSeverity string
 		quiet       bool
 		open        bool
 		unaddressed bool // deprecated alias for open
@@ -127,10 +128,11 @@ Examples:
 				return runFixList(cmd, effectiveBranch, newestFirst)
 			}
 			opts := fixOptions{
-				agentName: agentName,
-				model:     model,
-				reasoning: reasoning,
-				quiet:     quiet,
+				agentName:   agentName,
+				model:       model,
+				reasoning:   reasoning,
+				minSeverity: minSeverity,
+				quiet:       quiet,
 			}
 
 			if batch {
@@ -198,6 +200,7 @@ Examples:
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for fixes (default: from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough")
+	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
 	cmd.Flags().BoolVar(&open, "open", false, "fix all open completed jobs for the current repo")
 	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "deprecated: use --open")
@@ -214,10 +217,11 @@ Examples:
 }
 
 type fixOptions struct {
-	agentName string
-	model     string
-	reasoning string
-	quiet     bool
+	agentName   string
+	model       string
+	reasoning   string
+	minSeverity string
+	quiet       bool
 }
 
 // fixJobParams configures a fixJobDirect operation.
@@ -713,6 +717,14 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		return err
 	}
 
+	// Resolve minimum severity filter
+	minSev, err := config.ResolveFixMinSeverity(
+		opts.minSeverity, repoRoot,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve min-severity: %w", err)
+	}
+
 	if !opts.quiet {
 		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
 	}
@@ -731,7 +743,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		RepoRoot: repoRoot,
 		Agent:    fixAgent,
 		Output:   out,
-	}, buildGenericFixPrompt(review.Output))
+	}, buildGenericFixPrompt(review.Output, minSev))
 	if fmtr != nil {
 		fmtr.Flush()
 	}
@@ -892,6 +904,14 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		return err
 	}
 
+	// Resolve minimum severity filter
+	minSev, err := config.ResolveFixMinSeverity(
+		opts.minSeverity, repoRoot,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve min-severity: %w", err)
+	}
+
 	for i, batch := range batches {
 		batchJobIDs := make([]int64, len(batch))
 		for j, e := range batch {
@@ -911,7 +931,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
 		}
 
-		prompt := buildBatchFixPrompt(batch)
+		prompt := buildBatchFixPrompt(batch, minSev)
 
 		var out io.Writer
 		var fmtr *streamfmt.Formatter
@@ -1019,9 +1039,14 @@ func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 }
 
 // buildBatchFixPrompt creates a concatenated prompt from multiple reviews.
-func buildBatchFixPrompt(entries []batchEntry) string {
+// When minSeverity is non-empty, a severity filtering instruction is injected.
+func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 	var sb strings.Builder
 	sb.WriteString(batchPromptHeader)
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		sb.WriteString(inst)
+		sb.WriteString("\n")
+	}
 
 	for i, e := range entries {
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
@@ -1108,10 +1133,15 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 	})
 }
 
-// buildGenericFixPrompt creates a fix prompt without knowing the analysis type
-func buildGenericFixPrompt(analysisOutput string) string {
+// buildGenericFixPrompt creates a fix prompt without knowing the analysis type.
+// When minSeverity is non-empty, a severity filtering instruction is prepended.
+func buildGenericFixPrompt(analysisOutput, minSeverity string) string {
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		sb.WriteString(inst)
+		sb.WriteString("\n")
+	}
 	sb.WriteString("An analysis was performed and produced the following findings:\n\n")
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)

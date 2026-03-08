@@ -608,8 +608,10 @@ Be pragmatic - if previous attempts were rejected for being too minor, make more
 If they were rejected for being over-engineered, keep it simpler.
 `
 
-// BuildAddressPrompt constructs a prompt for addressing review findings
-func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, previousAttempts []storage.Response) (string, error) {
+// BuildAddressPrompt constructs a prompt for addressing review findings.
+// When minSeverity is non-empty, a severity filtering instruction is
+// injected before the findings section.
+func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, previousAttempts []storage.Response, minSeverity string) (string, error) {
 	var sb strings.Builder
 
 	// System prompt
@@ -631,6 +633,12 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 			sb.WriteString(attempt.Response)
 			sb.WriteString("\n\n")
 		}
+	}
+
+	// Severity filter instruction (before findings)
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		sb.WriteString(inst)
+		sb.WriteString("\n")
 	}
 
 	// Review findings section

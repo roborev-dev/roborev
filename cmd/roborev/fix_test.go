@@ -86,7 +86,7 @@ func TestBuildGenericFixPrompt(t *testing.T) {
 - Long function in main.go:50
 - Missing error handling`
 
-	prompt := buildGenericFixPrompt(analysisOutput)
+	prompt := buildGenericFixPrompt(analysisOutput, "")
 
 	// Should include the analysis output
 	if !strings.Contains(prompt, "Issues Found") {
@@ -1345,7 +1345,7 @@ func TestBuildBatchFixPrompt(t *testing.T) {
 		},
 	}
 
-	prompt := buildBatchFixPrompt(entries)
+	prompt := buildBatchFixPrompt(entries, "")
 
 	// Header
 	if !strings.Contains(prompt, "# Batch Fix Request") {
@@ -1387,7 +1387,7 @@ func TestBuildBatchFixPromptSingleEntry(t *testing.T) {
 		},
 	}
 
-	prompt := buildBatchFixPrompt(entries)
+	prompt := buildBatchFixPrompt(entries, "")
 	if !strings.Contains(prompt, "## Review 1 (Job 7") {
 		t.Error("single-entry batch should still have numbered header")
 	}
@@ -1482,7 +1482,7 @@ func TestSplitIntoBatches(t *testing.T) {
 		maxSize := 1000
 		batches := splitIntoBatches(entries, maxSize)
 		for i, batch := range batches {
-			prompt := buildBatchFixPrompt(batch)
+			prompt := buildBatchFixPrompt(batch, "")
 			// Single-entry batches that are inherently oversized are allowed to exceed.
 			if len(batch) > 1 && len(prompt) > maxSize {
 				t.Errorf("batch %d prompt size %d exceeds maxSize %d", i, len(prompt), maxSize)
@@ -2767,4 +2767,65 @@ func TestResolveFixAgentSameAsDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildGenericFixPromptMinSeverity(t *testing.T) {
+	output := "Found bug in foo.go"
+
+	t.Run("no filter", func(t *testing.T) {
+		p := buildGenericFixPrompt(output, "")
+		if strings.Contains(p, "Severity filter") {
+			t.Error("empty minSeverity should not inject filter")
+		}
+		if !strings.Contains(p, output) {
+			t.Error("prompt should contain the analysis output")
+		}
+	})
+
+	t.Run("high filter", func(t *testing.T) {
+		p := buildGenericFixPrompt(output, "high")
+		if !strings.Contains(p, "Severity filter") {
+			t.Error("high minSeverity should inject filter")
+		}
+		if !strings.Contains(p, "High and Critical") {
+			t.Error("instruction should mention High and Critical")
+		}
+		if !strings.Contains(p, output) {
+			t.Error("prompt should still contain the analysis output")
+		}
+	})
+
+	t.Run("low filter is no-op", func(t *testing.T) {
+		p := buildGenericFixPrompt(output, "low")
+		if strings.Contains(p, "Severity filter") {
+			t.Error("low minSeverity should not inject filter")
+		}
+	})
+}
+
+func TestBuildBatchFixPromptMinSeverity(t *testing.T) {
+	entries := []batchEntry{
+		{
+			jobID:  1,
+			job:    &storage.ReviewJob{GitRef: "abc123"},
+			review: &storage.Review{Output: "issue found"},
+		},
+	}
+
+	t.Run("no filter", func(t *testing.T) {
+		p := buildBatchFixPrompt(entries, "")
+		if strings.Contains(p, "Severity filter") {
+			t.Error("empty minSeverity should not inject filter")
+		}
+	})
+
+	t.Run("critical filter", func(t *testing.T) {
+		p := buildBatchFixPrompt(entries, "critical")
+		if !strings.Contains(p, "Severity filter") {
+			t.Error("critical minSeverity should inject filter")
+		}
+		if !strings.Contains(p, "Only include Critical") {
+			t.Error("instruction should mention Critical only")
+		}
+	})
 }

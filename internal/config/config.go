@@ -557,10 +557,12 @@ type RepoConfig struct {
 	ExcludedBranches       []string `toml:"excluded_branches"`
 	ExcludedCommitPatterns []string `toml:"excluded_commit_patterns"`
 	DisplayName            string   `toml:"display_name"`
-	ReviewReasoning        string   `toml:"review_reasoning"`   // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning        string   `toml:"refine_reasoning"`   // Reasoning level for refine: thorough, standard, fast
-	FixReasoning           string   `toml:"fix_reasoning"`      // Reasoning level for fix: thorough, standard, fast
-	PostCommitReview       string   `toml:"post_commit_review"` // "commit" (default) or "branch"
+	ReviewReasoning        string   `toml:"review_reasoning"`    // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning        string   `toml:"refine_reasoning"`    // Reasoning level for refine: thorough, standard, fast
+	FixReasoning           string   `toml:"fix_reasoning"`       // Reasoning level for fix: thorough, standard, fast
+	FixMinSeverity         string   `toml:"fix_min_severity"`    // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity      string   `toml:"refine_min_severity"` // Minimum severity for refine: critical, high, medium, low
+	PostCommitReview       string   `toml:"post_commit_review"`  // "commit" (default) or "branch"
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
@@ -979,6 +981,27 @@ func NormalizeMinSeverity(value string) (string, error) {
 	}
 }
 
+// severityAbove maps a minimum severity to the instruction
+// describing which levels to include.
+var severityAbove = map[string]string{
+	"critical": "Only include Critical findings.",
+	"high":     "Only include High and Critical findings.",
+	"medium":   "Only include Medium, High, and Critical findings.",
+}
+
+// SeverityInstruction returns a prompt instruction telling the agent
+// to focus only on findings at or above minSeverity. Returns "" for
+// empty, "low", or unrecognized input (no filtering needed).
+func SeverityInstruction(minSeverity string) string {
+	instruction, ok := severityAbove[minSeverity]
+	if !ok {
+		return ""
+	}
+	return "Severity filter: " + instruction +
+		" Ignore any findings below " + minSeverity +
+		" severity.\n"
+}
+
 // ResolveReviewReasoning determines reasoning level for reviews.
 // Priority: explicit > per-repo config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
@@ -1019,6 +1042,38 @@ func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 	}
 
 	return "standard", nil // Default for fix: balanced analysis
+}
+
+// ResolveFixMinSeverity determines minimum severity for fix.
+// Priority: explicit > per-repo config > "" (no filter)
+func ResolveFixMinSeverity(
+	explicit string, repoPath string,
+) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeMinSeverity(explicit)
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
+		repoCfg != nil &&
+		strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
+		return NormalizeMinSeverity(repoCfg.FixMinSeverity)
+	}
+	return "", nil
+}
+
+// ResolveRefineMinSeverity determines minimum severity for refine.
+// Priority: explicit > per-repo config > "" (no filter)
+func ResolveRefineMinSeverity(
+	explicit string, repoPath string,
+) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeMinSeverity(explicit)
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
+		repoCfg != nil &&
+		strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
+		return NormalizeMinSeverity(repoCfg.RefineMinSeverity)
+	}
+	return "", nil
 }
 
 // ResolveModel determines which model to use based on config priority:

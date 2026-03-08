@@ -31,6 +31,7 @@ type refineOptions struct {
 	agentName         string
 	model             string
 	reasoning         string
+	minSeverity       string
 	maxIterations     int
 	quiet             bool
 	allowUnsafeAgents bool
@@ -132,6 +133,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().StringVar(&opts.agentName, "agent", "", "agent to use for addressing findings (default: from config)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
+	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().IntVar(&opts.maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress agent output, show elapsed time instead")
@@ -375,6 +377,14 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	)
 	fmt.Printf("Using agent: %s\n", addressAgent.Name())
 
+	// Resolve minimum severity filter
+	minSev, err := config.ResolveRefineMinSeverity(
+		opts.minSeverity, repoPath,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve min-severity: %w", err)
+	}
+
 	// 3. Refinement loop
 	// Track current failed review - when a fix fails, we continue fixing it
 	// before moving on to the next oldest failed commit
@@ -501,7 +511,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Build address prompt
 		builder := prompt.NewBuilder(nil)
-		addressPrompt, err := builder.BuildAddressPrompt(repoPath, currentFailedReview, previousAttempts)
+		addressPrompt, err := builder.BuildAddressPrompt(repoPath, currentFailedReview, previousAttempts, minSev)
 		if err != nil {
 			return fmt.Errorf("build address prompt: %w", err)
 		}

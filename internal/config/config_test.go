@@ -2525,3 +2525,139 @@ gemini = ["default"]
 		)
 	}
 }
+
+func TestResolveMinSeverity(t *testing.T) {
+	type resolverFunc func(explicit string, dir string) (string, error)
+
+	runTests := func(
+		t *testing.T, name string, fn resolverFunc,
+		configKey string,
+	) {
+		t.Run(name, func(t *testing.T) {
+			tests := []struct {
+				testName   string
+				explicit   string
+				repoConfig string
+				want       string
+				wantErr    bool
+			}{
+				{
+					"default when no config",
+					"", "", "", false,
+				},
+				{
+					"repo config when explicit empty",
+					"",
+					fmt.Sprintf(`%s = "high"`, configKey),
+					"high", false,
+				},
+				{
+					"explicit overrides repo config",
+					"critical",
+					fmt.Sprintf(`%s = "medium"`, configKey),
+					"critical", false,
+				},
+				{
+					"explicit normalization",
+					"HIGH", "", "high", false,
+				},
+				{
+					"invalid explicit",
+					"bogus", "", "", true,
+				},
+				{
+					"invalid repo config",
+					"",
+					fmt.Sprintf(`%s = "invalid"`, configKey),
+					"", true,
+				},
+			}
+
+			for _, tt := range tests {
+				t.Run(tt.testName, func(t *testing.T) {
+					tmpDir := newTempRepo(t, tt.repoConfig)
+					got, err := fn(tt.explicit, tmpDir)
+					if (err != nil) != tt.wantErr {
+						t.Errorf(
+							"error = %v, wantErr %v",
+							err, tt.wantErr,
+						)
+					}
+					if !tt.wantErr && got != tt.want {
+						t.Errorf("got %q, want %q", got, tt.want)
+					}
+				})
+			}
+		})
+	}
+
+	runTests(t, "Fix", ResolveFixMinSeverity, "fix_min_severity")
+	runTests(t, "Refine", ResolveRefineMinSeverity, "refine_min_severity")
+}
+
+func TestSeverityInstruction(t *testing.T) {
+	tests := []struct {
+		name        string
+		minSeverity string
+		wantEmpty   bool
+		wantSubstr  string
+	}{
+		{
+			name:        "empty returns empty",
+			minSeverity: "",
+			wantEmpty:   true,
+		},
+		{
+			name:        "low returns empty",
+			minSeverity: "low",
+			wantEmpty:   true,
+		},
+		{
+			name:        "unknown returns empty",
+			minSeverity: "bogus",
+			wantEmpty:   true,
+		},
+		{
+			name:        "medium",
+			minSeverity: "medium",
+			wantSubstr:  "Medium, High, and Critical",
+		},
+		{
+			name:        "high",
+			minSeverity: "high",
+			wantSubstr:  "High and Critical",
+		},
+		{
+			name:        "critical",
+			minSeverity: "critical",
+			wantSubstr:  "Only include Critical",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SeverityInstruction(tt.minSeverity)
+			if tt.wantEmpty {
+				if got != "" {
+					t.Errorf(
+						"SeverityInstruction(%q) = %q, want empty",
+						tt.minSeverity, got,
+					)
+				}
+				return
+			}
+			if got == "" {
+				t.Fatalf(
+					"SeverityInstruction(%q) = empty, want non-empty",
+					tt.minSeverity,
+				)
+			}
+			if !strings.Contains(got, tt.wantSubstr) {
+				t.Errorf(
+					"SeverityInstruction(%q) = %q, missing %q",
+					tt.minSeverity, got, tt.wantSubstr,
+				)
+			}
+		})
+	}
+}
