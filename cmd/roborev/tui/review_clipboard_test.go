@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -155,23 +155,10 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	mock := &mockClipboard{}
 
-	// Create test server that returns a review
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review" {
-			t.Errorf("Expected /api/review, got %s", r.URL.Path)
-		}
-		jobID := r.URL.Query().Get("job_id")
-		if jobID != "123" {
-			t.Errorf("Expected job_id=123, got %s", jobID)
-		}
-		review := storage.Review{
-			ID:     1,
-			JobID:  123,
-			Agent:  "test",
-			Output: "Review content for clipboard",
-		}
-		json.NewEncoder(w).Encode(review)
-	})
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Review content for clipboard"},
+		nil,
+	))
 	m.clipboard = mock
 
 	// Execute fetchReviewAndCopy
@@ -191,6 +178,48 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	expectedContent := "Review #123\n\nReview content for clipboard"
 	if mock.lastText != expectedContent {
 		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
+	}
+}
+
+func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
+	mock := &mockClipboard{}
+
+	responses := []storage.Response{
+		{
+			ID:        1,
+			Responder: "dev",
+			Response:  "This is expected behavior",
+			CreatedAt: time.Date(2025, 3, 10, 9, 0, 0, 0, time.UTC),
+		},
+	}
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Found an issue"},
+		responses,
+	))
+	m.clipboard = mock
+
+	cmd := m.fetchReviewAndCopy(123, nil)
+	msg := cmd()
+
+	result, ok := msg.(clipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
+	}
+	if result.err != nil {
+		t.Errorf("Expected no error, got %v", result.err)
+	}
+
+	if !strings.Contains(mock.lastText, "Found an issue") {
+		t.Error("Expected review output in clipboard")
+	}
+	if !strings.Contains(mock.lastText, "--- Comments ---") {
+		t.Error("Expected comments section in clipboard")
+	}
+	if !strings.Contains(mock.lastText, "[Mar 10 09:00] dev:") {
+		t.Error("Expected comment header in clipboard")
+	}
+	if !strings.Contains(mock.lastText, "This is expected behavior") {
+		t.Error("Expected comment body in clipboard")
 	}
 }
 
@@ -487,10 +516,77 @@ func TestFormatClipboardContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatClipboardContent(tt.review)
+			got := formatClipboardContent(tt.review, nil)
 			if got != tt.expected {
 				t.Errorf("formatClipboardContent() = %q, want %q", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFormatClipboardContentWithResponses(t *testing.T) {
+	review := &storage.Review{
+		ID:     1,
+		JobID:  42,
+		Output: "Some findings here",
+	}
+	responses := []storage.Response{
+		{
+			ID:        1,
+			Responder: "alice",
+			Response:  "Known issue, ignoring",
+			CreatedAt: time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC),
+		},
+		{
+			ID:        2,
+			Responder: "bob",
+			Response:  "Fixed in next commit",
+			CreatedAt: time.Date(2025, 3, 15, 15, 0, 0, 0, time.UTC),
+		},
+	}
+
+	got := formatClipboardContent(review, responses)
+
+	// Should contain the review output
+	if !strings.Contains(got, "Some findings here") {
+		t.Errorf("Expected review output in result, got %q", got)
+	}
+
+	// Should contain the comments section
+	if !strings.Contains(got, "--- Comments ---") {
+		t.Errorf("Expected comments separator, got %q", got)
+	}
+
+	// Should contain each comment with timestamp and responder
+	if !strings.Contains(got, "[Mar 15 14:30] alice:") {
+		t.Errorf("Expected alice's comment header, got %q", got)
+	}
+	if !strings.Contains(got, "Known issue, ignoring") {
+		t.Errorf("Expected alice's comment body, got %q", got)
+	}
+	if !strings.Contains(got, "[Mar 15 15:00] bob:") {
+		t.Errorf("Expected bob's comment header, got %q", got)
+	}
+	if !strings.Contains(got, "Fixed in next commit") {
+		t.Errorf("Expected bob's comment body, got %q", got)
+	}
+}
+
+func TestFormatClipboardContentNoResponses(t *testing.T) {
+	review := &storage.Review{
+		ID:     1,
+		JobID:  42,
+		Output: "Review content",
+	}
+
+	withNil := formatClipboardContent(review, nil)
+	withEmpty := formatClipboardContent(review, []storage.Response{})
+
+	if withNil != withEmpty {
+		t.Errorf("nil and empty responses should produce same output")
+	}
+
+	if strings.Contains(withNil, "Comments") {
+		t.Error("Should not contain comments section with no responses")
 	}
 }

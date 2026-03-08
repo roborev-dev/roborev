@@ -132,6 +132,30 @@ Examples:
 				fmt.Println(review.Output)
 			}
 
+			// Fetch and display comments
+			commentsURL := addr + fmt.Sprintf(
+				"/api/comments?job_id=%d", review.JobID,
+			)
+			commentsResp, cErr := client.Get(commentsURL)
+			if cErr == nil {
+				defer commentsResp.Body.Close()
+				if commentsResp.StatusCode == http.StatusOK {
+					var result struct {
+						Responses []storage.Response `json:"responses"`
+					}
+					if json.NewDecoder(commentsResp.Body).Decode(&result) == nil &&
+						len(result.Responses) > 0 {
+						fmt.Println()
+						fmt.Println("--- Comments ---")
+						for _, r := range result.Responses {
+							ts := r.CreatedAt.Format("Jan 02 15:04")
+							fmt.Printf("\n[%s] %s:\n", ts, r.Responder)
+							fmt.Println(r.Response)
+						}
+					}
+				}
+			}
+
 			return nil
 		},
 	}

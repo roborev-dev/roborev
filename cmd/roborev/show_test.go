@@ -5,8 +5,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -210,4 +212,67 @@ func TestShowJSONOutput(t *testing.T) {
 			t.Errorf("--json should not contain separator, got: %s", output)
 		}
 	})
+}
+
+func TestShowIncludesComments(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	review := storage.Review{
+		ID: 1, JobID: 42, Output: "Found issues", Agent: "test",
+	}
+	responses := []storage.Response{
+		{
+			ID:        1,
+			Responder: "alice",
+			Response:  "This is expected",
+			CreatedAt: time.Date(2025, 6, 1, 10, 30, 0, 0, time.UTC),
+		},
+	}
+
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/review":
+			json.NewEncoder(w).Encode(review)
+		case "/api/comments":
+			json.NewEncoder(w).Encode(map[string]any{
+				"responses": responses,
+			})
+		}
+	}))
+
+	chdir(t, repo.Dir)
+	output := runShowCmd(t, "--job", "42")
+
+	if !strings.Contains(output, "Found issues") {
+		t.Errorf("expected review output, got: %s", output)
+	}
+	if !strings.Contains(output, "--- Comments ---") {
+		t.Errorf("expected comments separator, got: %s", output)
+	}
+	if !strings.Contains(output, "alice") {
+		t.Errorf("expected commenter name, got: %s", output)
+	}
+	if !strings.Contains(output, "This is expected") {
+		t.Errorf("expected comment text, got: %s", output)
+	}
+}
+
+func TestShowNoComments(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	mockReviewDaemon(t, storage.Review{
+		ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+	})
+
+	chdir(t, repo.Dir)
+	output := runShowCmd(t, "--job", "42")
+
+	if !strings.Contains(output, "LGTM") {
+		t.Errorf("expected review output, got: %s", output)
+	}
+	if strings.Contains(output, "Comments") {
+		t.Errorf("should not contain comments section when none exist, got: %s", output)
+	}
 }

@@ -192,7 +192,7 @@ func (m model) handleCommentOpenKey() (tea.Model, tea.Cmd) {
 
 func (m model) handleCopyKey() (tea.Model, tea.Cmd) {
 	if m.currentView == viewReview && m.currentReview != nil && m.currentReview.Output != "" {
-		return m, m.copyToClipboard(m.currentReview)
+		return m, m.copyToClipboard(m.currentReview, m.currentResponses)
 	} else if job, ok := m.selectedJob(); m.currentView == viewQueue && ok {
 		if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
 			jobCopy := *job

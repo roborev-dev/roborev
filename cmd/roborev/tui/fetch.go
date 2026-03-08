@@ -648,7 +648,9 @@ func (m model) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {
 			review.Job = job
 		}
 
-		content := formatClipboardContent(review)
+		responses := m.loadResponses(jobID, review)
+
+		content := formatClipboardContent(review, responses)
 		err = m.clipboard.WriteText(content)
 		return clipboardResultMsg{err: err, view: view}
 	}

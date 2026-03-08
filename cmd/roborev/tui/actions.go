@@ -22,7 +22,10 @@ import (
 // server API calls (close, cancel, rerun, comment, fix, apply patch),
 // and git operations (commit, worktree management).
 
-func formatClipboardContent(review *storage.Review) string {
+func formatClipboardContent(
+	review *storage.Review,
+	responses []storage.Response,
+) string {
 	if review == nil || review.Output == "" {
 		return ""
 	}
@@ -54,12 +57,29 @@ func formatClipboardContent(review *storage.Review) string {
 		}
 	}
 
-	return header + review.Output
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString(review.Output)
+
+	if len(responses) > 0 {
+		b.WriteString("\n\n--- Comments ---\n")
+		for _, r := range responses {
+			timestamp := r.CreatedAt.Format("Jan 02 15:04")
+			fmt.Fprintf(&b, "\n[%s] %s:\n", timestamp, r.Responder)
+			b.WriteString(r.Response)
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
 }
 
-func (m model) copyToClipboard(review *storage.Review) tea.Cmd {
+func (m model) copyToClipboard(
+	review *storage.Review,
+	responses []storage.Response,
+) tea.Cmd {
 	view := m.currentView // Capture view at trigger time
-	content := formatClipboardContent(review)
+	content := formatClipboardContent(review, responses)
 	return func() tea.Msg {
 		if content == "" {
 			return clipboardResultMsg{err: fmt.Errorf("no content to copy"), view: view}
