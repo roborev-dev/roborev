@@ -592,12 +592,14 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
 			wt.Close()
-			if minSev != "" {
-				// With a severity filter, "no changes" means all
-				// remaining findings are below threshold — treat
-				// as passing at the requested severity level.
-				fmt.Printf("Agent made no changes - all remaining findings below %s severity, closing review\n", minSev)
-				comment := fmt.Sprintf("All remaining findings are below %s severity — treating as passed", minSev)
+			// When a severity filter is active and the review
+			// contains no findings at or above the threshold,
+			// the agent correctly did nothing — close as passing.
+			// If above-threshold findings exist, the agent failed
+			// to fix them — skip like the unfiltered path.
+			if minSev != "" && !config.HasFindingsAtOrAbove(currentFailedReview.Output, minSev) {
+				fmt.Printf("Agent made no changes - all findings below %s severity, closing review\n", minSev)
+				comment := fmt.Sprintf("All findings are below %s severity — treating as passed", minSev)
 				if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", comment); err != nil {
 					fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 				}
