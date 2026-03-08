@@ -308,29 +308,16 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 }
 
 // resolveFixModel determines the model for a fix operation, skipping
-// generic default_model when the selected fix agent differs from the
-// generic default agent. In that case, an empty result lets the fix
-// agent keep its own built-in default model unless a fix-specific
-// model override is configured.
+// generic default_model when the actual fix agent that will run differs
+// from the generic default agent. In that case, an empty result lets
+// the fix agent keep its own built-in default model unless a
+// fix-specific model override is configured.
 func resolveFixModel(
-	cliAgent, cliModel, repoPath string,
+	selectedAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) string {
-	if cliModel != "" {
-		return config.ResolveModelForWorkflow(
-			cliModel, repoPath, cfg, "fix", reasoning,
-		)
-	}
-
-	selectedAgent := config.ResolveAgentForWorkflow(
-		cliAgent, repoPath, cfg, "fix", reasoning,
-	)
-	defaultAgent := config.ResolveAgent("", repoPath, cfg)
-	if agent.CanonicalName(selectedAgent) != agent.CanonicalName(defaultAgent) {
-		return config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
-	}
-	return config.ResolveModelForWorkflow(
-		"", repoPath, cfg, "fix", reasoning,
+	return agent.ResolveWorkflowModelForAgent(
+		selectedAgent, cliModel, repoPath, cfg, "fix", reasoning,
 	)
 }
 
@@ -364,7 +351,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	if usingBackup && opts.model == "" {
 		modelStr = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
 	} else {
-		modelStr = resolveFixModel(opts.agentName, opts.model, repoPath, cfg, reasoning)
+		modelStr = resolveFixModel(a.Name(), opts.model, repoPath, cfg, reasoning)
 	}
 
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)

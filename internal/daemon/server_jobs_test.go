@@ -1746,6 +1746,70 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 	}
 }
 
+func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	binDir := t.TempDir()
+	claudeName := "claude"
+	gitName := "git"
+	var gitWrapper []byte
+	var claudeScript []byte
+	if runtime.GOOS == "windows" {
+		claudeName += ".bat"
+		gitName += ".bat"
+		claudeScript = []byte("@exit /b 0\r\n")
+		gitWrapper = fmt.Appendf(nil, "@\"%s\" %%*\r\n", gitPath)
+	} else {
+		claudeScript = []byte("#!/bin/sh\nexit 0\n")
+		gitWrapper = fmt.Appendf(nil, "#!/bin/sh\nexec %q \"$@\"\n", gitPath)
+	}
+	claudePath := filepath.Join(binDir, claudeName)
+	if err := os.WriteFile(claudePath, claudeScript, 0o755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, gitName), gitWrapper, 0o755); err != nil {
+		t.Fatalf("write git wrapper: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+	headSHA := testutil.GetHeadSHA(t, repoDir)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = "claude-code"
+	cfg.DefaultModel = "gpt-5.4"
+	cfg.ReviewAgent = "codex"
+	server := NewServer(db, cfg, "")
+
+	reqData := EnqueueRequest{
+		RepoPath:  repoDir,
+		CommitSHA: headSHA,
+	}
+	req := testutil.MakeJSONRequest(
+		t, http.MethodPost, "/api/enqueue", reqData,
+	)
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+
+	if job.Agent != "claude-code" {
+		t.Fatalf("agent = %q, want %q", job.Agent, "claude-code")
+	}
+	if job.Model != "gpt-5.4" {
+		t.Fatalf("model = %q, want %q", job.Model, "gpt-5.4")
+	}
+}
+
 func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	// Compact jobs should use fix reasoning defaults ("standard"),
 	// not review reasoning defaults ("thorough").

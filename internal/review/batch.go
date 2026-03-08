@@ -96,9 +96,6 @@ func runSingle(
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
 		backupAgent = config.ResolveBackupAgentForWorkflow(
 			cfg.RepoPath, cfg.GlobalConfig, workflow)
-		model = config.ResolveModelForWorkflow(
-			"", cfg.RepoPath,
-			cfg.GlobalConfig, workflow, cfg.Reasoning)
 	}
 
 	var resolvedAgent agent.Agent
@@ -124,6 +121,12 @@ func runSingle(
 			model = config.ResolveBackupModelForWorkflow(
 				cfg.RepoPath, cfg.GlobalConfig, workflow)
 		}
+	}
+	if err == nil && cfg.GlobalConfig != nil && model == "" {
+		model = agent.ResolveWorkflowModelForAgent(
+			resolvedAgent.Name(), "", cfg.RepoPath,
+			cfg.GlobalConfig, workflow, cfg.Reasoning,
+		)
 	}
 
 	if err != nil {

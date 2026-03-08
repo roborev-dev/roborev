@@ -588,7 +588,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if usingBackup && cfg.CI.Model == "" {
 			resolvedModel = config.ResolveBackupModelForWorkflow(repo.RootPath, cfg, workflow)
 		} else {
-			resolvedModel = config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
+			resolvedModel = agent.ResolveWorkflowModelForAgent(
+				resolvedAgent, cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning,
+			)
 		}
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{

@@ -817,7 +817,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	if usingBackup && model == "" {
 		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
 	} else {
-		model = resolveFixModel(agentName, model, repoPath, cfg, reasoning)
+		model = resolveFixModel(a.Name(), model, repoPath, cfg, reasoning)
 	}
 
 	// Configure agent: agentic mode, with model and reasoning
