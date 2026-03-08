@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func TestIsValidConsolidatedReview(t *testing.T) {
@@ -422,5 +425,41 @@ func TestWriteCompactMetadata(t *testing.T) {
 				t.Errorf("Expected SourceJobIDs %v, got %v", tt.sourceIDs, metadata.SourceJobIDs)
 			}
 		})
+	}
+}
+
+func TestCompactWorktreeBranchResolution(t *testing.T) {
+	var receivedRepo, receivedBranch string
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			receivedRepo = r.URL.Query().Get("repo")
+			receivedBranch = r.URL.Query().Get("branch")
+			writeJSON(w, map[string]any{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+		}).
+		Build()
+
+	repo, worktreeDir := setupWorktree(t)
+	chdir(t, worktreeDir)
+
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	opts := compactOptions{quiet: true}
+	_ = runCompact(cmd, opts)
+
+	if receivedRepo == "" {
+		t.Fatal("expected repo param to be sent")
+	}
+	if receivedRepo != repo.Dir {
+		t.Errorf("repo: want main repo %q, got %q",
+			repo.Dir, receivedRepo)
+	}
+	if receivedBranch != "wt-branch" {
+		t.Errorf("branch: want worktree branch %q, got %q",
+			"wt-branch", receivedBranch)
 	}
 }

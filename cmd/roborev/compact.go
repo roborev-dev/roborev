@@ -314,6 +314,12 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
+	// Use worktree root for branch detection, main repo root for
+	// API queries (daemon stores jobs under the main repo path).
+	localRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		localRoot = root
+	}
 	repoRoot := workDir
 	if root, err := git.GetMainRepoRoot(workDir); err == nil {
 		repoRoot = root
@@ -321,7 +327,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	branchFilter := opts.branch
 	if !opts.allBranches && branchFilter == "" {
-		branchFilter = git.GetCurrentBranch(repoRoot)
+		branchFilter = git.GetCurrentBranch(localRoot)
 	}
 
 	// Query and limit jobs, excluding non-review types (compact, task)
