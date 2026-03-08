@@ -1189,8 +1189,8 @@ func applyModelForAgent(
 			repoPath, cfg, workflow,
 		)
 	} else {
-		model = config.ResolveModelForWorkflow(
-			cliModel, repoPath, cfg, workflow, reasoning,
+		model = agent.ResolveWorkflowModelForAgent(
+			a.Name(), cliModel, repoPath, cfg, workflow, reasoning,
 		)
 	}
 

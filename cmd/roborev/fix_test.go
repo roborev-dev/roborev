@@ -26,6 +26,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func patchFixDaemonRetryForTest(t *testing.T, ensure func() error) {
@@ -2597,6 +2598,62 @@ fix_model = "gemini-2.5-pro"
 	}
 }
 
+func TestResolveFixAgentSkipsDefaultModelForConfiguredFixAgent(t *testing.T) {
+	// When fix_agent differs from default_agent and no fix_model is set,
+	// the fix agent should keep its own built-in default model.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+fix_agent = "claude"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+
+	modelStr := resolveFixModel("claude-code", "", tmpDir, cfg, "standard")
+	if modelStr != "" {
+		t.Fatalf("expected empty model so claude keeps its default, got %q", modelStr)
+	}
+}
+
+func TestResolveFixAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
+	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+default_agent = "codex"
+default_model = "gpt-5.4"
+fix_agent = "claude"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, err := resolveFixAgent(tmpDir, fixOptions{})
+	if err != nil {
+		t.Fatalf("resolveFixAgent: %v", err)
+	}
+
+	codexAgent, ok := selected.(*agent.CodexAgent)
+	if !ok {
+		t.Fatalf("expected codex fallback agent, got %T", selected)
+	}
+	if codexAgent.Model != "gpt-5.4" {
+		t.Fatalf("expected fallback codex agent to use default_model, got %q", codexAgent.Model)
+	}
+}
+
 func TestResolveFixAgentUsesRepoWorkflowModel(t *testing.T) {
 	// Repo-level workflow-specific models should be used even when
 	// --agent is overridden on CLI.
@@ -2703,9 +2760,7 @@ func TestResolveFixAgentSameAsDefault(t *testing.T) {
 			}
 
 			// Call the production resolveFixModel function directly
-			modelStr := resolveFixModel(
-				tt.cliAgent, "", tmpDir, cfg, "fast",
-			)
+			modelStr := resolveFixModel(tt.cliAgent, "", tmpDir, cfg, "fast")
 
 			if modelStr != tt.wantModel {
 				t.Errorf("model = %q, want %q", modelStr, tt.wantModel)

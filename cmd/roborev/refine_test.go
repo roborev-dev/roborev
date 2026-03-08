@@ -1087,6 +1087,41 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 	}
 }
 
+func TestApplyModelForAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
+	a, err := agent.Get("codex")
+	if err != nil {
+		t.Fatalf("agent.Get: %v", err)
+	}
+
+	cfg := &config.Config{
+		DefaultAgent: "codex",
+		DefaultModel: "gpt-5.4",
+		ReviewAgent:  "claude",
+	}
+
+	result, model := applyModelForAgent(
+		a,
+		"claude", // preferred but unavailable
+		"",       // no backup
+		"",       // no CLI model
+		"",       // no repo path
+		cfg,
+		"review",
+		"standard",
+	)
+
+	codexAgent, ok := result.(*agent.CodexAgent)
+	if !ok {
+		t.Fatalf("expected *CodexAgent, got %T", result)
+	}
+	if model != "gpt-5.4" {
+		t.Fatalf("expected default model for actual fallback agent, got %q", model)
+	}
+	if codexAgent.Model != "gpt-5.4" {
+		t.Fatalf("expected codex fallback agent to use default_model, got %q", codexAgent.Model)
+	}
+}
+
 func TestRefineFlagValidation(t *testing.T) {
 	tests := []struct {
 		name    string

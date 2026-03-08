@@ -742,27 +742,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		agent.CanonicalName(agentName) == agent.CanonicalName(backupAgent) &&
 		agent.CanonicalName(agentName) != agent.CanonicalName(preferredAgent)
 
-	// Resolve model for workflow at this reasoning level.
-	// When the requested agent differs from what config resolves by
-	// default, skip generic default_model — it's paired with the
-	// default agent and may be incompatible with the override.
-	configAgent := config.ResolveAgentForWorkflow(
-		"", repoRoot, cfg, workflow, reasoning,
-	)
-	agentChanged := req.Agent != "" &&
-		agent.CanonicalName(req.Agent) != agent.CanonicalName(configAgent)
 	var model string
 	if usingBackup && req.Model == "" {
 		model = config.ResolveBackupModelForWorkflow(
 			repoRoot, cfg, workflow,
 		)
-	} else if agentChanged && req.Model == "" {
-		model = config.ResolveWorkflowModel(
-			repoRoot, cfg, workflow, reasoning,
-		)
 	} else {
-		model = config.ResolveModelForWorkflow(
-			req.Model, repoRoot, cfg, workflow, reasoning,
+		model = agent.ResolveWorkflowModelForAgent(
+			agentName, req.Model, repoRoot, cfg, workflow, reasoning,
 		)
 	}
 
