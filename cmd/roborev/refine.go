@@ -592,11 +592,25 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
 			wt.Close()
-			fmt.Println("Agent made no changes - skipping this review")
-			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
-				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
+			if minSev != "" {
+				// With a severity filter, "no changes" means all
+				// remaining findings are below threshold — treat
+				// as passing at the requested severity level.
+				fmt.Printf("Agent made no changes - all remaining findings below %s severity, closing review\n", minSev)
+				comment := fmt.Sprintf("All remaining findings are below %s severity — treating as passed", minSev)
+				if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", comment); err != nil {
+					fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
+				}
+				if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
+					fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
+				}
+			} else {
+				fmt.Println("Agent made no changes - skipping this review")
+				if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
+					fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
+				}
+				skippedReviews[currentFailedReview.ID] = true
 			}
-			skippedReviews[currentFailedReview.ID] = true
 			currentFailedReview = nil
 			continue
 		}
