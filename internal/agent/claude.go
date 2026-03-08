@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -135,7 +134,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	cmd.WaitDelay = 5 * time.Second
+	configureSubprocess(cmd)
 
 	// Strip CLAUDECODE to prevent nested-session detection (#270),
 	// and handle API key (configured key or subscription auth).
@@ -153,6 +152,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
+	closeOnContextDone(ctx, stdoutPipe)
 	cmd.Stderr = &stderr
 
 	// Always pipe prompt via stdin (stream-json mode)
@@ -184,6 +184,10 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			fmt.Fprintf(&detail, "\npartial output: %s", partial)
 		}
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 
 	if err != nil {

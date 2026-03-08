@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // CursorAgent runs code reviews using the Cursor agent CLI
@@ -112,7 +111,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	cmd.WaitDelay = 5 * time.Second
+	configureSubprocess(cmd)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	var stderr bytes.Buffer
@@ -120,6 +119,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
+	closeOnContextDone(ctx, stdoutPipe)
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
@@ -134,6 +134,10 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			return "", fmt.Errorf("cursor agent failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
 		}
 		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", waitErr, stderr.String())
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 
 	if err != nil {

@@ -158,6 +158,7 @@ func (a *PiAgent) Review(
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+	configureSubprocess(cmd)
 
 	// Capture stdout for the result
 	var stdoutBuf bytes.Buffer

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // maxPromptArgLen is a conservative limit for passing prompts as
@@ -150,7 +149,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	cmd.WaitDelay = 5 * time.Second
+	configureSubprocess(cmd)
 
 	// kiro-cli emits ANSI terminal escape codes that are not
 	// suitable for streaming. Capture and return stripped text.

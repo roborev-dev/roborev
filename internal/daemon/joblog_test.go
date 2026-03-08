@@ -168,18 +168,13 @@ func TestCleanJobLogs(t *testing.T) {
 	})
 }
 
-func TestSafeWriter(t *testing.T) {
-	t.Run("normal_writes", func(t *testing.T) {
+func TestJobLogWriter(t *testing.T) {
+	t.Run("writes_immediately", func(t *testing.T) {
 		setupTestEnv(t)
-		f := openJobLog(200)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
-		defer f.Close()
+		w := newJobLogWriter(200)
+		defer w.Close()
 
-		sw := &safeWriter{w: f}
-
-		n, err := sw.Write([]byte("line 1\n"))
+		n, err := w.Write([]byte("line 1\n"))
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -187,7 +182,7 @@ func TestSafeWriter(t *testing.T) {
 			t.Errorf("Write returned %d, want 7", n)
 		}
 
-		n, err = sw.Write([]byte("line 2\n"))
+		n, err = w.Write([]byte("line 2\n"))
 		if err != nil {
 			t.Fatalf("Write error: %v", err)
 		}
@@ -195,41 +190,90 @@ func TestSafeWriter(t *testing.T) {
 			t.Errorf("Write returned %d, want 7", n)
 		}
 
-		f.Close()
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
 		data, _ := os.ReadFile(JobLogPath(200))
 		if string(data) != "line 1\nline 2\n" {
 			t.Errorf("contents = %q", data)
 		}
 	})
 
-	t.Run("swallows_errors", func(t *testing.T) {
+	t.Run("retries_after_initial_open_failure", func(t *testing.T) {
 		setupTestEnv(t)
-		f := openJobLog(201)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
+		prevRetry := jobLogOpenRetryInterval
+		jobLogOpenRetryInterval = 0
+		t.Cleanup(func() {
+			jobLogOpenRetryInterval = prevRetry
+		})
+
+		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
+		if err := os.MkdirAll(logsDir, 0700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
 		}
 
-		// Close the file to force write errors
-		f.Close()
+		w := newJobLogWriter(201)
+		if _, err := w.Write([]byte("line 1\n")); err != nil {
+			t.Fatalf("Write while blocked: %v", err)
+		}
 
-		sw := &safeWriter{w: f}
+		if err := os.Remove(JobLogDir()); err != nil {
+			t.Fatalf("Remove blocker: %v", err)
+		}
 
-		// First write should fail internally but report success
-		n, err := sw.Write([]byte("data"))
+		if _, err := w.Write([]byte("line 2\n")); err != nil {
+			t.Fatalf("Write after recovery: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		data, err := os.ReadFile(JobLogPath(201))
 		if err != nil {
-			t.Fatalf("safeWriter should not return errors, got: %v", err)
+			t.Fatalf("ReadFile: %v", err)
 		}
-		if n != 4 {
-			t.Errorf("Write returned %d, want 4", n)
+		if string(data) != "line 1\nline 2\n" {
+			t.Errorf("contents = %q, want %q", data, "line 1\nline 2\n")
+		}
+	})
+
+	t.Run("flushes_buffer_on_close_after_recovery", func(t *testing.T) {
+		setupTestEnv(t)
+		prevRetry := jobLogOpenRetryInterval
+		jobLogOpenRetryInterval = 0
+		t.Cleanup(func() {
+			jobLogOpenRetryInterval = prevRetry
+		})
+
+		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
+		if err := os.MkdirAll(logsDir, 0700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
 		}
 
-		// Subsequent writes should also silently succeed
-		n, err = sw.Write([]byte("more data"))
-		if err != nil {
-			t.Fatalf("safeWriter should not return errors, got: %v", err)
+		w := newJobLogWriter(202)
+		if _, err := w.Write([]byte("buffered\n")); err != nil {
+			t.Fatalf("Write while blocked: %v", err)
 		}
-		if n != 9 {
-			t.Errorf("Write returned %d, want 9", n)
+
+		if err := os.Remove(JobLogDir()); err != nil {
+			t.Fatalf("Remove blocker: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		data, err := os.ReadFile(JobLogPath(202))
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(data) != "buffered\n" {
+			t.Errorf("contents = %q, want %q", data, "buffered\n")
 		}
 	})
 }

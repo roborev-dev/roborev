@@ -10,7 +10,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
@@ -117,7 +116,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	cmd.WaitDelay = 5 * time.Second
+	configureSubprocess(cmd)
 
 	// Pipe prompt via stdin
 	cmd.Stdin = strings.NewReader(prompt)
@@ -130,6 +129,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
+	closeOnContextDone(ctx, stdoutPipe)
 	// Tee stderr to output writer for live error visibility
 	if sw != nil {
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
@@ -149,6 +149,10 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			return "", fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderr.String()))
 		}
 		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderr.String()))
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 
 	if parseErr != nil {

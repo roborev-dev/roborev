@@ -106,6 +106,7 @@ func (a *KiloAgent) Review(
 	cmd := exec.CommandContext(ctx, a.Command, a.buildArgs()...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
+	configureSubprocess(cmd)
 
 	sw := newSyncWriter(output)
 
@@ -120,6 +121,7 @@ func (a *KiloAgent) Review(
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
+	closeOnContextDone(ctx, stdoutPipe)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start kilo: %w", err)
@@ -163,6 +165,10 @@ func (a *KiloAgent) Review(
 			)
 		}
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 
 	if parseErr != nil {

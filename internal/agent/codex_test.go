@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
@@ -113,6 +114,39 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 	}
 	if !strings.Contains(string(args), codexAutoApproveFlag) {
 		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+	}
+}
+
+func TestCodexReviewTimeoutClosesStdoutPipe(t *testing.T) {
+	skipIfWindows(t)
+
+	prevWaitDelay := subprocessWaitDelay
+	subprocessWaitDelay = 20 * time.Millisecond
+	t.Cleanup(func() {
+		subprocessWaitDelay = prevWaitDelay
+	})
+
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo "usage `+codexAutoApproveFlag+`"
+  exit 0
+fi
+(sleep 2) &
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+exit 0
+`)
+
+	a := NewCodexAgent(cmdPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := a.Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Review hung for %v after timeout", elapsed)
 	}
 }
 

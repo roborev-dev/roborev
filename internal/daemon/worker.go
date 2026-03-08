@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -434,17 +435,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
 
-	// Tee raw agent output to a per-job log file on disk
-	logFile := openJobLog(job.ID)
-	if logFile != nil {
-		defer logFile.Close()
-	}
-	var agentOutput io.Writer = outputWriter
-	if logFile != nil {
-		agentOutput = io.MultiWriter(
-			outputWriter, &safeWriter{w: logFile},
-		)
-	}
+	// Tee raw agent output to a per-job log file on disk. The writer retries
+	// transient filesystem failures so resource pressure does not permanently
+	// disable logging for the rest of the job.
+	jobLog := newJobLogWriter(job.ID)
+	defer func() {
+		if err := jobLog.Close(); err != nil {
+			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, err)
+		}
+	}()
+	agentOutput := io.MultiWriter(outputWriter, jobLog)
 	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
@@ -494,6 +494,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				Agent:    agentName,
 			})
 			return // Job already marked as canceled in DB, nothing more to do
+		}
+		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+			timeoutErr := fmt.Sprintf(
+				"agent timeout after %s",
+				(time.Duration(timeoutMinutes) * time.Minute).Round(time.Second),
+			)
+			log.Printf("[%s] Job %d timed out: %v", workerID, job.ID, err)
+			wp.failOrRetryAgent(workerID, job, agentName, timeoutErr)
+			return
 		}
 		log.Printf("[%s] Agent error on job %d: %v",
 			workerID, job.ID, err)

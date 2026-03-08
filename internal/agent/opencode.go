@@ -93,6 +93,7 @@ func (a *OpenCodeAgent) Review(
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
+	configureSubprocess(cmd)
 
 	// Share a single syncWriter so stdout and stderr writes
 	// to the output writer are serialized by one mutex.
@@ -109,6 +110,7 @@ func (a *OpenCodeAgent) Review(
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
+	closeOnContextDone(ctx, stdoutPipe)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start opencode: %w", err)
@@ -140,6 +142,10 @@ func (a *OpenCodeAgent) Review(
 			fmt.Fprintf(&detail, "\npartial output: %s", partial)
 		}
 		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 
 	if parseErr != nil {
