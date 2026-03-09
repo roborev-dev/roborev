@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -730,6 +731,34 @@ func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Error("live socket was deleted")
+	}
+}
+
+func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
+	path := shortSocketPath(t, "dgram")
+	// Create a DGRAM socket — dial with STREAM will fail with a
+	// non-ECONNREFUSED error, which should NOT be treated as stale.
+	fd, err := syscall.Socket(
+		syscall.AF_UNIX, syscall.SOCK_DGRAM, 0,
+	)
+	if err != nil {
+		t.Fatalf("create dgram socket fd: %v", err)
+	}
+	defer syscall.Close(fd)
+	if err := syscall.Bind(
+		fd, &syscall.SockaddrUnix{Name: path},
+	); err != nil {
+		t.Fatalf("bind dgram socket: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(path) })
+
+	err = removeStaleSocket(path)
+	if err == nil {
+		t.Fatal("expected error for incompatible socket, got nil")
+	}
+	// The socket must not have been removed.
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Error("incompatible socket was deleted")
 	}
 }
 
