@@ -620,13 +620,20 @@ func TestControlSocketRoundtrip(t *testing.T) {
 
 	// Provide a pipe for stdin so the program doesn't block on TTY.
 	r, w, _ := os.Pipe()
-	t.Cleanup(func() { w.Close(); r.Close() })
 	p := tea.NewProgram(m,
 		tea.WithoutRenderer(),
 		tea.WithInput(r),
 	)
-	go func() { _, _ = p.Run() }()
-	t.Cleanup(func() { p.Kill() })
+	runDone := make(chan struct{})
+	go func() { _, _ = p.Run(); close(runDone) }()
+	t.Cleanup(func() {
+		// Close the write end first so bubbletea's readLoop
+		// sees EOF and exits before Kill's shutdown closes the
+		// cancel reader, avoiding a data race on the fd.
+		w.Close()
+		p.Kill()
+		<-runDone
+	})
 
 	// Give the program time to complete Init() and reach its
 	// steady-state event loop.
