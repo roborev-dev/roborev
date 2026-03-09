@@ -904,6 +904,30 @@ func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
 	require.ErrorContains(t, err, "unknown agent")
 }
 
+func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {
+	fakeBin := t.TempDir()
+	binName := "gemini"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	geminiPath := filepath.Join(fakeBin, binName)
+	err := os.WriteFile(geminiPath, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	require.NoError(t, err, "create fake gemini binary: %v", err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":  NewCodexAgent("definitely-not-on-path"),
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{}
+	resolved, err := GetAvailableWithConfig("codex", cfg, "gemini")
+	require.NoError(t, err, "expected fallback, got error: %v", err)
+	assert.Equal(t, "gemini", resolved.Name(), "expected backup agent to be selected")
+}
+
 func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 
 	fakeBin := t.TempDir()
