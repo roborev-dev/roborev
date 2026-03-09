@@ -13,6 +13,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- Unit tests for control types ---
@@ -31,10 +33,8 @@ func TestViewKindString(t *testing.T) {
 		{viewKind(999), "unknown"},
 	}
 	for _, tt := range tests {
-		if got := tt.v.String(); got != tt.want {
-			t.Errorf("viewKind(%d).String() = %q, want %q",
-				tt.v, got, tt.want)
-		}
+		assert.Equal(t, tt.want, tt.v.String(),
+			"viewKind(%d).String()", tt.v)
 	}
 }
 
@@ -49,10 +49,8 @@ func TestParseViewKind(t *testing.T) {
 		{"review", viewKind(-1)}, // only queue and tasks are settable
 	}
 	for _, tt := range tests {
-		if got := parseViewKind(tt.s); got != tt.want {
-			t.Errorf("parseViewKind(%q) = %d, want %d",
-				tt.s, got, tt.want)
-		}
+		assert.Equal(t, tt.want, parseViewKind(tt.s),
+			"parseViewKind(%q)", tt.s)
 	}
 }
 
@@ -70,10 +68,10 @@ func TestIsControlCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		isQ, isM := isControlCommand(tt.cmd)
-		if isQ != tt.wantQuery || isM != tt.wantMutate {
-			t.Errorf("isControlCommand(%q) = (%v, %v), want (%v, %v)",
-				tt.cmd, isQ, isM, tt.wantQuery, tt.wantMutate)
-		}
+		assert.Equal(t, tt.wantQuery, isQ,
+			"isControlCommand(%q) query", tt.cmd)
+		assert.Equal(t, tt.wantMutate, isM,
+			"isControlCommand(%q) mutate", tt.cmd)
 	}
 }
 
@@ -89,23 +87,13 @@ func TestBuildStateResponse(t *testing.T) {
 	m.hideClosed = true
 
 	resp := m.buildStateResponse()
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 
 	data, ok := resp.Data.(stateSnapshot)
-	if !ok {
-		t.Fatalf("expected stateSnapshot, got %T", resp.Data)
-	}
-	if data.View != "queue" {
-		t.Errorf("view = %q, want %q", data.View, "queue")
-	}
-	if data.JobCount != 2 {
-		t.Errorf("job count = %d, want 2", data.JobCount)
-	}
-	if !data.HideClosed {
-		t.Error("hide_closed should be true")
-	}
+	require.True(t, ok, "expected stateSnapshot, got %T", resp.Data)
+	assert.Equal(t, "queue", data.View)
+	assert.Equal(t, 2, data.JobCount)
+	assert.True(t, data.HideClosed)
 }
 
 func TestBuildFilterResponse(t *testing.T) {
@@ -116,9 +104,7 @@ func TestBuildFilterResponse(t *testing.T) {
 	m.filterStack = []string{"repo", "branch"}
 
 	resp := m.buildFilterResponse()
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 }
 
 func TestBuildJobsResponse(t *testing.T) {
@@ -129,21 +115,12 @@ func TestBuildJobsResponse(t *testing.T) {
 	}
 
 	resp := m.buildJobsResponse()
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 
 	jobs, ok := resp.Data.([]jobSnapshot)
-	if !ok {
-		t.Fatalf("expected []jobSnapshot, got %T", resp.Data)
-	}
-	if len(jobs) != 2 {
-		t.Fatalf("got %d jobs, want 2", len(jobs))
-	}
-	if jobs[0].Agent != "claude-code" {
-		t.Errorf("job[0].Agent = %q, want %q",
-			jobs[0].Agent, "claude-code")
-	}
+	require.True(t, ok, "expected []jobSnapshot, got %T", resp.Data)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, "claude-code", jobs[0].Agent)
 }
 
 func TestBuildSelectedResponse_NoSelection(t *testing.T) {
@@ -151,13 +128,9 @@ func TestBuildSelectedResponse_NoSelection(t *testing.T) {
 	m.selectedIdx = -1
 
 	resp := m.buildSelectedResponse()
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 	data := resp.Data.(selectedSnapshot)
-	if data.Job != nil {
-		t.Error("expected nil job when nothing selected")
-	}
+	assert.Nil(t, data.Job)
 }
 
 func TestBuildSelectedResponse_WithSelection(t *testing.T) {
@@ -170,17 +143,10 @@ func TestBuildSelectedResponse_WithSelection(t *testing.T) {
 
 	resp := m.buildSelectedResponse()
 	data := resp.Data.(selectedSnapshot)
-	if data.Job == nil {
-		t.Fatal("expected non-nil job")
-	}
-	if data.Job.ID != 42 {
-		t.Errorf("job ID = %d, want 42", data.Job.ID)
-	}
-	if !data.HasReview {
-		t.Error(
-			"expected has_review=true for done job with closed field",
-		)
-	}
+	require.NotNil(t, data.Job)
+	assert.EqualValues(t, 42, data.Job.ID)
+	assert.True(t, data.HasReview,
+		"expected has_review=true for done job with closed field")
 }
 
 // --- Unit tests for mutation handlers ---
@@ -195,21 +161,10 @@ func TestHandleCtrlSetFilter(t *testing.T) {
 		"branch": branch,
 	})
 	updated, resp, _ := m.handleCtrlSetFilter(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if len(updated.activeRepoFilter) != 1 ||
-		updated.activeRepoFilter[0] != repo {
-		t.Errorf("repo filter = %v, want [%s]",
-			updated.activeRepoFilter, repo)
-	}
-	if updated.activeBranchFilter != branch {
-		t.Errorf("branch filter = %q, want %q",
-			updated.activeBranchFilter, branch)
-	}
-	if updated.selectedIdx != -1 {
-		t.Errorf("selectedIdx = %d, want -1", updated.selectedIdx)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, []string{repo}, updated.activeRepoFilter)
+	assert.Equal(t, branch, updated.activeBranchFilter)
+	assert.Equal(t, -1, updated.selectedIdx)
 }
 
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
@@ -218,12 +173,8 @@ func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{"repo": "/test/repo"})
 	_, resp, _ := m.handleCtrlSetFilter(params)
-	if resp.OK {
-		t.Fatal("expected error for locked repo filter")
-	}
-	if resp.Error == "" {
-		t.Error("expected non-empty error message")
-	}
+	require.False(t, resp.OK, "expected error for locked repo filter")
+	assert.NotEmpty(t, resp.Error)
 }
 
 func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
@@ -232,9 +183,7 @@ func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{"branch": "main"})
 	_, resp, _ := m.handleCtrlSetFilter(params)
-	if resp.OK {
-		t.Fatal("expected error for locked branch filter")
-	}
+	require.False(t, resp.OK, "expected error for locked branch filter")
 }
 
 func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
@@ -245,13 +194,8 @@ func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
 	empty := ""
 	params, _ := json.Marshal(map[string]*string{"repo": &empty})
 	updated, resp, _ := m.handleCtrlSetFilter(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if updated.activeRepoFilter != nil {
-		t.Errorf("expected nil repo filter, got %v",
-			updated.activeRepoFilter)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Nil(t, updated.activeRepoFilter)
 }
 
 func TestHandleCtrlClearFilter(t *testing.T) {
@@ -264,17 +208,9 @@ func TestHandleCtrlClearFilter(t *testing.T) {
 		"repo": true, "branch": true,
 	})
 	updated, resp, _ := m.handleCtrlClearFilter(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if updated.activeRepoFilter != nil {
-		t.Errorf("repo filter should be nil, got %v",
-			updated.activeRepoFilter)
-	}
-	if updated.activeBranchFilter != "" {
-		t.Errorf("branch filter should be empty, got %q",
-			updated.activeBranchFilter)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Nil(t, updated.activeRepoFilter)
+	assert.Empty(t, updated.activeBranchFilter)
 }
 
 func TestHandleCtrlSetHideClosed(t *testing.T) {
@@ -283,12 +219,8 @@ func TestHandleCtrlSetHideClosed(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]bool{"hide_closed": true})
 	updated, resp, _ := m.handleCtrlSetHideClosed(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if !updated.hideClosed {
-		t.Error("hideClosed should be true")
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.True(t, updated.hideClosed)
 }
 
 func TestHandleCtrlSelectJob(t *testing.T) {
@@ -299,16 +231,9 @@ func TestHandleCtrlSelectJob(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 20})
 	updated, resp, _ := m.handleCtrlSelectJob(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if updated.selectedIdx != 1 {
-		t.Errorf("selectedIdx = %d, want 1", updated.selectedIdx)
-	}
-	if updated.selectedJobID != 20 {
-		t.Errorf("selectedJobID = %d, want 20",
-			updated.selectedJobID)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, 1, updated.selectedIdx)
+	assert.EqualValues(t, 20, updated.selectedJobID)
 }
 
 func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
@@ -317,9 +242,7 @@ func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 999})
 	_, resp, _ := m.handleCtrlSelectJob(params)
-	if resp.OK {
-		t.Fatal("expected error for missing job")
-	}
+	require.False(t, resp.OK, "expected error for missing job")
 }
 
 func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
@@ -332,9 +255,7 @@ func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 20})
 	_, resp, _ := m.handleCtrlSelectJob(params)
-	if resp.OK {
-		t.Fatal("expected error for hidden job")
-	}
+	require.False(t, resp.OK, "expected error for hidden job")
 }
 
 func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
@@ -347,9 +268,7 @@ func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 20})
 	_, resp, _ := m.handleCtrlSelectJob(params)
-	if resp.OK {
-		t.Fatal("expected error for closed-hidden job")
-	}
+	require.False(t, resp.OK, "expected error for closed-hidden job")
 }
 
 func TestHandleCtrlSetView(t *testing.T) {
@@ -358,13 +277,8 @@ func TestHandleCtrlSetView(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{"view": "queue"})
 	updated, resp, _ := m.handleCtrlSetView(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if updated.currentView != viewQueue {
-		t.Errorf("view = %d, want %d",
-			updated.currentView, viewQueue)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, viewQueue, updated.currentView)
 }
 
 func TestHandleCtrlSetView_Invalid(t *testing.T) {
@@ -372,9 +286,7 @@ func TestHandleCtrlSetView_Invalid(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{"view": "review"})
 	_, resp, _ := m.handleCtrlSetView(params)
-	if resp.OK {
-		t.Fatal("expected error for unsettable view")
-	}
+	require.False(t, resp.OK, "expected error for unsettable view")
 }
 
 func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
@@ -383,9 +295,8 @@ func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{"view": "tasks"})
 	_, resp, _ := m.handleCtrlSetView(params)
-	if resp.OK {
-		t.Fatal("expected error when tasks workflow disabled")
-	}
+	require.False(t, resp.OK,
+		"expected error when tasks workflow disabled")
 }
 
 func TestHandleCtrlCloseReview(t *testing.T) {
@@ -401,12 +312,8 @@ func TestHandleCtrlCloseReview(t *testing.T) {
 		"closed": closedTrue,
 	})
 	_, resp, cmd := m.handleCtrlCloseReview(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if cmd == nil {
-		t.Error("expected non-nil cmd for close operation")
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.NotNil(t, cmd, "expected non-nil cmd for close operation")
 }
 
 func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
@@ -418,7 +325,6 @@ func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
 		makeJob(2, withClosed(&closed)),
 		makeJob(3, withClosed(boolPtr(false))),
 	}
-	// Select job 1 (index 0)
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
@@ -428,18 +334,11 @@ func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
 		"closed": true,
 	})
 	updated, resp, _ := m.handleCtrlCloseReview(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	// Selection should remain on job 1
-	if updated.selectedJobID != 1 {
-		t.Errorf("selectedJobID = %d, want 1 (unchanged)",
-			updated.selectedJobID)
-	}
-	if updated.selectedIdx != 0 {
-		t.Errorf("selectedIdx = %d, want 0 (unchanged)",
-			updated.selectedIdx)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.EqualValues(t, 1, updated.selectedJobID,
+		"selection should remain on job 1")
+	assert.Equal(t, 0, updated.selectedIdx,
+		"selectedIdx should remain 0")
 }
 
 func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
@@ -450,9 +349,7 @@ func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]any{"job_id": int64(5)})
 	_, resp, _ := m.handleCtrlCloseReview(params)
-	if resp.OK {
-		t.Fatal("expected error for job without review")
-	}
+	require.False(t, resp.OK, "expected error for job without review")
 }
 
 func TestHandleCtrlCancelJob(t *testing.T) {
@@ -463,16 +360,9 @@ func TestHandleCtrlCancelJob(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 7})
 	updated, resp, cmd := m.handleCtrlCancelJob(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if cmd == nil {
-		t.Error("expected non-nil cmd for cancel")
-	}
-	if updated.jobs[0].Status != storage.JobStatusCanceled {
-		t.Errorf("status = %s, want canceled",
-			updated.jobs[0].Status)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.NotNil(t, cmd, "expected non-nil cmd for cancel")
+	assert.Equal(t, storage.JobStatusCanceled, updated.jobs[0].Status)
 }
 
 func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
@@ -483,25 +373,17 @@ func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
 		makeJob(2, withStatus(storage.JobStatusRunning)),
 		makeJob(3, withClosed(boolPtr(false))),
 	}
-	// Select job 1 (index 0)
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Cancel job 2, which is not the selected job
 	params, _ := json.Marshal(map[string]int64{"job_id": 2})
 	updated, resp, _ := m.handleCtrlCancelJob(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	// Selection should remain on job 1
-	if updated.selectedJobID != 1 {
-		t.Errorf("selectedJobID = %d, want 1 (unchanged)",
-			updated.selectedJobID)
-	}
-	if updated.selectedIdx != 0 {
-		t.Errorf("selectedIdx = %d, want 0 (unchanged)",
-			updated.selectedIdx)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.EqualValues(t, 1, updated.selectedJobID,
+		"selection should remain on job 1")
+	assert.Equal(t, 0, updated.selectedIdx,
+		"selectedIdx should remain 0")
 }
 
 func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
@@ -512,9 +394,7 @@ func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 7})
 	_, resp, _ := m.handleCtrlCancelJob(params)
-	if resp.OK {
-		t.Fatal("expected error for non-cancellable job")
-	}
+	require.False(t, resp.OK, "expected error for non-cancellable job")
 }
 
 func TestHandleCtrlRerunJob(t *testing.T) {
@@ -525,16 +405,9 @@ func TestHandleCtrlRerunJob(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 8})
 	updated, resp, cmd := m.handleCtrlRerunJob(params)
-	if !resp.OK {
-		t.Fatalf("expected OK, got error: %s", resp.Error)
-	}
-	if cmd == nil {
-		t.Error("expected non-nil cmd for rerun")
-	}
-	if updated.jobs[0].Status != storage.JobStatusQueued {
-		t.Errorf("status = %s, want queued",
-			updated.jobs[0].Status)
-	}
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.NotNil(t, cmd, "expected non-nil cmd for rerun")
+	assert.Equal(t, storage.JobStatusQueued, updated.jobs[0].Status)
 }
 
 func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
@@ -545,9 +418,7 @@ func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 8})
 	_, resp, _ := m.handleCtrlRerunJob(params)
-	if resp.OK {
-		t.Fatal("expected error for non-rerunnable job")
-	}
+	require.False(t, resp.OK, "expected error for non-rerunnable job")
 }
 
 // --- Control message routing through Update() ---
@@ -563,17 +434,14 @@ func TestUpdateRoutesControlQuery(t *testing.T) {
 	}
 
 	updated, _ := m.Update(msg)
-	if _, ok := updated.(model); !ok {
-		t.Fatalf("Update returned %T, want model", updated)
-	}
+	_, ok := updated.(model)
+	require.True(t, ok, "Update returned %T, want model", updated)
 
 	select {
 	case resp := <-respCh:
-		if !resp.OK {
-			t.Errorf("expected OK, got error: %s", resp.Error)
-		}
+		assert.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 	default:
-		t.Fatal("no response received on channel")
+		require.Fail(t, "no response received on channel")
 	}
 }
 
@@ -592,17 +460,13 @@ func TestUpdateRoutesControlMutation(t *testing.T) {
 
 	updated, _ := m.Update(msg)
 	um := updated.(model)
-	if um.selectedJobID != 2 {
-		t.Errorf("selectedJobID = %d, want 2", um.selectedJobID)
-	}
+	assert.EqualValues(t, 2, um.selectedJobID)
 
 	select {
 	case resp := <-respCh:
-		if !resp.OK {
-			t.Errorf("expected OK, got error: %s", resp.Error)
-		}
+		assert.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
 	default:
-		t.Fatal("no response received on channel")
+		require.Fail(t, "no response received on channel")
 	}
 }
 
@@ -612,7 +476,6 @@ func TestControlSocketRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	// Use a real HTTP server that handles all TUI Init() requests
 	ts := controlTestServer(t)
 
 	m := newModel(ts.URL, withExternalIODisabled())
@@ -639,45 +502,35 @@ func TestControlSocketRoundtrip(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	cleanup, err := startControlListener(socketPath, p)
-	if err != nil {
-		t.Fatalf("startControlListener: %v", err)
-	}
+	require.NoError(t, err, "startControlListener")
 	t.Cleanup(cleanup)
 
 	// Test get-state
 	resp := sendControlCommand(t, socketPath,
 		`{"command":"get-state"}`)
-	if !resp.OK {
-		t.Fatalf("get-state failed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "get-state failed: %s", resp.Error)
 
 	// Test get-jobs
 	resp = sendControlCommand(t, socketPath,
 		`{"command":"get-jobs"}`)
-	if !resp.OK {
-		t.Fatalf("get-jobs failed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "get-jobs failed: %s", resp.Error)
 
 	// Test set-hide-closed mutation
 	resp = sendControlCommand(t, socketPath,
 		`{"command":"set-hide-closed","params":{"hide_closed":true}}`)
-	if !resp.OK {
-		t.Fatalf("set-hide-closed failed: %s", resp.Error)
-	}
+	require.True(t, resp.OK,
+		"set-hide-closed failed: %s", resp.Error)
 
 	// Verify state via get-state
 	resp = sendControlCommand(t, socketPath,
 		`{"command":"get-state"}`)
-	if !resp.OK {
-		t.Fatalf("get-state after mutation: %s", resp.Error)
-	}
+	require.True(t, resp.OK,
+		"get-state after mutation: %s", resp.Error)
 
 	// Test unknown command
 	resp = sendControlCommand(t, socketPath,
 		`{"command":"nope"}`)
-	if resp.OK {
-		t.Error("expected error for unknown command")
-	}
+	assert.False(t, resp.OK, "expected error for unknown command")
 }
 
 // controlTestServer returns an httptest.Server that handles all
@@ -718,15 +571,11 @@ func TestControlSocketInvalidJSON(t *testing.T) {
 	cleanup, err := startControlListener(
 		socketPath, newTestProgram(t),
 	)
-	if err != nil {
-		t.Fatalf("startControlListener: %v", err)
-	}
+	require.NoError(t, err, "startControlListener")
 	t.Cleanup(cleanup)
 
 	resp := sendControlCommand(t, socketPath, `{not json}`)
-	if resp.OK {
-		t.Error("expected error for invalid JSON")
-	}
+	assert.False(t, resp.OK, "expected error for invalid JSON")
 }
 
 // newTestProgram creates a tea.Program backed by a mock HTTP server
@@ -751,58 +600,39 @@ func newTestProgram(t *testing.T) *tea.Program {
 
 func TestRemoveStaleSocket_NonexistentPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nosuch.sock")
-	if err := removeStaleSocket(path); err != nil {
-		t.Errorf("expected nil for nonexistent path, got: %v", err)
-	}
+	assert.NoError(t, removeStaleSocket(path))
 }
 
 func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file.txt")
-	if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0600))
+
 	err := removeStaleSocket(path)
-	if err == nil {
-		t.Fatal("expected error for regular file, got nil")
-	}
-	// File must still exist
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Error("regular file was deleted")
-	}
+	require.Error(t, err, "expected error for regular file")
+	assert.FileExists(t, path, "regular file should not be deleted")
 }
 
 func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
 	// Use a short path to stay within the Unix socket length limit.
 	path := shortSocketPath(t, "stale")
 	ln, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ln.Close()
 
-	if err := removeStaleSocket(path); err != nil {
-		t.Fatalf("expected stale socket to be removed: %v", err)
-	}
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Error("stale socket was not removed")
-	}
+	require.NoError(t, removeStaleSocket(path),
+		"expected stale socket to be removed")
+	assert.NoFileExists(t, path, "stale socket should be removed")
 }
 
 func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	path := shortSocketPath(t, "live")
 	ln, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer ln.Close()
 
 	err = removeStaleSocket(path)
-	if err == nil {
-		t.Fatal("expected error for live socket, got nil")
-	}
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Error("live socket was deleted")
-	}
+	require.Error(t, err, "expected error for live socket")
+	assert.FileExists(t, path, "live socket should not be deleted")
 }
 
 func TestStartControlListener_CreatesParentDir(t *testing.T) {
@@ -814,9 +644,7 @@ func TestStartControlListener_CreatesParentDir(t *testing.T) {
 	cleanup, err := startControlListener(
 		socketPath, newTestProgram(t),
 	)
-	if err != nil {
-		t.Fatalf("expected listener to create dirs: %v", err)
-	}
+	require.NoError(t, err, "expected listener to create dirs")
 	cleanup()
 }
 
@@ -825,9 +653,7 @@ func TestStartControlListener_CreatesParentDir(t *testing.T) {
 func shortSocketPath(t *testing.T, prefix string) string {
 	t.Helper()
 	f, err := os.CreateTemp("", prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := f.Name()
 	f.Close()
 	os.Remove(path)
@@ -838,6 +664,9 @@ func shortSocketPath(t *testing.T, prefix string) string {
 // --- Runtime metadata tests ---
 
 func TestTUIRuntimeWriteAndRead(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	tmpDir := setupTuiTestEnv(t)
 
 	info := TUIRuntimeInfo{
@@ -848,35 +677,25 @@ func TestTUIRuntimeWriteAndRead(t *testing.T) {
 		BranchFilter: "main",
 	}
 
-	if err := WriteTUIRuntime(info); err != nil {
-		t.Fatalf("WriteTUIRuntime: %v", err)
-	}
+	require.NoError(WriteTUIRuntime(info))
 
 	runtimes, err := ListAllTUIRuntimes()
-	if err != nil {
-		t.Fatalf("ListAllTUIRuntimes: %v", err)
-	}
-	if len(runtimes) != 1 {
-		t.Fatalf("got %d runtimes, want 1", len(runtimes))
-	}
-	if runtimes[0].PID != 12345 {
-		t.Errorf("PID = %d, want 12345", runtimes[0].PID)
-	}
-	if runtimes[0].SocketPath != info.SocketPath {
-		t.Errorf("SocketPath = %q, want %q",
-			runtimes[0].SocketPath, info.SocketPath)
-	}
+	require.NoError(err)
+	require.Len(runtimes, 1)
+	assert.Equal(12345, runtimes[0].PID)
+	assert.Equal(info.SocketPath, runtimes[0].SocketPath)
 }
 
 func TestCleanupStaleTUIRuntimes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	setupTuiTestEnv(t)
 
 	// Create a real stale socket (listener closed, PID dead).
 	sockPath := shortSocketPath(t, "stale")
 	ln, err := net.Listen("unix", sockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	ln.Close() // leave stale socket file behind
 
 	info := TUIRuntimeInfo{
@@ -884,58 +703,44 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) {
 		SocketPath: sockPath,
 		ServerAddr: "http://127.0.0.1:7373",
 	}
-	if err := WriteTUIRuntime(info); err != nil {
-		t.Fatalf("WriteTUIRuntime: %v", err)
-	}
+	require.NoError(WriteTUIRuntime(info))
 
 	cleaned := CleanupStaleTUIRuntimes()
-	if cleaned != 1 {
-		t.Errorf("cleaned = %d, want 1", cleaned)
-	}
+	assert.Equal(1, cleaned)
 
 	runtimes, _ := ListAllTUIRuntimes()
-	if len(runtimes) != 0 {
-		t.Errorf("expected 0 runtimes after cleanup, got %d",
-			len(runtimes))
-	}
-	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
-		t.Error("expected stale socket file to be removed")
-	}
+	assert.Empty(runtimes)
+	assert.NoFileExists(sockPath,
+		"stale socket file should be removed")
 }
 
 func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	tmpDir := setupTuiTestEnv(t)
 
 	// Write metadata pointing to a regular file (not a socket).
 	// Cleanup should remove the metadata but not the file.
 	filePath := filepath.Join(tmpDir, "tui.999999999.sock")
-	if err := os.WriteFile(filePath, []byte{}, 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(filePath, []byte{}, 0600))
 
 	info := TUIRuntimeInfo{
 		PID:        999999999,
 		SocketPath: filePath,
 		ServerAddr: "http://127.0.0.1:7373",
 	}
-	if err := WriteTUIRuntime(info); err != nil {
-		t.Fatalf("WriteTUIRuntime: %v", err)
-	}
+	require.NoError(WriteTUIRuntime(info))
 
 	cleaned := CleanupStaleTUIRuntimes()
-	if cleaned != 1 {
-		t.Errorf("cleaned = %d, want 1", cleaned)
-	}
+	assert.Equal(1, cleaned)
 
 	// Metadata should be gone.
 	runtimes, _ := ListAllTUIRuntimes()
-	if len(runtimes) != 0 {
-		t.Errorf("expected 0 runtimes, got %d", len(runtimes))
-	}
+	assert.Empty(runtimes)
 	// The regular file must NOT have been deleted.
-	if _, err := os.Stat(filePath); err != nil {
-		t.Error("regular file was incorrectly removed")
-	}
+	assert.FileExists(filePath,
+		"regular file should not be removed")
 }
 
 func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
@@ -982,6 +787,9 @@ func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			opts := append(
 				[]option{withExternalIODisabled()},
 				tt.opts...,
@@ -995,39 +803,15 @@ func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
 				m, "/tmp/test.sock", testServerAddr,
 			)
 
-			if err := WriteTUIRuntime(info); err != nil {
-				t.Fatalf("WriteTUIRuntime: %v", err)
-			}
+			require.NoError(WriteTUIRuntime(info))
 
 			runtimes, err := ListAllTUIRuntimes()
-			if err != nil {
-				t.Fatalf("ListAllTUIRuntimes: %v", err)
-			}
-			if len(runtimes) != 1 {
-				t.Fatalf(
-					"got %d runtimes, want 1", len(runtimes),
-				)
-			}
+			require.NoError(err)
+			require.Len(runtimes, 1)
 
 			rt := runtimes[0]
-			if len(rt.RepoFilter) != len(tt.wantRepo) {
-				t.Errorf("RepoFilter = %v, want %v",
-					rt.RepoFilter, tt.wantRepo)
-			} else {
-				for i := range tt.wantRepo {
-					if rt.RepoFilter[i] != tt.wantRepo[i] {
-						t.Errorf(
-							"RepoFilter[%d] = %q, want %q",
-							i, rt.RepoFilter[i],
-							tt.wantRepo[i],
-						)
-					}
-				}
-			}
-			if rt.BranchFilter != tt.wantBranch {
-				t.Errorf("BranchFilter = %q, want %q",
-					rt.BranchFilter, tt.wantBranch)
-			}
+			assert.Equal(tt.wantRepo, rt.RepoFilter)
+			assert.Equal(tt.wantBranch, rt.BranchFilter)
 
 			// Clean up for next subtest
 			RemoveTUIRuntime(info.SocketPath)
@@ -1045,32 +829,23 @@ func sendControlCommand(
 	conn, err := net.DialTimeout(
 		"unix", socketPath, 2*time.Second,
 	)
-	if err != nil {
-		t.Fatalf("dial socket: %v", err)
-	}
+	require.NoError(t, err, "dial socket")
 	defer conn.Close()
 
-	if err := conn.SetDeadline(
-		time.Now().Add(5 * time.Second),
-	); err != nil {
-		t.Fatalf("set deadline: %v", err)
-	}
+	require.NoError(t,
+		conn.SetDeadline(time.Now().Add(5*time.Second)),
+		"set deadline")
 
 	_, err = fmt.Fprintf(conn, "%s\n", command)
-	if err != nil {
-		t.Fatalf("write command: %v", err)
-	}
+	require.NoError(t, err, "write command")
 
 	buf := make([]byte, 64*1024)
 	n, err := conn.Read(buf)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	require.NoError(t, err, "read response")
 
 	var resp controlResponse
-	if err := json.Unmarshal(buf[:n], &resp); err != nil {
-		t.Fatalf("unmarshal response %q: %v",
-			string(buf[:n]), err)
-	}
+	require.NoError(t,
+		json.Unmarshal(buf[:n], &resp),
+		"unmarshal response %q", string(buf[:n]))
 	return resp
 }

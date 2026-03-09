@@ -13,6 +13,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestControlSocketPermissions(t *testing.T) {
@@ -22,52 +24,37 @@ func TestControlSocketPermissions(t *testing.T) {
 	cleanup, err := startControlListener(
 		socketPath, newTestProgramUnix(t),
 	)
-	if err != nil {
-		t.Fatalf("startControlListener: %v", err)
-	}
+	require.NoError(t, err, "startControlListener")
 	t.Cleanup(cleanup)
 
 	info, err := os.Stat(socketPath)
-	if err != nil {
-		t.Fatalf("stat socket: %v", err)
-	}
-	if info.Mode().Type()&os.ModeSocket == 0 {
-		t.Errorf("expected socket type, got %s",
-			info.Mode().Type())
-	}
+	require.NoError(t, err, "stat socket")
+	assert.NotZero(t, info.Mode().Type()&os.ModeSocket,
+		"expected socket type, got %s", info.Mode().Type())
 	perm := info.Mode().Perm()
-	if perm&0077 != 0 {
-		t.Errorf("socket permissions %o allow group/other access",
-			perm)
-	}
+	assert.Zero(t, perm&0077,
+		"socket permissions %o allow group/other access", perm)
 }
 
 func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 	path := shortSocketPath(t, "dgram")
-	// Create a DGRAM socket — dial with STREAM will fail with a
+	// Create a DGRAM socket -- dial with STREAM will fail with a
 	// non-ECONNREFUSED error, which should NOT be treated as stale.
 	fd, err := syscall.Socket(
 		syscall.AF_UNIX, syscall.SOCK_DGRAM, 0,
 	)
-	if err != nil {
-		t.Fatalf("create dgram socket fd: %v", err)
-	}
+	require.NoError(t, err, "create dgram socket fd")
 	defer syscall.Close(fd)
-	if err := syscall.Bind(
-		fd, &syscall.SockaddrUnix{Name: path},
-	); err != nil {
-		t.Fatalf("bind dgram socket: %v", err)
-	}
+	require.NoError(t,
+		syscall.Bind(fd, &syscall.SockaddrUnix{Name: path}),
+		"bind dgram socket")
 	t.Cleanup(func() { os.Remove(path) })
 
 	err = removeStaleSocket(path)
-	if err == nil {
-		t.Fatal("expected error for incompatible socket, got nil")
-	}
-	// The socket must not have been removed.
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Error("incompatible socket was deleted")
-	}
+	require.Error(t, err,
+		"expected error for incompatible socket")
+	assert.FileExists(t, path,
+		"incompatible socket should not be deleted")
 }
 
 // newTestProgramUnix creates a tea.Program for Unix-only tests.
