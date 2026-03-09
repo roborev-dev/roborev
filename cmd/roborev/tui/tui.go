@@ -863,27 +863,34 @@ func Run(cfg Config) error {
 	if socketPath == "" {
 		socketPath = defaultControlSocketPath()
 	}
+	controlEnabled := false
 	cleanup, err := startControlListener(socketPath, p)
 	if err != nil {
 		log.Printf("warning: control socket disabled: %v", err)
 	} else {
+		controlEnabled = true
 		defer cleanup()
 	}
 
-	// Write TUI runtime metadata for discoverability
-	rtInfo := TUIRuntimeInfo{
-		PID:        os.Getpid(),
-		SocketPath: socketPath,
-		ServerAddr: cfg.ServerAddr,
+	// Only write runtime metadata when the socket is actually
+	// listening, so external tools don't discover a broken endpoint.
+	if controlEnabled {
+		rtInfo := TUIRuntimeInfo{
+			PID:        os.Getpid(),
+			SocketPath: socketPath,
+			ServerAddr: cfg.ServerAddr,
+		}
+		if cfg.RepoFilter != "" {
+			rtInfo.RepoFilter = []string{cfg.RepoFilter}
+		}
+		rtInfo.BranchFilter = cfg.BranchFilter
+		if err := WriteTUIRuntime(rtInfo); err != nil {
+			log.Printf(
+				"warning: failed to write TUI runtime info: %v", err,
+			)
+		}
+		defer RemoveTUIRuntime(socketPath)
 	}
-	if cfg.RepoFilter != "" {
-		rtInfo.RepoFilter = []string{cfg.RepoFilter}
-	}
-	rtInfo.BranchFilter = cfg.BranchFilter
-	if err := WriteTUIRuntime(rtInfo); err != nil {
-		log.Printf("warning: failed to write TUI runtime info: %v", err)
-	}
-	defer RemoveTUIRuntime(socketPath)
 
 	_, err = p.Run()
 	return err
