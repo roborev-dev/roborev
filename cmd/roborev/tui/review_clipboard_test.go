@@ -162,48 +162,6 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 	assert.Contains(t, mock.lastText, "This is expected behavior", "unexpected condition")
 }
 
-func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
-	mock := &mockClipboard{}
-
-	responses := []storage.Response{
-		{
-			ID:        1,
-			Responder: "dev",
-			Response:  "This is expected behavior",
-			CreatedAt: time.Date(2025, 3, 10, 9, 0, 0, 0, time.UTC),
-		},
-	}
-	_, m := mockServerModel(t, mockReviewHandler(
-		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Found an issue"},
-		responses,
-	))
-	m.clipboard = mock
-
-	cmd := m.fetchReviewAndCopy(123, nil)
-	msg := cmd()
-
-	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
-
-	if !strings.Contains(mock.lastText, "Found an issue") {
-		t.Error("Expected review output in clipboard")
-	}
-	if !strings.Contains(mock.lastText, "--- Comments ---") {
-		t.Error("Expected comments section in clipboard")
-	}
-	if !strings.Contains(mock.lastText, "[Mar 10 09:00] dev:") {
-		t.Error("Expected comment header in clipboard")
-	}
-	if !strings.Contains(mock.lastText, "This is expected behavior") {
-		t.Error("Expected comment body in clipboard")
-	}
-}
-
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
 
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {

@@ -236,25 +236,6 @@ func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
 	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
 }
 
-func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone)),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
-
-	if m2.reviewFromView != tuiViewQueue {
-		t.Fatalf("expected reviewFromView=%v, got %v", tuiViewQueue, m2.reviewFromView)
-	}
-	if cmd == nil {
-		t.Fatal("expected fetchReview command for ctrl+j activation")
-	}
-}
-
 func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
@@ -441,27 +422,6 @@ func TestTUITasksCtrlJFetchesReview(t *testing.T) {
 	assert.EqualValues(t, 101, m2.selectedJobID, "unexpected condition")
 	assert.Equal(t, tuiViewTasks, m2.reviewFromView, "unexpected condition")
 	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
-}
-
-func TestTUITasksCtrlJFetchesReview(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewTasks
-	m.fixJobs = []storage.ReviewJob{
-		{ID: 101, Status: storage.JobStatusDone},
-	}
-	m.fixSelectedIdx = 0
-
-	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
-
-	if m2.selectedJobID != 101 {
-		t.Fatalf("expected selectedJobID=101, got %d", m2.selectedJobID)
-	}
-	if m2.reviewFromView != tuiViewTasks {
-		t.Fatalf("expected reviewFromView=tuiViewTasks, got %v", m2.reviewFromView)
-	}
-	if cmd == nil {
-		t.Fatal("expected fetchReview command for ctrl+j activation")
-	}
 }
 
 func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
@@ -883,59 +843,6 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 		m3.selectedIdx)
 
 	assert.EqualValues(t, 1, m3.selectedJobID, "unexpected condition")
-}
-
-func TestTUIPageUpDownMovesSelection(t *testing.T) {
-	// Verify pgup moves toward newer (lower index) and pgdown moves
-	// toward older (higher index), including with hidden jobs.
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewQueue
-	m.hideClosed = true
-	m.height = 15 // pageSize = max(1, 15-10) = 5
-
-	// 10 visible jobs plus one hidden (canceled + hideClosed) in the
-	// middle.
-	m.jobs = []storage.ReviewJob{
-		makeJob(1), // idx 0 (newest)
-		makeJob(2), // idx 1
-		makeJob(3), // idx 2
-		makeJob(4), // idx 3
-		makeJob(5), // idx 4
-		makeJob(6, withStatus(storage.JobStatusCanceled)), // idx 5 hidden
-		makeJob(7),  // idx 6
-		makeJob(8),  // idx 7
-		makeJob(9),  // idx 8
-		makeJob(10), // idx 9
-		makeJob(11), // idx 10 (oldest)
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// pgdown should move 5 visible steps toward older (higher index),
-	// skipping the hidden job at index 5.
-	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	if m2.selectedIdx != 6 {
-		t.Errorf(
-			"pgdown: expected selectedIdx=6 (skipped hidden idx 5), got %d",
-			m2.selectedIdx,
-		)
-	}
-	if m2.selectedJobID != 7 {
-		t.Errorf("pgdown: expected selectedJobID=7, got %d", m2.selectedJobID)
-	}
-
-	// pgup from idx 6 should move 5 visible steps toward newer (lower
-	// index), again skipping the hidden job.
-	m3, _ := pressSpecial(m2, tea.KeyPgUp)
-	if m3.selectedIdx != 0 {
-		t.Errorf(
-			"pgup: expected selectedIdx=0 (back to newest), got %d",
-			m3.selectedIdx,
-		)
-	}
-	if m3.selectedJobID != 1 {
-		t.Errorf("pgup: expected selectedJobID=1, got %d", m3.selectedJobID)
-	}
 }
 
 func TestTUIResizeBehavior(t *testing.T) {
@@ -1851,31 +1758,6 @@ func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
 
 	m3, _ := updateModel(t, m2, mouseWheelDown())
 	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1, "unexpected condition")
-}
-
-func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-	m.mouseEnabled = false
-	m.width = 120
-	m.height = 20
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2),
-		makeJob(3),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
-	if m2.selectedIdx != 0 || m2.selectedJobID != 1 {
-		t.Fatalf("expected click to be ignored when mouse disabled, got idx=%d id=%d", m2.selectedIdx, m2.selectedJobID)
-	}
-
-	m3, _ := updateModel(t, m2, mouseWheelDown())
-	if m3.selectedIdx != 0 || m3.selectedJobID != 1 {
-		t.Fatalf("expected wheel to be ignored when mouse disabled, got idx=%d id=%d", m3.selectedIdx, m3.selectedJobID)
-	}
 }
 
 func TestHiddenColumnNotRendered(t *testing.T) {

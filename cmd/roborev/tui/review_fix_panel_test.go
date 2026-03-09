@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -172,27 +171,6 @@ func TestFixKeyDisabledShowsFlash(t *testing.T) {
 	assert.Nil(t, cmd, "unexpected condition")
 	assert.False(t, got.reviewFixPanelPending, "unexpected condition")
 	assert.Contains(t, got.flashMessage, "Tasks workflow disabled", "unexpected condition")
-}
-
-func TestFixKeyDisabledShowsFlash(t *testing.T) {
-	job := makeJob(42)
-	m := initTestModel(
-		withCurrentView(viewQueue),
-		withTestJobs(job),
-		withSelection(0, 42),
-	)
-
-	got, cmd := pressKey(m, 'F')
-
-	if cmd != nil {
-		t.Error("Expected nil cmd when tasks workflow is disabled")
-	}
-	if got.reviewFixPanelPending {
-		t.Error("Expected reviewFixPanelPending to remain false")
-	}
-	if !strings.Contains(got.flashMessage, "Tasks workflow disabled") {
-		t.Errorf("expected disabled flash, got %q", got.flashMessage)
-	}
 }
 
 func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
