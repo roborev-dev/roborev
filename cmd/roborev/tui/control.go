@@ -1,0 +1,167 @@
+package tui
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+const controlResponseTimeout = 3 * time.Second
+
+// startControlListener creates a Unix domain socket and starts
+// accepting connections. Each connection receives one JSON command,
+// dispatches it through the tea.Program, and returns a JSON response.
+// Returns a cleanup function that closes the listener and removes
+// the socket file.
+func startControlListener(
+	socketPath string, p *tea.Program,
+) (func(), error) {
+	// Remove stale socket file from a previous crash
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove stale socket: %w", err)
+	}
+
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
+	}
+
+	// Restrict access to the current user
+	if err := os.Chmod(socketPath, 0600); err != nil {
+		ln.Close()
+		os.Remove(socketPath)
+		return nil, fmt.Errorf("chmod socket: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go acceptLoop(ctx, ln, p)
+
+	cleanup := func() {
+		cancel()
+		ln.Close()
+		os.Remove(socketPath)
+	}
+	return cleanup, nil
+}
+
+func acceptLoop(ctx context.Context, ln net.Listener, p *tea.Program) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			// Check if listener was closed (normal shutdown)
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			log.Printf("control: accept error: %v", err)
+			continue
+		}
+		go handleControlConn(ctx, conn, p)
+	}
+}
+
+func handleControlConn(
+	ctx context.Context, conn net.Conn, p *tea.Program,
+) {
+	defer conn.Close()
+
+	// Set read deadline to prevent hung connections
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	if !scanner.Scan() {
+		writeError(conn, "empty request")
+		return
+	}
+
+	var req controlRequest
+	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+		writeError(conn, "invalid JSON: "+err.Error())
+		return
+	}
+
+	resp := dispatchCommand(ctx, req, p)
+	writeResponse(conn, resp)
+}
+
+func dispatchCommand(
+	ctx context.Context, req controlRequest, p *tea.Program,
+) controlResponse {
+	isQuery, isMutation := isControlCommand(req.Command)
+
+	switch {
+	case isQuery:
+		return queryViaProgram(ctx, p, req)
+	case isMutation:
+		return mutateViaProgram(ctx, p, req)
+	default:
+		return controlResponse{
+			Error: fmt.Sprintf("unknown command: %s", req.Command),
+		}
+	}
+}
+
+// queryViaProgram sends a controlQueryMsg through the program and
+// waits for the Update handler to write the response.
+func queryViaProgram(
+	ctx context.Context, p *tea.Program, req controlRequest,
+) controlResponse {
+	respCh := make(chan controlResponse, 1)
+	p.Send(controlQueryMsg{req: req, respCh: respCh})
+
+	select {
+	case resp := <-respCh:
+		return resp
+	case <-ctx.Done():
+		return controlResponse{Error: "TUI is shutting down"}
+	case <-time.After(controlResponseTimeout):
+		return controlResponse{Error: "response timeout"}
+	}
+}
+
+// mutateViaProgram sends a controlMutationMsg through the program
+// and waits for the Update handler to write the response.
+func mutateViaProgram(
+	ctx context.Context, p *tea.Program, req controlRequest,
+) controlResponse {
+	respCh := make(chan controlResponse, 1)
+	p.Send(controlMutationMsg{req: req, respCh: respCh})
+
+	select {
+	case resp := <-respCh:
+		return resp
+	case <-ctx.Done():
+		return controlResponse{Error: "TUI is shutting down"}
+	case <-time.After(controlResponseTimeout):
+		return controlResponse{Error: "response timeout"}
+	}
+}
+
+func writeResponse(conn net.Conn, resp controlResponse) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		writeError(conn, "marshal error: "+err.Error())
+		return
+	}
+	data = append(data, '\n')
+	_, _ = conn.Write(data)
+}
+
+func writeError(conn net.Conn, msg string) {
+	resp := controlResponse{Error: msg}
+	data, _ := json.Marshal(resp)
+	data = append(data, '\n')
+	_, _ = conn.Write(data)
+}
