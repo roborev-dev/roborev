@@ -44,9 +44,8 @@ func openTestDB(t *testing.T) *DB {
 	require.NoError(t, err, "Failed to read template DB: %v")
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	if err := os.WriteFile(dbPath, data, 0644); err != nil {
-		require.NoError(t, err, "Failed to write test DB: %v")
-	}
+	err = os.WriteFile(dbPath, data, 0644)
+	require.NoError(t, err, "Failed to write test DB: %v")
 
 	db, err := Open(dbPath)
 	require.NoError(t, err, "Failed to open test DB: %v")

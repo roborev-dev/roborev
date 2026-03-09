@@ -24,9 +24,7 @@ func assertError(t *testing.T, err error, expectError bool, contains string) {
 	t.Helper()
 	if expectError {
 		require.Error(t, err, "expected error but got nil")
-		if contains != "" {
-			assert.Contains(t, err.Error(), contains, "error text")
-		}
+		assert.Condition(t, func() bool { return contains == "" || strings.Contains(err.Error(), contains) }, "error text")
 	} else {
 		require.NoError(t, err)
 	}
@@ -122,14 +120,12 @@ func TestUninstallHookCmd(t *testing.T) {
 			}
 
 			if len(tt.initialHooks) > 0 {
-				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(repo.HooksDir, 0755)
+				require.NoError(t, err)
 				for name, content := range tt.initialHooks {
 					path := filepath.Join(repo.HooksDir, name)
-					if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-						require.NoError(t, err)
-					}
+					err = os.WriteFile(path, []byte(content), 0755)
+					require.NoError(t, err)
 				}
 			}
 
@@ -150,15 +146,14 @@ func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
 	repo := testutil.NewTestRepo(t)
 	repo.RemoveHooksDir()
 
-	if _, err := os.Stat(repo.HooksDir); !os.IsNotExist(err) {
-		require.NoError(t, err, "hooks directory should not exist before test")
-	}
+	_, err := os.Stat(repo.HooksDir)
+	require.ErrorIs(t, err, os.ErrNotExist, "hooks directory should not exist before test")
 
 	t.Cleanup(repo.Chdir())
 
 	installCmd := installHookCmd()
 	installCmd.SetArgs([]string{})
-	err := installCmd.Execute()
+	err = installCmd.Execute()
 
 	require.NoError(t, err, "install-hook command failed: %v")
 
@@ -180,9 +175,8 @@ func TestInstallHookCmdCreatesPostRewriteHook(t *testing.T) {
 
 	installCmd := installHookCmd()
 	installCmd.SetArgs([]string{})
-	if err := installCmd.Execute(); err != nil {
-		require.NoError(t, err, "install-hook failed: %v")
-	}
+	err := installCmd.Execute()
+	require.NoError(t, err, "install-hook failed: %v")
 
 	prHookPath := filepath.Join(repo.HooksDir, "post-rewrite")
 	content, err := os.ReadFile(prHookPath)
@@ -314,12 +308,10 @@ func TestInitNoDaemon(t *testing.T) {
 				w.WriteHeader(200)
 			},
 			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
-				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
-					require.NoError(t, err)
-				}
-				if err := os.WriteFile(filepath.Join(repo.HooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(repo.HooksDir, 0755)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(repo.HooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755)
+				require.NoError(t, err)
 			},
 			postCheck: func(t *testing.T, repo *testutil.TestRepo) {
 				prHookPath := filepath.Join(repo.HooksDir, "post-rewrite")

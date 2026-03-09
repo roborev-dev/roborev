@@ -16,18 +16,15 @@ import (
 func acpScriptsDir(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		require.Condition(t, func() bool { return false }, "failed to resolve test file path")
-	}
+	require.True(t, ok, "failed to resolve test file path")
 	return filepath.Join(filepath.Dir(file), "..", "..", "scripts")
 }
 
 func writeACPTestCommand(t *testing.T, dir, name, script string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		require.NoError(t, err, "failed to write command %s", name)
-	}
+	err := os.WriteFile(path, []byte(script), 0o755)
+	require.NoError(t, err, "failed to write command %s", name)
 }
 
 func runACPWrapperCommand(t *testing.T, commandPath string, env map[string]string, args ...string) (string, string, error) {

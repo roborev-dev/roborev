@@ -114,9 +114,8 @@ func TestLocalReviewFlag(t *testing.T) {
 	h := newReviewHarness(t)
 	// Passing --help to cobra usually returns nil error but prints usage.
 
-	if err := h.runCmd("--local", "--help"); err != nil {
-		require.NoError(t, err, "Expected no error, got: %v")
-	}
+	err := h.runCmd("--local", "--help")
+	require.NoError(t, err, "Expected no error, got: %v")
 
 	h.assertOutputContains("--local")
 	h.assertOutputContains("run review locally without daemon")
@@ -136,11 +135,10 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 
 	// Create a new file to make the repo dirty
 	newFile := filepath.Join(h.Dir, "newfile.go")
-	if err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0644); err != nil {
-		require.NoError(t, err)
-	}
+	err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0644)
+	require.NoError(t, err)
 
-	err := h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
+	err = h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
 	require.NoError(t, err, "Expected no error, got: %v")
 
 	// We don't check output for diff content because agent output is mocked.
@@ -207,7 +205,7 @@ func TestLocalReviewValidation(t *testing.T) {
 			err := h.run(tc.opts)
 			if tc.wantErr != "" {
 				h.assertErrorContains(err, tc.wantErr)
-			} else if err != nil {
+			} else {
 				require.NoError(t, err, "Expected no error, got: %v")
 			}
 			if tc.wantOutput != "" {

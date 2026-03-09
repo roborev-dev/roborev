@@ -482,12 +482,11 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 
 func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
 	t.Helper()
-	if err := os.WriteFile(
+	err := os.WriteFile(
 		filepath.Join(repo.Dir, ".roborev.toml"),
 		[]byte(content), 0644,
-	); err != nil {
-		require.NoError(t, err, "write .roborev.toml: %v")
-	}
+	)
+	require.NoError(t, err, "write .roborev.toml: %v")
 }
 
 func TestTryBranchReview(t *testing.T) {

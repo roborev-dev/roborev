@@ -113,9 +113,8 @@ func (s *stubRepoResolver) SetWorkingDirError(err error) {
 func createFakeGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0755); err != nil {
-		require.NoError(t, err, "create .git dir: %v", err)
-	}
+	err := os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	require.NoError(t, err, "create .git dir: %v", err)
 	return dir
 }
 

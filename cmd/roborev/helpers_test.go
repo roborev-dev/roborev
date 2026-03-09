@@ -48,9 +48,8 @@ func chdir(t *testing.T, dir string) {
 	orig, err := os.Getwd()
 	require.NoError(t, err, "Failed to getwd: %v")
 
-	if err := os.Chdir(dir); err != nil {
-		require.NoError(t, err, "Failed to chdir: %v")
-	}
+	err = os.Chdir(dir)
+	require.NoError(t, err, "Failed to chdir: %v")
 	t.Cleanup(func() { os.Chdir(orig) })
 }
 
@@ -143,12 +142,10 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	for path, content := range files {
 		fullPath := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			require.NoError(t, err, "mkdir: %v")
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			require.Errorf(t, err, "write %s: %v", path, err)
-		}
+		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+		require.NoError(t, err, "mkdir: %v")
+		err = os.WriteFile(fullPath, []byte(content), 0644)
+		require.NoError(t, err, "write %s: %v", path, err)
 	}
 }
 
@@ -181,9 +178,8 @@ func runShowCmd(t *testing.T, args ...string) string {
 	cmd := showCmd()
 	cmd.SetArgs(args)
 	return captureStdout(t, func() {
-		if err := cmd.Execute(); err != nil {
-			require.NoError(t, err)
-		}
+		err := cmd.Execute()
+		require.NoError(t, err)
 	})
 }
 

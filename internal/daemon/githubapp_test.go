@@ -268,14 +268,13 @@ func (m *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	assert.True(m.t, strings.HasPrefix(auth, "Bearer "), "expected Bearer auth, got: %s", auth)
 
-	if resp.path != "" && r.URL.Path != resp.path {
+	if resp.path != "" {
 		assert.Equal(m.t, resp.path, r.URL.Path, "unexpected path")
 	}
 
 	// Verify User-Agent is set
-	if ua := r.Header.Get("User-Agent"); ua != "roborev" {
-		assert.Equal(m.t, "roborev", ua, "expected User-Agent")
-	}
+	ua := r.Header.Get("User-Agent")
+	assert.Equal(m.t, "roborev", ua, "expected User-Agent")
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resp.body)
