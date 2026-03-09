@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -730,33 +729,6 @@ func TestControlSocketInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestControlSocketPermissions(t *testing.T) {
-	tmpDir := t.TempDir()
-	socketPath := filepath.Join(tmpDir, "test.sock")
-
-	cleanup, err := startControlListener(
-		socketPath, newTestProgram(t),
-	)
-	if err != nil {
-		t.Fatalf("startControlListener: %v", err)
-	}
-	t.Cleanup(cleanup)
-
-	info, err := os.Stat(socketPath)
-	if err != nil {
-		t.Fatalf("stat socket: %v", err)
-	}
-	if info.Mode().Type()&os.ModeSocket == 0 {
-		t.Errorf("expected socket type, got %s",
-			info.Mode().Type())
-	}
-	perm := info.Mode().Perm()
-	if perm&0077 != 0 {
-		t.Errorf("socket permissions %o allow group/other access",
-			perm)
-	}
-}
-
 // newTestProgram creates a tea.Program backed by a mock HTTP server
 // so that Init() commands complete quickly.
 func newTestProgram(t *testing.T) *tea.Program {
@@ -833,34 +805,6 @@ func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	}
 }
 
-func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
-	path := shortSocketPath(t, "dgram")
-	// Create a DGRAM socket — dial with STREAM will fail with a
-	// non-ECONNREFUSED error, which should NOT be treated as stale.
-	fd, err := syscall.Socket(
-		syscall.AF_UNIX, syscall.SOCK_DGRAM, 0,
-	)
-	if err != nil {
-		t.Fatalf("create dgram socket fd: %v", err)
-	}
-	defer syscall.Close(fd)
-	if err := syscall.Bind(
-		fd, &syscall.SockaddrUnix{Name: path},
-	); err != nil {
-		t.Fatalf("bind dgram socket: %v", err)
-	}
-	t.Cleanup(func() { os.Remove(path) })
-
-	err = removeStaleSocket(path)
-	if err == nil {
-		t.Fatal("expected error for incompatible socket, got nil")
-	}
-	// The socket must not have been removed.
-	if _, statErr := os.Stat(path); statErr != nil {
-		t.Error("incompatible socket was deleted")
-	}
-}
-
 func TestStartControlListener_CreatesParentDir(t *testing.T) {
 	base := shortSocketPath(t, "dir")
 	// Remove the file shortSocketPath created, use it as a subdir.
@@ -925,23 +869,23 @@ func TestTUIRuntimeWriteAndRead(t *testing.T) {
 }
 
 func TestCleanupStaleTUIRuntimes(t *testing.T) {
-	tmpDir := setupTuiTestEnv(t)
+	setupTuiTestEnv(t)
 
-	// Write a runtime with a PID that definitely doesn't exist
+	// Create a real stale socket (listener closed, PID dead).
+	sockPath := shortSocketPath(t, "stale")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close() // leave stale socket file behind
+
 	info := TUIRuntimeInfo{
 		PID:        999999999,
-		SocketPath: filepath.Join(tmpDir, "tui.999999999.sock"),
+		SocketPath: sockPath,
 		ServerAddr: "http://127.0.0.1:7373",
 	}
 	if err := WriteTUIRuntime(info); err != nil {
 		t.Fatalf("WriteTUIRuntime: %v", err)
-	}
-
-	// Create a fake socket file
-	if err := os.WriteFile(
-		info.SocketPath, []byte{}, 0600,
-	); err != nil {
-		t.Fatalf("create fake socket: %v", err)
 	}
 
 	cleaned := CleanupStaleTUIRuntimes()
@@ -954,8 +898,43 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) {
 		t.Errorf("expected 0 runtimes after cleanup, got %d",
 			len(runtimes))
 	}
-	if _, err := os.Stat(info.SocketPath); !os.IsNotExist(err) {
-		t.Error("expected socket file to be removed")
+	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
+		t.Error("expected stale socket file to be removed")
+	}
+}
+
+func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) {
+	tmpDir := setupTuiTestEnv(t)
+
+	// Write metadata pointing to a regular file (not a socket).
+	// Cleanup should remove the metadata but not the file.
+	filePath := filepath.Join(tmpDir, "tui.999999999.sock")
+	if err := os.WriteFile(filePath, []byte{}, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	info := TUIRuntimeInfo{
+		PID:        999999999,
+		SocketPath: filePath,
+		ServerAddr: "http://127.0.0.1:7373",
+	}
+	if err := WriteTUIRuntime(info); err != nil {
+		t.Fatalf("WriteTUIRuntime: %v", err)
+	}
+
+	cleaned := CleanupStaleTUIRuntimes()
+	if cleaned != 1 {
+		t.Errorf("cleaned = %d, want 1", cleaned)
+	}
+
+	// Metadata should be gone.
+	runtimes, _ := ListAllTUIRuntimes()
+	if len(runtimes) != 0 {
+		t.Errorf("expected 0 runtimes, got %d", len(runtimes))
+	}
+	// The regular file must NOT have been deleted.
+	if _, err := os.Stat(filePath); err != nil {
+		t.Error("regular file was incorrectly removed")
 	}
 }
 

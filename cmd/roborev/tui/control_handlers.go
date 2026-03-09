@@ -76,7 +76,7 @@ func (m model) buildStateResponse() controlResponse {
 		OK: true,
 		Data: stateSnapshot{
 			View:            m.currentView.String(),
-			RepoFilter:      m.activeRepoFilter,
+			RepoFilter:      copyStrings(m.activeRepoFilter),
 			BranchFilter:    m.activeBranchFilter,
 			LockedRepo:      m.lockedRepoFilter,
 			LockedBranch:    m.lockedBranchFilter,
@@ -100,11 +100,11 @@ func (m model) buildFilterResponse() controlResponse {
 	return controlResponse{
 		OK: true,
 		Data: filterData{
-			RepoFilter:   m.activeRepoFilter,
+			RepoFilter:   copyStrings(m.activeRepoFilter),
 			BranchFilter: m.activeBranchFilter,
 			LockedRepo:   m.lockedRepoFilter,
 			LockedBranch: m.lockedBranchFilter,
-			FilterStack:  m.filterStack,
+			FilterStack:  copyStrings(m.filterStack),
 		},
 	}
 }
@@ -139,7 +139,7 @@ func (m model) buildSelectedResponse() controlResponse {
 }
 
 func makeJobSnapshot(job storage.ReviewJob) jobSnapshot {
-	return jobSnapshot{
+	snap := jobSnapshot{
 		ID:      job.ID,
 		Agent:   job.Agent,
 		Status:  job.Status,
@@ -147,9 +147,30 @@ func makeJobSnapshot(job storage.ReviewJob) jobSnapshot {
 		Branch:  job.Branch,
 		GitRef:  job.GitRef,
 		Subject: job.CommitSubject,
-		Closed:  job.Closed,
-		Verdict: job.Verdict,
 	}
+	// Deep-copy pointer fields so the snapshot is safe to
+	// marshal in a connection goroutine without racing with
+	// mutations in the Bubble Tea update loop.
+	if job.Closed != nil {
+		c := *job.Closed
+		snap.Closed = &c
+	}
+	if job.Verdict != nil {
+		v := *job.Verdict
+		snap.Verdict = &v
+	}
+	return snap
+}
+
+// copyStrings returns a shallow copy of a string slice so the
+// snapshot doesn't alias the model's backing array.
+func copyStrings(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	cp := make([]string, len(s))
+	copy(cp, s)
+	return cp
 }
 
 // --- Mutation handlers ---

@@ -134,7 +134,12 @@ func CleanupStaleTUIRuntimes() int {
 		if isProcessAlive(info.PID) {
 			continue
 		}
-		os.Remove(info.SocketPath)
+		// Only remove the socket if it's actually a stale
+		// socket file. This prevents deleting a live socket
+		// at a shared custom path or a non-socket file.
+		// Errors are ignored: the metadata is still cleaned
+		// since the owning PID is dead.
+		_ = removeStaleSocket(info.SocketPath)
 		os.Remove(tuiRuntimePath(info.PID))
 		cleaned++
 	}
