@@ -341,6 +341,9 @@ roborev tui                          # Terminal UI
 - `test` agent is always available (no PATH lookup)
 - Worker pool test hooks enable deterministic synchronization
 - Table-driven tests are preferred
+- Use `testify` (`assert`/`require`) for all test assertions -- do not use raw `if`/`t.Errorf`/`t.Fatalf` patterns
+- `require.*` for fatal preconditions (test cannot continue if this fails), `assert.*` for non-fatal checks
+- In tests with more than three assertions, prefer `assert := assert.New(t)` shorthand
 
 ## Conventions
 
