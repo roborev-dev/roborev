@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,11 +43,33 @@ func removeStaleSocket(socketPath string) error {
 			"%s is already in use by another listener", socketPath,
 		)
 	}
-	// Stale socket — safe to remove.
+	// Only treat ECONNREFUSED as proof that nothing is listening.
+	// Other dial errors (wrong socket type, permission denied, etc.)
+	// are ambiguous and could indicate a live non-stream socket.
+	if !isConnRefused(dialErr) {
+		return fmt.Errorf(
+			"%s: cannot determine socket state: %w",
+			socketPath, dialErr,
+		)
+	}
+	// ECONNREFUSED — nothing is listening. Safe to remove.
 	if err := os.Remove(socketPath); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
 	return nil
+}
+
+// isConnRefused returns true when the error chain contains
+// ECONNREFUSED, which means a socket exists but nothing is listening.
+func isConnRefused(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		var sysErr *os.SyscallError
+		if errors.As(opErr.Err, &sysErr) {
+			return errors.Is(sysErr.Err, syscall.ECONNREFUSED)
+		}
+	}
+	return false
 }
 
 // startControlListener creates a Unix domain socket and starts
