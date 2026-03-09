@@ -65,9 +65,8 @@ func setBatchTimestamp(t *testing.T, db *DB, batchID int64, column string, offse
 	t.Helper()
 	ts := time.Now().UTC().Add(offset).Format("2006-01-02 15:04:05")
 	query := `UPDATE ci_pr_batches SET ` + column + ` = ? WHERE id = ?`
-	if _, err := db.Exec(query, ts, batchID); err != nil {
-		require.Errorf(t, err, "setBatchTimestamp (%s): %v", column, err)
-	}
+	_, err := db.Exec(query, ts, batchID)
+	require.NoError(t, err, "setBatchTimestamp (%s): %v", column, err)
 }
 
 func setBatchCreatedAt(t *testing.T, db *DB, batchID int64, offset time.Duration) {

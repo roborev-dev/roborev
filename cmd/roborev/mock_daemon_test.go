@@ -146,9 +146,8 @@ func TestCreateMockRefineHandler_405ResponseBody(t *testing.T) {
 	require.NoError(t, err, "reading body: %v")
 
 	var resp map[string]string
-	if err := json.Unmarshal(body, &resp); err != nil {
-		require.Errorf(t, err, "unmarshaling body %q: %v", body, err)
-	}
+	err = json.Unmarshal(body, &resp)
+	require.NoError(t, err, "unmarshaling body %q: %v", body, err)
 	assert.Equal(t, "method not allowed", resp["error"],
 
 		"got error %q, want %q",

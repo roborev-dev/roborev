@@ -115,9 +115,8 @@ func TestActivityLog_FileFormat(t *testing.T) {
 
 	for i, w := range want {
 		var got ActivityEntry
-		if err := decoder.Decode(&got); err != nil {
-			require.Errorf(t, err, "decode entry %d: %v", i, err)
-		}
+		err := decoder.Decode(&got)
+		require.NoError(t, err, "decode entry %d: %v", i, err)
 		assert.False(t, got.Event != w.Event || got.Component != w.Component || got.Message != w.Message,
 			"entry %d = %+v, want %+v", i, got, w)
 

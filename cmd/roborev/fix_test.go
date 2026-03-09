@@ -1110,9 +1110,8 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 		} {
 			c := exec.Command("git", args...)
 			c.Dir = dir
-			if err := c.Run(); err != nil {
-				require.Errorf(t, err, "git %v: %v", args, err)
-			}
+			err := c.Run()
+			require.NoError(t, err, "git %v: %v", args, err)
 		}
 
 		ag := &agent.FakeAgent{

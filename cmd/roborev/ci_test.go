@@ -69,11 +69,7 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 			cmd.SetArgs(tt.args)
 			err := cmd.Execute()
 
-			require.Error(t, err)
-
-			if !strings.Contains(err.Error(), tt.wantError) {
-				assert.Errorf(t, err, "expected error containing %q, got: %v", tt.wantError, err)
-			}
+			require.ErrorContains(t, err, tt.wantError)
 		})
 	}
 }

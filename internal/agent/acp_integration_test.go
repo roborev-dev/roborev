@@ -48,9 +48,8 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 	}
 	args := strings.Fields(strings.TrimSpace(os.Getenv(acpIntegrationArgsEnv)))
 
-	if _, err := exec.LookPath(command); err != nil {
-		require.Errorf(t, err, "ACP command %q not found in PATH: %v", command)
-	}
+	_, err := exec.LookPath(command)
+	require.NoError(t, err, "ACP command %q not found in PATH: %v", command, err)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is required for ACP integration smoke test")
 	}
