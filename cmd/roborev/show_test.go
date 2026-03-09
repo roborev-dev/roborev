@@ -33,7 +33,7 @@ func TestShowCommandArgParsing(t *testing.T) {
 			wantQueryNot: []string{"job_id="},
 			validate: func(t *testing.T, repo *TestGitRepo, query string) {
 				tagSHA := repo.Run("rev-parse", "12345")
-				assert.Contains(t, query, tagSHA[:7], "unexpected condition")
+				assert.Contains(t, query, tagSHA[:7])
 			},
 		},
 		{
@@ -76,10 +76,10 @@ func TestShowCommandArgParsing(t *testing.T) {
 
 			q := getQuery()
 			for _, s := range tt.wantQueryHas {
-				assert.Contains(t, q, s, "unexpected condition")
+				assert.Contains(t, q, s)
 			}
 			for _, s := range tt.wantQueryNot {
-				assert.NotContains(t, q, s, "unexpected condition")
+				assert.NotContains(t, q, s)
 			}
 
 			if tt.validate != nil {
@@ -126,9 +126,9 @@ func TestShowOutputFormat(t *testing.T) {
 
 			expected := tt.wantOutputFunc(shortSHA)
 
-			assert.Contains(t, output, expected, "unexpected condition")
+			assert.Contains(t, output, expected)
 			if tt.notOutput != "" {
-				assert.NotContains(t, output, tt.notOutput, "unexpected condition")
+				assert.NotContains(t, output, tt.notOutput)
 			}
 		})
 	}
@@ -158,8 +158,8 @@ func TestShowOutsideGitRepo(t *testing.T) {
 
 		output := runShowCmd(t, "--job", "42")
 		q := getQuery()
-		assert.Contains(t, q, "job_id=42", "unexpected condition")
-		assert.Contains(t, output, "LGTM", "unexpected condition")
+		assert.Contains(t, q, "job_id=42")
+		assert.Contains(t, output, "LGTM")
 	})
 }
 
@@ -179,14 +179,14 @@ func TestShowJSONOutput(t *testing.T) {
 		var parsed storage.Review
 		err := json.Unmarshal([]byte(output), &parsed)
 		require.NoError(t, err, "invalid JSON output")
-		assert.EqualValues(t, 42, parsed.JobID, "unexpected condition")
-		assert.Equal(t, "LGTM", parsed.Output, "unexpected condition")
-		assert.Equal(t, "test", parsed.Agent, "unexpected condition")
+		assert.EqualValues(t, 42, parsed.JobID)
+		assert.Equal(t, "LGTM", parsed.Output)
+		assert.Equal(t, "test", parsed.Agent)
 	})
 
 	t.Run("skips formatted header", func(t *testing.T) {
-		assert.NotContains(t, output, "Review for", "unexpected condition")
-		assert.NotContains(t, output, "---", "unexpected condition")
+		assert.NotContains(t, output, "Review for")
+		assert.NotContains(t, output, "---")
 	})
 }
 
@@ -220,10 +220,10 @@ func TestShowIncludesComments(t *testing.T) {
 	chdir(t, repo.Dir)
 	output := runShowCmd(t, "--job", "42")
 
-	assert.Contains(t, output, "Found issues", "unexpected condition")
-	assert.Contains(t, output, "--- Comments ---", "unexpected condition")
-	assert.Contains(t, output, "alice", "unexpected condition")
-	assert.Contains(t, output, "This is expected", "unexpected condition")
+	assert.Contains(t, output, "Found issues")
+	assert.Contains(t, output, "--- Comments ---")
+	assert.Contains(t, output, "alice")
+	assert.Contains(t, output, "This is expected")
 }
 
 func TestShowNoComments(t *testing.T) {
@@ -237,6 +237,6 @@ func TestShowNoComments(t *testing.T) {
 	chdir(t, repo.Dir)
 	output := runShowCmd(t, "--job", "42")
 
-	assert.Contains(t, output, "LGTM", "unexpected condition")
-	assert.NotContains(t, output, "Comments", "unexpected condition")
+	assert.Contains(t, output, "LGTM")
+	assert.NotContains(t, output, "Comments")
 }

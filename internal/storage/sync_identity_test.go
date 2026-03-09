@@ -19,17 +19,17 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		repoID, err := db.GetOrCreateRepoByIdentity(localIdentity)
 		require.NoError(t, err, "GetOrCreateRepoByIdentity failed: %v")
 
-		assert.NotEqual(t, 0, repoID, "unexpected condition")
+		assert.NotEqual(t, 0, repoID)
 
 		// Verify repo has correct fields
 		var rootPath, name, identity string
 		err = db.QueryRow(`SELECT root_path, name, identity FROM repos WHERE id = ?`, repoID).Scan(&rootPath, &name, &identity)
 		require.NoError(t, err, "Query repo failed: %v")
 
-		assert.Equal(t, rootPath, localIdentity, "unexpected condition")
+		assert.Equal(t, rootPath, localIdentity)
 		// Name is extracted from identity
-		assert.Equal(t, "my-local-project", name, "unexpected condition")
-		assert.Equal(t, identity, localIdentity, "unexpected condition")
+		assert.Equal(t, "my-local-project", name)
+		assert.Equal(t, identity, localIdentity)
 	})
 
 	t.Run("returns same ID on subsequent calls", func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		id2, err := db.GetOrCreateRepoByIdentity(localIdentity)
 		require.NoError(t, err, "Second GetOrCreateRepoByIdentity failed: %v")
 
-		assert.Equal(t, id1, id2, "unexpected condition")
+		assert.Equal(t, id1, id2)
 	})
 
 	t.Run("creates different repos for different identities", func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		id2, err := db.GetOrCreateRepoByIdentity("local:project-b")
 		require.NoError(t, err, "Second GetOrCreateRepoByIdentity failed: %v")
 
-		assert.NotEqual(t, id1, id2, "unexpected condition")
+		assert.NotEqual(t, id1, id2)
 	})
 
 	t.Run("works with git URL identities too", func(t *testing.T) {
@@ -65,8 +65,8 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		err = db.QueryRow(`SELECT identity, name FROM repos WHERE id = ?`, repoID).Scan(&identity, &name)
 		require.NoError(t, err, "Query repo failed: %v")
 
-		assert.Equal(t, identity, gitIdentity, "unexpected condition")
-		assert.Equal(t, "repo", name, "unexpected condition")
+		assert.Equal(t, identity, gitIdentity)
+		assert.Equal(t, "repo", name)
 	})
 
 	t.Run("reuses single local repo when one exists", func(t *testing.T) {
@@ -84,14 +84,14 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		gotID, err := db.GetOrCreateRepoByIdentity(singleIdentity)
 		require.NoError(t, err, "GetOrCreateRepoByIdentity failed: %v")
 
-		assert.Equal(t, gotID, localRepoID, "unexpected condition")
+		assert.Equal(t, gotID, localRepoID)
 
 		// Verify no placeholder was created
 		var count int
 		err = db.QueryRow(`SELECT COUNT(*) FROM repos WHERE root_path = ?`, singleIdentity).Scan(&count)
 		require.NoError(t, err, "Count query failed: %v")
 
-		assert.Equal(t, 0, count, "unexpected condition")
+		assert.Equal(t, 0, count)
 	})
 
 	t.Run("creates placeholder when multiple local clones exist", func(t *testing.T) {
@@ -116,14 +116,14 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		err = db.QueryRow(`SELECT root_path, name FROM repos WHERE id = ?`, placeholderID).Scan(&rootPath, &name)
 		require.NoError(t, err, "Query placeholder failed: %v")
 
-		assert.Equal(t, rootPath, sharedIdentity, "unexpected condition")
-		assert.Equal(t, "shared-repo", name, "unexpected condition")
+		assert.Equal(t, rootPath, sharedIdentity)
+		assert.Equal(t, "shared-repo", name)
 
 		// Subsequent calls should return the same placeholder
 		placeholderID2, err := db.GetOrCreateRepoByIdentity(sharedIdentity)
 		require.NoError(t, err, "Second GetOrCreateRepoByIdentity failed: %v")
 
-		assert.Equal(t, placeholderID, placeholderID2, "unexpected condition")
+		assert.Equal(t, placeholderID, placeholderID2)
 	})
 
 	t.Run("prefers single local repo over existing placeholder", func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		gotID, err := db.GetOrCreateRepoByIdentity(placeholderIdentity)
 		require.NoError(t, err, "GetOrCreateRepoByIdentity failed: %v")
 
-		assert.Equal(t, gotID, localRepoID, "unexpected condition")
+		assert.Equal(t, gotID, localRepoID)
 	})
 }
 
@@ -180,7 +180,7 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.identity, func(t *testing.T) {
 			got := ExtractRepoNameFromIdentity(tt.identity)
-			assert.Equal(t, tt.expected, got, "unexpected condition")
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
@@ -201,9 +201,9 @@ func TestSetRepoIdentity(t *testing.T) {
 	found, err := db.GetRepoByIdentity("https://github.com/user/repo.git")
 	require.NoError(t, err, "GetRepoByIdentity failed: %v")
 
-	assert.NotNil(t, found, "unexpected condition")
-	assert.Equal(t, found.ID, repo.ID, "unexpected condition")
-	assert.Equal(t, "https://github.com/user/repo.git", found.Identity, "unexpected condition")
+	assert.NotNil(t, found)
+	assert.Equal(t, found.ID, repo.ID)
+	assert.Equal(t, "https://github.com/user/repo.git", found.Identity)
 }
 
 func TestGetRepoByIdentity_NotFound(t *testing.T) {
@@ -213,7 +213,7 @@ func TestGetRepoByIdentity_NotFound(t *testing.T) {
 	found, err := db.GetRepoByIdentity("nonexistent")
 	require.NoError(t, err, "GetRepoByIdentity failed: %v")
 
-	assert.Nil(t, found, "unexpected condition")
+	assert.Nil(t, found)
 }
 
 func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
@@ -232,8 +232,8 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 
 	// GetRepoByIdentity should return error for duplicates
 	_, err = db.GetRepoByIdentity("same-id")
-	require.Error(t, err, "unexpected condition")
-	assert.True(t, regexp.MustCompile(`multiple repos found`).MatchString(err.Error()), "unexpected condition")
+	require.Error(t, err)
+	assert.True(t, regexp.MustCompile(`multiple repos found`).MatchString(err.Error()))
 }
 
 func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
@@ -291,7 +291,7 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 	err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE sha = 'abc123'`).Scan(&count)
 	require.NoError(t, err, "Failed to count commits: %v")
 
-	assert.Equal(t, 2, count, "unexpected condition")
+	assert.Equal(t, 2, count)
 
 	// Verify duplicate in same repo is still rejected
 	_, err = db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
@@ -335,7 +335,7 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 	repos, err := db.ListRepos()
 	require.NoError(t, err, "ListRepos failed: %v")
 
-	assert.Len(t, repos, 2, "unexpected condition")
+	assert.Len(t, repos, 2)
 }
 
 func TestUniqueIndexMigration(t *testing.T) {

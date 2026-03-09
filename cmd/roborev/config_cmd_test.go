@@ -55,7 +55,7 @@ func getNestedValue(t *testing.T, raw map[string]any, dotKey string) any {
 	var current any = raw
 	for _, part := range parts {
 		m, ok := current.(map[string]any)
-		assert.True(t, ok, "unexpected condition")
+		assert.True(t, ok)
 		current = m[part]
 	}
 	return current

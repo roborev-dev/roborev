@@ -21,11 +21,11 @@ const defaultTestMachineID = "11111111-1111-1111-1111-111111111111"
 func TestDefaultPgPoolConfig(t *testing.T) {
 	cfg := DefaultPgPoolConfig()
 
-	assert.Equal(t, 5*time.Second, cfg.ConnectTimeout, "unexpected condition")
-	assert.EqualValues(t, 4, cfg.MaxConns, "unexpected condition")
-	assert.EqualValues(t, 0, cfg.MinConns, "unexpected condition")
-	assert.Equal(t, time.Hour, cfg.MaxConnLifetime, "unexpected condition")
-	assert.Equal(t, 30*time.Minute, cfg.MaxConnIdleTime, "unexpected condition")
+	assert.Equal(t, 5*time.Second, cfg.ConnectTimeout)
+	assert.EqualValues(t, 4, cfg.MaxConns)
+	assert.EqualValues(t, 0, cfg.MinConns)
+	assert.Equal(t, time.Hour, cfg.MaxConnLifetime)
+	assert.Equal(t, 30*time.Minute, cfg.MaxConnIdleTime)
 }
 
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
@@ -44,7 +44,7 @@ func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
 	for _, required := range requiredStatements {
-		assert.Contains(t, allStatements, required, "unexpected condition")
+		assert.Contains(t, allStatements, required)
 	}
 }
 
@@ -62,7 +62,7 @@ func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
 	for _, idx := range requiredIndexes {
-		assert.Contains(t, allStatements, idx, "unexpected condition")
+		assert.Contains(t, allStatements, idx)
 	}
 }
 
@@ -138,8 +138,8 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 		reviews, newCursor, err := pool.PullReviews(ctx, machineID, []string{}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
-		assert.Empty(t, reviews, "unexpected condition")
-		assert.Empty(t, newCursor, "unexpected condition")
+		assert.Empty(t, reviews)
+		assert.Empty(t, newCursor)
 	})
 
 	t.Run("filters to only known job UUIDs", func(t *testing.T) {
@@ -147,8 +147,8 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 		reviews, _, err := pool.PullReviews(ctx, machineID, []string{jobUUID1}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
-		assert.Len(t, reviews, 1, "unexpected condition")
-		assert.Equal(t, reviews[0].JobUUID, jobUUID1, "unexpected condition")
+		assert.Len(t, reviews, 1)
+		assert.Equal(t, reviews[0].JobUUID, jobUUID1)
 	})
 
 	t.Run("cursor does not skip reviews for later-known jobs", func(t *testing.T) {
@@ -156,15 +156,15 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 		reviews1, cursor1, err := pool.PullReviews(ctx, machineID, []string{jobUUID1}, "", 100)
 		require.NoError(t, err, "First PullReviews failed: %v")
 
-		assert.Len(t, reviews1, 1, "unexpected condition")
+		assert.Len(t, reviews1, 1)
 
 		// Second pull with both jobs known - should still get review2
 		// even though cursor advanced past review1's timestamp
 		reviews2, _, err := pool.PullReviews(ctx, machineID, []string{jobUUID1, jobUUID2}, cursor1, 100)
 		require.NoError(t, err, "Second PullReviews failed: %v")
 
-		assert.Len(t, reviews2, 1, "unexpected condition")
-		assert.Equal(t, reviews2[0].JobUUID, jobUUID2, "unexpected condition")
+		assert.Len(t, reviews2, 1)
+		assert.Equal(t, reviews2[0].JobUUID, jobUUID2)
 	})
 }
 
@@ -237,7 +237,7 @@ func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) {
 	if err := pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil {
 		require.NoError(t, err, "Failed to query version: %v")
 	}
-	assert.Equal(t, pgSchemaVersion, version, "unexpected condition")
+	assert.Equal(t, pgSchemaVersion, version)
 }
 
 func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
@@ -257,8 +257,8 @@ func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
 
 	// EnsureSchema should fail with clear error
 	err = pool.EnsureSchema(ctx)
-	require.Error(t, err, "unexpected condition")
-	assert.Contains(t, err.Error(), "newer than supported", "unexpected condition")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "newer than supported")
 }
 
 func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
@@ -317,7 +317,7 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 		`).Scan(&tableCount)
 		require.NoError(t, err, "Failed to count tables: %v")
 
-		assert.GreaterOrEqual(t, tableCount, 5, "unexpected condition")
+		assert.GreaterOrEqual(t, tableCount, 5)
 
 		// Verify branch index was created for fresh install
 		var indexExists bool
@@ -389,14 +389,14 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	`).Scan(&publicExists); err != nil {
 		require.NoError(t, err, "Failed to check if public.schema_version exists: %v")
 	}
-	assert.False(t, publicExists, "unexpected condition")
+	assert.False(t, publicExists)
 
 	// Verify data is accessible in roborev schema
 	var version int
 	err = pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
 	require.NoError(t, err, "Failed to query migrated data: %v")
 
-	assert.Equal(t, 1, version, "unexpected condition")
+	assert.Equal(t, 1, version)
 }
 
 func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing.T) {
@@ -439,30 +439,30 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_version')`).Scan(&exists); err != nil {
 		require.NoError(t, err, "Failed to check public.schema_version: %v")
 	}
-	assert.False(t, exists, "unexpected condition")
+	assert.False(t, exists)
 	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
 		require.NoError(t, err, "Failed to check public.repos: %v")
 	}
-	assert.False(t, exists, "unexpected condition")
+	assert.False(t, exists)
 
 	// Verify roborev.machines exists
 	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='roborev' AND table_name='machines')`).Scan(&exists); err != nil {
 		require.NoError(t, err, "Failed to check roborev.machines: %v")
 	}
-	assert.True(t, exists, "unexpected condition")
+	assert.True(t, exists)
 
 	// Verify data is accessible
 	var version int
 	err = pool.pool.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&version)
 	require.NoError(t, err, "Failed to query migrated schema_version: %v")
 
-	assert.Equal(t, 1, version, "unexpected condition")
+	assert.Equal(t, 1, version)
 
 	var repoIdentity string
 	err = pool.pool.QueryRow(ctx, `SELECT identity FROM repos WHERE identity = 'test-repo-legacy'`).Scan(&repoIdentity)
 	require.NoError(t, err, "Failed to query migrated repo: %v")
 
-	assert.Equal(t, "test-repo-legacy", repoIdentity, "unexpected condition")
+	assert.Equal(t, "test-repo-legacy", repoIdentity)
 }
 
 func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
@@ -491,8 +491,8 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	defer pool.Close()
 
 	err = pool.EnsureSchema(ctx)
-	require.Error(t, err, "unexpected condition")
-	assert.Contains(t, err.Error(), "manual reconciliation required", "unexpected condition")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "manual reconciliation required")
 }
 
 func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
@@ -528,14 +528,14 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
 		require.NoError(t, err, "Failed to check public.repos: %v")
 	}
-	assert.False(t, exists, "unexpected condition")
+	assert.False(t, exists)
 
 	// Verify roborev.repos still exists with data
 	var repoIdentity string
 	err = pool.pool.QueryRow(ctx, `SELECT identity FROM roborev.repos`).Scan(&repoIdentity)
 	require.NoError(t, err, "Failed to query roborev.repos: %v")
 
-	assert.Equal(t, "new-repo", repoIdentity, "unexpected condition")
+	assert.Equal(t, "new-repo", repoIdentity)
 }
 
 func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
@@ -570,14 +570,14 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
 		require.NoError(t, err, "Failed to check public.repos: %v")
 	}
-	assert.False(t, exists, "unexpected condition")
+	assert.False(t, exists)
 
 	// Verify data is accessible in roborev.repos
 	var count int
 	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM roborev.repos WHERE identity IN ('migrated-repo-1', 'migrated-repo-2')`).Scan(&count)
 	require.NoError(t, err, "Failed to count migrated repos: %v")
 
-	assert.Equal(t, 2, count, "unexpected condition")
+	assert.Equal(t, 2, count)
 }
 
 func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
@@ -588,20 +588,20 @@ func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
 	dbID1, err := pool.GetDatabaseID(ctx)
 	require.NoError(t, err, "GetDatabaseID failed: %v")
 
-	assert.NotEmpty(t, dbID1, "unexpected condition")
+	assert.NotEmpty(t, dbID1)
 
 	// Get it again - should return the same ID
 	dbID2, err := pool.GetDatabaseID(ctx)
 	require.NoError(t, err, "GetDatabaseID (second call) failed: %v")
 
-	assert.Equal(t, dbID2, dbID1, "unexpected condition")
+	assert.Equal(t, dbID2, dbID1)
 
 	// Verify it's stored in sync_metadata
 	var storedID string
 	err = pool.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&storedID)
 	require.NoError(t, err, "Failed to query sync_metadata: %v")
 
-	assert.Equal(t, storedID, dbID1, "unexpected condition")
+	assert.Equal(t, storedID, dbID1)
 
 	t.Logf("Database ID: %s", dbID1)
 }
@@ -652,7 +652,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	// Verify job is currently synced
 	machineID, _ := sqliteDB.GetMachineID()
 	jobsToSync, _ := sqliteDB.GetJobsToSync(machineID, 100)
-	assert.Empty(t, jobsToSync, "unexpected condition")
+	assert.Empty(t, jobsToSync)
 
 	// Now get the database ID from the actual Postgres (which is different from oldTargetID)
 	dbID, err := pool.GetDatabaseID(ctx)
@@ -674,11 +674,11 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	jobsToSync, err = sqliteDB.GetJobsToSync(machineID, 100)
 	require.NoError(t, err, "GetJobsToSync failed: %v")
 
-	assert.Len(t, jobsToSync, 1, "unexpected condition")
+	assert.Len(t, jobsToSync, 1)
 
 	// Verify sync target was updated
 	newTargetID, _ := sqliteDB.GetSyncState(SyncStateSyncTargetID)
-	assert.Equal(t, newTargetID, dbID, "unexpected condition")
+	assert.Equal(t, newTargetID, dbID)
 }
 
 func TestIntegration_BatchUpsertJobs(t *testing.T) {
@@ -711,19 +711,19 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	success, err := pool.BatchUpsertJobs(ctx, jobs)
 	require.NoError(t, err, "BatchUpsertJobs failed: %v")
 
-	assert.Equal(t, 5, countSuccesses(success), "unexpected condition")
+	assert.Equal(t, 5, countSuccesses(success))
 
 	// Verify jobs exist
 	var jobCount int
 	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = $1`, defaultTestMachineID).Scan(&jobCount)
 	require.NoError(t, err, "Count query failed: %v")
 
-	assert.GreaterOrEqual(t, jobCount, 5, "unexpected condition")
+	assert.GreaterOrEqual(t, jobCount, 5)
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{})
-		require.NoError(t, err, "unexpected condition")
-		assert.Nil(t, success, "unexpected condition")
+		require.NoError(t, err)
+		assert.Nil(t, success)
 	})
 }
 
@@ -768,12 +768,12 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	success, err := pool.BatchUpsertReviews(ctx, reviews)
 	require.NoError(t, err, "BatchUpsertReviews failed: %v")
 
-	assert.Equal(t, 2, countSuccesses(success), "unexpected condition")
+	assert.Equal(t, 2, countSuccesses(success))
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})
-		require.NoError(t, err, "unexpected condition")
-		assert.Nil(t, success, "unexpected condition")
+		require.NoError(t, err)
+		assert.Nil(t, success)
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
@@ -802,7 +802,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 
 		require.Error(t, err, "Expected error from batch with invalid FK, got nil")
-		assert.Len(t, success, 2, "unexpected condition")
+		assert.Len(t, success, 2)
 		assert.True(t, success[0], "Expected success[0]=true (valid FK)")
 		assert.False(t, success[1], "Expected success[1]=false (invalid FK)")
 
@@ -810,7 +810,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE uuid = $1`, validReviewUUID).Scan(&count)
 		require.NoError(t, err, "Failed to query review: %v")
 
-		assert.Equal(t, 0, count, "unexpected condition")
+		assert.Equal(t, 0, count)
 	})
 }
 
@@ -859,12 +859,12 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	success, err := pool.BatchInsertResponses(ctx, responses)
 	require.NoError(t, err, "BatchInsertResponses failed: %v")
 
-	assert.Equal(t, 3, countSuccesses(success), "unexpected condition")
+	assert.Equal(t, 3, countSuccesses(success))
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchInsertResponses(ctx, []SyncableResponse{})
-		require.NoError(t, err, "unexpected condition")
-		assert.Nil(t, success, "unexpected condition")
+		require.NoError(t, err)
+		assert.Nil(t, success)
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
@@ -890,7 +890,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 		success, err := pool.BatchInsertResponses(ctx, responses)
 
 		require.Error(t, err, "Expected error from batch with invalid FK, got nil")
-		assert.Len(t, success, 2, "unexpected condition")
+		assert.Len(t, success, 2)
 		assert.True(t, success[0], "Expected success[0]=true (valid FK)")
 		assert.False(t, success[1], "Expected success[1]=false (invalid FK)")
 	})
@@ -942,7 +942,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	err = pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version)
 	require.NoError(t, err, "Failed to query schema version: %v")
 
-	assert.Equal(t, pgSchemaVersion, version, "unexpected condition")
+	assert.Equal(t, pgSchemaVersion, version)
 
 	// Verify model column was added
 	var hasModelColumn bool
@@ -962,8 +962,8 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	err = pool.pool.QueryRow(ctx, `SELECT agent, model FROM review_jobs WHERE uuid = $1`, testJobUUID).Scan(&jobAgent, &jobModel)
 	require.NoError(t, err, "Failed to query test job after migration: %v")
 
-	assert.Equal(t, "test-agent", jobAgent, "unexpected condition")
-	assert.Nil(t, jobModel, "unexpected condition")
+	assert.Equal(t, "test-agent", jobAgent)
+	assert.Nil(t, jobModel)
 }
 
 func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
@@ -1003,7 +1003,7 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelBefore)
 	require.NoError(t, err, "Failed to query model before: %v")
 
-	assert.Nil(t, modelBefore, "unexpected condition")
+	assert.Nil(t, modelBefore)
 
 	// Upsert with a model value - should backfill
 	job := SyncableJob{
@@ -1038,5 +1038,5 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelPreserved)
 	require.NoError(t, err, "Failed to query model preserved: %v")
 
-	assert.False(t, modelPreserved == nil || *modelPreserved != "gpt-4", "unexpected condition")
+	assert.False(t, modelPreserved == nil || *modelPreserved != "gpt-4")
 }

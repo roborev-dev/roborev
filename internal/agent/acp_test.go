@@ -21,25 +21,25 @@ func TestACPAgent(t *testing.T) {
 
 	acpAgent := NewACPAgent("test-acp-agent")
 
-	assert.Equal(t, "acp", acpAgent.Name(), "unexpected condition")
+	assert.Equal(t, "acp", acpAgent.Name())
 
-	assert.Equal(t, "test-acp-agent", acpAgent.CommandName(), "unexpected condition")
+	assert.Equal(t, "test-acp-agent", acpAgent.CommandName())
 
 	thoroughAgent := acpAgent.WithReasoning(ReasoningThorough)
-	assert.Equal(t, ReasoningThorough, thoroughAgent.(*ACPAgent).Reasoning, "unexpected condition")
+	assert.Equal(t, ReasoningThorough, thoroughAgent.(*ACPAgent).Reasoning)
 
 	agenticAgent := acpAgent.WithAgentic(true)
-	assert.True(t, agenticAgent.(*ACPAgent).Agentic, "unexpected condition")
+	assert.True(t, agenticAgent.(*ACPAgent).Agentic)
 
 	modelAgent := acpAgent.WithModel("gpt-4")
-	assert.Equal(t, "gpt-4", modelAgent.(*ACPAgent).Model, "unexpected condition")
+	assert.Equal(t, "gpt-4", modelAgent.(*ACPAgent).Model)
 
-	assert.True(t, acpAgent.WithAgentic(true).WithModel("gpt-4").(*ACPAgent).Agentic, "unexpected condition")
+	assert.True(t, acpAgent.WithAgentic(true).WithModel("gpt-4").(*ACPAgent).Agentic)
 
 	defaultAgent := NewACPAgent("")
-	assert.Equal(t, "acp-agent", defaultAgent.Command, "unexpected condition")
-	assert.Equal(t, "plan", defaultAgent.Mode, "unexpected condition")
-	assert.Equal(t, 10*time.Minute, defaultAgent.Timeout, "unexpected condition")
+	assert.Equal(t, "acp-agent", defaultAgent.Command)
+	assert.Equal(t, "plan", defaultAgent.Mode)
+	assert.Equal(t, 10*time.Minute, defaultAgent.Timeout)
 
 	configuredAgent := NewACPAgentFromConfig(&config.ACPAgentConfig{
 		Name:            "custom-acp",
@@ -48,20 +48,20 @@ func TestACPAgent(t *testing.T) {
 		AutoApproveMode: "auto-approve",
 		Mode:            "plan",
 	})
-	assert.Equal(t, "custom-acp", configuredAgent.Name(), "unexpected condition")
+	assert.Equal(t, "custom-acp", configuredAgent.Name())
 }
 
 func TestACPAgentCommandLine(t *testing.T) {
 	agent := NewACPAgent("acp-agent")
 
 	cmdLine := agent.CommandLine()
-	assert.Contains(t, cmdLine, "acp-agent", "unexpected condition")
+	assert.Contains(t, cmdLine, "acp-agent")
 
 	withModel := agent.WithModel("claude-3-opus")
-	assert.Equal(t, withModel.CommandLine(), agent.CommandLine(), "unexpected condition")
+	assert.Equal(t, withModel.CommandLine(), agent.CommandLine())
 
 	agentic := agent.WithAgentic(true)
-	assert.Equal(t, agent.CommandLine(), agentic.CommandLine(), "unexpected condition")
+	assert.Equal(t, agent.CommandLine(), agentic.CommandLine())
 }
 
 func TestApplyACPAgentConfigOverrideModeResolution(t *testing.T) {
@@ -298,15 +298,15 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
-		assert.Equal(t, "term-1", resp.TerminalId, "unexpected condition")
+		assert.Equal(t, "term-1", resp.TerminalId)
 
-		assert.Equal(t, 1, terminalCount(client), "unexpected condition")
+		assert.Equal(t, 1, terminalCount(client))
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("Output truncation", func(t *testing.T) {
@@ -333,14 +333,14 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			TerminalId: resp.TerminalId,
 		})
 		require.NoError(t, err)
-		assert.LessOrEqual(t, len(outputResp.Output), 5, "unexpected condition")
+		assert.LessOrEqual(t, len(outputResp.Output), 5)
 		assert.True(t, outputResp.Truncated, "Expected output to be marked truncated when output exceeds byte limit")
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("Terminal release with context cancellation", func(t *testing.T) {
@@ -356,9 +356,9 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 
-		assert.Equal(t, 0, terminalCount(client), "unexpected condition")
+		assert.Equal(t, 0, terminalCount(client))
 	})
 
 	t.Run("Session ID validation", func(t *testing.T) {
@@ -381,7 +381,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("Terminal lifecycle - persists after command completion", func(t *testing.T) {
@@ -393,7 +393,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
-		assert.Equal(t, 1, terminalCount(client), "unexpected condition")
+		assert.Equal(t, 1, terminalCount(client))
 
 		waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -419,7 +419,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("CreateTerminal defaults cwd to repo root when omitted", func(t *testing.T) {
@@ -446,7 +446,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("CreateTerminal resolves relative cwd against repo root", func(t *testing.T) {
@@ -479,7 +479,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("CreateTerminal rejects cwd traversal outside repo root", func(t *testing.T) {
@@ -538,7 +538,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 	})
 
 	t.Run("WaitForTerminalExit does not block other terminal operations", func(t *testing.T) {
@@ -648,9 +648,9 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("hello"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Equal(t, 5, n, "unexpected condition")
-		assert.Equal(t, "hello", buf.String(), "unexpected condition")
-		assert.False(t, writer.truncated, "unexpected condition")
+		assert.Equal(t, 5, n)
+		assert.Equal(t, "hello", buf.String())
+		assert.False(t, writer.truncated)
 	})
 
 	t.Run("Write exactly at limit", func(t *testing.T) {
@@ -668,9 +668,9 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("hello"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Equal(t, 5, n, "unexpected condition")
-		assert.Equal(t, "hello", buf.String(), "unexpected condition")
-		assert.False(t, writer.truncated, "unexpected condition")
+		assert.Equal(t, 5, n)
+		assert.Equal(t, "hello", buf.String())
+		assert.False(t, writer.truncated)
 	})
 
 	t.Run("Write exceeding limit with ASCII", func(t *testing.T) {
@@ -688,15 +688,15 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("hello world"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Len(t, "hello world", n, "unexpected condition")
-		assert.Equal(t, "world", buf.String(), "unexpected condition")
-		assert.True(t, writer.truncated, "unexpected condition")
+		assert.Len(t, "hello world", n)
+		assert.Equal(t, "world", buf.String())
+		assert.True(t, writer.truncated)
 
 		n2, err := writer.Write([]byte(" more"))
 		require.NoError(t, err, "Second write failed: %v")
 
-		assert.Equal(t, 5, n2, "unexpected condition")
-		assert.Equal(t, " more", buf.String(), "unexpected condition")
+		assert.Equal(t, 5, n2)
+		assert.Equal(t, " more", buf.String())
 	})
 
 	t.Run("Write exceeding limit with UTF-8 characters", func(t *testing.T) {
@@ -714,9 +714,9 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("héllo world"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Len(t, "héllo world", n, "unexpected condition")
-		assert.Equal(t, "world", buf.String(), "unexpected condition")
-		assert.True(t, writer.truncated, "unexpected condition")
+		assert.Len(t, "héllo world", n)
+		assert.Equal(t, "world", buf.String())
+		assert.True(t, writer.truncated)
 	})
 
 	t.Run("Write exceeding limit inside first UTF-8 rune keeps valid boundary", func(t *testing.T) {
@@ -734,9 +734,9 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("é"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Len(t, "é", n, "unexpected condition")
-		assert.Equal(t, 0, buf.Len(), "unexpected condition")
-		assert.True(t, writer.truncated, "unexpected condition")
+		assert.Len(t, "é", n)
+		assert.Equal(t, 0, buf.Len())
+		assert.True(t, writer.truncated)
 	})
 
 	t.Run("Write with zero limit", func(t *testing.T) {
@@ -754,9 +754,9 @@ func TestBoundedWriter(t *testing.T) {
 		n, err := writer.Write([]byte("hello"))
 		require.NoError(t, err, "Write failed: %v")
 
-		assert.Equal(t, 5, n, "unexpected condition")
-		assert.Empty(t, buf.String(), "unexpected condition")
-		assert.True(t, writer.truncated, "unexpected condition")
+		assert.Equal(t, 5, n)
+		assert.Empty(t, buf.String())
+		assert.True(t, writer.truncated)
 	})
 
 	t.Run("Multiple writes within limit", func(t *testing.T) {
@@ -774,20 +774,20 @@ func TestBoundedWriter(t *testing.T) {
 		n1, err := writer.Write([]byte("hello"))
 		require.NoError(t, err, "First write failed: %v")
 
-		assert.Equal(t, 5, n1, "unexpected condition")
+		assert.Equal(t, 5, n1)
 
 		n2, err := writer.Write([]byte(" "))
 		require.NoError(t, err, "Second write failed: %v")
 
-		assert.Equal(t, 1, n2, "unexpected condition")
+		assert.Equal(t, 1, n2)
 
 		n3, err := writer.Write([]byte("world"))
 		require.NoError(t, err, "Third write failed: %v")
 
-		assert.Equal(t, 5, n3, "unexpected condition")
+		assert.Equal(t, 5, n3)
 
-		assert.Equal(t, "hello world", buf.String(), "unexpected condition")
-		assert.False(t, writer.truncated, "unexpected condition")
+		assert.Equal(t, "hello world", buf.String())
+		assert.False(t, writer.truncated)
 	})
 }
 

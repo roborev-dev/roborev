@@ -155,22 +155,22 @@ func TestTUIReviewNavigation(t *testing.T) {
 
 			assertSelection(t, m2, tt.wantIdx, tt.wantJobID)
 
-			assert.False(t, tt.wantScroll != -1 && m2.reviewScroll != tt.wantScroll, "unexpected condition")
+			assert.False(t, tt.wantScroll != -1 && m2.reviewScroll != tt.wantScroll)
 
 			if tt.wantFlash != "" {
-				assert.Equal(t, tt.wantFlash, m2.flashMessage, "unexpected condition")
-				assert.Equal(t, viewReview, m2.flashView, "unexpected condition")
-				assert.False(t, m2.flashExpiresAt.IsZero(), "unexpected condition")
-				assert.True(t, m2.flashExpiresAt.After(time.Now()), "unexpected condition")
+				assert.Equal(t, tt.wantFlash, m2.flashMessage)
+				assert.Equal(t, viewReview, m2.flashView)
+				assert.False(t, m2.flashExpiresAt.IsZero())
+				assert.True(t, m2.flashExpiresAt.After(time.Now()))
 			}
 
 			assert.Equal(t, tt.wantCmd, cmd != nil, "command presence mismatch")
 
 			// Specific check for failed job inline content
 			if tt.checkFailedJobInline {
-				assert.NotNil(t, m2.currentReview, "unexpected condition")
-				assert.Contains(t, m2.currentReview.Output, "something went wrong", "unexpected condition")
-				assert.Equal(t, "codex", m2.currentReview.Agent, "unexpected condition")
+				assert.NotNil(t, m2.currentReview)
+				assert.Contains(t, m2.currentReview.Output, "something went wrong")
+				assert.Equal(t, "codex", m2.currentReview.Agent)
 			}
 		})
 	}
@@ -198,8 +198,8 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 	m2, _ := updateModel(t, m, staleMsg)
 
 	// Should ignore the stale response
-	assert.Equal(t, "Review for job 2", m2.currentReview.Output, "unexpected condition")
-	assert.EqualValues(t, 20, m2.currentReview.ID, "unexpected condition")
+	assert.Equal(t, "Review for job 2", m2.currentReview.Output)
+	assert.EqualValues(t, 20, m2.currentReview.ID)
 }
 
 func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
@@ -221,9 +221,9 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, validMsg)
 
 	// Should accept the response and switch to review view
-	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
-	assert.False(t, m2.currentReview == nil || m2.currentReview.Output != "New review", "unexpected condition")
-	assert.Equal(t, 0, m2.reviewScroll, "unexpected condition")
+	assert.Equal(t, viewReview, m2.currentView)
+	assert.False(t, m2.currentReview == nil || m2.currentReview.Output != "New review")
+	assert.Equal(t, 0, m2.reviewScroll)
 }
 
 func TestTUISelectionSyncInReviewView(t *testing.T) {
@@ -252,8 +252,8 @@ func TestTUISelectionSyncInReviewView(t *testing.T) {
 	m2, _ := updateModel(t, m, newJobs)
 
 	// selectedIdx should sync with currentReview.Job.ID (2), now at index 2
-	assert.Equal(t, 2, m2.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 2, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, 2, m2.selectedIdx)
+	assert.EqualValues(t, 2, m2.selectedJobID)
 }
 
 func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
@@ -288,11 +288,11 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	m2, _ := updateModel(t, m, refreshedJobs)
 
 	// Selection should stay on job 3 (user's navigation intent), not revert to job 2
-	assert.EqualValues(t, 3, m2.selectedJobID, "unexpected condition")
-	assert.Equal(t, 2, m2.selectedIdx, "unexpected condition")
+	assert.EqualValues(t, 3, m2.selectedJobID)
+	assert.Equal(t, 2, m2.selectedIdx)
 
 	// currentReview should still be the old one (review for job 3 hasn't loaded)
-	assert.EqualValues(t, 2, m2.currentReview.Job.ID, "unexpected condition")
+	assert.EqualValues(t, 2, m2.currentReview.Job.ID)
 
 	// Now when the review for job 3 arrives, it should be accepted
 	newReviewMsg := reviewMsg{
@@ -302,8 +302,8 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 
 	m3, _ := updateModel(t, m2, newReviewMsg)
 
-	assert.EqualValues(t, 30, m3.currentReview.ID, "unexpected condition")
-	assert.Equal(t, "Review for job 3", m3.currentReview.Output, "unexpected condition")
+	assert.EqualValues(t, 30, m3.currentReview.ID)
+	assert.Equal(t, "Review for job 3", m3.currentReview.Output)
 }
 
 func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
@@ -328,7 +328,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	m2, _ := updateModel(t, m, emptyJobs)
 
 	// selectedJobID should be preserved (not cleared) while viewing a review
-	assert.EqualValues(t, 2, m2.selectedJobID, "unexpected condition")
+	assert.EqualValues(t, 2, m2.selectedJobID)
 
 	// Jobs repopulate
 	repopulatedJobs := jobsMsg{jobs: []storage.ReviewJob{
@@ -340,8 +340,8 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	m3, _ := updateModel(t, m2, repopulatedJobs)
 
 	// Selection should restore to job 2 (the displayed review)
-	assert.EqualValues(t, 2, m3.selectedJobID, "unexpected condition")
-	assert.Equal(t, 1, m3.selectedIdx, "unexpected condition")
+	assert.EqualValues(t, 2, m3.selectedJobID)
+	assert.Equal(t, 1, m3.selectedIdx)
 }
 
 func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
@@ -365,6 +365,6 @@ func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 	m2, _ := updateModel(t, m, repopulatedJobs)
 
 	// Selection should be seeded from currentReview.Job.ID
-	assert.EqualValues(t, 2, m2.selectedJobID, "unexpected condition")
-	assert.Equal(t, 1, m2.selectedIdx, "unexpected condition")
+	assert.EqualValues(t, 2, m2.selectedJobID)
+	assert.Equal(t, 1, m2.selectedIdx)
 }

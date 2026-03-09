@@ -61,7 +61,7 @@ func TestEnsureDaemonRestartsWhenLegacyProbeHasNoVersion(t *testing.T) {
 			if err := ensureDaemon(); err != nil {
 				require.NoError(t, err, "ensureDaemon returned error: %v")
 			}
-			assert.Equal(t, 1, restartCalls, "unexpected condition")
+			assert.Equal(t, 1, restartCalls)
 		})
 	}
 }
@@ -110,7 +110,7 @@ func TestEnsureDaemonRestartsWhenManualLegacyProbeHasNoVersion(t *testing.T) {
 			if err := ensureDaemon(); err != nil {
 				require.NoError(t, err, "ensureDaemon returned error: %v")
 			}
-			assert.Equal(t, 1, restartCalls, "unexpected condition")
+			assert.Equal(t, 1, restartCalls)
 		})
 	}
 }
@@ -153,7 +153,7 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 	if err := ensureDaemon(); err != nil {
 		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
-	assert.Equal(t, 1, restartCalls, "unexpected condition")
+	assert.Equal(t, 1, restartCalls)
 }
 
 func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.T) {
@@ -181,5 +181,5 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	if err := ensureDaemon(); err != nil {
 		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
-	assert.Equal(t, 1, restartCalls, "unexpected condition")
+	assert.Equal(t, 1, restartCalls)
 }

@@ -209,7 +209,7 @@ func TestGetHooksPath(t *testing.T) {
 		require.NoError(t, err, "GetHooksPath failed: %v", err)
 
 		assert.True(t, filepath.IsAbs(hooksPath), "hooks path should be absolute, got: %s", hooksPath)
-		assert.Equal(t, filepath.Join(repo.Dir, "custom-hooks"), hooksPath, "unexpected condition")
+		assert.Equal(t, filepath.Join(repo.Dir, "custom-hooks"), hooksPath)
 	})
 }
 

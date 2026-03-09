@@ -34,8 +34,8 @@ func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
 	m, _ = updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
-	assert.False(t, m.currentReview.Closed, "unexpected condition")
-	require.Error(t, m.err, "unexpected condition")
+	assert.False(t, m.currentReview.Closed)
+	require.Error(t, m.err)
 }
 
 func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
@@ -59,8 +59,8 @@ func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
 	m, _ = updateModel(t, m, successMsg)
 
 	// Should stay true (no rollback on success)
-	assert.True(t, m.currentReview.Closed, "unexpected condition")
-	require.NoError(t, m.err, "unexpected condition")
+	assert.True(t, m.currentReview.Closed)
+	require.NoError(t, m.err)
 }
 
 func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
@@ -98,13 +98,13 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m, _ = updateModel(t, m, errMsg)
 
 	// Review B should be unchanged (still false)
-	assert.False(t, m.currentReview.Closed, "unexpected condition")
+	assert.False(t, m.currentReview.Closed)
 
 	// Job A in queue should be rolled back to false
-	assert.False(t, *m.jobs[0].Closed, "unexpected condition")
+	assert.False(t, *m.jobs[0].Closed)
 
 	// Job B in queue should be unchanged
-	assert.False(t, *m.jobs[1].Closed, "unexpected condition")
+	assert.False(t, *m.jobs[1].Closed)
 }
 
 func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
@@ -127,8 +127,8 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 	m.setJobClosed(100, newState)
 
 	// Both should be updated
-	assert.True(t, m.currentReview.Closed, "unexpected condition")
-	assert.True(t, *m.jobs[0].Closed, "unexpected condition")
+	assert.True(t, m.currentReview.Closed)
+	assert.True(t, *m.jobs[0].Closed)
 }
 
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
@@ -158,14 +158,14 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
-	assert.False(t, m2.currentReview.Closed, "unexpected condition")
+	assert.False(t, m2.currentReview.Closed)
 
 	// Error should be set
-	require.Error(t, m2.err, "unexpected condition")
+	require.Error(t, m2.err)
 
 	// pendingReviewClosed should be cleared
 	_, ok := m2.pendingReviewClosed[42]
-	assert.False(t, ok, "unexpected condition")
+	assert.False(t, ok)
 }
 
 func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
@@ -195,14 +195,14 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, staleErrorMsg)
 
 	// State should NOT be rolled back (stale error)
-	assert.False(t, m2.currentReview.Closed, "unexpected condition")
+	assert.False(t, m2.currentReview.Closed)
 
 	// Error should NOT be set (stale error)
-	require.NoError(t, m2.err, "unexpected condition")
+	require.NoError(t, m2.err)
 
 	// pendingReviewClosed should still be set (not cleared by stale response)
 	_, ok := m2.pendingReviewClosed[42]
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 }
 
 func TestTUIReviewViewSameStateLateError(t *testing.T) {
@@ -237,12 +237,12 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 
 	// With sequence numbers, the late error should be IGNORED (not rolled back)
 	// because seq: 1 != pending seq: 3
-	assert.True(t, m2.currentReview.Closed, "unexpected condition")
+	assert.True(t, m2.currentReview.Closed)
 
 	// Error should NOT be set (stale error)
-	require.NoError(t, m2.err, "unexpected condition")
+	require.NoError(t, m2.err)
 
 	// pendingReviewClosed should still be set (not cleared by stale response)
 	_, ok := m2.pendingReviewClosed[42]
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 }

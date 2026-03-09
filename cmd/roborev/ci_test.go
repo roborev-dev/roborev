@@ -38,7 +38,7 @@ func TestCIReviewCmd_Help(t *testing.T) {
 		"--synthesis-agent",
 	}
 	for _, check := range checks {
-		assert.Contains(t, output, check, "unexpected condition")
+		assert.Contains(t, output, check)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestDetectGitRef(t *testing.T) {
 	ref, err := detectGitRef()
 	require.NoError(t, err)
 
-	assert.Equal(t, "aaa111..bbb222", ref, "unexpected condition")
+	assert.Equal(t, "aaa111..bbb222", ref)
 }
 
 func TestDetectGitRef_NoEnv(t *testing.T) {
@@ -120,7 +120,7 @@ func TestDetectPRNumber_EventJSON(t *testing.T) {
 	pr, err := detectPRNumber()
 	require.NoError(t, err)
 
-	assert.Equal(t, 42, pr, "unexpected condition")
+	assert.Equal(t, 42, pr)
 }
 
 func TestDetectPRNumber_GitHubRef(t *testing.T) {
@@ -130,7 +130,7 @@ func TestDetectPRNumber_GitHubRef(t *testing.T) {
 	pr, err := detectPRNumber()
 	require.NoError(t, err)
 
-	assert.Equal(t, 123, pr, "unexpected condition")
+	assert.Equal(t, 123, pr)
 }
 
 func TestDetectPRNumber_NoEnv(t *testing.T) {
@@ -153,7 +153,7 @@ func TestExtractHeadSHA(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractHeadSHA(tt.ref)
-		assert.Equal(t, tt.want, got, "unexpected condition")
+		assert.Equal(t, tt.want, got)
 	}
 }
 
@@ -163,12 +163,12 @@ func TestResolveAgentList(t *testing.T) {
 			"codex,gemini", nil, nil)
 		assert.False(t, len(agents) != 2 ||
 			agents[0] != "codex" ||
-			agents[1] != "gemini", "unexpected condition")
+			agents[1] != "gemini")
 	})
 
 	t.Run("default", func(t *testing.T) {
 		agents := resolveAgentList("", nil, nil)
-		assert.False(t, len(agents) != 1 || agents[0] != "", "unexpected condition")
+		assert.False(t, len(agents) != 1 || agents[0] != "")
 	})
 }
 
@@ -176,25 +176,25 @@ func TestResolveReviewTypes(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
 		types := resolveReviewTypes(
 			"security,design", nil, nil)
-		assert.Len(t, types, 2, "unexpected condition")
+		assert.Len(t, types, 2)
 	})
 
 	t.Run("default", func(t *testing.T) {
 		types := resolveReviewTypes("", nil, nil)
-		assert.False(t, len(types) != 1 || types[0] != "security", "unexpected condition")
+		assert.False(t, len(types) != 1 || types[0] != "security")
 	})
 }
 
 func TestResolveAgentList_EmptyFlag(t *testing.T) {
 	// Comma-only flag should resolve to empty list.
 	agents := resolveAgentList(",", nil, nil)
-	assert.Empty(t, agents, "unexpected condition")
+	assert.Empty(t, agents)
 }
 
 func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
 	// Whitespace-comma flag should resolve to empty list.
 	types := resolveReviewTypes(" , ", nil, nil)
-	assert.Empty(t, types, "unexpected condition")
+	assert.Empty(t, types)
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -250,7 +250,7 @@ func TestResolveCIUpsertComments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveCIUpsertComments(tt.repo, tt.global)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -267,9 +267,9 @@ func TestSplitTrimmed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := splitTrimmed(tt.in)
-		assert.Len(t, tt.want, len(got), "unexpected condition")
+		assert.Len(t, tt.want, len(got))
 		for i := range got {
-			assert.Equal(t, got[i], tt.want[i], "unexpected condition")
+			assert.Equal(t, got[i], tt.want[i])
 		}
 	}
 }

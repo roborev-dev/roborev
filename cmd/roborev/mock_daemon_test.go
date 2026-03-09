@@ -140,7 +140,7 @@ func TestCreateMockRefineHandler_405ResponseBody(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "unexpected condition")
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 
 	body, err := io.ReadAll(w.Body)
 	require.NoError(t, err, "reading body: %v")
@@ -167,7 +167,7 @@ func TestNewMockDaemon_ServerWiring(t *testing.T) {
 
 	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "unexpected condition")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestNewMockDaemon_HookRouting(t *testing.T) {
@@ -381,8 +381,8 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 
 			defer resp.Body.Close()
 
-			assert.Equal(t, tt.wantCalled, hookCalled, "unexpected condition")
-			assert.Equal(t, tt.wantStatus, resp.StatusCode, "unexpected condition")
+			assert.Equal(t, tt.wantCalled, hookCalled)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
 		})
 	}
 }

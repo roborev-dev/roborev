@@ -30,7 +30,7 @@ func TestMockServerHandler_HandleEnqueue_MethodRouting(t *testing.T) {
 
 			h.handleEnqueue(w, req)
 
-			assert.Equal(t, tt.wantStatus, w.Code, "unexpected condition")
+			assert.Equal(t, tt.wantStatus, w.Code)
 		})
 	}
 }

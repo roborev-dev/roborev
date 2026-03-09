@@ -15,7 +15,7 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 		uuids, err := h.db.GetKnownJobUUIDs()
 		require.NoError(t, err, "GetKnownJobUUIDs failed: %v")
 
-		assert.Empty(t, uuids, "unexpected condition")
+		assert.Empty(t, uuids)
 	})
 
 	t.Run("returns UUIDs of jobs with UUIDs", func(t *testing.T) {
@@ -26,15 +26,15 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 		uuids, err := h.db.GetKnownJobUUIDs()
 		require.NoError(t, err, "GetKnownJobUUIDs failed: %v")
 
-		assert.Len(t, uuids, 2, "unexpected condition")
+		assert.Len(t, uuids, 2)
 
 		uuidMap := make(map[string]bool)
 		for _, u := range uuids {
 			uuidMap[u] = true
 		}
 
-		assert.True(t, uuidMap[job1.UUID], "unexpected condition")
-		assert.True(t, uuidMap[job2.UUID], "unexpected condition")
+		assert.True(t, uuidMap[job1.UUID])
+		assert.True(t, uuidMap[job2.UUID])
 	})
 }
 
@@ -86,11 +86,11 @@ func TestParseSQLiteTime(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseSQLiteTime(tt.input)
 			if tt.wantZero {
-				assert.True(t, got.IsZero(), "unexpected condition")
+				assert.True(t, got.IsZero())
 				return
 			}
-			assert.False(t, got.IsZero(), "unexpected condition")
-			assert.Equal(t, tt.wantYear, got.Year(), "unexpected condition")
+			assert.False(t, got.IsZero())
+			assert.Equal(t, tt.wantYear, got.Year())
 		})
 	}
 }
@@ -110,7 +110,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 				break
 			}
 		}
-		assert.True(t, found, "unexpected condition")
+		assert.True(t, found)
 	})
 
 	t.Run("job after MarkJobSynced is not returned", func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		require.NoError(t, err, "GetJobsToSync failed: %v")
 
 		for _, j := range jobs {
-			assert.NotEqual(t, j.ID, job.ID, "unexpected condition")
+			assert.NotEqual(t, j.ID, job.ID)
 		}
 	})
 
@@ -243,7 +243,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 				break
 			}
 		}
-		assert.True(t, found, "unexpected condition")
+		assert.True(t, found)
 	})
 
 	t.Run("review after MarkReviewSynced is not returned", func(t *testing.T) {
@@ -254,7 +254,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		require.NoError(t, err, "GetReviewsToSync failed: %v")
 
 		for _, r := range reviews {
-			assert.NotEqual(t, r.ID, review.ID, "unexpected condition")
+			assert.NotEqual(t, r.ID, review.ID)
 		}
 	})
 
@@ -379,8 +379,8 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 			break
 		}
 	}
-	assert.NotNil(t, syncJob, "unexpected condition")
-	assert.Equal(t, "agent-session-abc", syncJob.SessionID, "unexpected condition")
+	assert.NotNil(t, syncJob)
+	assert.Equal(t, "agent-session-abc", syncJob.SessionID)
 
 	dst := newSyncTestHelper(t)
 	pulled := PulledJob{
@@ -419,7 +419,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 		syncJob.UUID).Scan(&gotSessionID)
 	require.NoError(t, err, "query imported session_id: %v")
 
-	assert.False(t, !gotSessionID.Valid || gotSessionID.String != "agent-session-abc", "unexpected condition")
+	assert.False(t, !gotSessionID.Valid || gotSessionID.String != "agent-session-abc")
 }
 
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
@@ -458,7 +458,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 		}
 	}
 
-	assert.True(t, foundJobResp, "unexpected condition")
+	assert.True(t, foundJobResp)
 	assert.False(t, foundLegacyResp, "Expected legacy response (job_id IS NULL) to be EXCLUDED from sync")
 
 }

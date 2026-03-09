@@ -24,9 +24,9 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	assert.Empty(t, m2.activeRepoFilter, "unexpected condition")
+	assert.Empty(t, m2.activeRepoFilter)
 
-	assert.Equal(t, -1, m2.selectedIdx, "unexpected condition")
+	assert.Equal(t, -1, m2.selectedIdx)
 }
 
 func TestTUIFilterClearWithEscLayered(t *testing.T) {
@@ -46,12 +46,12 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	assert.Empty(t, m2.activeRepoFilter, "unexpected condition")
-	assert.True(t, m2.hideClosed, "unexpected condition")
+	assert.Empty(t, m2.activeRepoFilter)
+	assert.True(t, m2.hideClosed)
 
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
-	assert.False(t, m3.hideClosed, "unexpected condition")
+	assert.False(t, m3.hideClosed)
 }
 
 func TestTUIFilterClearHideClosedOnly(t *testing.T) {
@@ -68,8 +68,8 @@ func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	assert.False(t, m2.hideClosed, "unexpected condition")
-	assert.Equal(t, -1, m2.selectedIdx, "unexpected condition")
+	assert.False(t, m2.hideClosed)
+	assert.Equal(t, -1, m2.selectedIdx)
 }
 
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
@@ -89,13 +89,13 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
-	assert.Empty(t, m2.activeRepoFilter, "unexpected condition")
-	assert.Greater(t, m2.fetchSeq, oldSeq, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Empty(t, m2.activeRepoFilter)
+	assert.Greater(t, m2.fetchSeq, oldSeq)
+	assert.NotNil(t, cmd)
 
 	m3, _ := updateModel(t, m2, jobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false, seq: oldSeq})
 
-	assert.True(t, m3.loadingJobs, "unexpected condition")
+	assert.True(t, m3.loadingJobs)
 }
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
@@ -116,9 +116,9 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
-	assert.Empty(t, m2.activeRepoFilter, "unexpected condition")
-	assert.Greater(t, m2.fetchSeq, oldSeq, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Empty(t, m2.activeRepoFilter)
+	assert.Greater(t, m2.fetchSeq, oldSeq)
+	assert.NotNil(t, cmd)
 
 	m3, _ := updateModel(t, m2, jobsMsg{
 		jobs:    []storage.ReviewJob{makeJob(99, withRepoName("stale"))},
@@ -128,7 +128,7 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	})
 
 	for _, job := range m3.jobs {
-		assert.NotEqual(t, 99, job.ID, "unexpected condition")
+		assert.NotEqual(t, 99, job.ID)
 	}
 }
 
@@ -140,18 +140,18 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
-	assert.Empty(t, m2.filterSearch, "unexpected condition")
+	assert.Equal(t, viewQueue, m2.currentView)
+	assert.Empty(t, m2.filterSearch)
 }
 
 func TestTUIFilterStackPush(t *testing.T) {
 	m := initFilterModel(nil)
 
 	m.pushFilter("repo")
-	assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "repo", "unexpected condition")
+	assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "repo")
 
 	m.pushFilter("branch")
-	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "branch", "unexpected condition")
+	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "branch")
 }
 
 func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
@@ -161,7 +161,7 @@ func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
 	m.pushFilter("branch")
 
 	m.pushFilter("repo")
-	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "branch" || m.filterStack[1] != "repo", "unexpected condition")
+	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "branch" || m.filterStack[1] != "repo")
 }
 
 func TestTUIFilterStackPopClearsValue(t *testing.T) {
@@ -172,16 +172,16 @@ func TestTUIFilterStackPopClearsValue(t *testing.T) {
 	m.filterStack = []string{"repo", "branch"}
 
 	popped := m.popFilter()
-	assert.Equal(t, "branch", popped, "unexpected condition")
-	assert.Empty(t, m.activeBranchFilter, "unexpected condition")
-	assert.Len(t, m.activeRepoFilter, 1, "unexpected condition")
+	assert.Equal(t, "branch", popped)
+	assert.Empty(t, m.activeBranchFilter)
+	assert.Len(t, m.activeRepoFilter, 1)
 
 	popped = m.popFilter()
-	assert.Equal(t, "repo", popped, "unexpected condition")
-	assert.Empty(t, m.activeRepoFilter, "unexpected condition")
+	assert.Equal(t, "repo", popped)
+	assert.Empty(t, m.activeRepoFilter)
 
 	popped = m.popFilter()
-	assert.Empty(t, popped, "unexpected condition")
+	assert.Empty(t, popped)
 }
 
 func TestTUIFilterStackEscapeOrder(t *testing.T) {
@@ -201,16 +201,16 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 		{
 			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
 			assert: func(t *testing.T, m model) {
-				assert.Empty(t, m.activeBranchFilter, "unexpected condition")
-				assert.NotEmpty(t, m.activeRepoFilter, "unexpected condition")
-				assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "repo", "unexpected condition")
+				assert.Empty(t, m.activeBranchFilter)
+				assert.NotEmpty(t, m.activeRepoFilter)
+				assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "repo")
 			},
 		},
 		{
 			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
 			assert: func(t *testing.T, m model) {
-				assert.Empty(t, m.activeRepoFilter, "unexpected condition")
-				assert.Empty(t, m.filterStack, "unexpected condition")
+				assert.Empty(t, m.activeRepoFilter)
+				assert.Empty(t, m.filterStack)
 			},
 		},
 	}
@@ -237,12 +237,12 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
 	output := m.View()
 
-	assert.Contains(t, output, "[b: feature]", "unexpected condition")
-	assert.Contains(t, output, "[f: myrepo]", "unexpected condition")
+	assert.Contains(t, output, "[b: feature]")
+	assert.Contains(t, output, "[f: myrepo]")
 
 	bIdx := strings.Index(output, "[b: feature]")
 	fIdx := strings.Index(output, "[f: myrepo]")
-	assert.LessOrEqual(t, bIdx, fIdx, "unexpected condition")
+	assert.LessOrEqual(t, bIdx, fIdx)
 }
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
@@ -263,7 +263,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 
 	fIdx := strings.Index(output, "[f: myrepo]")
 	bIdx := strings.Index(output, "[b: develop]")
-	assert.LessOrEqual(t, fIdx, bIdx, "unexpected condition")
+	assert.LessOrEqual(t, fIdx, bIdx)
 }
 
 func TestTUIRemoveFilterFromStack(t *testing.T) {
@@ -272,10 +272,10 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 	m.filterStack = []string{"repo", "branch", "other"}
 
 	m.removeFilterFromStack("branch")
-	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "other", "unexpected condition")
+	assert.False(t, len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "other")
 
 	m.removeFilterFromStack("nonexistent")
-	assert.Len(t, m.filterStack, 2, "unexpected condition")
+	assert.Len(t, m.filterStack, 2)
 }
 
 // TestTUIReconnectClearsFetchFailed verifies that a successful
@@ -295,10 +295,10 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 		newAddr: "http://localhost:7374",
 	})
 
-	assert.False(t, m2.filterTree[0].fetchFailed, "unexpected condition")
+	assert.False(t, m2.filterTree[0].fetchFailed)
 	assert.NotNil(t, cmd, "Expected commands after reconnect")
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
 
 	m3 := newModel("http://localhost:7373", withExternalIODisabled())
 	m3.currentView = viewFilter
@@ -311,9 +311,9 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 		newAddr: "http://localhost:7374",
 	})
 
-	assert.False(t, m4.filterTree[0].fetchFailed, "unexpected condition")
+	assert.False(t, m4.filterTree[0].fetchFailed)
 
-	assert.False(t, m4.filterTree[0].loading, "unexpected condition")
+	assert.False(t, m4.filterTree[0].loading)
 }
 
 func TestTUILockedFilterModalBlocksAll(t *testing.T) {
@@ -331,8 +331,8 @@ func TestTUILockedFilterModalBlocksAll(t *testing.T) {
 	m.filterSelectedIdx = 0
 	m2, _ := pressKey(m, '\r')
 
-	assert.NotNil(t, m2.activeRepoFilter, "unexpected condition")
-	assert.NotEmpty(t, m2.activeBranchFilter, "unexpected condition")
+	assert.NotNil(t, m2.activeRepoFilter)
+	assert.NotEmpty(t, m2.activeBranchFilter)
 }
 
 func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
@@ -344,11 +344,11 @@ func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
 	m.lockedBranchFilter = true
 
 	popped := m.popFilter()
-	assert.Equal(t, "repo", popped, "unexpected condition")
-	assert.Nil(t, m.activeRepoFilter, "unexpected condition")
-	assert.Equal(t, "locked-branch", m.activeBranchFilter, "unexpected condition")
+	assert.Equal(t, "repo", popped)
+	assert.Nil(t, m.activeRepoFilter)
+	assert.Equal(t, "locked-branch", m.activeBranchFilter)
 
-	assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "branch", "unexpected condition")
+	assert.False(t, len(m.filterStack) != 1 || m.filterStack[0] != "branch")
 }
 
 func TestTUIPopFilterAllLocked(t *testing.T) {
@@ -361,8 +361,8 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 	m.lockedBranchFilter = true
 
 	popped := m.popFilter()
-	assert.Empty(t, popped, "unexpected condition")
-	assert.Len(t, m.filterStack, 2, "unexpected condition")
+	assert.Empty(t, popped)
+	assert.Len(t, m.filterStack, 2)
 }
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
@@ -380,9 +380,9 @@ func TestTUIEscapeWithLockedFilters(t *testing.T) {
 	m.lockedBranchFilter = true
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
-	assert.Equal(t, "b", m2.activeBranchFilter, "unexpected condition")
-	assert.Nil(t, m2.activeRepoFilter, "unexpected condition")
+	assert.Equal(t, "b", m2.activeBranchFilter)
+	assert.Nil(t, m2.activeRepoFilter)
 
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
-	assert.Equal(t, "b", m3.activeBranchFilter, "unexpected condition")
+	assert.Equal(t, "b", m3.activeBranchFilter)
 }

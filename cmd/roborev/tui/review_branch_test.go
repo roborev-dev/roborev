@@ -27,7 +27,7 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Equal(t, "main", m2.currentBranch, "unexpected condition")
+	assert.Equal(t, "main", m2.currentBranch)
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
@@ -48,7 +48,7 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Empty(t, m2.currentBranch, "unexpected condition")
+	assert.Empty(t, m2.currentBranch)
 }
 
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
@@ -72,11 +72,11 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	m2, _ := pressKey(m, 'j')
 
 	// Branch should be cleared
-	assert.Empty(t, m2.currentBranch, "unexpected condition")
+	assert.Empty(t, m2.currentBranch)
 
 	// Should still be in review view showing the failed job
-	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
-	assert.False(t, m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed"), "unexpected condition")
+	assert.Equal(t, viewReview, m2.currentView)
+	assert.False(t, m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed"))
 }
 
 func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
@@ -97,10 +97,10 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Branch should be cleared
-	assert.Empty(t, m2.currentBranch, "unexpected condition")
+	assert.Empty(t, m2.currentBranch)
 
 	// Should show review view with error
-	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
+	assert.Equal(t, viewReview, m2.currentView)
 }
 
 func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
@@ -121,7 +121,7 @@ func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 	output := m.View()
 
 	// Should show branch filter indicator
-	assert.Contains(t, output, "[b: feature]", "unexpected condition")
+	assert.Contains(t, output, "[b: feature]")
 	// Should NOT show repo filter indicator (since no repo filter)
-	assert.NotContains(t, output, "[f:", "unexpected condition")
+	assert.NotContains(t, output, "[f:")
 }

@@ -44,7 +44,7 @@ func TestPostCommitSubmitsHEAD(t *testing.T) {
 	require.NoError(t, err)
 
 	req := <-reqCh
-	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+	assert.Equal(t, "HEAD", req.GitRef)
 }
 
 func TestPostCommitBranchReview(t *testing.T) {
@@ -63,7 +63,7 @@ func TestPostCommitBranchReview(t *testing.T) {
 
 	req := <-reqCh
 	want := mainSHA + "..HEAD"
-	assert.Equal(t, want, req.GitRef, "unexpected condition")
+	assert.Equal(t, want, req.GitRef)
 }
 
 func TestPostCommitFallsBackOnBaseBranch(t *testing.T) {
@@ -78,15 +78,15 @@ func TestPostCommitFallsBackOnBaseBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	req := <-reqCh
-	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+	assert.Equal(t, "HEAD", req.GitRef)
 }
 
 func TestPostCommitSilentExitNotARepo(t *testing.T) {
 	dir := t.TempDir()
 	stdout, stderr, err := executePostCommitCmd("--repo", dir)
-	require.NoError(t, err, "unexpected condition")
-	assert.Empty(t, stdout, "unexpected condition")
-	assert.Empty(t, stderr, "unexpected condition")
+	require.NoError(t, err)
+	assert.Empty(t, stdout)
+	assert.Empty(t, stderr)
 }
 
 func TestPostCommitAcceptsQuietFlag(t *testing.T) {
@@ -98,7 +98,7 @@ func TestPostCommitAcceptsQuietFlag(t *testing.T) {
 	_, _, err := executePostCommitCmd(
 		"--repo", repo.Dir, "--quiet",
 	)
-	require.NoError(t, err, "unexpected condition")
+	require.NoError(t, err)
 }
 
 func TestEnqueueAliasWorksIdentically(t *testing.T) {
@@ -111,14 +111,14 @@ func TestEnqueueAliasWorksIdentically(t *testing.T) {
 	require.NoError(t, err)
 
 	req := <-reqCh
-	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+	assert.Equal(t, "HEAD", req.GitRef)
 }
 
 func TestPostCommitRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executePostCommitCmd("abc123")
 	require.Error(t, err)
 
-	assert.Contains(t, err.Error(), "unknown command", "unexpected condition")
+	assert.Contains(t, err.Error(), "unknown command")
 }
 
 func TestEnqueueRejectsPositionalArgs(t *testing.T) {
@@ -175,7 +175,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
 	elapsed := time.Since(start)
 
-	require.NoError(t, err, "unexpected condition")
+	require.NoError(t, err)
 
 	select {
 	case <-rt.hit:
@@ -193,6 +193,6 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 
 func TestEnqueueAliasIsHidden(t *testing.T) {
 	cmd := enqueueCmd()
-	assert.True(t, cmd.Hidden, "unexpected condition")
-	assert.Contains(t, cmd.Use, "enqueue", "unexpected condition")
+	assert.True(t, cmd.Hidden)
+	assert.Contains(t, cmd.Use, "enqueue")
 }

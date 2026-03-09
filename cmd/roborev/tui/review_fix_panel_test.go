@@ -51,7 +51,7 @@ func TestReviewFixPanelTextInput(t *testing.T) {
 		m, _ = pressKey(m, ch)
 	}
 
-	assert.Equal(t, "hello", m.fixPromptText, "unexpected condition")
+	assert.Equal(t, "hello", m.fixPromptText)
 }
 
 func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
@@ -61,7 +61,7 @@ func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
 	)
 
 	got, _ := pressKey(m, 'x')
-	assert.Empty(t, got.fixPromptText, "unexpected condition")
+	assert.Empty(t, got.fixPromptText)
 }
 
 func TestReviewFixPanelEscWhenFocusedClosesPanel(t *testing.T) {
@@ -103,7 +103,7 @@ func TestReviewFixPanelPendingConsumedOnLoad(t *testing.T) {
 	review := &storage.Review{ID: 1, JobID: 5}
 	got, _ := updateModel(t, m, reviewMsg{review: review, jobID: 5})
 
-	assert.False(t, got.reviewFixPanelPending, "unexpected condition")
+	assert.False(t, got.reviewFixPanelPending)
 	assertFixPanelOpen(t, got, 5)
 }
 
@@ -133,7 +133,7 @@ func TestReviewFixPanelBackspaceDeletesRune(t *testing.T) {
 
 	got, _ := pressSpecial(m, tea.KeyBackspace)
 
-	assert.Equal(t, "hell", got.fixPromptText, "unexpected condition")
+	assert.Equal(t, "hell", got.fixPromptText)
 }
 
 func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
@@ -153,9 +153,9 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 
 	got, cmd := pressKey(m, 'F')
 
-	assert.True(t, got.reviewFixPanelPending, "unexpected condition")
-	assert.EqualValues(t, 42, got.selectedJobID, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, got.reviewFixPanelPending)
+	assert.EqualValues(t, 42, got.selectedJobID)
+	assert.NotNil(t, cmd)
 }
 
 func TestFixKeyDisabledShowsFlash(t *testing.T) {
@@ -168,9 +168,9 @@ func TestFixKeyDisabledShowsFlash(t *testing.T) {
 
 	got, cmd := pressKey(m, 'F')
 
-	assert.Nil(t, cmd, "unexpected condition")
-	assert.False(t, got.reviewFixPanelPending, "unexpected condition")
-	assert.Contains(t, got.flashMessage, "Tasks workflow disabled", "unexpected condition")
+	assert.Nil(t, cmd)
+	assert.False(t, got.reviewFixPanelPending)
+	assert.Contains(t, got.flashMessage, "Tasks workflow disabled")
 }
 
 func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
@@ -223,7 +223,7 @@ func TestFixPanelClosedOnQuitFromReview(t *testing.T) {
 	got, _ := pressKey(m, 'q')
 
 	assertFixPanelClosed(t, got)
-	assert.NotEqual(t, viewReview, got.currentView, "unexpected condition")
+	assert.NotEqual(t, viewReview, got.currentView)
 }
 
 func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
@@ -238,8 +238,8 @@ func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
 		review: &storage.Review{ID: 2, JobID: 10}, jobID: 10,
 	})
 
-	assert.False(t, got.reviewFixPanelOpen, "unexpected condition")
-	assert.True(t, got.reviewFixPanelPending, "unexpected condition")
+	assert.False(t, got.reviewFixPanelOpen)
+	assert.True(t, got.reviewFixPanelPending)
 }
 
 func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {
@@ -254,7 +254,7 @@ func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {
 		review: &storage.Review{ID: 1, JobID: 5}, jobID: 5,
 	})
 
-	assert.False(t, got.reviewFixPanelPending, "unexpected condition")
+	assert.False(t, got.reviewFixPanelPending)
 	assertFixPanelClosed(t, got)
 }
 
@@ -293,7 +293,7 @@ func TestFixPanelPendingClearedOnEscFromReview(t *testing.T) {
 
 	got, _ := pressSpecial(m, tea.KeyEsc)
 
-	assert.NotEqual(t, viewReview, got.currentView, "unexpected condition")
-	assert.False(t, got.reviewFixPanelPending, "unexpected condition")
-	assert.EqualValues(t, 0, got.fixPromptJobID, "unexpected condition")
+	assert.NotEqual(t, viewReview, got.currentView)
+	assert.False(t, got.reviewFixPanelPending)
+	assert.EqualValues(t, 0, got.fixPromptJobID)
 }

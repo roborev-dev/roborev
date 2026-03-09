@@ -18,8 +18,8 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 	msg := cmd()
 
 	errMsg, ok := msg.(errMsg)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, "no review found", errMsg.Error(), "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, "no review found", errMsg.Error())
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
@@ -30,8 +30,8 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 	msg := cmd()
 
 	errMsg, ok := msg.(errMsg)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, "fetch review: 500 Internal Server Error", errMsg.Error(), "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, "fetch review: 500 Internal Server Error", errMsg.Error())
 }
 
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
@@ -85,7 +85,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 	msg := cmd()
 
 	reviewMsg, ok := msg.(reviewMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
 	// Should have fetched both job_id and sha responses
 	foundJobIDRequest := false
@@ -99,12 +99,12 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		}
 	}
 
-	assert.True(t, foundJobIDRequest, "unexpected condition")
-	assert.True(t, foundSHARequest, "unexpected condition")
+	assert.True(t, foundJobIDRequest)
+	assert.True(t, foundSHARequest)
 
 	// Should have the legacy response from SHA fallback
-	assert.Len(t, reviewMsg.responses, 1, "unexpected condition")
-	assert.Equal(t, "Legacy response from SHA lookup", reviewMsg.responses[0].Response, "unexpected condition")
+	assert.Len(t, reviewMsg.responses, 1)
+	assert.Equal(t, "Legacy response from SHA lookup", reviewMsg.responses[0].Response)
 }
 
 func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
@@ -144,10 +144,10 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	msg := cmd()
 
 	_, ok := msg.(reviewMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
 	// Should NOT have made a SHA fallback request for range review
 	for _, path := range requestedPaths {
-		assert.NotContains(t, path, "sha=", "unexpected condition")
+		assert.NotContains(t, path, "sha=")
 	}
 }

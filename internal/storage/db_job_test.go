@@ -14,18 +14,18 @@ func TestJobLifecycle(t *testing.T) {
 
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
 
-	assert.Equal(t, JobStatusQueued, job.Status, "unexpected condition")
+	assert.Equal(t, JobStatusQueued, job.Status)
 
 	// Claim job
 	claimed := claimJob(t, db, "worker-1")
-	assert.Equal(t, claimed.ID, job.ID, "unexpected condition")
-	assert.Equal(t, JobStatusRunning, claimed.Status, "unexpected condition")
+	assert.Equal(t, claimed.ID, job.ID)
+	assert.Equal(t, JobStatusRunning, claimed.Status)
 
 	// Claim again should return nil (no more jobs)
 	claimed2, err := db.ClaimJob("worker-2")
 	require.NoError(t, err, "ClaimJob (second) failed: %v")
 
-	assert.Nil(t, claimed2, "unexpected condition")
+	assert.Nil(t, claimed2)
 
 	// Complete job
 	err = db.CompleteJob(job.ID, "codex", "test prompt", "test output")
@@ -35,7 +35,7 @@ func TestJobLifecycle(t *testing.T) {
 	updatedJob, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusDone, updatedJob.Status, "unexpected condition")
+	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
 func TestJobFailure(t *testing.T) {
@@ -52,8 +52,8 @@ func TestJobFailure(t *testing.T) {
 	updatedJob, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusFailed, updatedJob.Status, "unexpected condition")
-	assert.Equal(t, "test error message", updatedJob.Error, "unexpected condition")
+	assert.Equal(t, JobStatusFailed, updatedJob.Status)
+	assert.Equal(t, "test error message", updatedJob.Error)
 }
 
 func TestFailJobOwnerScoped(t *testing.T) {
@@ -67,25 +67,25 @@ func TestFailJobOwnerScoped(t *testing.T) {
 	updated, err := db.FailJob(job.ID, "worker-2", "stale fail")
 	require.NoError(t, err, "FailJob with wrong worker failed: %v")
 
-	assert.False(t, updated, "unexpected condition")
+	assert.False(t, updated)
 
 	// Job should still be running
 	j, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusRunning, j.Status, "unexpected condition")
+	assert.Equal(t, JobStatusRunning, j.Status)
 
 	// Correct worker should succeed
 	updated, err = db.FailJob(job.ID, "worker-1", "legit fail")
 	require.NoError(t, err, "FailJob with correct worker failed: %v")
 
-	assert.True(t, updated, "unexpected condition")
+	assert.True(t, updated)
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusFailed, j.Status, "unexpected condition")
-	assert.Equal(t, "legit fail", j.Error, "unexpected condition")
+	assert.Equal(t, JobStatusFailed, j.Status)
+	assert.Equal(t, "legit fail", j.Error)
 }
 
 func TestRetryJobOwnerScoped(t *testing.T) {
@@ -99,24 +99,24 @@ func TestRetryJobOwnerScoped(t *testing.T) {
 	retried, err := db.RetryJob(job.ID, "worker-2", 3)
 	require.NoError(t, err, "RetryJob with wrong worker failed: %v")
 
-	assert.False(t, retried, "unexpected condition")
+	assert.False(t, retried)
 
 	// Job should still be running (not requeued)
 	j, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusRunning, j.Status, "unexpected condition")
+	assert.Equal(t, JobStatusRunning, j.Status)
 
 	// Correct worker should succeed
 	retried, err = db.RetryJob(job.ID, "worker-1", 3)
 	require.NoError(t, err, "RetryJob with correct worker failed: %v")
 
-	assert.True(t, retried, "unexpected condition")
+	assert.True(t, retried)
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID failed: %v")
 
-	assert.Equal(t, JobStatusQueued, j.Status, "unexpected condition")
+	assert.Equal(t, JobStatusQueued, j.Status)
 }
 
 func TestReviewOperations(t *testing.T) {
@@ -133,8 +133,8 @@ func TestReviewOperations(t *testing.T) {
 	review, err := db.GetReviewByCommitSHA("rev123")
 	require.NoError(t, err, "GetReviewByCommitSHA failed: %v")
 
-	assert.Equal(t, "the review output", review.Output, "unexpected condition")
-	assert.Equal(t, "codex", review.Agent, "unexpected condition")
+	assert.Equal(t, "the review output", review.Output)
+	assert.Equal(t, "codex", review.Agent)
 }
 
 func TestReviewVerdictComputation(t *testing.T) {
@@ -149,8 +149,8 @@ func TestReviewVerdictComputation(t *testing.T) {
 		review, err := db.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed: %v")
 
-		assert.NotNil(t, review.Job.Verdict, "unexpected condition")
-		assert.Equal(t, "P", *review.Job.Verdict, "unexpected condition")
+		assert.NotNil(t, review.Job.Verdict)
+		assert.Equal(t, "P", *review.Job.Verdict)
 	})
 
 	t.Run("verdict nil when output is empty", func(t *testing.T) {
@@ -161,7 +161,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		review, err := db.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed: %v")
 
-		assert.Nil(t, review.Job.Verdict, "unexpected condition")
+		assert.Nil(t, review.Job.Verdict)
 	})
 
 	t.Run("verdict nil when job has error", func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		review, err := db.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed: %v")
 
-		assert.Nil(t, review.Job.Verdict, "unexpected condition")
+		assert.Nil(t, review.Job.Verdict)
 	})
 
 	t.Run("GetReviewByCommitSHA also respects verdict guard", func(t *testing.T) {
@@ -187,8 +187,8 @@ func TestReviewVerdictComputation(t *testing.T) {
 		review, err := db.GetReviewByCommitSHA("verdict-sha")
 		require.NoError(t, err, "GetReviewByCommitSHA failed: %v")
 
-		assert.NotNil(t, review.Job.Verdict, "unexpected condition")
-		assert.Equal(t, "P", *review.Job.Verdict, "unexpected condition")
+		assert.NotNil(t, review.Job.Verdict)
+		assert.Equal(t, "P", *review.Job.Verdict)
 	})
 }
 
@@ -203,13 +203,13 @@ func TestResponseOperations(t *testing.T) {
 	resp, err := db.AddComment(commit.ID, "test-user", "LGTM!")
 	require.NoError(t, err, "AddComment failed: %v")
 
-	assert.Equal(t, "LGTM!", resp.Response, "unexpected condition")
+	assert.Equal(t, "LGTM!", resp.Response)
 
 	// Get comments
 	comments, err := db.GetCommentsForCommit(commit.ID)
 	require.NoError(t, err, "GetCommentsForCommit failed: %v")
 
-	assert.Len(t, comments, 1, "unexpected condition")
+	assert.Len(t, comments, 1)
 }
 
 func TestMarkReviewClosed(t *testing.T) {
@@ -225,7 +225,7 @@ func TestMarkReviewClosed(t *testing.T) {
 	require.NoError(t, err, "GetReviewByJobID failed: %v")
 
 	// Initially not closed
-	assert.False(t, review.Closed, "unexpected condition")
+	assert.False(t, review.Closed)
 
 	// Mark as closed
 	err = db.MarkReviewClosed(review.ID, true)
@@ -249,10 +249,10 @@ func TestMarkReviewClosedNotFound(t *testing.T) {
 
 	// Try to mark a non-existent review
 	err := db.MarkReviewClosed(999999, true)
-	require.Error(t, err, "unexpected condition")
+	require.Error(t, err)
 
 	// Should be sql.ErrNoRows
-	require.ErrorIs(t, err, sql.ErrNoRows, "unexpected condition")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestMarkReviewClosedByJobID(t *testing.T) {
@@ -268,7 +268,7 @@ func TestMarkReviewClosedByJobID(t *testing.T) {
 	require.NoError(t, err, "GetReviewByJobID failed: %v")
 
 	// Initially not closed
-	assert.False(t, review.Closed, "unexpected condition")
+	assert.False(t, review.Closed)
 
 	// Mark as closed using job ID
 	err = db.MarkReviewClosedByJobID(job.ID, true)
@@ -292,10 +292,10 @@ func TestMarkReviewClosedByJobIDNotFound(t *testing.T) {
 
 	// Try to mark a non-existent job
 	err := db.MarkReviewClosedByJobID(999999, true)
-	require.Error(t, err, "unexpected condition")
+	require.Error(t, err)
 
 	// Should be sql.ErrNoRows
-	require.ErrorIs(t, err, sql.ErrNoRows, "unexpected condition")
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestRetryJob(t *testing.T) {
@@ -311,13 +311,13 @@ func TestRetryJob(t *testing.T) {
 	retried, err := db.RetryJob(job.ID, "", 3)
 	require.NoError(t, err, "RetryJob failed: %v")
 
-	assert.True(t, retried, "unexpected condition")
+	assert.True(t, retried)
 
 	// Verify job is queued with retry_count=1
 	updatedJob, _ := db.GetJobByID(job.ID)
-	assert.Equal(t, JobStatusQueued, updatedJob.Status, "unexpected condition")
+	assert.Equal(t, JobStatusQueued, updatedJob.Status)
 	count, _ := db.GetJobRetryCount(job.ID)
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 
 	// Claim again and retry twice more (retry_count: 1->2, 2->3)
 	_, _ = db.ClaimJob("worker-1")
@@ -326,18 +326,18 @@ func TestRetryJob(t *testing.T) {
 	db.RetryJob(job.ID, "", 3) // retry_count becomes 3
 
 	count, _ = db.GetJobRetryCount(job.ID)
-	assert.Equal(t, 3, count, "unexpected condition")
+	assert.Equal(t, 3, count)
 
 	// Claim again - next retry should fail (at max)
 	_, _ = db.ClaimJob("worker-1")
 	retried, err = db.RetryJob(job.ID, "", 3)
 	require.NoError(t, err, "RetryJob at max failed: %v")
 
-	assert.False(t, retried, "unexpected condition")
+	assert.False(t, retried)
 
 	// Job should still be running (retry didn't happen)
 	updatedJob, _ = db.GetJobByID(job.ID)
-	assert.Equal(t, JobStatusRunning, updatedJob.Status, "unexpected condition")
+	assert.Equal(t, JobStatusRunning, updatedJob.Status)
 }
 
 func TestRetryJobOnlyWorksForRunning(t *testing.T) {
@@ -350,7 +350,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	retried, err := db.RetryJob(job.ID, "", 3)
 	require.NoError(t, err, "RetryJob on queued job failed: %v")
 
-	assert.False(t, retried, "unexpected condition")
+	assert.False(t, retried)
 
 	// Claim, complete, then try retry (should fail - job is done)
 	_, _ = db.ClaimJob("worker-1")
@@ -359,7 +359,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	retried, err = db.RetryJob(job.ID, "", 3)
 	require.NoError(t, err, "RetryJob on done job failed: %v")
 
-	assert.False(t, retried, "unexpected condition")
+	assert.False(t, retried)
 }
 
 func TestRetryJobAtomic(t *testing.T) {
@@ -374,12 +374,12 @@ func TestRetryJobAtomic(t *testing.T) {
 	retried1, _ := db.RetryJob(job.ID, "", 3)
 	retried2, _ := db.RetryJob(job.ID, "", 3) // Job is now queued, not running
 
-	assert.True(t, retried1, "unexpected condition")
+	assert.True(t, retried1)
 	assert.False(t, retried2, "Second retry should fail (job is no longer running)")
 
 	// Verify retry_count is 1, not 2
 	count, _ := db.GetJobRetryCount(job.ID)
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 }
 
 func TestFailoverJob(t *testing.T) {
@@ -405,16 +405,16 @@ func TestFailoverJob(t *testing.T) {
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.True(t, ok, "unexpected condition")
+		assert.True(t, ok)
 
 		// Verify: agent swapped, retry_count reset, status queued
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
-		assert.Equal(t, "backup", updated.Agent, "unexpected condition")
-		assert.Equal(t, JobStatusQueued, updated.Status, "unexpected condition")
+		assert.Equal(t, "backup", updated.Agent)
+		assert.Equal(t, JobStatusQueued, updated.Status)
 		count, _ := db.GetJobRetryCount(job.ID)
-		assert.Equal(t, 0, count, "unexpected condition")
+		assert.Equal(t, 0, count)
 	})
 
 	t.Run("clears model on failover", func(t *testing.T) {
@@ -433,19 +433,19 @@ func TestFailoverJob(t *testing.T) {
 		})
 		require.NoError(t, err, "EnqueueJob: %v")
 
-		assert.Equal(t, "o3-mini", job.Model, "unexpected condition")
+		assert.Equal(t, "o3-mini", job.Model)
 
 		claimJob(t, db, "worker-1")
 
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.True(t, ok, "unexpected condition")
+		assert.True(t, ok)
 
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
-		assert.Empty(t, updated.Model, "unexpected condition")
+		assert.Empty(t, updated.Model)
 	})
 
 	t.Run("sets backup model on failover", func(t *testing.T) {
@@ -469,13 +469,13 @@ func TestFailoverJob(t *testing.T) {
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "claude-sonnet")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.True(t, ok, "unexpected condition")
+		assert.True(t, ok)
 
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
-		assert.Equal(t, "claude-sonnet", updated.Model, "unexpected condition")
-		assert.Equal(t, "backup", updated.Agent, "unexpected condition")
+		assert.Equal(t, "claude-sonnet", updated.Model)
+		assert.Equal(t, "backup", updated.Agent)
 	})
 
 	t.Run("fails with empty backup agent", func(t *testing.T) {
@@ -488,7 +488,7 @@ func TestFailoverJob(t *testing.T) {
 		ok, err := db.FailoverJob(job.ID, "worker-1", "", "")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 
 	t.Run("fails when backup equals agent", func(t *testing.T) {
@@ -533,7 +533,7 @@ func TestFailoverJob(t *testing.T) {
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 
 	t.Run("second failover with same backup is no-op", func(t *testing.T) {
@@ -587,13 +587,13 @@ func TestFailoverJob(t *testing.T) {
 		ok, err := db.FailoverJob(job.ID, "worker-2", "backup", "")
 		require.NoError(t, err, "FailoverJob: %v")
 
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 
 		// Verify original agent is unchanged
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
-		assert.Equal(t, "primary", updated.Agent, "unexpected condition")
+		assert.Equal(t, "primary", updated.Agent)
 	})
 }
 
@@ -608,7 +608,7 @@ func TestCancelJob(t *testing.T) {
 		require.NoError(t, err, "CancelJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusCanceled, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusCanceled, updated.Status)
 	})
 
 	t.Run("cancel running job", func(t *testing.T) {
@@ -619,7 +619,7 @@ func TestCancelJob(t *testing.T) {
 		require.NoError(t, err, "CancelJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusCanceled, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusCanceled, updated.Status)
 	})
 
 	t.Run("cancel done job fails", func(t *testing.T) {
@@ -628,7 +628,7 @@ func TestCancelJob(t *testing.T) {
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		err := db.CancelJob(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("cancel failed job fails", func(t *testing.T) {
@@ -637,7 +637,7 @@ func TestCancelJob(t *testing.T) {
 		db.FailJob(job.ID, "", "some error")
 
 		err := db.CancelJob(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("complete respects canceled status", func(t *testing.T) {
@@ -649,7 +649,7 @@ func TestCancelJob(t *testing.T) {
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusCanceled, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusCanceled, updated.Status)
 
 		// Verify no review was inserted (should get sql.ErrNoRows)
 		_, err := db.GetReviewByJobID(job.ID)
@@ -666,7 +666,7 @@ func TestCancelJob(t *testing.T) {
 		db.FailJob(job.ID, "", "some error")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusCanceled, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusCanceled, updated.Status)
 	})
 
 	t.Run("canceled jobs counted correctly", func(t *testing.T) {
@@ -677,7 +677,7 @@ func TestCancelJob(t *testing.T) {
 		_, _, _, _, canceled, _, _, err := db.GetJobCounts()
 		require.NoError(t, err, "GetJobCounts failed: %v")
 
-		assert.GreaterOrEqual(t, canceled, 1, "unexpected condition")
+		assert.GreaterOrEqual(t, canceled, 1)
 	})
 }
 
@@ -697,14 +697,14 @@ func TestMarkJobApplied(t *testing.T) {
 		require.NoError(t, err, "MarkJobApplied failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusApplied, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusApplied, updated.Status)
 	})
 
 	t.Run("mark non-done job fails", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-q", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 
 		err := db.MarkJobApplied(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("mark applied job again fails", func(t *testing.T) {
@@ -714,7 +714,7 @@ func TestMarkJobApplied(t *testing.T) {
 		db.MarkJobApplied(job.ID)
 
 		err := db.MarkJobApplied(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("mark non-fix job fails", func(t *testing.T) {
@@ -723,7 +723,7 @@ func TestMarkJobApplied(t *testing.T) {
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobApplied(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 }
 
@@ -743,14 +743,14 @@ func TestMarkJobRebased(t *testing.T) {
 		require.NoError(t, err, "MarkJobRebased failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusRebased, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusRebased, updated.Status)
 	})
 
 	t.Run("mark non-done job fails", func(t *testing.T) {
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test-q", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 
 		err := db.MarkJobRebased(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("mark non-fix job fails", func(t *testing.T) {
@@ -759,7 +759,7 @@ func TestMarkJobRebased(t *testing.T) {
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		err := db.MarkJobRebased(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 }
 
@@ -776,10 +776,10 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusQueued, updated.Status, "unexpected condition")
-		assert.Empty(t, updated.Error, "unexpected condition")
-		assert.Nil(t, updated.StartedAt, "unexpected condition")
-		assert.Nil(t, updated.FinishedAt, "unexpected condition")
+		assert.Equal(t, JobStatusQueued, updated.Status)
+		assert.Empty(t, updated.Error)
+		assert.Nil(t, updated.StartedAt)
+		assert.Nil(t, updated.FinishedAt)
 	})
 
 	t.Run("rerun canceled job", func(t *testing.T) {
@@ -790,7 +790,7 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusQueued, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusQueued, updated.Status)
 	})
 
 	t.Run("rerun done job", func(t *testing.T) {
@@ -799,7 +799,7 @@ func TestReenqueueJob(t *testing.T) {
 		var claimed *ReviewJob
 		for {
 			claimed, _ = db.ClaimJob("worker-1")
-			assert.NotNil(t, claimed, "unexpected condition")
+			assert.NotNil(t, claimed)
 			if claimed.ID == job.ID {
 				break
 			}
@@ -812,14 +812,14 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
-		assert.Equal(t, JobStatusQueued, updated.Status, "unexpected condition")
+		assert.Equal(t, JobStatusQueued, updated.Status)
 	})
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-queued")
 
 		err := db.ReenqueueJob(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("rerun running job fails", func(t *testing.T) {
@@ -827,12 +827,12 @@ func TestReenqueueJob(t *testing.T) {
 		db.ClaimJob("worker-1")
 
 		err := db.ReenqueueJob(job.ID)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
 		err := db.ReenqueueJob(99999)
-		require.Error(t, err, "unexpected condition")
+		require.Error(t, err)
 	})
 
 	t.Run("rerun done job and complete again", func(t *testing.T) {
@@ -844,7 +844,7 @@ func TestReenqueueJob(t *testing.T) {
 
 		// First completion cycle
 		claimed, _ := isolatedDB.ClaimJob("worker-1")
-		assert.False(t, claimed == nil || claimed.ID != job.ID, "unexpected condition")
+		assert.False(t, claimed == nil || claimed.ID != job.ID)
 		err := isolatedDB.CompleteJob(job.ID, "codex", "first prompt", "first output")
 		require.NoError(t, err, "First CompleteJob failed: %v")
 
@@ -852,7 +852,7 @@ func TestReenqueueJob(t *testing.T) {
 		review1, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after first complete: %v")
 
-		assert.Equal(t, "first output", review1.Output, "unexpected condition")
+		assert.Equal(t, "first output", review1.Output)
 
 		// Re-enqueue the done job
 		err = isolatedDB.ReenqueueJob(job.ID)
@@ -864,7 +864,7 @@ func TestReenqueueJob(t *testing.T) {
 
 		// Second completion cycle
 		claimed, _ = isolatedDB.ClaimJob("worker-1")
-		assert.False(t, claimed == nil || claimed.ID != job.ID, "unexpected condition")
+		assert.False(t, claimed == nil || claimed.ID != job.ID)
 		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
 		require.NoError(t, err, "Second CompleteJob failed: %v")
 
@@ -872,7 +872,7 @@ func TestReenqueueJob(t *testing.T) {
 		review2, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after second complete: %v")
 
-		assert.Equal(t, "second output", review2.Output, "unexpected condition")
+		assert.Equal(t, "second output", review2.Output)
 	})
 }
 
@@ -892,13 +892,13 @@ func TestEnqueueJobWithPatchID(t *testing.T) {
 	})
 	require.NoError(t, err, "EnqueueJob: %v")
 
-	assert.Equal(t, "deadbeef1234", job.PatchID, "unexpected condition")
+	assert.Equal(t, "deadbeef1234", job.PatchID)
 
 	// Verify it round-trips through GetJobByID
 	got, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID: %v")
 
-	assert.Equal(t, "deadbeef1234", got.PatchID, "unexpected condition")
+	assert.Equal(t, "deadbeef1234", got.PatchID)
 }
 
 func TestRemapJobGitRef(t *testing.T) {
@@ -922,12 +922,12 @@ func TestRemapJobGitRef(t *testing.T) {
 		n, err := db.RemapJobGitRef(repo.ID, "oldsha", "newsha", "patchabc", newCommit.ID)
 		require.NoError(t, err, "RemapJobGitRef: %v")
 
-		assert.Equal(t, 1, n, "unexpected condition")
+		assert.Equal(t, 1, n)
 
 		got, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
-		assert.Equal(t, "newsha", got.GitRef, "unexpected condition")
+		assert.Equal(t, "newsha", got.GitRef)
 	})
 
 	t.Run("skips on patch_id mismatch", func(t *testing.T) {
@@ -945,7 +945,7 @@ func TestRemapJobGitRef(t *testing.T) {
 		n, err := db.RemapJobGitRef(repo.ID, "sha2", "sha2_new", "patch_different", newCommit.ID)
 		require.NoError(t, err, "RemapJobGitRef: %v")
 
-		assert.Equal(t, 0, n, "unexpected condition")
+		assert.Equal(t, 0, n)
 	})
 
 	t.Run("returns 0 for no matches", func(t *testing.T) {
@@ -953,7 +953,7 @@ func TestRemapJobGitRef(t *testing.T) {
 		n, err := db.RemapJobGitRef(repo.ID, "nonexistent", "nonexistent_new", "patch", newCommit.ID)
 		require.NoError(t, err, "RemapJobGitRef: %v")
 
-		assert.Equal(t, 0, n, "unexpected condition")
+		assert.Equal(t, 0, n)
 	})
 }
 
@@ -1020,10 +1020,10 @@ func TestJobTypeBackfill(t *testing.T) {
 			require.NoError(t, err, "scan row: %v")
 		}
 		assert.Less(t, i, len(expected), "more rows than expected")
-		assert.False(t, gitRef != expected[i].gitRef || jobType != expected[i].jobType, "unexpected condition")
+		assert.False(t, gitRef != expected[i].gitRef || jobType != expected[i].jobType)
 		i++
 	}
-	assert.Equal(t, len(expected), i, "unexpected condition")
+	assert.Equal(t, len(expected), i)
 }
 
 func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
@@ -1039,7 +1039,7 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 
 	j, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after worker-A save: %v", err)
-	assert.Equal(t, "session-A", j.SessionID, "unexpected condition")
+	assert.Equal(t, "session-A", j.SessionID)
 
 	err = db.CancelJob(job.ID)
 	require.NoError(t, err, "CancelJob: %v", err)
@@ -1049,7 +1049,7 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after reenqueue: %v", err)
-	assert.Empty(t, j.SessionID, "unexpected condition")
+	assert.Empty(t, j.SessionID)
 
 	claimJob(t, db, "worker-B")
 
@@ -1058,19 +1058,19 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after stale worker save: %v", err)
-	assert.Empty(t, j.SessionID, "unexpected condition")
+	assert.Empty(t, j.SessionID)
 
 	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B")
 	require.NoError(t, err, "SaveJobSessionID (worker-B): %v", err)
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after worker-B save: %v", err)
-	assert.Equal(t, "session-B", j.SessionID, "unexpected condition")
+	assert.Equal(t, "session-B", j.SessionID)
 
 	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B2")
 	require.NoError(t, err, "SaveJobSessionID (worker-B second): %v", err)
 
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after worker-B second save: %v", err)
-	assert.Equal(t, "session-B", j.SessionID, "unexpected condition")
+	assert.Equal(t, "session-B", j.SessionID)
 }

@@ -159,8 +159,8 @@ func TestTUIQueueNavigation(t *testing.T) {
 				m2, _ = pressSpecial(m, k)
 			}
 
-			assert.Equal(t, tt.wantIdx, m2.selectedIdx, "unexpected condition")
-			assert.Equal(t, tt.wantJobID, m2.selectedJobID, "unexpected condition")
+			assert.Equal(t, tt.wantIdx, m2.selectedIdx)
+			assert.Equal(t, tt.wantJobID, m2.selectedJobID)
 		})
 	}
 }
@@ -182,8 +182,8 @@ func TestTUIQueueMouseClickSelectsVisibleRow(t *testing.T) {
 
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
 
-	assert.EqualValues(t, 2, m2.selectedJobID, "unexpected condition")
-	assert.Equal(t, 1, m2.selectedIdx, "unexpected condition")
+	assert.EqualValues(t, 2, m2.selectedJobID)
+	assert.Equal(t, 1, m2.selectedIdx)
 }
 
 func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
@@ -203,7 +203,7 @@ func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
 	if got := []int64{m2.jobs[0].ID, m2.jobs[1].ID, m2.jobs[2].ID}; !slices.Equal(got, []int64{3, 1, 2}) {
 		assert.True(t, slices.Equal(got, []int64{3, 1, 2}), "expected header click not to reorder rows, got %v, got")
 	}
-	assert.False(t, m2.selectedJobID != 1 || m2.selectedIdx != 1, "unexpected condition")
+	assert.False(t, m2.selectedJobID != 1 || m2.selectedIdx != 1)
 }
 
 func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
@@ -217,7 +217,7 @@ func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
 	m.selectedJobID = 2
 
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 3))
-	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 2, "unexpected condition")
+	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 2)
 	assert.True(t, slices.Equal([]int64{m2.jobs[0].ID, m2.jobs[1].ID}, []int64{2, 1}), "expected job order unchanged outside queue view")
 }
 
@@ -232,7 +232,7 @@ func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
 
-	assert.Equal(t, tuiViewQueue, m2.reviewFromView, "unexpected condition")
+	assert.Equal(t, tuiViewQueue, m2.reviewFromView)
 	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
 }
 
@@ -248,10 +248,10 @@ func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
 	m.selectedJobID = 1
 
 	m2, _ := updateModel(t, m, mouseWheelDown())
-	assert.False(t, m2.selectedIdx != 1 || m2.selectedJobID != 2, "unexpected condition")
+	assert.False(t, m2.selectedIdx != 1 || m2.selectedJobID != 2)
 
 	m3, _ := updateModel(t, m2, mouseWheelUp())
-	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1, "unexpected condition")
+	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1)
 }
 
 func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
@@ -304,18 +304,18 @@ func TestTUIQueueCompactMode(t *testing.T) {
 
 	output := m.View()
 
-	assert.Contains(t, output, "roborev queue", "unexpected condition")
+	assert.Contains(t, output, "roborev queue")
 
-	assert.NotContains(t, output, "JobID", "unexpected condition")
+	assert.NotContains(t, output, "JobID")
 
-	assert.NotContains(t, output, "nav", "unexpected condition")
+	assert.NotContains(t, output, "nav")
 
-	assert.NotContains(t, output, "Daemon:", "unexpected condition")
+	assert.NotContains(t, output, "Daemon:")
 
 	m.selectedIdx = 2
 	m.selectedJobID = 3
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 1))
-	assert.EqualValues(t, 1, m2.selectedJobID, "unexpected condition")
+	assert.EqualValues(t, 1, m2.selectedJobID)
 }
 
 func TestTUIQueueDistractionFreeToggle(t *testing.T) {
@@ -331,20 +331,20 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	m.selectedJobID = 1
 
 	output := m.View()
-	assert.Contains(t, output, "JobID", "unexpected condition")
-	assert.Contains(t, output, "nav", "unexpected condition")
+	assert.Contains(t, output, "JobID")
+	assert.Contains(t, output, "nav")
 
 	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	assert.True(t, m2.distractionFree, "D should toggle distraction-free on")
 	output = m2.View()
-	assert.NotContains(t, output, "JobID", "unexpected condition")
-	assert.NotContains(t, output, "nav", "unexpected condition")
-	assert.NotContains(t, output, "Daemon:", "unexpected condition")
+	assert.NotContains(t, output, "JobID")
+	assert.NotContains(t, output, "nav")
+	assert.NotContains(t, output, "Daemon:")
 
 	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
 	assert.False(t, m3.distractionFree, "D should toggle distraction-free off")
 	output = m3.View()
-	assert.Contains(t, output, "JobID", "unexpected condition")
+	assert.Contains(t, output, "JobID")
 }
 
 func TestTUITasksMouseClickSelectsRow(t *testing.T) {
@@ -360,7 +360,7 @@ func TestTUITasksMouseClickSelectsRow(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 4))
-	assert.Equal(t, 1, m2.fixSelectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m2.fixSelectedIdx)
 }
 
 func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
@@ -374,10 +374,10 @@ func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	m2, _ := updateModel(t, m, mouseWheelDown())
-	assert.Equal(t, 1, m2.fixSelectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m2.fixSelectedIdx)
 
 	m3, _ := updateModel(t, m2, mouseWheelUp())
-	assert.Equal(t, 0, m3.fixSelectedIdx, "unexpected condition")
+	assert.Equal(t, 0, m3.fixSelectedIdx)
 }
 
 func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
@@ -391,8 +391,8 @@ func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'P')
 	assert.NotNil(t, cmd, "expected fetchReview command for parent shortcut")
-	assert.Equal(t, m2.selectedJobID, parentID, "unexpected condition")
-	assert.Equal(t, tuiViewTasks, m2.reviewFromView, "unexpected condition")
+	assert.Equal(t, m2.selectedJobID, parentID)
+	assert.Equal(t, tuiViewTasks, m2.reviewFromView)
 }
 
 func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
@@ -405,8 +405,8 @@ func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'P')
 	assert.Nil(t, cmd, "expected no command when task has no parent")
-	assert.Equal(t, "No parent review for this task", m2.flashMessage, "unexpected condition")
-	assert.Equal(t, tuiViewTasks, m2.flashView, "unexpected condition")
+	assert.Equal(t, "No parent review for this task", m2.flashMessage)
+	assert.Equal(t, tuiViewTasks, m2.flashView)
 }
 
 func TestTUITasksCtrlJFetchesReview(t *testing.T) {
@@ -419,8 +419,8 @@ func TestTUITasksCtrlJFetchesReview(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
 
-	assert.EqualValues(t, 101, m2.selectedJobID, "unexpected condition")
-	assert.Equal(t, tuiViewTasks, m2.reviewFromView, "unexpected condition")
+	assert.EqualValues(t, 101, m2.selectedJobID)
+	assert.Equal(t, tuiViewTasks, m2.reviewFromView)
 	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
 }
 
@@ -449,14 +449,14 @@ func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
 	}
 
 	out := stripANSI(m.renderTasksView())
-	assert.Contains(t, out, "Queued", "unexpected condition")
-	assert.Contains(t, out, "Elapsed", "unexpected condition")
-	assert.False(t, !strings.Contains(out, "Branch") || !strings.Contains(out, "Repo"), "unexpected condition")
-	assert.Contains(t, out, "Ref/Subject", "unexpected condition")
-	assert.Contains(t, out, enqueued.Format("Jan 02 15:04"), "unexpected condition")
-	assert.Contains(t, out, "1m0s", "unexpected condition")
-	assert.False(t, !strings.Contains(out, "feature/task") || !strings.Contains(out, "repo-alpha"), "unexpected condition")
-	assert.Contains(t, out, "abc1234 Fix flaky task tests", "unexpected condition")
+	assert.Contains(t, out, "Queued")
+	assert.Contains(t, out, "Elapsed")
+	assert.False(t, !strings.Contains(out, "Branch") || !strings.Contains(out, "Repo"))
+	assert.Contains(t, out, "Ref/Subject")
+	assert.Contains(t, out, enqueued.Format("Jan 02 15:04"))
+	assert.Contains(t, out, "1m0s")
+	assert.False(t, !strings.Contains(out, "feature/task") || !strings.Contains(out, "repo-alpha"))
+	assert.Contains(t, out, "abc1234 Fix flaky task tests")
 }
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
@@ -469,7 +469,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyUp)
 
-	assert.Equal(t, 0, m2.selectedIdx, "unexpected condition")
+	assert.Equal(t, 0, m2.selectedIdx)
 	assertFlashMessage(t, m2, viewQueue, "No newer review")
 
 	m.selectedIdx = 2
@@ -478,7 +478,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 
 	m3, _ := pressSpecial(m, tea.KeyDown)
 
-	assert.Equal(t, 2, m3.selectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m3.selectedIdx)
 	assertFlashMessage(t, m3, viewQueue, "No older review")
 }
 
@@ -506,8 +506,8 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assert.True(t, m2.loadingMore, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
@@ -521,8 +521,8 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIJobCellsContent(t *testing.T) {
@@ -537,17 +537,17 @@ func TestTUIJobCellsContent(t *testing.T) {
 		)
 		cells := m.jobCells(job)
 
-		assert.Contains(t, cells[0], "abc1234", "unexpected condition")
-		assert.Equal(t, "myrepo", cells[2], "unexpected condition")
-		assert.Equal(t, "test", cells[3], "unexpected condition")
-		assert.Equal(t, "Done", cells[6], "unexpected condition")
-		assert.Equal(t, "-", cells[7], "unexpected condition")
+		assert.Contains(t, cells[0], "abc1234")
+		assert.Equal(t, "myrepo", cells[2])
+		assert.Equal(t, "test", cells[3])
+		assert.Equal(t, "Done", cells[6])
+		assert.Equal(t, "-", cells[7])
 	})
 
 	t.Run("claude-code normalizes to claude", func(t *testing.T) {
 		job := makeJob(1, withAgent("claude-code"))
 		cells := m.jobCells(job)
-		assert.Equal(t, "claude", cells[3], "unexpected condition")
+		assert.Equal(t, "claude", cells[3])
 	})
 
 	t.Run("verdict and handled values", func(t *testing.T) {
@@ -558,9 +558,9 @@ func TestTUIJobCellsContent(t *testing.T) {
 		job.Closed = &handled
 
 		cells := m.jobCells(job)
-		assert.Equal(t, "Done", cells[6], "unexpected condition")
-		assert.Equal(t, "P", cells[7], "unexpected condition")
-		assert.Equal(t, "yes", cells[8], "unexpected condition")
+		assert.Equal(t, "Done", cells[6])
+		assert.Equal(t, "P", cells[7])
+		assert.Equal(t, "yes", cells[8])
 	})
 }
 
@@ -585,8 +585,8 @@ func TestTUIJobCellsReviewTypeTag(t *testing.T) {
 			cells := m.jobCells(job)
 			ref := cells[0]
 			hasTag := strings.Contains(ref, "["+tc.reviewType+"]")
-			assert.False(t, tc.wantTag && !hasTag, "unexpected condition")
-			assert.False(t, !tc.wantTag && tc.reviewType != "" && hasTag, "unexpected condition")
+			assert.False(t, tc.wantTag && !hasTag)
+			assert.False(t, !tc.wantTag && tc.reviewType != "" && hasTag)
 		})
 	}
 }
@@ -666,11 +666,11 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 
 			statusIdx := strings.Index(headerLine, "Status")
 			pfIdx := strings.Index(headerLine, "P/F")
-			assert.False(t, statusIdx < 0 || pfIdx < 0 || pfIdx <= statusIdx, "unexpected condition")
+			assert.False(t, statusIdx < 0 || pfIdx < 0 || pfIdx <= statusIdx)
 
 			gap := pfIdx - statusIdx
 			gotWidth := gap - 1
-			assert.Equal(t, tt.wantWidth, gotWidth, "unexpected condition")
+			assert.Equal(t, tt.wantWidth, gotWidth)
 		})
 	}
 }
@@ -695,13 +695,13 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 
 	m2, _ := updateModel(t, m, appendMsg)
 
-	assert.Len(t, m2.jobs, 75, "unexpected condition")
+	assert.Len(t, m2.jobs, 75)
 
 	assert.False(t, m2.hasMore, "hasMore should be false after append with hasMore=false")
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
+	assert.False(t, m2.loadingMore)
 
-	assert.EqualValues(t, 50, m2.selectedJobID, "unexpected condition")
+	assert.EqualValues(t, 50, m2.selectedJobID)
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
@@ -723,10 +723,10 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 
 	m2, _ := updateModel(t, m, refreshMsg)
 
-	assert.Len(t, m2.jobs, 100, "unexpected condition")
+	assert.Len(t, m2.jobs, 100)
 
-	assert.EqualValues(t, 50, m2.selectedJobID, "unexpected condition")
-	assert.Equal(t, 51, m2.selectedIdx, "unexpected condition")
+	assert.EqualValues(t, 50, m2.selectedJobID)
+	assert.Equal(t, 51, m2.selectedIdx)
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
@@ -736,9 +736,9 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 	errMsg := paginationErrMsg{err: fmt.Errorf("network error")}
 	m2, _ := updateModel(t, m, errMsg)
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
+	assert.False(t, m2.loadingMore)
 
-	require.Error(t, m2.err, "unexpected condition")
+	require.Error(t, m2.err)
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
@@ -748,9 +748,9 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 	errMsg := errMsg(fmt.Errorf("some other error"))
 	m2, _ := updateModel(t, m, errMsg)
 
-	assert.True(t, m2.loadingMore, "unexpected condition")
+	assert.True(t, m2.loadingMore)
 
-	require.Error(t, m2.err, "unexpected condition")
+	require.Error(t, m2.err)
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
@@ -766,8 +766,8 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'j')
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
@@ -783,8 +783,8 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'j')
 
-	assert.True(t, m2.loadingMore, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
@@ -801,8 +801,8 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
@@ -834,7 +834,7 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 		"pgdown: expected selectedIdx=6 (skipped hidden idx 5), got %d",
 		m2.selectedIdx)
 
-	assert.EqualValues(t, 7, m2.selectedJobID, "unexpected condition")
+	assert.EqualValues(t, 7, m2.selectedJobID)
 
 	m3, _ := pressSpecial(m2, tea.KeyPgUp)
 	assert.Equal(t, 0, m3.selectedIdx,
@@ -842,7 +842,7 @@ func TestTUIPageUpDownMovesSelection(t *testing.T) {
 		"pgup: expected selectedIdx=0 (back to newest), got %d",
 		m3.selectedIdx)
 
-	assert.EqualValues(t, 1, m3.selectedJobID, "unexpected condition")
+	assert.EqualValues(t, 1, m3.selectedJobID)
 }
 
 func TestTUIResizeBehavior(t *testing.T) {
@@ -943,23 +943,23 @@ func TestTUIResizeBehavior(t *testing.T) {
 				m, cmd = updateModel(t, m, tt.msg)
 
 				assert.Nil(t, cmd, "Expected no fetch command on first resize, got one")
-				assert.Equal(t, m.height, tt.msg.Height, "unexpected condition")
-				assert.True(t, m.heightDetected, "unexpected condition")
+				assert.Equal(t, m.height, tt.msg.Height)
+				assert.True(t, m.heightDetected)
 
 				m, cmd = updateModel(t, m, tea.WindowSizeMsg{Height: 40})
 
 				assert.NotNil(t, cmd, "Expected fetch command on second resize, got nil")
-				assert.Equal(t, 40, m.height, "unexpected condition")
-				assert.True(t, m.loadingJobs, "unexpected condition")
+				assert.Equal(t, 40, m.height)
+				assert.True(t, m.loadingJobs)
 				return
 			} else {
 				m, cmd = updateModel(t, m, tt.msg)
 			}
 
 			assert.Equal(t, tt.wantCmd, cmd != nil, "fetch command mismatch")
-			assert.Equal(t, m.height, tt.msg.Height, "unexpected condition")
-			assert.True(t, m.heightDetected, "unexpected condition")
-			assert.Equal(t, tt.wantLoading, m.loadingJobs, "unexpected condition")
+			assert.Equal(t, m.height, tt.msg.Height)
+			assert.True(t, m.heightDetected)
+			assert.Equal(t, tt.wantLoading, m.loadingJobs)
 		})
 	}
 }
@@ -1034,7 +1034,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 	lines := strings.Split(output, "\n")
 
-	assert.GreaterOrEqual(t, len(lines), m.height-3, "unexpected condition")
+	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
 	assert.Contains(t, output, "No jobs in queue", "Expected 'No jobs in queue' message in output")
 }
@@ -1051,7 +1051,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	output := m.View()
 
 	lines := strings.Split(output, "\n")
-	assert.GreaterOrEqual(t, len(lines), m.height-3, "unexpected condition")
+	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
 	assert.Contains(t, output, "No jobs matching filters", "Expected 'No jobs matching filters' message in output")
 }
@@ -1100,7 +1100,7 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 
 	lines := strings.Split(output, "\n")
 
-	assert.GreaterOrEqual(t, len(lines), m.height-5, "unexpected condition")
+	assert.GreaterOrEqual(t, len(lines), m.height-5)
 }
 
 func setupQueue(jobs []storage.ReviewJob, selectedIdx int) model {
@@ -1232,12 +1232,12 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 
 			for id, p := range tt.initialPending {
 				val, exists := m2.pendingClosed[id]
-				assert.False(t, tt.wantPending && !exists, "unexpected condition")
-				assert.False(t, !tt.wantPending && exists, "unexpected condition")
+				assert.False(t, tt.wantPending && !exists)
+				assert.False(t, !tt.wantPending && exists)
 				if exists && tt.wantPendingState != nil {
-					assert.Equal(t, *tt.wantPendingState, val.newState, "unexpected condition")
+					assert.Equal(t, *tt.wantPendingState, val.newState)
 				}
-				assert.False(t, exists && val.seq != p.seq, "unexpected condition")
+				assert.False(t, exists && val.seq != p.seq)
 			}
 
 			if tt.wantClosed != nil && len(m2.jobs) > 0 {
@@ -1283,8 +1283,8 @@ func TestTUIReviewClosedTransitions(t *testing.T) {
 
 			for id := range tt.initialReviewPending {
 				_, exists := m2.pendingReviewClosed[id]
-				assert.False(t, tt.wantPending && !exists, "unexpected condition")
-				assert.False(t, !tt.wantPending && exists, "unexpected condition")
+				assert.False(t, tt.wantPending && !exists)
+				assert.False(t, !tt.wantPending && exists)
 			}
 		})
 	}
@@ -1348,13 +1348,13 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 
 			for id := range tt.initialPending {
 				_, exists := m2.pendingClosed[id]
-				assert.False(t, tt.wantPending && !exists, "unexpected condition")
-				assert.False(t, !tt.wantPending && exists, "unexpected condition")
+				assert.False(t, tt.wantPending && !exists)
+				assert.False(t, !tt.wantPending && exists)
 			}
 
 			if tt.wantStats != nil {
-				assert.Equal(t, m2.jobStats.Closed, tt.wantStats.Closed, "unexpected condition")
-				assert.Equal(t, m2.jobStats.Open, tt.wantStats.Open, "unexpected condition")
+				assert.Equal(t, m2.jobStats.Closed, tt.wantStats.Closed)
+				assert.Equal(t, m2.jobStats.Open, tt.wantStats.Open)
 			}
 		})
 	}
@@ -1371,25 +1371,25 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 	m := setupQueue(threeJobs, 0)
 
 	m, _ = pressKey(m, 'j')
-	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m.selectedIdx)
 
 	m, _ = pressKey(m, 'j')
-	assert.Equal(t, 2, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m.selectedIdx)
 
 	m, _ = pressKey(m, 'k')
-	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m.selectedIdx)
 
 	m, _ = pressKey(m, 'j')
-	assert.Equal(t, 2, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m.selectedIdx)
 
 	m, _ = pressKey(m, 'g')
-	assert.Equal(t, 0, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 0, m.selectedIdx)
 
 	m, _ = pressSpecial(m, tea.KeyLeft)
-	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m.selectedIdx)
 
 	m, _ = pressSpecial(m, tea.KeyRight)
-	assert.Equal(t, 0, m.selectedIdx, "unexpected condition")
+	assert.Equal(t, 0, m.selectedIdx)
 }
 
 type queueTestModelOption func(*model)
@@ -1428,9 +1428,9 @@ func newQueueTestModel(opts ...queueTestModelOption) model {
 
 func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 	t.Helper()
-	assert.Equal(t, m.flashMessage, msg, "unexpected condition")
-	assert.Equal(t, m.flashView, view, "unexpected condition")
-	assert.False(t, m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()), "unexpected condition")
+	assert.Equal(t, m.flashMessage, msg)
+	assert.Equal(t, m.flashView, view)
+	assert.False(t, m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()))
 }
 
 func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
@@ -1474,7 +1474,7 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
+		assert.LessOrEqual(t, visW, m.width+1)
 	}
 }
 
@@ -1500,7 +1500,7 @@ func TestTUIQueueLongAgentName(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
+		assert.LessOrEqual(t, visW, m.width+1)
 	}
 }
 
@@ -1527,7 +1527,7 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
+		assert.LessOrEqual(t, visW, m.width+1)
 	}
 }
 
@@ -1562,7 +1562,7 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 			run = 0
 		}
 	}
-	assert.LessOrEqual(t, maxRun, 12, "unexpected condition")
+	assert.LessOrEqual(t, maxRun, 12)
 }
 
 func TestTUITasksFlexOvershootHandled(t *testing.T) {
@@ -1583,12 +1583,12 @@ func TestTUITasksFlexOvershootHandled(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	output := m.renderTasksView()
-	assert.Contains(t, output, "roborev tasks", "unexpected condition")
+	assert.Contains(t, output, "roborev tasks")
 
 	for line := range strings.SplitSeq(output, "\n") {
 		clean := strings.ReplaceAll(line, "\x1b[K", "")
 		clean = strings.ReplaceAll(clean, "\x1b[J", "")
-		assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1, "unexpected condition")
+		assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1)
 	}
 }
 
@@ -1628,7 +1628,7 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 			for i := 3; i < len(lines); i++ {
 				clean := strings.ReplaceAll(lines[i], "\x1b[K", "")
 				clean = strings.ReplaceAll(clean, "\x1b[J", "")
-				assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1, "unexpected condition")
+				assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1)
 			}
 		})
 	}
@@ -1676,7 +1676,7 @@ func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
 	m.fixSelectedIdx = 5
 
 	output := m.renderTasksView()
-	assert.Contains(t, output, "roborev tasks", "unexpected condition")
+	assert.Contains(t, output, "roborev tasks")
 }
 
 func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
@@ -1704,19 +1704,19 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 	m.hiddenColumns = map[int]bool{}
 
 	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	assert.Equal(t, viewColumnOptions, m2.currentView, "unexpected condition")
+	assert.Equal(t, viewColumnOptions, m2.currentView)
 	assert.NotEmpty(t, m2.colOptionsList, "expected non-empty colOptionsList")
 
-	assert.GreaterOrEqual(t, len(m2.colOptionsList), 3, "unexpected condition")
+	assert.GreaterOrEqual(t, len(m2.colOptionsList), 3)
 	borders := m2.colOptionsList[len(m2.colOptionsList)-3]
-	assert.False(t, borders.id != colOptionBorders || borders.name != "Column borders", "unexpected condition")
+	assert.False(t, borders.id != colOptionBorders || borders.name != "Column borders")
 	mouse := m2.colOptionsList[len(m2.colOptionsList)-2]
-	assert.False(t, mouse.id != colOptionMouse || mouse.name != "Mouse interactions", "unexpected condition")
+	assert.False(t, mouse.id != colOptionMouse || mouse.name != "Mouse interactions")
 	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
-	assert.False(t, tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow", "unexpected condition")
+	assert.False(t, tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow")
 
 	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyEscape})
-	assert.Equal(t, viewQueue, m3.currentView, "unexpected condition")
+	assert.Equal(t, viewQueue, m3.currentView)
 }
 
 func TestColumnOptionsToggle(t *testing.T) {
@@ -1727,7 +1727,7 @@ func TestColumnOptionsToggle(t *testing.T) {
 
 	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 
-	assert.Equal(t, colRef, m.colOptionsList[0].id, "unexpected condition")
+	assert.Equal(t, colRef, m.colOptionsList[0].id)
 	assert.True(t, m.colOptionsList[0].enabled, "expected Ref to be enabled initially")
 
 	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
@@ -1754,10 +1754,10 @@ func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
 	m.selectedJobID = 1
 
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
-	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 1, "unexpected condition")
+	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 1)
 
 	m3, _ := updateModel(t, m2, mouseWheelDown())
-	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1, "unexpected condition")
+	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1)
 }
 
 func TestHiddenColumnNotRendered(t *testing.T) {
@@ -1772,9 +1772,9 @@ func TestHiddenColumnNotRendered(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	assert.NotContains(t, output, "Agent", "unexpected condition")
+	assert.NotContains(t, output, "Agent")
 
-	assert.Contains(t, output, "Branch", "unexpected condition")
+	assert.Contains(t, output, "Branch")
 }
 
 func TestColumnBordersRendered(t *testing.T) {
@@ -1796,7 +1796,7 @@ func TestColumnBordersRendered(t *testing.T) {
 	output2 := m.renderQueueView()
 	bordersOffCount := strings.Count(output2, "▕")
 
-	assert.Greater(t, bordersOnCount, bordersOffCount, "unexpected condition")
+	assert.Greater(t, bordersOnCount, bordersOffCount)
 }
 
 func TestQueueColWidthCacheColdStart(t *testing.T) {
@@ -1811,7 +1811,7 @@ func TestQueueColWidthCacheColdStart(t *testing.T) {
 	m.selectedJobID = 1
 
 	output := stripANSI(m.renderQueueView())
-	assert.Contains(t, output, "abc1234", "unexpected condition")
+	assert.Contains(t, output, "abc1234")
 
 	assert.NotNil(t, m.queueColCache.contentWidths, "cache contentWidths should be populated after first render")
 }
@@ -1884,7 +1884,7 @@ func TestTaskColWidthCacheColdStart(t *testing.T) {
 	}
 
 	output := stripANSI(m.renderTasksView())
-	assert.Contains(t, output, "def5678", "unexpected condition")
+	assert.Contains(t, output, "def5678")
 	assert.NotNil(t, m.taskColCache.contentWidths, "task cache contentWidths should be populated after first render")
 }
 
@@ -1945,7 +1945,7 @@ func TestStatusLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := statusLabel(tt.job)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -1969,11 +1969,11 @@ func TestStatusColor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := statusColor(tt.status)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 
-	assert.NotEqual(t, failedStyle.GetForeground(), failStyle.GetForeground(), "unexpected condition")
+	assert.NotEqual(t, failedStyle.GetForeground(), failStyle.GetForeground())
 }
 
 func TestVerdictColor(t *testing.T) {
@@ -1993,7 +1993,7 @@ func TestVerdictColor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := verdictColor(tt.verdict)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -2088,9 +2088,9 @@ func TestMigrateColumnConfig(t *testing.T) {
 				HiddenColumns: slices.Clone(tt.hiddenCols),
 			}
 			dirty := migrateColumnConfig(cfg)
-			assert.Equal(t, tt.wantDirty, dirty, "unexpected condition")
-			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder), "unexpected condition")
-			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden), "unexpected condition")
+			assert.Equal(t, tt.wantDirty, dirty)
+			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder))
+			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden))
 		})
 	}
 }
@@ -2101,7 +2101,7 @@ func TestParseColumnOrderAppendsMissing(t *testing.T) {
 	got := parseColumnOrder(oldCustom)
 
 	wantPrefix := []int{colRepo, colRef, colAgent, colStatus, colQueued, colElapsed, colBranch, colHandled}
-	assert.True(t, slices.Equal(got[:len(wantPrefix)], wantPrefix), "unexpected condition")
+	assert.True(t, slices.Equal(got[:len(wantPrefix)], wantPrefix))
 
 	pfCount := 0
 	for _, c := range got {
@@ -2109,7 +2109,7 @@ func TestParseColumnOrderAppendsMissing(t *testing.T) {
 			pfCount++
 		}
 	}
-	assert.Equal(t, 1, pfCount, "unexpected condition")
+	assert.Equal(t, 1, pfCount)
 }
 
 func TestDefaultColumnOrderDetection(t *testing.T) {
@@ -2123,5 +2123,5 @@ func TestDefaultColumnOrderDetection(t *testing.T) {
 	copy(customOrder, toggleableColumns)
 	customOrder[0], customOrder[1] = customOrder[1], customOrder[0]
 
-	assert.False(t, slices.Equal(customOrder, toggleableColumns), "unexpected condition")
+	assert.False(t, slices.Equal(customOrder, toggleableColumns))
 }

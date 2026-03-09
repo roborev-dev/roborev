@@ -31,23 +31,23 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 		makeNode("repo-b", 3),
 	})
 
-	assert.Len(t, m.filterFlatList, 3, "unexpected condition")
+	assert.Len(t, m.filterFlatList, 3)
 
 	m.filterSelectedIdx = 1
 	m2, _ := pressSpecial(m, tea.KeyRight)
 
-	assert.True(t, m2.filterTree[0].expanded, "unexpected condition")
+	assert.True(t, m2.filterTree[0].expanded)
 
-	assert.Len(t, m2.filterFlatList, 5, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 5)
 
 	m2.filterSelectedIdx = 2
 	m3, _ := pressSpecial(m2, tea.KeyLeft)
 
-	assert.False(t, m3.filterTree[0].expanded, "unexpected condition")
+	assert.False(t, m3.filterTree[0].expanded)
 
-	assert.Len(t, m3.filterFlatList, 3, "unexpected condition")
+	assert.Len(t, m3.filterFlatList, 3)
 
-	assert.Equal(t, 1, m3.filterSelectedIdx, "unexpected condition")
+	assert.Equal(t, 1, m3.filterSelectedIdx)
 }
 
 func TestTUITreeFilterSelectBranch(t *testing.T) {
@@ -72,9 +72,9 @@ func TestTUITreeFilterSelectBranch(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
-	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a", "unexpected condition")
-	assert.Equal(t, "feature", m2.activeBranchFilter, "unexpected condition")
+	assert.Equal(t, viewQueue, m2.currentView)
+	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a")
+	assert.Equal(t, "feature", m2.activeBranchFilter)
 
 	foundRepo := false
 	foundBranch := false
@@ -86,9 +86,9 @@ func TestTUITreeFilterSelectBranch(t *testing.T) {
 			foundBranch = true
 		}
 	}
-	assert.True(t, foundRepo, "unexpected condition")
-	assert.True(t, foundBranch, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, foundRepo)
+	assert.True(t, foundBranch)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
@@ -100,8 +100,8 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyRight)
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
+	assert.NotNil(t, cmd)
 
 	m3, _ := updateModel(t, m2, repoBranchesMsg{
 		repoIdx:      0,
@@ -110,11 +110,11 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 		expandOnLoad: true,
 	})
 
-	assert.False(t, m3.filterTree[0].loading, "unexpected condition")
-	assert.True(t, m3.filterTree[0].expanded, "unexpected condition")
-	assert.Len(t, m3.filterTree[0].children, 2, "unexpected condition")
+	assert.False(t, m3.filterTree[0].loading)
+	assert.True(t, m3.filterTree[0].expanded)
+	assert.Len(t, m3.filterTree[0].children, 2)
 
-	assert.Len(t, m3.filterFlatList, 4, "unexpected condition")
+	assert.Len(t, m3.filterFlatList, 4)
 }
 
 func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
@@ -134,9 +134,9 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 		err:       errors.New("connection refused"),
 	})
 
-	assert.False(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.False(t, m2.filterTree[0].expanded, "unexpected condition")
-	require.Error(t, m2.err, "unexpected condition")
+	assert.False(t, m2.filterTree[0].loading)
+	assert.False(t, m2.filterTree[0].expanded)
+	require.Error(t, m2.err)
 }
 
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
@@ -158,11 +158,11 @@ func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 		err:       errors.New("server error"),
 	})
 
-	require.Error(t, m2.err, "unexpected condition")
+	require.Error(t, m2.err)
 
-	assert.False(t, m2.filterTree[0].loading, "unexpected condition")
+	assert.False(t, m2.filterTree[0].loading)
 
-	assert.False(t, m2.filterBranchMode, "unexpected condition")
+	assert.False(t, m2.filterBranchMode)
 }
 
 func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) {
@@ -182,10 +182,10 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 		err:       mockConnError("connection refused"),
 	})
 
-	assert.Equal(t, 3, m2.consecutiveErrors, "unexpected condition")
-	assert.True(t, m2.reconnecting, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
-	assert.False(t, m2.filterTree[0].loading, "unexpected condition")
+	assert.Equal(t, 3, m2.consecutiveErrors)
+	assert.True(t, m2.reconnecting)
+	assert.NotNil(t, cmd)
+	assert.False(t, m2.filterTree[0].loading)
 }
 
 func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
@@ -205,9 +205,9 @@ func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'f')
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.False(t, m2.filterTree[1].loading, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
+	assert.False(t, m2.filterTree[1].loading)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
@@ -234,10 +234,10 @@ func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 	m.filterSearch = "xyz"
 	m.rebuildFilterFlatList()
 
-	assert.Len(t, m.filterFlatList, 2, "unexpected condition")
+	assert.Len(t, m.filterFlatList, 2)
 	if len(m.filterFlatList) >= 2 {
-		assert.False(t, m.filterFlatList[0].repoIdx != 0 || m.filterFlatList[0].branchIdx != -1, "unexpected condition")
-		assert.False(t, m.filterFlatList[1].repoIdx != 0 || m.filterFlatList[1].branchIdx != 1, "unexpected condition")
+		assert.False(t, m.filterFlatList[0].repoIdx != 0 || m.filterFlatList[0].branchIdx != -1)
+		assert.False(t, m.filterFlatList[1].repoIdx != 0 || m.filterFlatList[1].branchIdx != 1)
 	}
 }
 
@@ -253,17 +253,17 @@ func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
 		expandOnLoad: false,
 	})
 
-	assert.False(t, m2.filterTree[0].expanded, "unexpected condition")
+	assert.False(t, m2.filterTree[0].expanded)
 
 	m2.filterSearch = "main"
 	m2.rebuildFilterFlatList()
 
-	assert.Len(t, m2.filterFlatList, 2, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 2)
 
 	m2.filterSearch = ""
 	m2.rebuildFilterFlatList()
 
-	assert.Len(t, m2.filterFlatList, 2, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 2)
 }
 
 func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
@@ -281,20 +281,20 @@ func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
 
 	m.filterSearch = "xyz"
 	m.rebuildFilterFlatList()
-	assert.Len(t, m.filterFlatList, 2, "unexpected condition")
+	assert.Len(t, m.filterFlatList, 2)
 
 	m.filterSelectedIdx = 0
 	m2, _ := pressSpecial(m, tea.KeyLeft)
 
-	assert.True(t, m2.filterTree[0].userCollapsed, "unexpected condition")
+	assert.True(t, m2.filterTree[0].userCollapsed)
 
-	assert.Len(t, m2.filterFlatList, 1, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 1)
 
 	m2.filterSelectedIdx = 0
 	m3, _ := pressSpecial(m2, tea.KeyRight)
 
-	assert.False(t, m3.filterTree[0].userCollapsed, "unexpected condition")
-	assert.True(t, m3.filterTree[0].expanded, "unexpected condition")
+	assert.False(t, m3.filterTree[0].userCollapsed)
+	assert.True(t, m3.filterTree[0].expanded)
 }
 
 func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
@@ -313,11 +313,11 @@ func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
 	m.filterTree[0].userCollapsed = true
 	m.rebuildFilterFlatList()
 
-	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
+	assert.Len(t, m.filterFlatList, 1)
 
 	m.filterSearch = ""
 	m.rebuildFilterFlatList()
-	assert.False(t, m.filterTree[0].userCollapsed, "unexpected condition")
+	assert.False(t, m.filterTree[0].userCollapsed)
 }
 
 func TestRootPathsMatchOrderIndependent(t *testing.T) {
@@ -343,7 +343,7 @@ func TestRootPathsMatchOrderIndependent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := rootPathsMatch(tt.a, tt.b)
-			assert.Equal(t, got, tt.match, "unexpected condition")
+			assert.Equal(t, got, tt.match)
 		})
 	}
 }
@@ -365,9 +365,9 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 		expandOnLoad: true,
 	})
 
-	assert.False(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.Len(t, m2.filterTree[0].children, 1, "unexpected condition")
-	assert.True(t, m2.filterTree[0].expanded, "unexpected condition")
+	assert.False(t, m2.filterTree[0].loading)
+	assert.Len(t, m2.filterTree[0].children, 1)
+	assert.True(t, m2.filterTree[0].expanded)
 
 	m3 := initFilterModel([]treeFilterNode{
 		{
@@ -385,8 +385,8 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 		expandOnLoad: true,
 	})
 
-	assert.True(t, m4.filterTree[0].loading, "unexpected condition")
-	assert.Nil(t, m4.filterTree[0].children, "unexpected condition")
+	assert.True(t, m4.filterTree[0].loading)
+	assert.Nil(t, m4.filterTree[0].children)
 }
 
 func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
@@ -407,11 +407,11 @@ func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 	assert.NotNil(t, cmd, "Expected command from fetchUnloadedBranches")
 
 	loading := countLoading(&m)
-	assert.Equal(t, maxSearchBranchFetches, loading, "unexpected condition")
+	assert.Equal(t, maxSearchBranchFetches, loading)
 
 	cmd2 := m.fetchUnloadedBranches()
-	assert.Nil(t, cmd2, "unexpected condition")
-	assert.Equal(t, maxSearchBranchFetches, countLoading(&m), "unexpected condition")
+	assert.Nil(t, cmd2)
+	assert.Equal(t, maxSearchBranchFetches, countLoading(&m))
 }
 
 func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
@@ -431,12 +431,12 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 		expandOnLoad: true,
 	})
 
-	assert.False(t, m2.filterTree[0].fetchFailed, "unexpected condition")
+	assert.False(t, m2.filterTree[0].fetchFailed)
 
 	m2.filterSearch = "test"
 	cmd := m2.fetchUnloadedBranches()
-	assert.NotNil(t, cmd, "unexpected condition")
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
+	assert.NotNil(t, cmd)
+	assert.True(t, m2.filterTree[0].loading)
 }
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
@@ -465,8 +465,8 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
-	assert.True(t, m2.loadingJobs, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.loadingJobs)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
@@ -478,7 +478,7 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 		backfillCount: 0,
 	})
 
-	assert.True(t, m2.branchBackfillDone, "unexpected condition")
+	assert.True(t, m2.branchBackfillDone)
 }
 
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
@@ -490,7 +490,7 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 		backfillCount: 2,
 	})
 
-	assert.True(t, m2.branchBackfillDone, "unexpected condition")
+	assert.True(t, m2.branchBackfillDone)
 }
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
@@ -502,13 +502,13 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 		backfillCount: 1,
 	})
 
-	assert.True(t, m2.branchBackfillDone, "unexpected condition")
+	assert.True(t, m2.branchBackfillDone)
 
 	m3, _ := updateModel(t, m2, branchesMsg{
 		backfillCount: 0,
 	})
 
-	assert.True(t, m3.branchBackfillDone, "unexpected condition")
+	assert.True(t, m3.branchBackfillDone)
 }
 
 func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
@@ -520,7 +520,7 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 		backfillCount: 0,
 	})
 
-	assert.True(t, m2.branchBackfillDone, "unexpected condition")
+	assert.True(t, m2.branchBackfillDone)
 }
 
 func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
@@ -543,9 +543,9 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyLeft)
 
-	assert.False(t, m2.filterTree[0].expanded, "unexpected condition")
+	assert.False(t, m2.filterTree[0].expanded)
 
-	assert.Len(t, m2.filterFlatList, 2, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 2)
 }
 
 func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
@@ -563,9 +563,9 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, msg)
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.Equal(t, "repo-b", m2.filterTree[0].name, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
+	assert.Equal(t, "repo-b", m2.filterTree[0].name)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
@@ -585,10 +585,10 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.False(t, m2.filterBranchMode, "unexpected condition")
+	assert.False(t, m2.filterBranchMode)
 
-	assert.Equal(t, 2, m2.filterSelectedIdx, "unexpected condition")
-	assert.False(t, len(m2.filterFlatList) > 2 && m2.filterFlatList[2].branchIdx != 0, "unexpected condition")
+	assert.Equal(t, 2, m2.filterSelectedIdx)
+	assert.False(t, len(m2.filterFlatList) > 2 && m2.filterFlatList[2].branchIdx != 0)
 }
 
 func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
@@ -601,8 +601,8 @@ func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	assert.False(t, m2.filterBranchMode, "unexpected condition")
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
+	assert.False(t, m2.filterBranchMode)
+	assert.Equal(t, viewQueue, m2.currentView)
 }
 
 func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
@@ -628,10 +628,10 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 	m2, _ := updateModel(t, m, msg)
 
 	children := m2.filterTree[0].children
-	assert.Len(t, children, 3, "unexpected condition")
-	assert.Equal(t, "feature", children[0].name, "unexpected condition")
-	assert.Equal(t, "main", children[1].name, "unexpected condition")
-	assert.Equal(t, "develop", children[2].name, "unexpected condition")
+	assert.Len(t, children, 3)
+	assert.Equal(t, "feature", children[0].name)
+	assert.Equal(t, "main", children[1].name)
+	assert.Equal(t, "develop", children[2].name)
 }
 
 func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
@@ -647,8 +647,8 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	assert.False(t, m2.filterBranchMode, "unexpected condition")
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
+	assert.False(t, m2.filterBranchMode)
+	assert.Equal(t, viewQueue, m2.currentView)
 }
 
 func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {

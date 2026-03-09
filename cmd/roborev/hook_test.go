@@ -54,7 +54,7 @@ func TestUninstallHookCmd(t *testing.T) {
 				require.NoError(t, err, "Failed to read hook: %v")
 
 				want := "#!/bin/bash\necho 'other hook'\n"
-				assert.Equal(t, want, string(content), "unexpected condition")
+				assert.Equal(t, want, string(content))
 			},
 		},
 		{
@@ -77,10 +77,10 @@ func TestUninstallHookCmd(t *testing.T) {
 				require.NoError(t, err, "Failed to read hook: %v")
 
 				contentStr := string(content)
-				assert.NotContains(t, contentStr, githook.PostCommitVersionMarker, "unexpected condition")
-				assert.NotContains(t, contentStr, `"$ROBOREV" post-commit`, "unexpected condition")
-				assert.Contains(t, contentStr, "echo 'before'", "unexpected condition")
-				assert.Contains(t, contentStr, "echo 'after'", "unexpected condition")
+				assert.NotContains(t, contentStr, githook.PostCommitVersionMarker)
+				assert.NotContains(t, contentStr, `"$ROBOREV" post-commit`)
+				assert.Contains(t, contentStr, "echo 'before'")
+				assert.Contains(t, contentStr, "echo 'after'")
 			},
 		},
 		{
@@ -182,8 +182,8 @@ func TestInstallHookCmdCreatesPostRewriteHook(t *testing.T) {
 	content, err := os.ReadFile(prHookPath)
 	require.NoError(t, err, "post-rewrite hook not created: %v")
 
-	assert.Contains(t, string(content), "remap --quiet", "unexpected condition")
-	assert.Contains(t, string(content), githook.PostRewriteVersionMarker, "unexpected condition")
+	assert.Contains(t, string(content), "remap --quiet")
+	assert.Contains(t, string(content), githook.PostRewriteVersionMarker)
 }
 
 func TestIsTransportError(t *testing.T) {
@@ -191,22 +191,22 @@ func TestIsTransportError(t *testing.T) {
 		err := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: &net.OpError{
 			Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
 		}}
-		assert.True(t, isTransportError(err), "unexpected condition")
+		assert.True(t, isTransportError(err))
 	})
 
 	t.Run("url.Error without OpError is not transport error", func(t *testing.T) {
 		err := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: errors.New("some non-transport error")}
-		assert.False(t, isTransportError(err), "unexpected condition")
+		assert.False(t, isTransportError(err))
 	})
 
 	t.Run("registerRepoError is not transport error", func(t *testing.T) {
 		err := &registerRepoError{StatusCode: 500, Body: "internal error"}
-		assert.False(t, isTransportError(err), "unexpected condition")
+		assert.False(t, isTransportError(err))
 	})
 
 	t.Run("plain error is not transport error", func(t *testing.T) {
 		err := fmt.Errorf("something else")
-		assert.False(t, isTransportError(err), "unexpected condition")
+		assert.False(t, isTransportError(err))
 	})
 
 	t.Run("wrapped url.Error with OpError is transport error", func(t *testing.T) {
@@ -214,17 +214,17 @@ func TestIsTransportError(t *testing.T) {
 			Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
 		}}
 		err := fmt.Errorf("register failed: %w", inner)
-		assert.True(t, isTransportError(err), "unexpected condition")
+		assert.True(t, isTransportError(err))
 	})
 }
 
 func TestRegisterRepoError(t *testing.T) {
 	err := &registerRepoError{StatusCode: 500, Body: "internal server error"}
-	assert.Equal(t, "server returned 500: internal server error", err.Error(), "unexpected condition")
+	assert.Equal(t, "server returned 500: internal server error", err.Error())
 
 	var regErr *registerRepoError
-	require.ErrorAs(t, err, &regErr, "unexpected condition")
-	assert.Equal(t, 500, regErr.StatusCode, "unexpected condition")
+	require.ErrorAs(t, err, &regErr)
+	assert.Equal(t, 500, regErr.StatusCode)
 }
 
 // initNoDaemonSetup prepares the environment for init --no-daemon tests:
@@ -318,7 +318,7 @@ func TestInitNoDaemon(t *testing.T) {
 				content, err := os.ReadFile(prHookPath)
 				require.NoError(t, err, "post-rewrite hook should be installed: %v")
 
-				assert.Contains(t, string(content), "remap --quiet", "unexpected condition")
+				assert.Contains(t, string(content), "remap --quiet")
 			},
 		},
 		{
@@ -397,10 +397,10 @@ func TestInitNoDaemon(t *testing.T) {
 			})
 
 			for _, s := range tt.expectContains {
-				assert.Contains(t, output, s, "unexpected condition")
+				assert.Contains(t, output, s)
 			}
 			for _, s := range tt.expectNot {
-				assert.NotContains(t, output, s, "unexpected condition")
+				assert.NotContains(t, output, s)
 			}
 
 			if tt.postCheck != nil {

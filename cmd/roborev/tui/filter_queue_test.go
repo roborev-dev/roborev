@@ -30,7 +30,7 @@ func TestTUIFilterNavigation(t *testing.T) {
 			m.filterSelectedIdx = tc.startIdx
 
 			m2, _ := pressKey(m, tc.key)
-			assert.Equal(t, tc.expectedIdx, m2.filterSelectedIdx, "unexpected condition")
+			assert.Equal(t, tc.expectedIdx, m2.filterSelectedIdx)
 		})
 	}
 }
@@ -49,7 +49,7 @@ func TestTUIFilterNavigationSequential(t *testing.T) {
 		m2, _ = pressKey(m2, k)
 	}
 
-	assert.Equal(t, 2, m2.filterSelectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m2.filterSelectedIdx)
 }
 
 func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
@@ -69,16 +69,16 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
-	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-b", "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-b")
+	assert.NotNil(t, cmd)
 
-	assert.Equal(t, -1, m2.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 0, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, -1, m2.selectedIdx)
+	assert.EqualValues(t, 0, m2.selectedJobID)
 
 	m3, _ := updateModel(t, m2, jobsMsg{jobs: []storage.ReviewJob{}})
 
-	assert.Equal(t, -1, m3.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 0, m3.selectedJobID, "unexpected condition")
+	assert.Equal(t, -1, m3.selectedIdx)
+	assert.EqualValues(t, 0, m3.selectedJobID)
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
@@ -101,9 +101,9 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	assert.Contains(t, output, "Completed: 3", "unexpected condition")
-	assert.Contains(t, output, "Closed: 1", "unexpected condition")
-	assert.Contains(t, output, "Open: 2", "unexpected condition")
+	assert.Contains(t, output, "Completed: 3")
+	assert.Contains(t, output, "Closed: 1")
+	assert.Contains(t, output, "Open: 2")
 }
 
 func TestTUIBranchFilterApplied(t *testing.T) {
@@ -123,9 +123,9 @@ func TestTUIBranchFilterApplied(t *testing.T) {
 	m.activeBranchFilter = "main"
 
 	visible := m.getVisibleJobs()
-	assert.Len(t, visible, 2, "unexpected condition")
+	assert.Len(t, visible, 2)
 	for _, job := range visible {
-		assert.Equal(t, "main", job.Branch, "unexpected condition")
+		assert.Equal(t, "main", job.Branch)
 	}
 }
 
@@ -145,9 +145,9 @@ func TestTUIBranchFilterNone(t *testing.T) {
 	m.activeBranchFilter = "(none)"
 
 	visible := m.getVisibleJobs()
-	assert.Len(t, visible, 2, "unexpected condition")
+	assert.Len(t, visible, 2)
 	for _, job := range visible {
-		assert.Empty(t, job.Branch, "unexpected condition")
+		assert.Empty(t, job.Branch)
 	}
 }
 
@@ -169,8 +169,8 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 	m.activeBranchFilter = "main"
 
 	visible := m.getVisibleJobs()
-	assert.Len(t, visible, 1, "unexpected condition")
-	assert.False(t, len(visible) > 0 && (visible[0].RepoPath != "/path/to/repo-a" || visible[0].Branch != "main"), "unexpected condition")
+	assert.Len(t, visible, 1)
+	assert.False(t, len(visible) > 0 && (visible[0].RepoPath != "/path/to/repo-a" || visible[0].Branch != "main"))
 }
 
 func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
@@ -187,8 +187,8 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
@@ -205,8 +205,8 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'j')
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
@@ -224,8 +224,8 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
@@ -240,9 +240,9 @@ func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
-	assert.Empty(t, m2.activeBranchFilter, "unexpected condition")
-	assert.True(t, m2.loadingJobs, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Empty(t, m2.activeBranchFilter)
+	assert.True(t, m2.loadingJobs)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIQueueNavigationWithFilter(t *testing.T) {
@@ -262,17 +262,17 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 
 	m2, _ := pressKey(m, 'j')
 
-	assert.Equal(t, 2, m2.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 3, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, 2, m2.selectedIdx)
+	assert.EqualValues(t, 3, m2.selectedJobID)
 
 	m3, _ := pressKey(m2, 'j')
 
-	assert.Equal(t, 4, m3.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 5, m3.selectedJobID, "unexpected condition")
+	assert.Equal(t, 4, m3.selectedIdx)
+	assert.EqualValues(t, 5, m3.selectedJobID)
 
 	m4, _ := pressKey(m3, 'k')
 
-	assert.Equal(t, 2, m4.selectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m4.selectedIdx)
 }
 
 func TestTUIJobsRefreshWithFilter(t *testing.T) {
@@ -295,8 +295,8 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 
 	m2, _ := updateModel(t, m, newJobs)
 
-	assert.Equal(t, 2, m2.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 3, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, 2, m2.selectedIdx)
+	assert.EqualValues(t, 3, m2.selectedJobID)
 
 	newJobs = jobsMsg{jobs: []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -305,8 +305,8 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 
 	m3, _ := updateModel(t, m2, newJobs)
 
-	assert.Equal(t, 0, m3.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 1, m3.selectedJobID, "unexpected condition")
+	assert.Equal(t, 0, m3.selectedIdx)
+	assert.EqualValues(t, 1, m3.selectedJobID)
 }
 
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
@@ -325,8 +325,8 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 	}
 	m2, _ := updateModel(t, m, jobsMsg{jobs: newJobs})
 
-	assert.Equal(t, -1, m2.selectedIdx, "unexpected condition")
-	assert.EqualValues(t, 0, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, -1, m2.selectedIdx)
+	assert.EqualValues(t, 0, m2.selectedJobID)
 }
 
 func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
@@ -341,14 +341,14 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	m.currentView = viewQueue
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
-	assert.Nil(t, cmd, "unexpected condition")
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewQueue, m2.currentView)
 
 	_, cmd = pressKey(m, 'x')
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.Nil(t, cmd)
 
 	_, cmd = pressKey(m, 'a')
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.Nil(t, cmd)
 }
 
 func TestTUIBKeyOpensBranchFilter(t *testing.T) {
@@ -359,9 +359,9 @@ func TestTUIBKeyOpensBranchFilter(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'b')
 
-	assert.Equal(t, viewFilter, m2.currentView, "unexpected condition")
-	assert.True(t, m2.filterBranchMode, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Equal(t, viewFilter, m2.currentView)
+	assert.True(t, m2.filterBranchMode)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
@@ -373,8 +373,8 @@ func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'f')
 
-	assert.Equal(t, viewFilter, m2.currentView, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Equal(t, viewFilter, m2.currentView)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
@@ -391,10 +391,10 @@ func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Len(t, m2.filterTree, 3, "unexpected condition")
-	assert.Equal(t, "repo-b", m2.filterTree[0].name, "unexpected condition")
-	assert.Equal(t, "repo-a", m2.filterTree[1].name, "unexpected condition")
-	assert.Equal(t, "repo-c", m2.filterTree[2].name, "unexpected condition")
+	assert.Len(t, m2.filterTree, 3)
+	assert.Equal(t, "repo-b", m2.filterTree[0].name)
+	assert.Equal(t, "repo-a", m2.filterTree[1].name)
+	assert.Equal(t, "repo-c", m2.filterTree[2].name)
 }
 
 func TestTUIFilterNoCwdNoReorder(t *testing.T) {
@@ -410,9 +410,9 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Equal(t, "repo-a", m2.filterTree[0].name, "unexpected condition")
-	assert.Equal(t, "repo-b", m2.filterTree[1].name, "unexpected condition")
-	assert.Equal(t, "repo-c", m2.filterTree[2].name, "unexpected condition")
+	assert.Equal(t, "repo-a", m2.filterTree[0].name)
+	assert.Equal(t, "repo-b", m2.filterTree[1].name)
+	assert.Equal(t, "repo-c", m2.filterTree[2].name)
 }
 
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
@@ -421,7 +421,7 @@ func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'b')
 
-	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
-	assert.False(t, m2.filterBranchMode, "unexpected condition")
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.Equal(t, viewReview, m2.currentView)
+	assert.False(t, m2.filterBranchMode)
+	assert.Nil(t, cmd)
 }

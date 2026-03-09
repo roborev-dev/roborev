@@ -32,13 +32,13 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 			found++
 		}
 	}
-	assert.Equal(t, 3, found, "unexpected condition")
+	assert.Equal(t, 3, found)
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
 	lines := renderMarkdownLines("", 80, 80, styles.DarkStyleConfig, 2)
 	// Should not panic and should produce some output (even if empty)
-	assert.NotNil(t, lines, "unexpected condition")
+	assert.NotNil(t, lines)
 }
 
 func TestMarkdownCacheBehavior(t *testing.T) {
@@ -76,9 +76,9 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 			isSameObject := &lines1[0] == &lines2[0]
 
 			if tt.expectHit {
-				assert.True(t, isSameObject, "unexpected condition")
+				assert.True(t, isSameObject)
 			} else {
-				assert.False(t, isSameObject, "unexpected condition")
+				assert.False(t, isSameObject)
 			}
 
 			if tt.expectedMatch != "" {
@@ -86,7 +86,7 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 				for _, line := range lines2 {
 					combined.WriteString(stripTestANSI(line))
 				}
-				assert.Contains(t, combined.String(), tt.expectedMatch, "unexpected condition")
+				assert.Contains(t, combined.String(), tt.expectedMatch)
 			}
 		})
 	}
@@ -102,7 +102,7 @@ func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
 	reviewContent := strings.TrimSpace(reviewLines[len(reviewLines)-1])
 	promptContent := strings.TrimSpace(promptLines[len(promptLines)-1])
 
-	assert.NotEqual(t, reviewContent, promptContent, "unexpected condition")
+	assert.NotEqual(t, reviewContent, promptContent)
 }
 
 func TestRenderViewSafety_NilCache(t *testing.T) {
@@ -144,7 +144,7 @@ func TestRenderViewSafety_NilCache(t *testing.T) {
 
 			// Should not panic despite nil mdCache
 			got := tt.render(m)
-			assert.Contains(t, got, tt.want, "unexpected condition")
+			assert.Contains(t, got, tt.want)
 		})
 	}
 }
@@ -203,12 +203,12 @@ func TestScrollPageUpAfterPageDown(t *testing.T) {
 			}
 
 			s := getScroll(m)
-			assert.LessOrEqual(t, s, maxScroll, "unexpected condition")
+			assert.LessOrEqual(t, s, maxScroll)
 
 			// Page up
 			before := getScroll(m)
 			m, _ = pressSpecial(m, tea.KeyPgUp)
-			assert.Less(t, getScroll(m), before, "unexpected condition")
+			assert.Less(t, getScroll(m), before)
 		})
 	}
 }
@@ -219,11 +219,11 @@ func TestTruncateLongLinesOnlyTruncatesCodeBlocks(t *testing.T) {
 	out := truncateLongLines(input, 20, 2)
 	lines := strings.Split(out, "\n")
 
-	assert.Len(t, lines, 5, "unexpected condition")
-	assert.Equal(t, "short", lines[0], "unexpected condition")
-	assert.LessOrEqual(t, len(lines[2]), 20, "unexpected condition")
+	assert.Len(t, lines, 5)
+	assert.Equal(t, "short", lines[0])
+	assert.LessOrEqual(t, len(lines[2]), 20)
 	// Prose line outside code block should be preserved intact
-	assert.Equal(t, lines[4], longLine, "unexpected condition")
+	assert.Equal(t, lines[4], longLine)
 }
 
 func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
@@ -283,7 +283,7 @@ func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
 			for line := range lines {
 				if strings.Contains(line, "xxxxxxxxxx") { // 10 x's is enough to identify the line
 					truncated := len(line) <= 20
-					require.Equal(t, tt.wantTrunc, truncated, "unexpected condition")
+					require.Equal(t, tt.wantTrunc, truncated)
 					found = true
 					break
 				}
@@ -297,7 +297,7 @@ func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
 	// Ensure blank lines and structure are preserved
 	input := "line1\n\n\nline4"
 	out := truncateLongLines(input, 80, 2)
-	assert.Equal(t, out, input, "unexpected condition")
+	assert.Equal(t, out, input)
 }
 
 func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
@@ -311,7 +311,7 @@ func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
 		combined.WriteString(stripTestANSI(line) + " ")
 	}
 	for _, word := range []string{"important", "word-wrapped", "truncated", "information", "rendered"} {
-		assert.Contains(t, combined.String(), word, "unexpected condition")
+		assert.Contains(t, combined.String(), word)
 	}
 }
 
@@ -413,7 +413,7 @@ func TestSanitizeEscapes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sanitizeEscapes(tt.input)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -470,7 +470,7 @@ func TestReflowHelpRows(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := reflowHelpRows([][]helpItem{tc.items}, tc.width)
-			assert.Len(t, rows, tc.wantRows, "unexpected condition")
+			assert.Len(t, rows, tc.wantRows)
 		})
 	}
 }
@@ -505,13 +505,13 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 
 				// Rendered line count must match reflowed row count.
 				lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
-				assert.Len(t, reflowed, len(lines), "unexpected condition")
+				assert.Len(t, reflowed, len(lines))
 
 				// No rendered line should exceed the target width.
 				for _, line := range lines {
 					visible := stripTestANSI(line)
 					visW := runewidth.StringWidth(visible)
-					assert.LessOrEqual(t, visW, width, "unexpected condition")
+					assert.LessOrEqual(t, visW, width)
 				}
 			})
 		}
@@ -523,7 +523,7 @@ func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
 	assert.NotEmpty(t, disabled, "expected queue help rows")
 	for _, row := range disabled {
 		for _, item := range row {
-			assert.False(t, item.key == "F" || item.key == "T", "unexpected condition")
+			assert.False(t, item.key == "F" || item.key == "T")
 		}
 	}
 
@@ -542,18 +542,18 @@ func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
 			}
 		}
 	}
-	assert.False(t, !foundF || !foundT, "unexpected condition")
+	assert.False(t, !foundF || !foundT)
 }
 
 func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
 	disabled := strings.Join(helpLines(false), "\n")
-	assert.Contains(t, stripTestANSI(disabled), "Trigger fix for selected review (disabled)", "unexpected condition")
-	assert.Contains(t, stripTestANSI(disabled), "Trigger fix (opens inline panel) (disabled)", "unexpected condition")
-	assert.Contains(t, stripTestANSI(disabled), "Open Tasks view (disabled)", "unexpected condition")
-	assert.Contains(t, stripTestANSI(disabled), "advanced.tasks_enabled = false", "unexpected condition")
+	assert.Contains(t, stripTestANSI(disabled), "Trigger fix for selected review (disabled)")
+	assert.Contains(t, stripTestANSI(disabled), "Trigger fix (opens inline panel) (disabled)")
+	assert.Contains(t, stripTestANSI(disabled), "Open Tasks view (disabled)")
+	assert.Contains(t, stripTestANSI(disabled), "advanced.tasks_enabled = false")
 
 	enabled := strings.Join(helpLines(true), "\n")
-	assert.NotContains(t, stripTestANSI(enabled), "(disabled)", "unexpected condition")
+	assert.NotContains(t, stripTestANSI(enabled), "(disabled)")
 }
 
 func TestSanitizeForDisplay(t *testing.T) {
@@ -612,7 +612,7 @@ func TestSanitizeForDisplay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sanitizeForDisplay(tt.input)
-			assert.Equal(t, tt.expected, got, "unexpected condition")
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
@@ -698,17 +698,17 @@ func TestPatchFiles(t *testing.T) {
 			for _, f := range tt.want {
 				wantSet[f] = true
 			}
-			assert.Len(t, tt.want, len(got), "unexpected condition")
+			assert.Len(t, tt.want, len(got))
 			gotSet := map[string]bool{}
 			for _, f := range got {
-				assert.False(t, gotSet[f], "unexpected condition")
+				assert.False(t, gotSet[f])
 				gotSet[f] = true
 			}
 			for f := range wantSet {
-				assert.True(t, gotSet[f], "unexpected condition")
+				assert.True(t, gotSet[f])
 			}
 			for f := range gotSet {
-				assert.True(t, wantSet[f], "unexpected condition")
+				assert.True(t, wantSet[f])
 			}
 		})
 	}
@@ -755,7 +755,7 @@ func TestShortRef(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shortRef(tt.ref)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -804,7 +804,7 @@ func TestShortJobRef(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shortJobRef(tt.job)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -816,5 +816,5 @@ func TestDirtyPatchFilesError(t *testing.T) {
 	_, err := dirtyPatchFiles(missingPath, []string{"file.go"})
 	require.Error(t, err)
 
-	assert.Contains(t, err.Error(), "git diff", "unexpected condition")
+	assert.Contains(t, err.Error(), "git diff")
 }

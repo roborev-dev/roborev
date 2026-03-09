@@ -38,12 +38,12 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 
 	msg := cmd()
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.NoError(t, result.err, "unexpected condition")
+	require.NoError(t, result.err)
 
 	expectedContent := "Review #1\n\nThis is the review content to copy"
-	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
+	assert.Equal(t, expectedContent, mock.lastText)
 }
 
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
@@ -55,14 +55,14 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 
 	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewReview})
 
-	assert.Equal(t, "Copied to clipboard", m.flashMessage, "unexpected condition")
+	assert.Equal(t, "Copied to clipboard", m.flashMessage)
 
-	assert.False(t, m.flashExpiresAt.IsZero(), "unexpected condition")
+	assert.False(t, m.flashExpiresAt.IsZero())
 
-	assert.Equal(t, viewReview, m.flashView, "unexpected condition")
+	assert.Equal(t, viewReview, m.flashView)
 
 	output := m.renderReviewView()
-	assert.Contains(t, output, "Copied to clipboard", "unexpected condition")
+	assert.Contains(t, output, "Copied to clipboard")
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
@@ -71,9 +71,9 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 
 	m, _ = updateModel(t, m, clipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: viewQueue})
 
-	require.Error(t, m.err, "unexpected condition")
+	require.Error(t, m.err)
 
-	assert.Contains(t, m.err.Error(), "copy failed", "unexpected condition")
+	assert.Contains(t, m.err.Error(), "copy failed")
 }
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
@@ -88,10 +88,10 @@ func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 
 	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewQueue})
 
-	assert.Equal(t, viewQueue, m.flashView, "unexpected condition")
+	assert.Equal(t, viewQueue, m.flashView)
 
 	output := m.renderReviewView()
-	assert.NotContains(t, output, "Copied to clipboard", "unexpected condition")
+	assert.NotContains(t, output, "Copied to clipboard")
 }
 
 func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
@@ -104,11 +104,11 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := pressKey(m, 'y')
-	assert.Nil(t, cmd, "unexpected condition")
+	assert.Nil(t, cmd)
 
 	m.selectedIdx = 1
 	_, cmd = pressKey(m, 'y')
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
@@ -124,12 +124,12 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.NoError(t, result.err, "unexpected condition")
+	require.NoError(t, result.err)
 
 	expectedContent := "Review #123\n\nReview content for clipboard"
-	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
+	assert.Equal(t, expectedContent, mock.lastText)
 }
 
 func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
@@ -153,13 +153,13 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
-	require.NoError(t, result.err, "unexpected condition")
+	assert.True(t, ok)
+	require.NoError(t, result.err)
 
-	assert.Contains(t, mock.lastText, "Found an issue", "unexpected condition")
-	assert.Contains(t, mock.lastText, "--- Comments ---", "unexpected condition")
-	assert.Contains(t, mock.lastText, "[Mar 10 09:00] dev:", "unexpected condition")
-	assert.Contains(t, mock.lastText, "This is expected behavior", "unexpected condition")
+	assert.Contains(t, mock.lastText, "Found an issue")
+	assert.Contains(t, mock.lastText, "--- Comments ---")
+	assert.Contains(t, mock.lastText, "[Mar 10 09:00] dev:")
+	assert.Contains(t, mock.lastText, "This is expected behavior")
 }
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
@@ -172,11 +172,11 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.Error(t, result.err, "unexpected condition")
+	require.Error(t, result.err)
 
-	assert.Contains(t, result.err.Error(), "no review found", "unexpected condition")
+	assert.Contains(t, result.err.Error(), "no review found")
 }
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
@@ -189,11 +189,11 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.Error(t, result.err, "unexpected condition")
+	require.Error(t, result.err)
 
-	assert.Contains(t, result.err.Error(), "review has no content", "unexpected condition")
+	assert.Contains(t, result.err.Error(), "review has no content")
 }
 
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
@@ -210,11 +210,11 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 
 	msg := cmd()
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.Error(t, result.err, "unexpected condition")
+	require.Error(t, result.err)
 
-	assert.Contains(t, result.err.Error(), "clipboard unavailable", "unexpected condition")
+	assert.Contains(t, result.err.Error(), "clipboard unavailable")
 }
 
 func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
@@ -230,11 +230,11 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.Error(t, result.err, "unexpected condition")
+	require.Error(t, result.err)
 
-	assert.Contains(t, result.err.Error(), "clipboard unavailable", "unexpected condition")
+	assert.Contains(t, result.err.Error(), "clipboard unavailable")
 }
 
 func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
@@ -252,12 +252,12 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	require.NoError(t, result.err, "unexpected condition")
+	require.NoError(t, result.err)
 
 	expectedContent := "Review #123 /path/to/repo a1b2c3d\n\nReview content"
-	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
+	assert.Equal(t, expectedContent, mock.lastText)
 }
 
 func TestFormatClipboardContent(t *testing.T) {
@@ -417,7 +417,7 @@ func TestFormatClipboardContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatClipboardContent(tt.review, nil)
-			assert.Equal(t, tt.expected, got, "unexpected condition")
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
@@ -445,14 +445,14 @@ func TestFormatClipboardContentWithResponses(t *testing.T) {
 
 	got := formatClipboardContent(review, responses)
 
-	assert.Contains(t, got, "Some findings here", "unexpected condition")
+	assert.Contains(t, got, "Some findings here")
 
-	assert.Contains(t, got, "--- Comments ---", "unexpected condition")
+	assert.Contains(t, got, "--- Comments ---")
 
-	assert.Contains(t, got, "[Mar 15 14:30] alice:", "unexpected condition")
-	assert.Contains(t, got, "Known issue, ignoring", "unexpected condition")
-	assert.Contains(t, got, "[Mar 15 15:00] bob:", "unexpected condition")
-	assert.Contains(t, got, "Fixed in next commit", "unexpected condition")
+	assert.Contains(t, got, "[Mar 15 14:30] alice:")
+	assert.Contains(t, got, "Known issue, ignoring")
+	assert.Contains(t, got, "[Mar 15 15:00] bob:")
+	assert.Contains(t, got, "Fixed in next commit")
 }
 
 func TestFormatClipboardContentNoResponses(t *testing.T) {
@@ -466,5 +466,5 @@ func TestFormatClipboardContentNoResponses(t *testing.T) {
 	withEmpty := formatClipboardContent(review, []storage.Response{})
 	assert.Equal(t, withEmpty, withNil, "nil and empty responses should produce same output")
 
-	assert.NotContains(t, withNil, "Comments", "unexpected condition")
+	assert.NotContains(t, withNil, "Comments")
 }

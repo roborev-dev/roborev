@@ -28,7 +28,7 @@ func TestJobCounts(t *testing.T) {
 	_, _ = db.ClaimJob("drain3")
 	claimed, _ := db.ClaimJob("w1")
 	if claimed != nil {
-		assert.Equal(t, claimed.ID, job.ID, "unexpected condition")
+		assert.Equal(t, claimed.ID, job.ID)
 		db.CompleteJob(claimed.ID, "codex", "p", "o")
 	}
 
@@ -42,10 +42,10 @@ func TestJobCounts(t *testing.T) {
 	queued, running, done, failed, _, _, _, err := db.GetJobCounts()
 	require.NoError(t, err, "GetJobCounts failed: %v")
 
-	assert.Equal(t, 0, queued, "unexpected condition")
-	assert.Equal(t, 3, running, "unexpected condition")
-	assert.Equal(t, 1, done, "unexpected condition")
-	assert.Equal(t, 1, failed, "unexpected condition")
+	assert.Equal(t, 0, queued)
+	assert.Equal(t, 3, running)
+	assert.Equal(t, 1, done)
+	assert.Equal(t, 1, failed)
 }
 
 func TestCountStalledJobs(t *testing.T) {
@@ -58,7 +58,7 @@ func TestCountStalledJobs(t *testing.T) {
 	count, err := db.CountStalledJobs(30 * time.Minute)
 	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	assert.Equal(t, 0, count, "unexpected condition")
+	assert.Equal(t, 0, count)
 
 	commit2 := createCommit(t, db, repo.ID, "stalled1")
 	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stalled1")
@@ -67,7 +67,7 @@ func TestCountStalledJobs(t *testing.T) {
 	count, err = db.CountStalledJobs(30 * time.Minute)
 	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 
 	commit3 := createCommit(t, db, repo.ID, "stalled2")
 	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stalled2")
@@ -78,12 +78,12 @@ func TestCountStalledJobs(t *testing.T) {
 	count, err = db.CountStalledJobs(30 * time.Minute)
 	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	assert.Equal(t, 2, count, "unexpected condition")
+	assert.Equal(t, 2, count)
 
 	count, err = db.CountStalledJobs(2 * time.Hour)
 	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	assert.Equal(t, 0, count, "unexpected condition")
+	assert.Equal(t, 0, count)
 }
 
 func TestListReposWithReviewCounts(t *testing.T) {
@@ -94,8 +94,8 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Empty(t, repos, "unexpected condition")
-		assert.Equal(t, 0, totalCount, "unexpected condition")
+		assert.Empty(t, repos)
+		assert.Equal(t, 0, totalCount)
 	})
 
 	repo1 := createRepo(t, db, "/tmp/repo1")
@@ -118,18 +118,18 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 3, "unexpected condition")
+		assert.Len(t, repos, 3)
 
-		assert.Equal(t, 5, totalCount, "unexpected condition")
+		assert.Equal(t, 5, totalCount)
 
 		repoMap := make(map[string]int)
 		for _, r := range repos {
 			repoMap[r.Name] = r.Count
 		}
 
-		assert.Equal(t, 3, repoMap["repo1"], "unexpected condition")
-		assert.Equal(t, 2, repoMap["repo2"], "unexpected condition")
-		assert.Equal(t, 0, repoMap["repo3"], "unexpected condition")
+		assert.Equal(t, 3, repoMap["repo1"])
+		assert.Equal(t, 2, repoMap["repo2"])
+		assert.Equal(t, 0, repoMap["repo3"])
 	})
 
 	t.Run("counts include all job statuses", func(t *testing.T) {
@@ -147,14 +147,14 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Equal(t, 5, totalCount, "unexpected condition")
+		assert.Equal(t, 5, totalCount)
 
 		repoMap := make(map[string]int)
 		for _, r := range repos {
 			repoMap[r.Name] = r.Count
 		}
 
-		assert.Equal(t, 3, repoMap["repo1"], "unexpected condition")
+		assert.Equal(t, 3, repoMap["repo1"])
 	})
 }
 
@@ -181,7 +181,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 5, "unexpected condition")
+		assert.Len(t, jobs, 5)
 	})
 
 	t.Run("repo filter returns only matching jobs", func(t *testing.T) {
@@ -189,9 +189,9 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		jobs, err := db.ListJobs("", repo1.RootPath, 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 3, "unexpected condition")
+		assert.Len(t, jobs, 3)
 		for _, job := range jobs {
-			assert.Equal(t, "repo1", job.RepoName, "unexpected condition")
+			assert.Equal(t, "repo1", job.RepoName)
 		}
 	})
 
@@ -199,23 +199,23 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 2, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 
 	t.Run("limit=0 returns all jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 0, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 5, "unexpected condition")
+		assert.Len(t, jobs, 5)
 	})
 
 	t.Run("repo filter with limit", func(t *testing.T) {
 		jobs, err := db.ListJobs("", repo1.RootPath, 2, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 		for _, job := range jobs {
-			assert.Equal(t, "repo1", job.RepoName, "unexpected condition")
+			assert.Equal(t, "repo1", job.RepoName)
 		}
 	})
 
@@ -231,8 +231,8 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		jobs, err := db.ListJobs("done", repo1.RootPath, 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
-		assert.False(t, len(jobs) > 0 && jobs[0].Status != JobStatusDone, "unexpected condition")
+		assert.Len(t, jobs, 1)
+		assert.False(t, len(jobs) > 0 && jobs[0].Status != JobStatusDone)
 	})
 
 	t.Run("offset pagination", func(t *testing.T) {
@@ -240,23 +240,23 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		jobs1, err := db.ListJobs("", "", 2, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs1, 2, "unexpected condition")
+		assert.Len(t, jobs1, 2)
 
 		jobs2, err := db.ListJobs("", "", 2, 2)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs2, 2, "unexpected condition")
+		assert.Len(t, jobs2, 2)
 
 		for _, j1 := range jobs1 {
 			for _, j2 := range jobs2 {
-				assert.NotEqual(t, j1.ID, j2.ID, "unexpected condition")
+				assert.NotEqual(t, j1.ID, j2.ID)
 			}
 		}
 
 		jobs3, err := db.ListJobs("", "", 2, 4)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs3, 1, "unexpected condition")
+		assert.Len(t, jobs3, 1)
 	})
 }
 
@@ -276,37 +276,37 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
-		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123", "unexpected condition")
+		assert.Len(t, jobs, 1)
+		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123")
 	})
 
 	t.Run("git_ref filter with range ref", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123..def456"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
-		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123..def456", "unexpected condition")
+		assert.Len(t, jobs, 1)
+		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123..def456")
 	})
 
 	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("nonexistent"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Empty(t, jobs, "unexpected condition")
+		assert.Empty(t, jobs)
 	})
 
 	t.Run("empty git_ref filter returns all jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 4, "unexpected condition")
+		assert.Len(t, jobs, 4)
 	})
 
 	t.Run("git_ref filter combined with repo filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", repo.RootPath, 50, 0, WithGitRef("def456"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.Len(t, jobs, 1)
 	})
 }
 
@@ -338,28 +338,28 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 
 	t.Run("closed=false filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 
 	t.Run("closed=true filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(true))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.Len(t, jobs, 1)
 	})
 
 	t.Run("branch + closed combined", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithClosed(false))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.Len(t, jobs, 1)
 	})
 }
 
@@ -386,14 +386,14 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.Len(t, jobs, 1)
 	})
 
 	t.Run("WithBranchOrEmpty includes branchless", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 }
 
@@ -420,24 +420,24 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.NotEmpty(t, jobs, "unexpected condition")
+		assert.NotEmpty(t, jobs)
 
 		var found bool
 		for _, j := range jobs {
 			if j.ID == job.ID {
 				found = true
-				assert.True(t, j.Agentic, "unexpected condition")
+				assert.True(t, j.Agentic)
 				break
 			}
 		}
-		assert.True(t, found, "unexpected condition")
+		assert.True(t, found)
 	})
 
 	t.Run("GetJobByID returns agentic field", func(t *testing.T) {
 		fetchedJob, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID failed: %v")
 
-		assert.True(t, fetchedJob.Agentic, "unexpected condition")
+		assert.True(t, fetchedJob.Agentic)
 	})
 
 	t.Run("non-agentic job returns Agentic=false", func(t *testing.T) {
@@ -451,7 +451,7 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		fetchedJob, err := db.GetJobByID(nonAgenticJob.ID)
 		require.NoError(t, err, "GetJobByID failed: %v")
 
-		assert.False(t, fetchedJob.Agentic, "unexpected condition")
+		assert.False(t, fetchedJob.Agentic)
 
 		jobs, err := db.ListJobs("", "", 50, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
@@ -460,11 +460,11 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		for _, j := range jobs {
 			if j.ID == nonAgenticJob.ID {
 				found = true
-				assert.False(t, j.Agentic, "unexpected condition")
+				assert.False(t, j.Agentic)
 				break
 			}
 		}
-		assert.True(t, found, "unexpected condition")
+		assert.True(t, found)
 	})
 }
 
@@ -491,16 +491,16 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("main"))
 		require.NoError(t, err, "ListReposWithReviewCounts(branch=main) failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
-		assert.Equal(t, 2, totalCount, "unexpected condition")
+		assert.Len(t, repos, 2)
+		assert.Equal(t, 2, totalCount)
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("feature"))
 		require.NoError(t, err, "ListReposWithReviewCounts(branch=feature) failed: %v")
 
-		assert.Len(t, repos, 1, "unexpected condition")
-		assert.Equal(t, 1, totalCount, "unexpected condition")
+		assert.Len(t, repos, 1)
+		assert.Equal(t, 1, totalCount)
 	})
 
 	t.Run("filter by (none) branch", func(t *testing.T) {
@@ -511,15 +511,15 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("(none)"))
 		require.NoError(t, err, "ListReposWithReviewCounts(branch=(none)) failed: %v")
 
-		assert.Len(t, repos, 1, "unexpected condition")
-		assert.Equal(t, 1, totalCount, "unexpected condition")
+		assert.Len(t, repos, 1)
+		assert.Equal(t, 1, totalCount)
 	})
 
 	t.Run("empty filter returns all", func(t *testing.T) {
 		repos, _, err := db.ListReposWithReviewCounts()
 		require.NoError(t, err, "ListReposWithReviewCounts() failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Len(t, repos, 2)
 	})
 }
 
@@ -551,9 +551,9 @@ func TestListBranchesWithCounts(t *testing.T) {
 		result, err := db.ListBranchesWithCounts(nil)
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
-		assert.Len(t, result.Branches, 3, "unexpected condition")
-		assert.Equal(t, 5, result.TotalCount, "unexpected condition")
-		assert.Equal(t, 1, result.NullsRemaining, "unexpected condition")
+		assert.Len(t, result.Branches, 3)
+		assert.Equal(t, 5, result.TotalCount)
+		assert.Equal(t, 1, result.NullsRemaining)
 	})
 
 	t.Run("filter by single repo", func(t *testing.T) {
@@ -561,8 +561,8 @@ func TestListBranchesWithCounts(t *testing.T) {
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath})
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
-		assert.Len(t, result.Branches, 2, "unexpected condition")
-		assert.Equal(t, 3, result.TotalCount, "unexpected condition")
+		assert.Len(t, result.Branches, 2)
+		assert.Equal(t, 3, result.TotalCount)
 	})
 
 	t.Run("filter by multiple repos", func(t *testing.T) {
@@ -570,8 +570,8 @@ func TestListBranchesWithCounts(t *testing.T) {
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath, repo2.RootPath})
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
-		assert.Len(t, result.Branches, 3, "unexpected condition")
-		assert.Equal(t, 5, result.TotalCount, "unexpected condition")
+		assert.Len(t, result.Branches, 3)
+		assert.Equal(t, 5, result.TotalCount)
 	})
 
 	t.Run("no nulls when all have branches", func(t *testing.T) {
@@ -579,7 +579,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 		result, err := db.ListBranchesWithCounts(nil)
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
-		assert.Equal(t, 0, result.NullsRemaining, "unexpected condition")
+		assert.Equal(t, 0, result.NullsRemaining)
 	})
 }
 
@@ -606,12 +606,12 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 	for _, j := range jobs {
 		if j.ID == job.ID {
 			found = true
-			assert.NotNil(t, j.Verdict, "unexpected condition")
-			assert.Equal(t, "F", *j.Verdict, "unexpected condition")
+			assert.NotNil(t, j.Verdict)
+			assert.Equal(t, "F", *j.Verdict)
 			break
 		}
 	}
-	assert.True(t, found, "unexpected condition")
+	assert.True(t, found)
 }
 
 func TestListJobsWithJobTypeFilter(t *testing.T) {
@@ -654,7 +654,7 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 			}
 			if tt.expectedTypes != nil {
 				for i, typ := range tt.expectedTypes {
-					assert.Equal(t, jobs[i].JobType, typ, "unexpected condition")
+					assert.Equal(t, jobs[i].JobType, typ)
 				}
 			}
 		})
@@ -712,7 +712,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 
 	t.Run("prefix filter excludes non-matching", func(t *testing.T) {
@@ -721,7 +721,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.Len(t, jobs, 1)
 	})
 
 	for range 3 {
@@ -737,8 +737,8 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		)
 		require.NoError(t, err, "CountJobStats failed: %v")
 
-		assert.Equal(t, 2, stats.Done, "unexpected condition")
-		assert.Equal(t, 2, stats.Open, "unexpected condition")
+		assert.Equal(t, 2, stats.Done)
+		assert.Equal(t, 2, stats.Open)
 	})
 
 	t.Run("ListReposWithReviewCounts with special-char prefix", func(t *testing.T) {
@@ -747,8 +747,8 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
-		assert.Equal(t, 2, total, "unexpected condition")
+		assert.Len(t, repos, 2)
+		assert.Equal(t, 2, total)
 	})
 
 	t.Run("backslash in path does not cause SQL error", func(t *testing.T) {
@@ -800,7 +800,7 @@ func TestRootPrefixMatchesAllRepos(t *testing.T) {
 		)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2, "unexpected condition")
+		assert.Len(t, jobs, 2)
 	})
 
 	t.Run("parent prefix returns all repos via ListReposWithReviewCounts", func(t *testing.T) {
@@ -809,8 +809,8 @@ func TestRootPrefixMatchesAllRepos(t *testing.T) {
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
-		assert.Equal(t, 2, total, "unexpected condition")
+		assert.Len(t, repos, 2)
+		assert.Equal(t, 2, total)
 	})
 }
 
@@ -851,8 +851,8 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
-		assert.Equal(t, 3, total, "unexpected condition")
+		assert.Len(t, repos, 2)
+		assert.Equal(t, 3, total)
 	})
 
 	t.Run("prefix + feature branch", func(t *testing.T) {
@@ -862,8 +862,8 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 1, "unexpected condition")
-		assert.Equal(t, 1, total, "unexpected condition")
+		assert.Len(t, repos, 1)
+		assert.Equal(t, 1, total)
 	})
 
 	t.Run("prefix only returns all branches", func(t *testing.T) {
@@ -872,7 +872,7 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		assert.Len(t, repos, 2, "unexpected condition")
-		assert.Equal(t, 4, total, "unexpected condition")
+		assert.Len(t, repos, 2)
+		assert.Equal(t, 4, total)
 	})
 }

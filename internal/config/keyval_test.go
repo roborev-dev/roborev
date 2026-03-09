@@ -140,7 +140,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "default_agent",
 			val:  "claude-code",
 			verify: func(t *testing.T, c *Config) {
-				assert.Equal(t, "claude-code", c.DefaultAgent, "unexpected condition")
+				assert.Equal(t, "claude-code", c.DefaultAgent)
 			},
 		},
 		{
@@ -148,7 +148,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "max_workers",
 			val:  "8",
 			verify: func(t *testing.T, c *Config) {
-				assert.Equal(t, 8, c.MaxWorkers, "unexpected condition")
+				assert.Equal(t, 8, c.MaxWorkers)
 			},
 		},
 		{
@@ -156,7 +156,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "sync.enabled",
 			val:  "true",
 			verify: func(t *testing.T, c *Config) {
-				assert.True(t, c.Sync.Enabled, "unexpected condition")
+				assert.True(t, c.Sync.Enabled)
 			},
 		},
 		{
@@ -164,7 +164,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.github_app_id",
 			val:  "98765",
 			verify: func(t *testing.T, c *Config) {
-				assert.EqualValues(t, 98765, c.CI.GitHubAppID, "unexpected condition")
+				assert.EqualValues(t, 98765, c.CI.GitHubAppID)
 			},
 		},
 		{
@@ -172,7 +172,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.github_app_private_key",
 			val:  "private-key-data",
 			verify: func(t *testing.T, c *Config) {
-				assert.Equal(t, "private-key-data", c.CI.GitHubAppPrivateKey, "unexpected condition")
+				assert.Equal(t, "private-key-data", c.CI.GitHubAppPrivateKey)
 			},
 		},
 		{
@@ -180,7 +180,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "allow_unsafe_agents",
 			val:  "true",
 			verify: func(t *testing.T, c *Config) {
-				assert.False(t, c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents, "unexpected condition")
+				assert.False(t, c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents)
 			},
 		},
 		{
@@ -188,7 +188,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
 			verify: func(t *testing.T, c *Config) {
-				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2", "unexpected condition")
+				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2")
 			},
 		},
 		{
@@ -197,7 +197,7 @@ func TestSetConfigValue(t *testing.T) {
 			val:  "org/repo1,org/repo2",
 			init: func() *Config { return &Config{} },
 			verify: func(t *testing.T, c *Config) {
-				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2", "unexpected condition")
+				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2")
 			},
 		},
 		{
@@ -205,7 +205,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "",
 			verify: func(t *testing.T, c *Config) {
-				assert.Empty(t, c.CI.Repos, "unexpected condition")
+				assert.Empty(t, c.CI.Repos)
 			},
 		},
 	}

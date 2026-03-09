@@ -259,10 +259,10 @@ func TestGenerate(t *testing.T) {
 			out, err := Generate(tt.cfg)
 			require.NoError(t, err, "Generate failed: %v", err)
 			for _, want := range tt.wantStrs {
-				assert.Contains(t, out, want, "unexpected condition")
+				assert.Contains(t, out, want)
 			}
 			for _, notWant := range tt.notWantStrs {
-				assert.NotContains(t, out, notWant, "unexpected condition")
+				assert.NotContains(t, out, notWant)
 			}
 
 			if tt.envChecks != nil || tt.name == "dedupes env vars" {
@@ -298,7 +298,7 @@ func TestGenerate(t *testing.T) {
 							envDefCount++
 						}
 					}
-					assert.Equal(t, 1, envDefCount, "unexpected condition")
+					assert.Equal(t, 1, envDefCount)
 				}
 			}
 		})
@@ -353,9 +353,9 @@ func TestAgentInstallCmd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			cmd := AgentInstallCmd(tt.agent)
-			assert.Contains(t, cmd, tt.wantPkg, "unexpected condition")
+			assert.Contains(t, cmd, tt.wantPkg)
 			for _, bad := range tt.notWantPkgs {
-				assert.NotContains(t, cmd, bad, "unexpected condition")
+				assert.NotContains(t, cmd, bad)
 			}
 		})
 	}
@@ -457,7 +457,7 @@ func TestAgentEnvVar(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			got := AgentEnvVar(tt.agent)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -510,9 +510,9 @@ func TestAgentSecrets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			secrets := AgentSecrets(tt.agents)
-			assert.Len(t, secrets, tt.wantLen, "unexpected condition")
+			assert.Len(t, secrets, tt.wantLen)
 			for i, wantVar := range tt.wantVars {
-				assert.Equal(t, wantVar, secrets[i].EnvVar, "unexpected condition")
+				assert.Equal(t, wantVar, secrets[i].EnvVar)
 			}
 		})
 	}

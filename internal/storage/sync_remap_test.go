@@ -51,8 +51,8 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 			break
 		}
 	}
-	assert.NotNil(t, found, "unexpected condition")
-	assert.Equal(t, "deadbeef9999", found.PatchID, "unexpected condition")
+	assert.NotNil(t, found)
+	assert.Equal(t, "deadbeef9999", found.PatchID)
 
 	// Simulate pull: upsert back into a fresh DB via UpsertPulledJob
 	db2 := openTestDB(t)
@@ -105,7 +105,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 	).Scan(&patchIDVal)
 	require.NoError(t, err, "query patch_id in db2: %v")
 
-	assert.False(t, !patchIDVal.Valid || patchIDVal.String != "deadbeef9999", "unexpected condition")
+	assert.False(t, !patchIDVal.Valid || patchIDVal.String != "deadbeef9999")
 }
 
 func TestRemapJobGitRef_RunningJob(t *testing.T) {
@@ -138,7 +138,7 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 	)
 	require.NoError(t, err, "RemapJobGitRef: %v")
 
-	assert.Equal(t, 0, n, "unexpected condition")
+	assert.Equal(t, 0, n)
 
 	got, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID: %v")
@@ -148,7 +148,7 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 		"running job git_ref should be unchanged, got %q",
 		got.GitRef)
 
-	assert.Equal(t, JobStatusRunning, got.Status, "unexpected condition")
+	assert.Equal(t, JobStatusRunning, got.Status)
 }
 
 func TestRemapJob_RunningJob(t *testing.T) {
@@ -175,13 +175,13 @@ func TestRemapJob_RunningJob(t *testing.T) {
 	)
 	require.NoError(t, err, "RemapJob: %v")
 
-	assert.Equal(t, 0, n, "unexpected condition")
+	assert.Equal(t, 0, n)
 
 	got, err := db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID: %v")
 
-	assert.Equal(t, "rjrun-oldsha", got.GitRef, "unexpected condition")
-	assert.Equal(t, JobStatusRunning, got.Status, "unexpected condition")
+	assert.Equal(t, "rjrun-oldsha", got.GitRef)
+	assert.Equal(t, JobStatusRunning, got.Status)
 }
 
 func TestRemapTriggersResync(t *testing.T) {
@@ -230,7 +230,7 @@ func TestRemapTriggersResync(t *testing.T) {
 	require.NoError(t, err, "GetJobsToSync (pre): %v")
 
 	for _, j := range preJobs {
-		assert.NotEqual(t, j.ID, job.ID, "unexpected condition")
+		assert.NotEqual(t, j.ID, job.ID)
 	}
 
 	// Remap the job — this sets updated_at to time.Now() which is after pastTime
@@ -241,7 +241,7 @@ func TestRemapTriggersResync(t *testing.T) {
 	)
 	require.NoError(t, err, "RemapJobGitRef: %v")
 
-	assert.Equal(t, 1, n, "unexpected condition")
+	assert.Equal(t, 1, n)
 
 	// Now GetJobsToSync should include it again
 	postJobs, err := db.GetJobsToSync(machineID, 100)
@@ -251,9 +251,9 @@ func TestRemapTriggersResync(t *testing.T) {
 	for _, j := range postJobs {
 		if j.ID == job.ID {
 			found = true
-			assert.Equal(t, "resync-newsha", j.GitRef, "unexpected condition")
+			assert.Equal(t, "resync-newsha", j.GitRef)
 			break
 		}
 	}
-	assert.True(t, found, "unexpected condition")
+	assert.True(t, found)
 }

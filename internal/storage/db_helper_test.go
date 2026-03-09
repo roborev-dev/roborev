@@ -119,7 +119,7 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	rows, err := res.RowsAffected()
 	require.NoError(t, err, "Failed to get rows affected: %v")
 
-	assert.EqualValues(t, 1, rows, "unexpected condition")
+	assert.EqualValues(t, 1, rows)
 }
 
 func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {

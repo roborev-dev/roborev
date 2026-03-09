@@ -26,8 +26,8 @@ func writeJSON(w http.ResponseWriter, data any) {
 func newMockHandler(t *testing.T, method, path string, response any, status int) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, r.Method, method, "unexpected condition")
-		assert.Equal(t, r.URL.Path, path, "unexpected condition")
+		assert.Equal(t, r.Method, method)
+		assert.Equal(t, r.URL.Path, path)
 		if status != 0 {
 			w.WriteHeader(status)
 		}
@@ -59,16 +59,16 @@ func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 	t.Cleanup(func() {
 		mu.Lock()
 		defer mu.Unlock()
-		assert.False(t, !t.Failed() && call != len(steps), "unexpected condition")
+		assert.False(t, !t.Failed() && call != len(steps))
 	})
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		assert.False(t, r.URL.Path != "/api/jobs" || r.Method != "GET", "unexpected condition")
+		assert.False(t, r.URL.Path != "/api/jobs" || r.Method != "GET")
 
-		assert.Less(t, call, len(steps), "unexpected condition")
+		assert.Less(t, call, len(steps))
 
 		step := steps[call]
 		call++
@@ -76,7 +76,7 @@ func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 		query := r.URL.Query()
 		for k, v := range step.ExpectedQuery {
 			got := query.Get(k)
-			assert.Equal(t, v, got, "unexpected condition")
+			assert.Equal(t, v, got)
 		}
 
 		writeJSON(w, map[string]any{"jobs": step.Jobs})
@@ -95,7 +95,7 @@ func TestGetCommentsForJob(t *testing.T) {
 		// Wrap newMockHandler to verify query params
 		baseHandler := newMockHandler(t, "GET", "/api/comments", mockResp, http.StatusOK)
 		handler := func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "42", r.URL.Query().Get("job_id"), "unexpected condition")
+			assert.Equal(t, "42", r.URL.Query().Get("job_id"))
 			baseHandler(w, r)
 		}
 
@@ -104,7 +104,7 @@ func TestGetCommentsForJob(t *testing.T) {
 		responses, err := getCommentsForJob(42)
 		require.NoError(t, err)
 
-		assert.Len(t, responses, 2, "unexpected condition")
+		assert.Len(t, responses, 2)
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestWaitForReview(t *testing.T) {
 		review, err := waitForReview(1)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Review complete", review.Output, "unexpected condition")
+		assert.Equal(t, "Review complete", review.Output)
 	})
 
 	t.Run("polls until job transitions from queued to done", func(t *testing.T) {
@@ -154,8 +154,8 @@ func TestWaitForReview(t *testing.T) {
 		review, err := waitForReviewWithInterval(1, 1*time.Millisecond)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Review after polling", review.Output, "unexpected condition")
-		assert.GreaterOrEqual(t, pollCount, 3, "unexpected condition")
+		assert.Equal(t, "Review after polling", review.Output)
+		assert.GreaterOrEqual(t, pollCount, 3)
 	})
 
 	t.Run("returns error on job failure", func(t *testing.T) {
@@ -167,7 +167,7 @@ func TestWaitForReview(t *testing.T) {
 		_, err := waitForReview(1)
 		require.Error(t, err)
 
-		assert.Contains(t, err.Error(), "agent crashed", "unexpected condition")
+		assert.Contains(t, err.Error(), "agent crashed")
 	})
 
 	t.Run("returns error on job canceled", func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestWaitForReview(t *testing.T) {
 		_, err := waitForReview(1)
 		require.Error(t, err)
 
-		assert.Contains(t, err.Error(), "canceled", "unexpected condition")
+		assert.Contains(t, err.Error(), "canceled")
 	})
 }
 
@@ -360,9 +360,9 @@ func TestFindJobForCommit(t *testing.T) {
 
 			if tt.expectFound {
 				require.NotNil(t, job, "expected to find job")
-				assert.Equal(t, tt.expectedID, job.ID, "unexpected condition")
+				assert.Equal(t, tt.expectedID, job.ID)
 			} else {
-				assert.Nil(t, job, "unexpected condition")
+				assert.Nil(t, job)
 			}
 		})
 	}

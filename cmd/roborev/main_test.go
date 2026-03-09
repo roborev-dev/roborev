@@ -112,7 +112,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 				var req daemon.EnqueueRequest
 				json.NewDecoder(r.Body).Decode(&req)
 
-				assert.False(t, req.RepoPath != "/test/repo" || req.GitRef != "abc..def", "unexpected condition")
+				assert.False(t, req.RepoPath != "/test/repo" || req.GitRef != "abc..def")
 
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 123})
@@ -124,7 +124,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		jobID, err := enqueueReview("/test/repo", "abc..def", "codex")
 		require.NoError(t, err)
 
-		assert.EqualValues(t, 123, jobID, "unexpected condition")
+		assert.EqualValues(t, 123, jobID)
 	})
 
 	t.Run("returns error on failure", func(t *testing.T) {
@@ -173,7 +173,7 @@ func TestSummarizeAgentOutput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := summarizeAgentOutput(tt.input)
-			assert.Equal(t, tt.expected, result, "unexpected condition")
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -243,8 +243,8 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 		require.Error(t, err, "expected error, got nil")
 	})
 
-	assert.NotContains(t, output, "\r", "unexpected condition")
-	assert.Contains(t, output, "Addressing review (job 42)...", "unexpected condition")
+	assert.NotContains(t, output, "\r")
+	assert.Contains(t, output, "Addressing review (job 42)...")
 }
 
 func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
@@ -274,8 +274,8 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	})
 
 	idx := strings.LastIndex(output, "\rAddressing review (job 7)...")
-	assert.NotEqual(t, -1, idx, "unexpected condition")
-	assert.Contains(t, output[idx:], "\n", "unexpected condition")
+	assert.NotEqual(t, -1, idx)
+	assert.Contains(t, output[idx:], "\n")
 }
 
 // ============================================================================
@@ -302,7 +302,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 
 		require.NotNil(t, review, "expected to find failed review")
 		// Should find commit2 failure (oldest-first iteration)
-		assert.EqualValues(t, 2, review.ID, "unexpected condition")
+		assert.EqualValues(t, 2, review.ID)
 	})
 
 	t.Run("returns nil when review is already closed", func(t *testing.T) {
@@ -317,7 +317,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 
 		require.NoError(t, err)
 
-		assert.Nil(t, review, "unexpected condition")
+		assert.Nil(t, review)
 	})
 }
 
@@ -341,14 +341,14 @@ func TestRefineLoopNoChangeSkipsReview(t *testing.T) {
 	responses, err := getCommentsForJob(42)
 	require.NoError(t, err)
 
-	assert.Empty(t, responses, "unexpected condition")
+	assert.Empty(t, responses)
 
 	// Job with a prior skip comment — verify the comment text matches
 	responses, err = getCommentsForJob(99)
 	require.NoError(t, err)
 
-	assert.Len(t, responses, 1, "unexpected condition")
-	assert.Contains(t, responses[0].Response, "could not determine", "unexpected condition")
+	assert.Len(t, responses, 1)
+	assert.Contains(t, responses[0].Response, "could not determine")
 }
 
 func TestRefineLoopBranchReviewPath(t *testing.T) {
@@ -370,7 +370,7 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 		// Should return nil since all pass
 		require.NoError(t, err)
 
-		assert.Nil(t, review, "unexpected condition")
+		assert.Nil(t, review)
 
 		// In actual refine loop, this would trigger branch review
 		// We can test enqueueReview separately
@@ -387,11 +387,11 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 		jobID, err := enqueueReview("/test/repo", "abc123..HEAD", "codex")
 		require.NoError(t, err)
 
-		assert.NotEqual(t, 0, jobID, "unexpected condition")
+		assert.NotEqual(t, 0, jobID)
 
 		// Verify the range ref was enqueued
-		assert.Len(t, md.State.enqueuedRefs, 1, "unexpected condition")
-		assert.Equal(t, "abc123..HEAD", md.State.enqueuedRefs[0], "unexpected condition")
+		assert.Len(t, md.State.enqueuedRefs, 1)
+		assert.Equal(t, "abc123..HEAD", md.State.enqueuedRefs[0])
 	})
 }
 
@@ -411,7 +411,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NotNil(t, review, "expected review")
-		assert.Contains(t, review.Output, "No issues found", "unexpected condition")
+		assert.Contains(t, review.Output, "No issues found")
 	})
 
 	t.Run("returns error when job fails", func(t *testing.T) {
@@ -427,7 +427,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 
 		_, err := waitForReviewWithInterval(42, 1*time.Millisecond)
 		require.Error(t, err, "expected error for failed job")
-		assert.Contains(t, err.Error(), "timeout", "unexpected condition")
+		assert.Contains(t, err.Error(), "timeout")
 	})
 }
 
@@ -541,7 +541,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	require.NoError(t, err, "expected refine to succeed (pending wait should not consume iteration), got: %v")
 
 	// Verify the job was actually polled multiple times (proving we waited)
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&pollCount), int32(2), "unexpected condition")
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&pollCount), int32(2))
 }
 
 // ============================================================================
@@ -569,7 +569,7 @@ func TestShowJobFlagRequiresArgument(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err, "expected error when --job used without argument")
-	assert.Contains(t, err.Error(), "--job requires a job ID argument", "unexpected condition")
+	assert.Contains(t, err.Error(), "--job requires a job ID argument")
 }
 
 // ============================================================================
@@ -605,9 +605,9 @@ func TestFilterGitEnv(t *testing.T) {
 		"GIT_ASKPASS=/usr/lib/ssh/askpass",
 	}
 
-	assert.Len(t, filtered, len(want), "unexpected condition")
+	assert.Len(t, filtered, len(want))
 	for i, got := range filtered {
-		assert.Equal(t, got, want[i], "unexpected condition")
+		assert.Equal(t, got, want[i])
 	}
 }
 
@@ -626,7 +626,7 @@ func TestIsGoTestBinaryPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			got := isGoTestBinaryPath(tt.path)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -705,7 +705,7 @@ func TestDaemonStopNotRunning(t *testing.T) {
 	_ = setupIsolatedDataDir(t)
 
 	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning, "unexpected condition")
+	assert.Equal(t, err, ErrDaemonNotRunning)
 }
 
 // TestDaemonStopInvalidPID verifies stopDaemon handles invalid PID in daemon.json
@@ -724,7 +724,7 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 	// so it returns an empty list, and stopDaemon returns ErrDaemonNotRunning.
 	// The key is that the invalid file gets cleaned up.
 	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning, "unexpected condition")
+	assert.Equal(t, err, ErrDaemonNotRunning)
 
 	// Verify daemon.json was cleaned up
 	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
@@ -741,7 +741,7 @@ func TestDaemonStopCorruptedFile(t *testing.T) {
 	}
 
 	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning, "unexpected condition")
+	assert.Equal(t, err, ErrDaemonNotRunning)
 
 	// Verify daemon.json was cleaned up
 	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
@@ -760,7 +760,7 @@ func TestDaemonStopTruncatedFile(t *testing.T) {
 	}
 
 	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning, "unexpected condition")
+	assert.Equal(t, err, ErrDaemonNotRunning)
 
 	// Verify daemon.json was cleaned up
 	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
@@ -803,7 +803,7 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	err := stopDaemon()
 	// With the new behavior, unreadable files are skipped during ListAllRuntimes.
 	// Since no readable daemon files exist, stopDaemon returns ErrDaemonNotRunning.
-	assert.Equal(t, err, ErrDaemonNotRunning, "unexpected condition")
+	assert.Equal(t, err, ErrDaemonNotRunning)
 }
 
 func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
@@ -811,8 +811,8 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 
 	flag := cmd.Flags().Lookup("no-restart")
 	require.NotNil(t, flag, "expected --no-restart flag to be defined")
-	assert.Equal(t, "false", flag.DefValue, "unexpected condition")
-	assert.Contains(t, flag.Usage, "skip daemon restart", "unexpected condition")
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Contains(t, flag.Usage, "skip daemon restart")
 }
 
 // stubRestartVars saves and restores all package-level vars used by
@@ -880,9 +880,9 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", true)
 	})
 
-	assert.Contains(t, output, "Skipping daemon restart (--no-restart)", "unexpected condition")
-	assert.Equal(t, 0, s.stopCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
+	assert.Contains(t, output, "Skipping daemon restart (--no-restart)")
+	assert.Equal(t, 0, s.stopCalls)
+	assert.Equal(t, 0, s.startCalls)
 }
 
 func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
@@ -902,9 +902,9 @@ func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Contains(t, output, "Restarting daemon... OK", "unexpected condition")
-	assert.Equal(t, 1, s.stopCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
+	assert.Contains(t, output, "Restarting daemon... OK")
+	assert.Equal(t, 1, s.stopCalls)
+	assert.Equal(t, 0, s.startCalls)
 }
 
 func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
@@ -922,10 +922,10 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop daemon", "unexpected condition")
-	assert.Contains(t, output, "warning: daemon pid 100 is still running; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
+	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop daemon")
+	assert.Contains(t, output, "warning: daemon pid 100 is still running; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
+	assert.Equal(t, 0, s.startCalls)
 }
 
 func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
@@ -942,8 +942,8 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.False(t, exited, "unexpected condition")
-	assert.Equal(t, 0, newPID, "unexpected condition")
+	assert.False(t, exited)
+	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
@@ -961,8 +961,8 @@ func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.True(t, exited, "unexpected condition")
-	assert.Equal(t, 0, newPID, "unexpected condition")
+	assert.True(t, exited)
+	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
@@ -979,8 +979,8 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.False(t, exited, "unexpected condition")
-	assert.Equal(t, 0, newPID, "unexpected condition")
+	assert.False(t, exited)
+	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
@@ -999,8 +999,8 @@ func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
 	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.True(t, exited, "unexpected condition")
-	assert.Equal(t, 0, newPID, "unexpected condition")
+	assert.True(t, exited)
+	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
@@ -1020,7 +1020,7 @@ func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *tes
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	require.True(t, exited, "expected exited=true when previous pid is gone")
-	assert.Equal(t, 200, newPID, "unexpected condition")
+	assert.Equal(t, 200, newPID)
 }
 
 func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
@@ -1104,10 +1104,10 @@ func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testin
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop all daemons", "unexpected condition")
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 1, s.startCalls, "unexpected condition")
-	assert.False(t, !strings.Contains(output, "Restarting daemon...") || !strings.Contains(output, "OK"), "unexpected condition")
+	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop all daemons")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 1, s.startCalls)
+	assert.False(t, !strings.Contains(output, "Restarting daemon...") || !strings.Contains(output, "OK"))
 }
 
 func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
@@ -1136,9 +1136,9 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
@@ -1176,10 +1176,10 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
-	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually", "unexpected condition")
+	assert.Equal(t, 0, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.NotContains(t, output, "Restarting daemon... OK")
+	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
 }
 
 func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *testing.T) {
@@ -1220,10 +1220,10 @@ func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPID(t *testing.T) {
@@ -1260,10 +1260,10 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPI
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingering(t *testing.T) {
@@ -1309,10 +1309,10 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 0, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRuntimeSkipsStart(t *testing.T) {
@@ -1361,9 +1361,9 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually", "unexpected condition")
+	assert.Equal(t, 0, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually")
 }
 
 func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testing.T) {
@@ -1410,10 +1410,10 @@ func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testin
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t *testing.T) {
@@ -1457,10 +1457,10 @@ func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t 
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 1, s.killCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
-	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually", "unexpected condition")
-	assert.NotContains(t, output, "Restarting daemon... OK", "unexpected condition")
+	assert.Equal(t, 1, s.killCalls)
+	assert.Equal(t, 0, s.startCalls)
+	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually")
+	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 // Fix #2: Probe failure with runtime files should use PID from
@@ -1501,9 +1501,9 @@ func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Contains(t, output, "Restarting daemon... OK", "unexpected condition")
-	assert.Equal(t, 1, s.stopCalls, "unexpected condition")
-	assert.Equal(t, 1, s.startCalls, "unexpected condition")
+	assert.Contains(t, output, "Restarting daemon... OK")
+	assert.Equal(t, 1, s.stopCalls)
+	assert.Equal(t, 1, s.startCalls)
 }
 
 // Fix #2: No responsive daemon and no runtime files should skip silently.
@@ -1522,9 +1522,9 @@ func TestRestartDaemonAfterUpdateNoDaemon(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Empty(t, output, "unexpected condition")
-	assert.Equal(t, 0, s.stopCalls, "unexpected condition")
-	assert.Equal(t, 0, s.startCalls, "unexpected condition")
+	assert.Empty(t, output)
+	assert.Equal(t, 0, s.stopCalls)
+	assert.Equal(t, 0, s.startCalls)
 }
 
 // Fix #3: Unmanaged daemon exits quickly — no 2s delay.
@@ -1549,9 +1549,9 @@ func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Contains(t, output, "Restarting daemon... OK", "unexpected condition")
-	assert.Equal(t, 1, s.stopCalls, "unexpected condition")
-	assert.Equal(t, 1, s.startCalls, "unexpected condition")
+	assert.Contains(t, output, "Restarting daemon... OK")
+	assert.Equal(t, 1, s.stopCalls)
+	assert.Equal(t, 1, s.startCalls)
 }
 
 func TestShortJobRef(t *testing.T) {
@@ -1618,7 +1618,7 @@ func TestShortJobRef(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shortJobRef(tt.job)
-			assert.Equal(t, tt.expected, got, "unexpected condition")
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }

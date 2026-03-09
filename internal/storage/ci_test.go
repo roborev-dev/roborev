@@ -695,7 +695,7 @@ func TestCancelClosedPRBatches(t *testing.T) {
 	canceledIDs, err = db.CancelClosedPRBatches(testRepo, 5)
 	require.NoError(t, err, "CancelClosedPRBatches no-op: %v")
 
-	assert.Empty(t, canceledIDs, "unexpected condition")
+	assert.Empty(t, canceledIDs)
 }
 
 func TestCancelClosedPRBatches_SkipsClaimedBatch(t *testing.T) {
@@ -730,7 +730,7 @@ func TestCancelClosedPRBatches_SkipsClaimedBatch(t *testing.T) {
 	canceledIDs, err := db.CancelClosedPRBatches(testRepo, 15)
 	require.NoError(t, err, "CancelClosedPRBatches: %v")
 
-	assert.Empty(t, canceledIDs, "unexpected condition")
+	assert.Empty(t, canceledIDs)
 
 	var count int
 	if err := db.QueryRow(

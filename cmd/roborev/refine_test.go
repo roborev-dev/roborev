@@ -224,7 +224,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result := resolveAllowUnsafeAgents(tc.flag, tc.flagChanged, tc.cfg)
-			assert.Equal(t, tc.expected, result, "unexpected condition")
+			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
@@ -236,8 +236,8 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, agent.ReasoningFast, codexAgent.Reasoning, "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, agent.ReasoningFast, codexAgent.Reasoning)
 }
 
 func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
@@ -255,8 +255,8 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	acpAgent, ok := selected.(*agent.ACPAgent)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, "acp-agent", acpAgent.CommandName(), "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, "acp-agent", acpAgent.CommandName())
 }
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
@@ -266,8 +266,8 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, agent.ReasoningThorough, codexAgent.Reasoning, "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, agent.ReasoningThorough, codexAgent.Reasoning)
 }
 
 func TestFindFailedReviewForBranch(t *testing.T) {
@@ -417,34 +417,34 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
 
 			if len(tt.wantErrs) > 0 {
-				require.Error(t, err, "unexpected condition")
+				require.Error(t, err)
 				for _, wantErr := range tt.wantErrs {
 					require.Contains(t, err.Error(), wantErr, "expected error containing %q, got: %v", wantErr, err)
 				}
-				require.Nil(t, found, "unexpected condition")
+				require.Nil(t, found)
 				return
 			}
 
 			require.NoError(t, err, "findFailedReviewForBranch failed: %v")
 
 			if tt.wantJobID == 0 {
-				assert.Nil(t, found, "unexpected condition")
+				assert.Nil(t, found)
 			} else {
-				assert.NotNil(t, found, "unexpected condition")
-				assert.Equal(t, tt.wantJobID, found.JobID, "unexpected condition")
+				assert.NotNil(t, found)
+				assert.Equal(t, tt.wantJobID, found.JobID)
 			}
 
 			if len(tt.wantClosedIDs) > 0 {
-				assert.Len(t, tt.wantClosedIDs, len(client.closedJobIDs), "unexpected condition")
+				assert.Len(t, tt.wantClosedIDs, len(client.closedJobIDs))
 				closed := make(map[int64]bool)
 				for _, id := range client.closedJobIDs {
 					closed[id] = true
 				}
 				for _, id := range tt.wantClosedIDs {
-					assert.True(t, closed[id], "unexpected condition")
+					assert.True(t, closed[id])
 				}
 			} else {
-				assert.Empty(t, client.closedJobIDs, "unexpected condition")
+				assert.Empty(t, client.closedJobIDs)
 			}
 		})
 	}
@@ -509,10 +509,10 @@ func TestFindPendingJobForBranch(t *testing.T) {
 			require.NoError(t, err, "findPendingJobForBranch failed: %v")
 
 			if tt.wantJobID == 0 {
-				assert.Nil(t, pending, "unexpected condition")
+				assert.Nil(t, pending)
 			} else {
-				assert.NotNil(t, pending, "unexpected condition")
-				assert.Equal(t, tt.wantJobID, pending.ID, "unexpected condition")
+				assert.NotNil(t, pending)
+				assert.Equal(t, tt.wantJobID, pending.ID)
 			}
 		})
 	}
@@ -539,8 +539,8 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 
 	_, _, _, _, err := validateRefineContext("", "", "")
 	require.Error(t, err, "expected error when validating on main without --since")
-	assert.Contains(t, err.Error(), "refusing to refine on main", "unexpected condition")
-	assert.Contains(t, err.Error(), "--since", "unexpected condition")
+	assert.Contains(t, err.Error(), "refusing to refine on main")
+	assert.Contains(t, err.Error(), "--since")
 }
 
 func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
@@ -558,9 +558,9 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
 	require.NoError(t, err, "validation should pass with --since on main, got: %v")
 
-	assert.NotEmpty(t, repoPath, "unexpected condition")
-	assert.Equal(t, "main", currentBranch, "unexpected condition")
-	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
+	assert.NotEmpty(t, repoPath)
+	assert.Equal(t, "main", currentBranch)
+	assert.Equal(t, mergeBase, baseSHA)
 }
 
 func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
@@ -579,9 +579,9 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
 	require.NoError(t, err, "--since should work on feature branch, got: %v")
 
-	assert.NotEmpty(t, repoPath, "unexpected condition")
-	assert.Equal(t, "feature", currentBranch, "unexpected condition")
-	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
+	assert.NotEmpty(t, repoPath)
+	assert.Equal(t, "feature", currentBranch)
+	assert.Equal(t, mergeBase, baseSHA)
 }
 
 func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
@@ -595,7 +595,7 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 
 	_, _, _, _, err := validateRefineContext("", "nonexistent-ref-abc123", "")
 	require.Error(t, err, "expected error for invalid --since ref")
-	assert.Contains(t, err.Error(), "cannot resolve --since", "unexpected condition")
+	assert.Contains(t, err.Error(), "cannot resolve --since")
 }
 
 func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
@@ -616,7 +616,7 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 
 	_, _, _, _, err := validateRefineContext("", otherBranchSHA, "")
 	require.Error(t, err, "expected error when --since is not an ancestor of HEAD")
-	assert.Contains(t, err.Error(), "not an ancestor of HEAD", "unexpected condition")
+	assert.Contains(t, err.Error(), "not an ancestor of HEAD")
 }
 
 func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
@@ -635,10 +635,10 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", "", "")
 	require.NoError(t, err, "feature branch without --since should work, got: %v")
 
-	assert.NotEmpty(t, repoPath, "unexpected condition")
-	assert.Equal(t, "feature", currentBranch, "unexpected condition")
+	assert.NotEmpty(t, repoPath)
+	assert.Equal(t, "feature", currentBranch)
 
-	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
+	assert.Equal(t, mergeBase, baseSHA)
 }
 
 func TestCommitWithHookRetrySucceeds(t *testing.T) {
@@ -674,7 +674,7 @@ exit 0
 	require.NotEmpty(t, sha, "expected non-empty SHA")
 
 	commitSHA := repo.RevParse("HEAD")
-	assert.Equal(t, commitSHA, sha, "unexpected condition")
+	assert.Equal(t, commitSHA, sha)
 }
 
 func TestCommitWithHookRetryExhausted(t *testing.T) {
@@ -694,7 +694,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 	testAgent := agent.NewTestAgent()
 	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
 	require.Error(t, err, "expected error after exhausting retries")
-	assert.Contains(t, err.Error(), "after 3 attempts", "unexpected condition")
+	assert.Contains(t, err.Error(), "after 3 attempts")
 }
 
 func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
@@ -708,8 +708,8 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
 	require.Error(t, err, "expected error for empty commit without hook")
 
-	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
-	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
+	assert.NotContains(t, err.Error(), "pre-commit hook failed")
+	assert.NotContains(t, err.Error(), "after 3 attempts")
 }
 
 func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
@@ -735,8 +735,8 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
 	require.Error(t, err, "expected error with index.lock present")
 
-	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
-	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
+	assert.NotContains(t, err.Error(), "pre-commit hook failed")
+	assert.NotContains(t, err.Error(), "after 3 attempts")
 }
 
 func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
@@ -752,8 +752,8 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
 	require.Error(t, err, "expected error for empty commit")
 
-	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
-	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
+	assert.NotContains(t, err.Error(), "pre-commit hook failed")
+	assert.NotContains(t, err.Error(), "after 3 attempts")
 }
 
 func TestResolveReasoningWithFast(t *testing.T) {
@@ -797,7 +797,7 @@ func TestResolveReasoningWithFast(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveReasoningWithFast(tt.reasoning, tt.fast, tt.reasoningExplicitlySet)
-			assert.Equal(t, tt.want, got, "unexpected condition")
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -811,7 +811,7 @@ func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 	)
 	require.NoError(t, err, "selectRefineAgent: %v")
 
-	assert.Equal(t, "codex", selected.Name(), "unexpected condition")
+	assert.Equal(t, "codex", selected.Name())
 
 	result, model := applyModelForAgent(
 		selected,
@@ -825,11 +825,11 @@ func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 	if codexAgent.Model != "" {
 		assert.Empty(t, codexAgent.Model, "backup agent should keep its default model (empty), got %q", codexAgent.Model)
 	}
-	assert.Empty(t, model, "unexpected condition")
+	assert.Empty(t, model)
 }
 
 func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
@@ -852,7 +852,7 @@ func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 	assert.Equal(t, "o3", codexAgent.Model, "agent model should remain %q, got %q", "o3", codexAgent.Model)
 
 }
@@ -880,9 +880,9 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
+	assert.True(t, ok)
 
-	assert.Equal(t, "primary-model", model, "unexpected condition")
+	assert.Equal(t, "primary-model", model)
 	assert.Equal(t, "primary-model", codexAgent.Model, "expected agent model %q, got %q", "primary-model", codexAgent.Model)
 
 }
@@ -909,9 +909,9 @@ func TestApplyModelForAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) 
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	assert.True(t, ok, "unexpected condition")
-	assert.Equal(t, "gpt-5.4", model, "unexpected condition")
-	assert.Equal(t, "gpt-5.4", codexAgent.Model, "unexpected condition")
+	assert.True(t, ok)
+	assert.Equal(t, "gpt-5.4", model)
+	assert.Equal(t, "gpt-5.4", codexAgent.Model)
 }
 
 func TestRefineFlagValidation(t *testing.T) {
@@ -970,7 +970,7 @@ func TestRefineFlagValidation(t *testing.T) {
 				msg := err.Error()
 				isValidationErr := strings.Contains(msg, "mutually exclusive") ||
 					strings.Contains(msg, "requires --")
-				assert.False(t, isValidationErr, "unexpected condition")
+				assert.False(t, isValidationErr)
 			}
 		})
 	}

@@ -120,7 +120,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"result","result":"Done! Review complete."}
 `,
 			assertResult: func(t *testing.T, res string) {
-				assert.Equal(t, "Done! Review complete.", res, "unexpected condition")
+				assert.Equal(t, "Done! Review complete.", res)
 			},
 		},
 		{
@@ -131,7 +131,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				for _, s := range []string{"Changes:", "filtering logic"} {
-					assert.Contains(t, res, s, "unexpected condition")
+					assert.Contains(t, res, s)
 				}
 			},
 		},
@@ -143,7 +143,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "First message\nSecond message"
-				assert.Equal(t, want, res, "unexpected condition")
+				assert.Equal(t, want, res)
 			},
 		},
 		{
@@ -155,7 +155,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
-				assert.Equal(t, want, res, "unexpected condition")
+				assert.Equal(t, want, res)
 			},
 		},
 		{
@@ -167,7 +167,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
-				assert.Equal(t, want, res, "unexpected condition")
+				assert.Equal(t, want, res)
 			},
 		},
 		{
@@ -207,7 +207,7 @@ still not json
 {"type":"result","result":"Done"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				assert.Equal(t, "Done", res, "unexpected condition")
+				assert.Equal(t, "Done", res)
 			},
 			wantOutput: true,
 		},
@@ -217,7 +217,7 @@ still not json
 {"type":"tool","name":"Read"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				assert.Empty(t, res, "unexpected condition")
+				assert.Empty(t, res)
 			},
 		},
 		{

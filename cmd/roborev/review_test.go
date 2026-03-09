@@ -121,8 +121,8 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		assert.Equal(t, req.GitRef, shortFirstSHA, "unexpected condition")
-		assert.NotEqual(t, "HEAD", req.GitRef, "unexpected condition")
+		assert.Equal(t, req.GitRef, shortFirstSHA)
+		assert.NotEqual(t, "HEAD", req.GitRef)
 	})
 
 	t.Run("sha flag works", func(t *testing.T) {
@@ -137,7 +137,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		assert.Equal(t, req.GitRef, shortFirstSHA, "unexpected condition")
+		assert.Equal(t, req.GitRef, shortFirstSHA)
 	})
 
 	t.Run("defaults to HEAD", func(t *testing.T) {
@@ -150,7 +150,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+		assert.Equal(t, "HEAD", req.GitRef)
 	})
 }
 
@@ -167,9 +167,9 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial commit")
 
 		stdout, _, err := executeReviewCmd("--repo", repo.Dir)
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 
-		assert.Contains(t, stdout, "Skipped", "unexpected condition")
+		assert.Contains(t, stdout, "Skipped")
 	})
 
 	t.Run("skipped response in quiet mode suppresses output", func(t *testing.T) {
@@ -184,9 +184,9 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial commit")
 
 		stdout, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-		require.NoError(t, err, "unexpected condition")
+		require.NoError(t, err)
 
-		assert.Empty(t, stdout, "unexpected condition")
+		assert.Empty(t, stdout)
 	})
 }
 
@@ -200,9 +200,9 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
-		require.NoError(t, err, "unexpected condition")
-		assert.Empty(t, stdout, "unexpected condition")
-		assert.Empty(t, stderr, "unexpected condition")
+		require.NoError(t, err)
+		assert.Empty(t, stdout)
+		assert.Empty(t, stderr)
 	})
 
 	t.Run("failing review exits 1 with no output", func(t *testing.T) {
@@ -218,8 +218,8 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 		exitErr, ok := err.(*exitError)
 		require.True(t, ok, "expected exitError, got: %T %v", err)
 		require.Equal(t, 1, exitErr.code, "expected exit code 1")
-		assert.Empty(t, stdout, "unexpected condition")
-		assert.Empty(t, stderr, "unexpected condition")
+		assert.Empty(t, stdout)
+		assert.Empty(t, stderr)
 	})
 }
 
@@ -249,7 +249,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 		assertErrorContains(t, err, "unknown status")
 		assertErrorContains(t, err, "daemon may be newer than CLI")
 
-		assert.Equal(t, 10, callCount, "unexpected condition")
+		assert.Equal(t, 10, callCount)
 	})
 
 	t.Run("counter resets on known status", func(t *testing.T) {
@@ -274,8 +274,8 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
-		require.NoError(t, err, "unexpected condition")
-		assert.Equal(t, 12, poller.callCount, "unexpected condition")
+		require.NoError(t, err)
+		assert.Equal(t, 12, poller.callCount)
 	})
 }
 
@@ -368,8 +368,8 @@ func TestReviewSinceFlag(t *testing.T) {
 		require.NoError(t, err)
 
 		req := <-reqCh
-		assert.Contains(t, req.GitRef, firstSHA, "unexpected condition")
-		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"), "unexpected condition")
+		assert.Contains(t, req.GitRef, firstSHA)
+		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"))
 	})
 
 	t.Run("since with invalid ref fails", func(t *testing.T) {
@@ -425,8 +425,8 @@ func TestReviewBranchFlag(t *testing.T) {
 		require.NoError(t, err)
 
 		req := <-reqCh
-		assert.Contains(t, req.GitRef, mainSHA, "unexpected condition")
-		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"), "unexpected condition")
+		assert.Contains(t, req.GitRef, mainSHA)
+		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"))
 	})
 }
 
@@ -441,7 +441,7 @@ func TestReviewFastFlag(t *testing.T) {
 		require.NoError(t, err)
 
 		req := <-reqCh
-		assert.Equal(t, "fast", req.Reasoning, "unexpected condition")
+		assert.Equal(t, "fast", req.Reasoning)
 	})
 
 	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
@@ -454,7 +454,7 @@ func TestReviewFastFlag(t *testing.T) {
 		require.NoError(t, err)
 
 		req := <-reqCh
-		assert.Equal(t, "thorough", req.Reasoning, "unexpected condition")
+		assert.Equal(t, "thorough", req.Reasoning)
 	})
 }
 
@@ -498,7 +498,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 
 	t.Run("returns false when config is commit", func(t *testing.T) {
@@ -510,7 +510,7 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 
 	t.Run("returns merge-base range when config is branch", func(t *testing.T) {
@@ -525,8 +525,8 @@ func TestTryBranchReview(t *testing.T) {
 		ref, ok := tryBranchReview(repo.Dir, "")
 		require.True(t, ok, "expected true with branch config")
 
-		assert.Contains(t, ref, mainSHA, "unexpected condition")
-		assert.True(t, strings.HasSuffix(ref, "..HEAD"), "unexpected condition")
+		assert.Contains(t, ref, mainSHA)
+		assert.True(t, strings.HasSuffix(ref, "..HEAD"))
 	})
 
 	t.Run("covers multiple commits on feature branch", func(t *testing.T) {
@@ -544,7 +544,7 @@ func TestTryBranchReview(t *testing.T) {
 		require.True(t, ok, "expected true")
 
 		want := mainSHA + "..HEAD"
-		assert.Equal(t, want, ref, "unexpected condition")
+		assert.Equal(t, want, ref)
 	})
 
 	t.Run("returns false on base branch", func(t *testing.T) {
@@ -554,7 +554,7 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 
 	t.Run("uses baseBranch override", func(t *testing.T) {
@@ -570,7 +570,7 @@ func TestTryBranchReview(t *testing.T) {
 		require.True(t, ok, "expected true with baseBranch override")
 
 		want := developSHA + "..HEAD"
-		assert.Equal(t, want, ref, "unexpected condition")
+		assert.Equal(t, want, ref)
 	})
 
 	t.Run("returns false on detached HEAD", func(t *testing.T) {
@@ -582,7 +582,7 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		assert.False(t, ok, "unexpected condition")
+		assert.False(t, ok)
 	})
 }
 
@@ -600,7 +600,7 @@ func TestReviewIgnoresBranchConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	req := <-reqCh
-	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+	assert.Equal(t, "HEAD", req.GitRef)
 }
 
 func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
@@ -617,7 +617,7 @@ func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	req := <-reqCh
-	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
+	assert.Equal(t, "HEAD", req.GitRef)
 }
 
 func TestFindChildGitRepos(t *testing.T) {
@@ -644,16 +644,16 @@ func TestFindChildGitRepos(t *testing.T) {
 
 	repos := findChildGitRepos(parent)
 
-	assert.Len(t, repos, 2, "unexpected condition")
+	assert.Len(t, repos, 2)
 
 	found := make(map[string]bool)
 	for _, r := range repos {
 		found[r] = true
 	}
-	assert.True(t, found["regular"], "unexpected condition")
-	assert.True(t, found["worktree"], "unexpected condition")
-	assert.False(t, found["plain"], "unexpected condition")
-	assert.False(t, found[".hidden"], "unexpected condition")
+	assert.True(t, found["regular"])
+	assert.True(t, found["worktree"])
+	assert.False(t, found["plain"])
+	assert.False(t, found[".hidden"])
 }
 
 func TestFindChildGitReposHintPaths(t *testing.T) {

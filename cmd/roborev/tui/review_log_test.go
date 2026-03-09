@@ -55,7 +55,7 @@ func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 	}
 	withHeader := m.logVisibleLines()
 
-	assert.Equal(t, 1, noHeader-withHeader, "unexpected condition")
+	assert.Equal(t, 1, noHeader-withHeader)
 }
 
 func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
@@ -79,22 +79,22 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 	visLines := m.logVisibleLines()
 
 	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	assert.Equal(t, m2.logScroll, visLines, "unexpected condition")
+	assert.Equal(t, m2.logScroll, visLines)
 
 	m3, _ := pressSpecial(m, tea.KeyEnd)
 	expectedMax := max(50-visLines, 0)
-	assert.Equal(t, expectedMax, m3.logScroll, "unexpected condition")
+	assert.Equal(t, expectedMax, m3.logScroll)
 
 	m4, _ := pressKeys(m, []rune{'g'})
-	assert.Equal(t, expectedMax, m4.logScroll, "unexpected condition")
+	assert.Equal(t, expectedMax, m4.logScroll)
 
 	mMid := m
 	mMid.logScroll = 2 * visLines
 	m5, _ := pressSpecial(mMid, tea.KeyPgUp)
-	assert.Equal(t, m5.logScroll, visLines, "unexpected condition")
+	assert.Equal(t, m5.logScroll, visLines)
 
 	m6, _ := pressSpecial(m, tea.KeyPgUp)
-	assert.Equal(t, 0, m6.logScroll, "unexpected condition")
+	assert.Equal(t, 0, m6.logScroll)
 }
 
 func TestTUILogPagingNoHeader(t *testing.T) {
@@ -119,10 +119,10 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 	expectedMax := max(50-visLines, 0)
 
 	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	assert.Equal(t, m2.logScroll, visLines, "unexpected condition")
+	assert.Equal(t, m2.logScroll, visLines)
 
 	m3, _ := pressSpecial(m, tea.KeyEnd)
-	assert.Equal(t, expectedMax, m3.logScroll, "unexpected condition")
+	assert.Equal(t, expectedMax, m3.logScroll)
 }
 
 func TestTUILogLoadingGuard(t *testing.T) {
@@ -136,8 +136,8 @@ func TestTUILogLoadingGuard(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, logTickMsg{})
 
-	assert.Nil(t, cmd, "unexpected condition")
-	assert.True(t, m2.logLoading, "unexpected condition")
+	assert.Nil(t, cmd)
+	assert.True(t, m2.logLoading)
 }
 
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
@@ -154,8 +154,8 @@ func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	require.NoError(t, m2.err, "unexpected condition")
-	assert.False(t, m2.logLoading, "unexpected condition")
+	require.NoError(t, m2.err)
+	assert.False(t, m2.logLoading)
 }
 
 func TestTUILogViewLookupFixJob(t *testing.T) {
@@ -179,8 +179,8 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 	m.logLines = []logLine{{text: "output"}}
 
 	view := m.View()
-	assert.Contains(t, view, "#42", "unexpected condition")
-	assert.Contains(t, view, "codex", "unexpected condition")
+	assert.Contains(t, view, "#42")
+	assert.Contains(t, view, "codex")
 }
 
 func TestTUILogCancelFixJob(t *testing.T) {
@@ -202,7 +202,7 @@ func TestTUILogCancelFixJob(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'x')
 
-	assert.False(t, m2.logStreaming, "unexpected condition")
+	assert.False(t, m2.logStreaming)
 	assert.Equal(t, storage.JobStatusCanceled, m2.fixJobs[0].Status, "fix job status should be canceled, got %s", m2.fixJobs[0].Status)
 
 	assert.NotNil(t, cmd, "expected command from cancel action")
@@ -492,23 +492,23 @@ func TestTUILogOutputTable(t *testing.T) {
 
 			m2, _ := updateModel(t, m, tt.msg)
 
-			assert.Equal(t, tt.wantView, m2.currentView, "unexpected condition")
+			assert.Equal(t, tt.wantView, m2.currentView)
 			if tt.wantLinesNil {
-				assert.Nil(t, m2.logLines, "unexpected condition")
+				assert.Nil(t, m2.logLines)
 			} else if tt.wantLinesEmpty {
-				assert.False(t, m2.logLines == nil || len(m2.logLines) != 0, "unexpected condition")
+				assert.False(t, m2.logLines == nil || len(m2.logLines) != 0)
 			} else if m2.logLines == nil {
 				assert.NotNil(t, m2.logLines, "Expected logLines to not be nil")
 			}
-			assert.Len(t, m2.logLines, tt.wantLinesLen, "unexpected condition")
+			assert.Len(t, m2.logLines, tt.wantLinesLen)
 			for i, line := range tt.wantLines {
-				assert.False(t, i < len(m2.logLines) && m2.logLines[i].text != line, "unexpected condition")
+				assert.False(t, i < len(m2.logLines) && m2.logLines[i].text != line)
 			}
-			assert.Equal(t, tt.wantStreaming, m2.logStreaming, "unexpected condition")
-			assert.False(t, tt.wantFlashMsg != "" && !strings.Contains(m2.flashMessage, tt.wantFlashMsg), "unexpected condition")
-			assert.Equal(t, tt.wantLoading, m2.logLoading, "unexpected condition")
-			assert.Equal(t, tt.wantOffset, m2.logOffset, "unexpected condition")
-			assert.False(t, tt.wantFmtr != nil && m2.logFmtr != tt.wantFmtr, "unexpected condition")
+			assert.Equal(t, tt.wantStreaming, m2.logStreaming)
+			assert.False(t, tt.wantFlashMsg != "" && !strings.Contains(m2.flashMessage, tt.wantFlashMsg))
+			assert.Equal(t, tt.wantLoading, m2.logLoading)
+			assert.Equal(t, tt.wantOffset, m2.logOffset)
+			assert.False(t, tt.wantFmtr != nil && m2.logFmtr != tt.wantFmtr)
 		})
 	}
 }
@@ -636,7 +636,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 			if expectedView == 0 {
 				expectedView = viewQueue
 			}
-			assert.Equal(t, expectedView, updated.currentView, "unexpected condition")
+			assert.Equal(t, expectedView, updated.currentView)
 
 			msgs := collectMsgs(cmd)
 			if !hasMsgType(msgs, "tea.enableMouseCellMotionMsg") {
@@ -677,5 +677,5 @@ func TestMouseNotToggledWithinContentViews(t *testing.T) {
 	msgs := collectMsgs(cmd)
 	hasDisable := hasMsgType(msgs, "tea.disableMouseMsg")
 	hasEnable := hasMsgType(msgs, "tea.enableMouseCellMotionMsg")
-	assert.False(t, hasDisable || hasEnable, "unexpected condition")
+	assert.False(t, hasDisable || hasEnable)
 }

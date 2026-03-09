@@ -170,7 +170,7 @@ func TestCursorReviewEmptyOutput(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	assert.Equal(t, "No review output generated", result, "unexpected condition")
+	assert.Equal(t, "No review output generated", result)
 }
 
 func TestCursorReviewErrorResult(t *testing.T) {
@@ -186,7 +186,7 @@ func TestCursorReviewErrorResult(t *testing.T) {
 	)
 	require.Error(t, err)
 
-	assert.Contains(t, err.Error(), "Invalid API key", "unexpected condition")
+	assert.Contains(t, err.Error(), "Invalid API key")
 }
 
 func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
@@ -204,12 +204,12 @@ func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
 	require.Error(t, err)
 
 	errStr := err.Error()
-	assert.Contains(t, errStr, "quota exceeded", "unexpected condition")
-	assert.Contains(t, errStr, "failed", "unexpected condition")
+	assert.Contains(t, errStr, "quota exceeded")
+	assert.Contains(t, errStr, "failed")
 }
 
 func TestCursorName(t *testing.T) {
 	a := NewCursorAgent("")
-	assert.Equal(t, "cursor", a.Name(), "unexpected condition")
-	assert.Equal(t, "agent", a.CommandName(), "unexpected condition")
+	assert.Equal(t, "cursor", a.Name())
+	assert.Equal(t, "agent", a.CommandName())
 }

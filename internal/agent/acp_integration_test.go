@@ -64,7 +64,7 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 		cmd := exec.Command("git", arguments...)
 		cmd.Dir = repoPath
 		out, err := cmd.CombinedOutput()
-		assert.Equal(t, false, err != nil, "unexpected condition")
+		assert.Equal(t, false, err != nil)
 		return string(out)
 	}
 
@@ -78,7 +78,7 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 	gitRun("add", "README.md")
 	gitRun("-c", "commit.gpgsign=false", "-c", "core.hooksPath="+disabledHooksDir, "commit", "--no-verify", "-m", "seed")
 	commitSHA := strings.TrimSpace(gitRun("rev-parse", "HEAD"))
-	assert.Equal(t, false, commitSHA == "", "unexpected condition")
+	assert.Equal(t, false, commitSHA == "")
 
 	agent := NewACPAgent(command)
 	agent.Args = args
@@ -102,9 +102,9 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 		"Connectivity smoke test: respond with exactly 'ACP_OK' after reading README.md. Do not run roborev commands.",
 		&streamOutput,
 	)
-	assert.Equal(t, false, err != nil, "unexpected condition")
+	assert.Equal(t, false, err != nil)
 
 	trimmed := strings.TrimSpace(result)
-	assert.Equal(t, false, trimmed == "", "unexpected condition")
-	assert.Equal(t, false, !strings.Contains(trimmed, "ACP_OK"), "unexpected condition")
+	assert.Equal(t, false, trimmed == "")
+	assert.Equal(t, false, !strings.Contains(trimmed, "ACP_OK"))
 }

@@ -96,7 +96,7 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 	prompt := "Review this commit carefully"
 	_, args, stdin := runMockOpenCodeReview(t, "", prompt, nil)
 
-	assert.Equal(t, strings.TrimSpace(stdin), prompt, "unexpected condition")
+	assert.Equal(t, strings.TrimSpace(stdin), prompt)
 
 	assertNotContains(t, args, prompt)
 }
@@ -463,8 +463,8 @@ func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
 	)
 	require.NoError(t, err, "parseOpenCodeJSON: %v")
 
-	assert.NotContains(t, result, "\x1b", "unexpected condition")
-	assert.NotContains(t, result, "\x07", "unexpected condition")
+	assert.NotContains(t, result, "\x1b")
+	assert.NotContains(t, result, "\x07")
 	assertContains(t, result, "red")
 	assertContains(t, result, "safe")
 	assertNotContains(t, result, "evil")

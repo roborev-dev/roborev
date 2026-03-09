@@ -51,7 +51,7 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 
 			defer resp.Body.Close()
 
-			assert.Equal(t, tt.wantStatus, resp.StatusCode, "unexpected condition")
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
 
 			if tt.wantStatus != http.StatusOK {
 				return
@@ -62,8 +62,8 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 				require.NoError(t, err, "failed to decode response: %v")
 			}
 
-			assert.Equal(t, tt.wantJobID, review.JobID, "unexpected condition")
-			assert.Equal(t, tt.wantOutput, review.Output, "unexpected condition")
+			assert.Equal(t, tt.wantJobID, review.JobID)
+			assert.Equal(t, tt.wantOutput, review.Output)
 		})
 	}
 }

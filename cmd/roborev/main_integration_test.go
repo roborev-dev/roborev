@@ -125,7 +125,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	execGit(t, repoDir, "commit", "-m", "second commit")
 
 	commitList := strings.Fields(execGit(t, repoDir, "rev-list", "--reverse", "main..HEAD"))
-	assert.Equal(t, false, len(commitList) < 2, "unexpected condition")
+	assert.Equal(t, false, len(commitList) < 2)
 	oldestCommit := commitList[0]
 	newestCommit := commitList[1]
 

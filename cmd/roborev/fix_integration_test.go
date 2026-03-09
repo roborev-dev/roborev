@@ -83,12 +83,12 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			require.NoError(t, err, "enqueueIfNeeded: %v")
 
 			if tt.checkExact {
-				assert.Equal(t, false, jobCheckCalls.Load() != tt.expectedChecks, "unexpected condition")
+				assert.Equal(t, false, jobCheckCalls.Load() != tt.expectedChecks)
 			} else {
-				assert.Equal(t, false, jobCheckCalls.Load() < tt.minChecks, "unexpected condition")
+				assert.Equal(t, false, jobCheckCalls.Load() < tt.minChecks)
 			}
 
-			assert.Equal(t, false, enqueueCalls.Load() != tt.expectedEnqueues, "unexpected condition")
+			assert.Equal(t, false, enqueueCalls.Load() != tt.expectedEnqueues)
 		})
 	}
 }

@@ -61,7 +61,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	count, err := db.BackfillRepoIdentities()
 	require.NoError(t, err, "BackfillRepoIdentities failed: %v")
 
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 
 	// Verify identity was set with local: prefix
 	var identity string
@@ -69,10 +69,10 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	require.NoError(t, err, "Query identity failed: %v")
 
 	expectedPrefix := "local:"
-	assert.True(t, strings.HasPrefix(identity, expectedPrefix), "unexpected condition")
+	assert.True(t, strings.HasPrefix(identity, expectedPrefix))
 
 	// The identity should contain the repo name (last component of path)
-	assert.Contains(t, identity, repo.Name, "unexpected condition")
+	assert.Contains(t, identity, repo.Name)
 }
 
 func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
@@ -92,14 +92,14 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 	count, err := db.BackfillRepoIdentities()
 	require.NoError(t, err, "BackfillRepoIdentities failed: %v")
 
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 
 	// Verify identity is set to local:// prefix
 	var identity sql.NullString
 	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
-	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"), "unexpected condition")
+	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"))
 }
 
 func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
@@ -118,14 +118,14 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 	count, err := db.BackfillRepoIdentities()
 	require.NoError(t, err, "BackfillRepoIdentities failed: %v")
 
-	assert.Equal(t, 0, count, "unexpected condition")
+	assert.Equal(t, 0, count)
 
 	// Verify identity unchanged
 	var identity string
 	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
-	assert.Equal(t, "https://github.com/user/existing.git", identity, "unexpected condition")
+	assert.Equal(t, "https://github.com/user/existing.git", identity)
 }
 
 func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
@@ -148,14 +148,14 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 	count, err := db.BackfillRepoIdentities()
 	require.NoError(t, err, "BackfillRepoIdentities failed: %v")
 
-	assert.Equal(t, 1, count, "unexpected condition")
+	assert.Equal(t, 1, count)
 
 	// Verify identity is set to local:// prefix
 	var identity sql.NullString
 	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
-	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"), "unexpected condition")
+	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"))
 }
 
 func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
@@ -182,7 +182,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelBefore)
 	require.NoError(t, err, "Failed to query model before: %v")
 
-	assert.False(t, modelBefore.Valid, "unexpected condition")
+	assert.False(t, modelBefore.Valid)
 
 	// Upsert with a model value - should backfill
 	pulledJob := PulledJob{
@@ -219,5 +219,5 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelPreserved)
 	require.NoError(t, err, "Failed to query model preserved: %v")
 
-	assert.False(t, !modelPreserved.Valid || modelPreserved.String != "gpt-4", "unexpected condition")
+	assert.False(t, !modelPreserved.Valid || modelPreserved.String != "gpt-4")
 }

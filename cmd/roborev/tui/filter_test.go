@@ -42,12 +42,12 @@ func TestTUIFilterOpenModal(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'f')
 
-	assert.Equal(t, viewFilter, m2.currentView, "unexpected condition")
+	assert.Equal(t, viewFilter, m2.currentView)
 
-	assert.Nil(t, m2.filterTree, "unexpected condition")
-	assert.Equal(t, 0, m2.filterSelectedIdx, "unexpected condition")
-	assert.Empty(t, m2.filterSearch, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Nil(t, m2.filterTree)
+	assert.Equal(t, 0, m2.filterSelectedIdx)
+	assert.Empty(t, m2.filterSearch)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIFilterReposMsg(t *testing.T) {
@@ -62,12 +62,12 @@ func TestTUIFilterReposMsg(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Len(t, m2.filterTree, 3, "unexpected condition")
-	assert.False(t, m2.filterTree[0].name != "repo-a" || m2.filterTree[0].count != 2, "unexpected condition")
-	assert.False(t, m2.filterTree[1].name != "repo-b" || m2.filterTree[1].count != 1, "unexpected condition")
-	assert.False(t, m2.filterTree[2].name != "repo-c" || m2.filterTree[2].count != 1, "unexpected condition")
+	assert.Len(t, m2.filterTree, 3)
+	assert.False(t, m2.filterTree[0].name != "repo-a" || m2.filterTree[0].count != 2)
+	assert.False(t, m2.filterTree[1].name != "repo-b" || m2.filterTree[1].count != 1)
+	assert.False(t, m2.filterTree[2].name != "repo-c" || m2.filterTree[2].count != 1)
 
-	assert.Len(t, m2.filterFlatList, 4, "unexpected condition")
+	assert.Len(t, m2.filterFlatList, 4)
 }
 
 func TestTUIFilterSelectRepo(t *testing.T) {
@@ -86,10 +86,10 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
-	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a", "unexpected condition")
+	assert.Equal(t, viewQueue, m2.currentView)
+	assert.False(t, len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a")
 
-	assert.Equal(t, -1, m2.selectedIdx, "unexpected condition")
+	assert.Equal(t, -1, m2.selectedIdx)
 }
 
 func TestTUIFilterSelectAll(t *testing.T) {
@@ -103,10 +103,10 @@ func TestTUIFilterSelectAll(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	assert.Equal(t, viewQueue, m2.currentView, "unexpected condition")
-	assert.Empty(t, m2.activeRepoFilter, "unexpected condition")
-	assert.Empty(t, m2.activeBranchFilter, "unexpected condition")
-	assert.Empty(t, m2.filterStack, "unexpected condition")
+	assert.Equal(t, viewQueue, m2.currentView)
+	assert.Empty(t, m2.activeRepoFilter)
+	assert.Empty(t, m2.activeBranchFilter)
+	assert.Empty(t, m2.filterStack)
 }
 
 func TestTUIFilterPreselectsCurrent(t *testing.T) {
@@ -121,7 +121,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	assert.Equal(t, 2, m2.filterSelectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m2.filterSelectedIdx)
 }
 
 func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
@@ -135,7 +135,7 @@ func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
 	}
 	m2, _ := updateModel(t, m, reposMsg{repos: repos})
 
-	assert.Equal(t, 2, m2.filterSelectedIdx, "unexpected condition")
+	assert.Equal(t, 2, m2.filterSelectedIdx)
 }
 
 func TestTUIFilterAggregatedDisplayName(t *testing.T) {
@@ -155,12 +155,12 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	assert.Len(t, m2.activeRepoFilter, 2, "unexpected condition")
+	assert.Len(t, m2.activeRepoFilter, 2)
 
-	assert.True(t, m2.repoMatchesFilter("/path/to/backend-dev"), "unexpected condition")
-	assert.True(t, m2.repoMatchesFilter("/path/to/backend-prod"), "unexpected condition")
+	assert.True(t, m2.repoMatchesFilter("/path/to/backend-dev"))
+	assert.True(t, m2.repoMatchesFilter("/path/to/backend-prod"))
 
-	assert.False(t, m2.repoMatchesFilter("/path/to/frontend"), "unexpected condition")
+	assert.False(t, m2.repoMatchesFilter("/path/to/frontend"))
 }
 
 func TestTUIFilterViewSmallTerminal(t *testing.T) {
@@ -176,38 +176,38 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 		m.height = 5
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "(terminal too small)", "unexpected condition")
+		assert.Contains(t, output, "(terminal too small)")
 
-		assert.NotContains(t, output, "repo-a", "unexpected condition")
+		assert.NotContains(t, output, "repo-a")
 	})
 
 	t.Run("exactly reservedLines shows no items", func(t *testing.T) {
 		m.height = 7
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "(terminal too small)", "unexpected condition")
+		assert.Contains(t, output, "(terminal too small)")
 	})
 
 	t.Run("one row available", func(t *testing.T) {
 		m.height = 8
 		output := m.renderFilterView()
 
-		assert.NotContains(t, output, "(terminal too small)", "unexpected condition")
+		assert.NotContains(t, output, "(terminal too small)")
 
-		assert.Contains(t, output, "All", "unexpected condition")
+		assert.Contains(t, output, "All")
 
-		assert.Contains(t, output, "[showing 1-1 of 4]", "unexpected condition")
+		assert.Contains(t, output, "[showing 1-1 of 4]")
 	})
 
 	t.Run("fits all items without scroll", func(t *testing.T) {
 		m.height = 15
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "All", "unexpected condition")
-		assert.Contains(t, output, "repo-a", "unexpected condition")
-		assert.Contains(t, output, "repo-c", "unexpected condition")
+		assert.Contains(t, output, "All")
+		assert.Contains(t, output, "repo-a")
+		assert.Contains(t, output, "repo-c")
 
-		assert.NotContains(t, output, "[showing", "unexpected condition")
+		assert.NotContains(t, output, "[showing")
 	})
 
 	t.Run("needs scrolling shows scroll info", func(t *testing.T) {
@@ -215,9 +215,9 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 		m.filterSelectedIdx = 2
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "[showing", "unexpected condition")
+		assert.Contains(t, output, "[showing")
 
-		assert.Contains(t, output, "repo-b", "unexpected condition")
+		assert.Contains(t, output, "repo-b")
 	})
 }
 
@@ -236,22 +236,22 @@ func TestTUIFilterViewScrollWindow(t *testing.T) {
 		m.filterSelectedIdx = 0
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "[showing 1-3 of 6]", "unexpected condition")
+		assert.Contains(t, output, "[showing 1-3 of 6]")
 	})
 
 	t.Run("scroll keeps selected item visible at bottom", func(t *testing.T) {
 		m.filterSelectedIdx = 5
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "[showing 4-6 of 6]", "unexpected condition")
-		assert.Contains(t, output, "repo-5", "unexpected condition")
+		assert.Contains(t, output, "[showing 4-6 of 6]")
+		assert.Contains(t, output, "repo-5")
 	})
 
 	t.Run("scroll centers selected item in middle", func(t *testing.T) {
 		m.filterSelectedIdx = 3
 		output := m.renderFilterView()
 
-		assert.Contains(t, output, "repo-3", "unexpected condition")
+		assert.Contains(t, output, "repo-3")
 	})
 }
 
@@ -265,9 +265,9 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 
 	lines := strings.Split(output, "\n")
 
-	assert.GreaterOrEqual(t, len(lines), m.height-3, "unexpected condition")
+	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
-	assert.Contains(t, output, "Loading repos...", "unexpected condition")
+	assert.Contains(t, output, "Loading repos...")
 }
 
 func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
@@ -285,8 +285,8 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyRight)
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
@@ -304,10 +304,10 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 50})
 
-	assert.False(t, m2.loadingMore, "unexpected condition")
-	assert.False(t, m2.loadingJobs, "unexpected condition")
-	assert.Equal(t, 50, m2.height, "unexpected condition")
-	assert.True(t, m2.heightDetected, "unexpected condition")
+	assert.False(t, m2.loadingMore)
+	assert.False(t, m2.loadingJobs)
+	assert.Equal(t, 50, m2.height)
+	assert.True(t, m2.heightDetected)
 
 	_ = cmd
 }
@@ -325,8 +325,8 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, msg)
 
-	assert.True(t, m2.filterTree[0].loading, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[0].loading)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
@@ -344,9 +344,9 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, msg)
 
-	assert.True(t, m2.filterTree[1].loading, "unexpected condition")
-	assert.Equal(t, "repo-b", m2.filterTree[1].name, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[1].loading)
+	assert.Equal(t, "repo-b", m2.filterTree[1].name)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
@@ -364,9 +364,9 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, msg)
 
-	assert.True(t, m2.filterTree[1].loading, "unexpected condition")
-	assert.Equal(t, "multi-root", m2.filterTree[1].name, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.True(t, m2.filterTree[1].loading)
+	assert.Equal(t, "multi-root", m2.filterTree[1].name)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
@@ -378,6 +378,6 @@ func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'f')
 
-	assert.Equal(t, viewFilter, m2.currentView, "unexpected condition")
-	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Equal(t, viewFilter, m2.currentView)
+	assert.NotNil(t, cmd)
 }
