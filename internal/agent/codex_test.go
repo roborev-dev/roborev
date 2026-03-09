@@ -16,10 +16,6 @@ func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *
 	return NewCodexAgent(mock.CmdPath), mock
 }
 
-func buildStream(events ...string) string {
-	return strings.Join(events, "\n") + "\n"
-}
-
 func TestCodex_buildArgs(t *testing.T) {
 	a := NewCodexAgent("codex")
 
