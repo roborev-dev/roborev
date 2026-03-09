@@ -582,6 +582,24 @@ func TestAnalyzeBranchSpaceSeparated(t *testing.T) {
 	assert.Contains(t, err.Error(), "--branch=<name>", "error should suggest --branch=<name> syntax")
 }
 
+func TestAnalyzeBranchFlagValidation(t *testing.T) {
+	t.Run("branch requires analysis type", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch=feature"})
+
+		err := cmd.Execute()
+		require.ErrorContains(t, err, "--branch requires an analysis type")
+	})
+
+	t.Run("branch cannot be combined with file patterns", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"refactor", "--branch=feature", "*.go"})
+
+		err := cmd.Execute()
+		require.ErrorContains(t, err, "cannot specify file patterns with --branch")
+	})
+}
+
 func TestAnalyzeJSONOutput(t *testing.T) {
 	t.Run("single analysis JSON output", func(t *testing.T) {
 		ts, _ := newMockServer(t, MockServerOpts{Agent: "test-agent"})

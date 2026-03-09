@@ -190,9 +190,8 @@ func TestGetHooksPath(t *testing.T) {
 	t.Run("custom core.hooksPath absolute", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		customHooksDir := filepath.Join(repo.Dir, "my-hooks")
-		if err := os.MkdirAll(customHooksDir, 0755); err != nil {
-			require.NoError(t, err)
-		}
+		err := os.MkdirAll(customHooksDir, 0o755)
+		require.NoError(t, err)
 
 		repo.Run("config", "core.hooksPath", customHooksDir)
 
@@ -202,13 +201,38 @@ func TestGetHooksPath(t *testing.T) {
 		assert.Equal(t, customHooksDir, hooksPath, "expected hooksPath=%s, got %s", customHooksDir, hooksPath)
 	})
 
+	t.Run("custom core.hooksPath relative", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", "custom-hooks")
+
+		hooksPath, err := GetHooksPath(repo.Dir)
+		require.NoError(t, err, "GetHooksPath failed: %v", err)
+
+		assert.True(t, filepath.IsAbs(hooksPath), "hooks path should be absolute, got: %s", hooksPath)
+		assert.Equal(t, filepath.Join(repo.Dir, "custom-hooks"), hooksPath, "unexpected condition")
+	})
+}
+
+func TestIsRebaseInProgress(t *testing.T) {
+	t.Run("no rebase", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		assert.False(t, IsRebaseInProgress(repo.Dir), "expected no rebase in progress")
+	})
+
+	t.Run("rebase-merge directory", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		rebaseMerge := filepath.Join(repo.Dir, ".git", "rebase-merge")
+		err := os.MkdirAll(rebaseMerge, 0o755)
+		require.NoError(t, err)
+		assert.True(t, IsRebaseInProgress(repo.Dir), "should detect rebase-merge")
+	})
+
 	t.Run("rebase-apply directory", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		rebaseApply := filepath.Join(repo.Dir, ".git", "rebase-apply")
-		if err := os.MkdirAll(rebaseApply, 0755); err != nil {
-			require.NoError(t, err)
-		}
-		assert.True(t, IsRebaseInProgress(repo.Dir), "should detect rebase-merge")
+		err := os.MkdirAll(rebaseApply, 0o755)
+		require.NoError(t, err)
+		assert.True(t, IsRebaseInProgress(repo.Dir), "should detect rebase-apply")
 	})
 
 	t.Run("non-repo returns false", func(t *testing.T) {
@@ -228,8 +252,7 @@ func TestGetHooksPath(t *testing.T) {
 		if info.IsDir() {
 			t.Skip("worktree has .git directory instead of file - older git version")
 		}
-		require.
-			False(t, IsRebaseInProgress(wt.Dir), "worktree should not be in rebase")
+		require.False(t, IsRebaseInProgress(wt.Dir), "worktree should not be in rebase")
 
 		worktreeGitDir := strings.TrimSpace(wt.Run("rev-parse", "--git-dir"))
 		if !filepath.IsAbs(worktreeGitDir) {
@@ -237,9 +260,8 @@ func TestGetHooksPath(t *testing.T) {
 		}
 
 		rebaseMerge := filepath.Join(worktreeGitDir, "rebase-merge")
-		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
-			require.NoError(t, err)
-		}
+		err = os.MkdirAll(rebaseMerge, 0o755)
+		require.NoError(t, err)
 		require.True(t, IsRebaseInProgress(wt.Dir), "worktree should detect rebase")
 	})
 }
