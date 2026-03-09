@@ -8,12 +8,45 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 const controlResponseTimeout = 3 * time.Second
+
+// removeStaleSocket checks whether socketPath is a leftover Unix
+// socket from a previous crash and removes it. Returns an error if
+// the path exists but is not a socket (protecting regular files from
+// accidental deletion via a mistyped --control-socket).
+func removeStaleSocket(socketPath string) error {
+	fi, err := os.Lstat(socketPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat socket path: %w", err)
+	}
+	if fi.Mode().Type()&os.ModeSocket == 0 {
+		return fmt.Errorf(
+			"%s already exists and is not a socket", socketPath,
+		)
+	}
+	// It's a socket — try to connect to see if it's still live.
+	conn, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	if dialErr == nil {
+		conn.Close()
+		return fmt.Errorf(
+			"%s is already in use by another listener", socketPath,
+		)
+	}
+	// Stale socket — safe to remove.
+	if err := os.Remove(socketPath); err != nil {
+		return fmt.Errorf("remove stale socket: %w", err)
+	}
+	return nil
+}
 
 // startControlListener creates a Unix domain socket and starts
 // accepting connections. Each connection receives one JSON command,
@@ -23,9 +56,17 @@ const controlResponseTimeout = 3 * time.Second
 func startControlListener(
 	socketPath string, p *tea.Program,
 ) (func(), error) {
-	// Remove stale socket file from a previous crash
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("remove stale socket: %w", err)
+	// Ensure the parent directory exists (fresh installs,
+	// custom --control-socket paths).
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
+
+	// Only remove an existing path if it is a stale Unix socket.
+	// Refusing to remove regular files prevents data loss from
+	// a mistyped --control-socket path.
+	if err := removeStaleSocket(socketPath); err != nil {
+		return nil, err
 	}
 
 	ln, err := net.Listen("unix", socketPath)

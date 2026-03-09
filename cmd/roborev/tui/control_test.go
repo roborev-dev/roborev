@@ -675,6 +675,94 @@ func newTestProgram(t *testing.T) *tea.Program {
 	return p
 }
 
+// --- Stale socket safety tests ---
+
+func TestRemoveStaleSocket_NonexistentPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nosuch.sock")
+	if err := removeStaleSocket(path); err != nil {
+		t.Errorf("expected nil for nonexistent path, got: %v", err)
+	}
+}
+
+func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := removeStaleSocket(path)
+	if err == nil {
+		t.Fatal("expected error for regular file, got nil")
+	}
+	// File must still exist
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Error("regular file was deleted")
+	}
+}
+
+func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
+	// Use a short path to stay within the Unix socket length limit.
+	path := shortSocketPath(t, "stale")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+
+	if err := removeStaleSocket(path); err != nil {
+		t.Fatalf("expected stale socket to be removed: %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Error("stale socket was not removed")
+	}
+}
+
+func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
+	path := shortSocketPath(t, "live")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	err = removeStaleSocket(path)
+	if err == nil {
+		t.Fatal("expected error for live socket, got nil")
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Error("live socket was deleted")
+	}
+}
+
+func TestStartControlListener_CreatesParentDir(t *testing.T) {
+	base := shortSocketPath(t, "dir")
+	// Remove the file shortSocketPath created, use it as a subdir.
+	os.Remove(base)
+	socketPath := filepath.Join(base, "sub", "t.sock")
+
+	cleanup, err := startControlListener(
+		socketPath, newTestProgram(t),
+	)
+	if err != nil {
+		t.Fatalf("expected listener to create dirs: %v", err)
+	}
+	cleanup()
+}
+
+// shortSocketPath returns a temporary socket path short enough for
+// the Unix socket 104-byte name limit on macOS.
+func shortSocketPath(t *testing.T, prefix string) string {
+	t.Helper()
+	f, err := os.CreateTemp("", prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	f.Close()
+	os.Remove(path)
+	t.Cleanup(func() { os.Remove(path) })
+	return path
+}
+
 // --- Runtime metadata tests ---
 
 func TestTUIRuntimeWriteAndRead(t *testing.T) {
