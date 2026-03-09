@@ -10,6 +10,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/githook"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupHookTest(t *testing.T) *testutil.TestRepo {
@@ -34,17 +36,13 @@ func runInitCmd(t *testing.T) {
 	t.Helper()
 	cmd := initCmd()
 	cmd.SetArgs([]string{"--agent", "test"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
+	require.NoError(t, cmd.Execute(), "init command failed")
 }
 
 func readHookContent(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("Failed to read hook at %s: %v", path, err)
-	}
+	require.NoError(t, err, "Failed to read hook at %s", path)
 	return string(content)
 }
 
@@ -60,36 +58,27 @@ fi
 
 func assertNotContains(t *testing.T, content, substr, msg string) {
 	t.Helper()
-	if strings.Contains(content, substr) {
-		t.Errorf("%s. Expected NOT to find %q in:\n%s", msg, substr, content)
-	}
+	assert.NotContains(t, content, substr, msg)
 }
 
 func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	repo := setupHookTest(t)
 	repo.RemoveHooksDir()
 
-	if _, err := os.Stat(repo.HooksDir); !os.IsNotExist(err) {
-		t.Fatal("hooks directory should not exist before test")
-	}
+	_, err := os.Stat(repo.HooksDir)
+	assert.Equal(t, true, os.IsNotExist(err), "hooks directory should not exist before test")
 
 	runInitCmd(t)
 
-	if _, err := os.Stat(repo.HooksDir); os.IsNotExist(err) {
-		t.Error("hooks directory was not created")
-	}
+	_, err = os.Stat(repo.HooksDir)
+	assert.Equal(t, false, os.IsNotExist(err), "hooks directory was not created")
 
-	if _, err := os.Stat(repo.HookPath); os.IsNotExist(err) {
-		t.Error("post-commit hook was not created")
-	}
+	_, err = os.Stat(repo.HookPath)
+	assert.Equal(t, false, os.IsNotExist(err), "post-commit hook was not created")
 
 	info, err := os.Stat(repo.HookPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&0111 == 0 {
-		t.Error("post-commit hook is not executable")
-	}
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&0111, "post-commit hook is not executable")
 }
 
 func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
@@ -143,15 +132,9 @@ func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
 	// Roborev snippet should appear before exit 0
 	snippetIdx := strings.Index(contentStr, "_roborev_hook")
 	exitIdx := strings.Index(contentStr, "exit 0")
-	if snippetIdx < 0 {
-		t.Fatal("roborev snippet should be present")
-	}
-	if exitIdx < 0 {
-		t.Fatal("exit 0 should be preserved")
-	}
-	if snippetIdx > exitIdx {
-		t.Error("roborev snippet should appear before exit 0")
-	}
+	require.GreaterOrEqual(t, snippetIdx, 0, "roborev snippet should be present")
+	require.GreaterOrEqual(t, exitIdx, 0, "exit 0 should be preserved")
+	assert.Less(t, snippetIdx, exitIdx, "roborev snippet should appear before exit 0")
 
 	// All original content should be preserved
 	assertContains(t, contentStr, "husky.sh", "husky.sh reference should be preserved")

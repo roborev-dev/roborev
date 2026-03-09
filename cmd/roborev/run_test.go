@@ -15,6 +15,8 @@ import (
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createRepoWithConfig creates a temp directory with a .roborev.toml file.
@@ -24,7 +26,7 @@ func createRepoWithConfig(t *testing.T, configContent string) string {
 	repoPath := t.TempDir()
 	if configContent != "" {
 		if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(configContent), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 	}
 	return repoPath
@@ -109,9 +111,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		expectedStrings := []string{"my-project", repoPath, "## Context", "## Request", userPrompt}
 		for _, s := range expectedStrings {
-			if !strings.Contains(result, s) {
-				t.Errorf("Expected result to contain %q", s)
-			}
+			assert.Contains(t, result, s, "unexpected condition")
 		}
 	})
 
@@ -120,12 +120,8 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
-		if !strings.Contains(result, "## Project Guidelines") {
-			t.Error("Expected result to contain '## Project Guidelines' header")
-		}
-		if !strings.Contains(result, "Always use tabs for indentation") {
-			t.Error("Expected result to contain guidelines text")
-		}
+		assert.Contains(t, result, "## Project Guidelines", "unexpected condition")
+		assert.Contains(t, result, "Always use tabs for indentation", "unexpected condition")
 	})
 
 	t.Run("omits guidelines section when not configured", func(t *testing.T) {
@@ -133,9 +129,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
-		if strings.Contains(result, "## Project Guidelines") {
-			t.Error("Expected result to NOT contain '## Project Guidelines' header when no config")
-		}
+		assert.NotContains(t, result, "## Project Guidelines", "unexpected condition")
 	})
 
 	t.Run("omits guidelines when config has no guidelines", func(t *testing.T) {
@@ -143,9 +137,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
-		if strings.Contains(result, "## Project Guidelines") {
-			t.Error("Expected result to NOT contain '## Project Guidelines' when guidelines empty")
-		}
+		assert.NotContains(t, result, "## Project Guidelines", "unexpected condition")
 	})
 
 	t.Run("preserves user prompt exactly", func(t *testing.T) {
@@ -154,9 +146,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		result := buildPromptWithContext(repoPath, userPrompt)
 
-		if !strings.Contains(result, userPrompt) {
-			t.Error("Expected user prompt to be preserved exactly")
-		}
+		assert.Contains(t, result, userPrompt, "unexpected condition")
 	})
 
 	t.Run("correct section order", func(t *testing.T) {
@@ -168,16 +158,12 @@ func TestBuildPromptWithContext(t *testing.T) {
 		guidelinesPos := strings.Index(result, "## Project Guidelines")
 		requestPos := strings.Index(result, "## Request")
 
-		if contextPos == -1 || guidelinesPos == -1 || requestPos == -1 {
-			t.Fatal("Missing expected sections")
-		}
+		require.NotEqual(t, -1, contextPos, "Missing expected sections")
+		require.NotEqual(t, -1, guidelinesPos, "Missing expected sections")
+		require.NotEqual(t, -1, requestPos, "Missing expected sections")
 
-		if contextPos > guidelinesPos {
-			t.Error("Context should come before Guidelines")
-		}
-		if guidelinesPos > requestPos {
-			t.Error("Guidelines should come before Request")
-		}
+		assert.LessOrEqual(t, contextPos, guidelinesPos, "unexpected condition")
+		assert.LessOrEqual(t, guidelinesPos, requestPos, "unexpected condition")
 	})
 }
 
@@ -189,17 +175,11 @@ func TestShowPromptResult(t *testing.T) {
 		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
 		output := out.String()
-		if !strings.Contains(output, "Result (by test-agent)") {
-			t.Error("Expected result header with agent name")
-		}
-		if !strings.Contains(output, "Paris") {
-			t.Error("Expected output to contain 'Paris'")
-		}
+		assert.Contains(t, output, "Result (by test-agent)", "unexpected condition")
+		assert.Contains(t, output, "Paris", "unexpected condition")
 	})
 
 	t.Run("returns nil for output that would be FAIL verdict in review", func(t *testing.T) {
@@ -209,9 +189,7 @@ func TestShowPromptResult(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
-		if err != nil {
-			t.Errorf("Prompt jobs should not return error based on verdict, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("quiet mode suppresses output", func(t *testing.T) {
@@ -221,13 +199,9 @@ func TestShowPromptResult(t *testing.T) {
 		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if out.Len() > 0 {
-			t.Errorf("Expected no output in quiet mode, got: %s", out.String())
-		}
+		assert.LessOrEqual(t, out.Len(), 0, "unexpected condition")
 	})
 
 	t.Run("handles not found error", func(t *testing.T) {
@@ -239,12 +213,8 @@ func TestShowPromptResult(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 999, false, "")
 
-		if err == nil {
-			t.Error("Expected error for not found")
-		}
-		if !strings.Contains(err.Error(), "no result found") {
-			t.Errorf("Expected 'no result found' error, got: %v", err)
-		}
+		require.Error(t, err, "unexpected condition")
+		assert.Contains(t, err.Error(), "no result found", "unexpected condition")
 	})
 
 	t.Run("handles server error", func(t *testing.T) {
@@ -252,12 +222,8 @@ func TestShowPromptResult(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
-		if err == nil {
-			t.Error("Expected error for server error")
-		}
-		if !strings.Contains(err.Error(), "server error") {
-			t.Errorf("Expected 'server error' in message, got: %v", err)
-		}
+		require.Error(t, err, "unexpected condition")
+		assert.Contains(t, err.Error(), "server error", "unexpected condition")
 	})
 }
 
@@ -301,13 +267,9 @@ func TestRunLabelFlag(t *testing.T) {
 			cmd.SetArgs(args)
 
 			err := cmd.Execute()
-			if err != nil {
-				t.Fatalf("Unexpected error executing command: %v", err)
-			}
+			require.NoError(t, err)
 
-			if receivedRef != tt.expectedRef {
-				t.Errorf("Expected git_ref %q, got %q", tt.expectedRef, receivedRef)
-			}
+			assert.Equal(t, tt.expectedRef, receivedRef, "unexpected condition")
 		})
 	}
 }
@@ -385,23 +347,18 @@ func TestWaitForPromptJob(t *testing.T) {
 			err := waitForPromptJob(cmd, server.URL, 123, tt.quiet, 1*time.Millisecond)
 
 			if tt.expectError != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.expectError) {
-					t.Errorf("Expected error containing %q, got %v", tt.expectError, err)
-				}
-			} else if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.expectError, "Expected error containing %q, got %v", tt.expectError, err)
+			} else {
+				require.NoError(t, err)
 			}
 
 			output := out.String()
 			if tt.quiet {
-				if output != "" {
-					t.Errorf("Expected no output in quiet mode, got: %q", output)
-				}
+				assert.Empty(t, output, "unexpected condition")
 			} else {
 				for _, s := range tt.expectOut {
-					if !strings.Contains(output, s) {
-						t.Errorf("Expected output to contain %q, got: %q", s, output)
-					}
+					assert.Contains(t, output, s, "unexpected condition")
 				}
 			}
 		})
@@ -417,13 +374,9 @@ func TestWaitForPromptJob(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if *pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
-		}
+		assert.GreaterOrEqual(t, *pollCount, 3, "unexpected condition")
 	})
 
 	t.Run("retries on unknown status", func(t *testing.T) {
@@ -436,13 +389,9 @@ func TestWaitForPromptJob(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if *pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
-		}
+		assert.GreaterOrEqual(t, *pollCount, 3, "unexpected condition")
 	})
 
 	t.Run("fails after max unknown retries", func(t *testing.T) {
@@ -459,12 +408,9 @@ func TestWaitForPromptJob(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
-		if err == nil {
-			t.Fatal("Expected error for max unknown retries")
-		}
-		if !strings.Contains(err.Error(), "giving up") {
-			t.Errorf("Expected 'giving up' error, got: %v", err)
-		}
+		require.Error(t, err, "Expected error for max unknown retries")
+
+		assert.Contains(t, err.Error(), "giving up", "unexpected condition")
 	})
 
 	for _, tt := range []struct {
@@ -501,18 +447,15 @@ func TestWaitForPromptJob(t *testing.T) {
 			cmd, _ := newTestCmd(t)
 			err := waitForPromptJob(cmd, server.URL, 123, true, tt.interval)
 
-			if err != nil {
-				t.Fatalf("Expected no error, got: %v", err)
-			}
-			if len(pollTimes) < 3 {
-				t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
-			}
+			require.NoError(t, err, "Expected no error, got: %v")
+
+			assert.GreaterOrEqual(t, len(pollTimes), 3, "unexpected condition")
 			// Verify polls are spaced by at least 3ms (fallback is 5ms;
 			// allow slack for scheduling jitter but reject busy-polling)
 			for i := 1; i < len(pollTimes); i++ {
 				gap := pollTimes[i].Sub(pollTimes[i-1])
 				if gap < 3*time.Millisecond {
-					t.Errorf(
+					assert.GreaterOrEqual(t, gap, 3*time.Millisecond,
 						"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
 						i-1, i, gap,
 					)
@@ -533,12 +476,8 @@ func TestWaitForPromptJob(t *testing.T) {
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if *pollCount < 13 {
-			t.Errorf("Expected at least 13 polls, got: %d", *pollCount)
-		}
+		assert.GreaterOrEqual(t, *pollCount, 13, "unexpected condition")
 	})
 }

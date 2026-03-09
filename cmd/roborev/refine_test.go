@@ -13,23 +13,21 @@ import (
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// mockDaemonClient is a test implementation of daemon.Client
 type mockDaemonClient struct {
-	reviews   map[string]*storage.Review // keyed by SHA
+	reviews   map[string]*storage.Review
 	jobs      map[int64]*storage.ReviewJob
 	responses map[int64][]storage.Response
 
-	// Track calls for assertions
 	closedJobIDs    []int64
 	addedComments   []addedComment
 	enqueuedReviews []enqueuedReview
 
-	// Auto-incrementing review ID counter for WithReview
 	nextReviewID int64
 
-	// Configurable errors for testing error paths
 	markClosedErr     error
 	getReviewBySHAErr error
 }
@@ -127,7 +125,6 @@ func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, 
 	return &daemon.RemapResult{}, nil
 }
 
-// WithReview adds a review to the mock client, returning the client for chaining.
 func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, closed bool) *mockDaemonClient {
 	m.nextReviewID++
 	m.reviews[sha] = &storage.Review{
@@ -139,7 +136,6 @@ func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, cl
 	return m
 }
 
-// WithJob adds a job to the mock client, returning the client for chaining.
 func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobStatus) *mockDaemonClient {
 	m.jobs[id] = &storage.ReviewJob{
 		ID:     id,
@@ -149,26 +145,21 @@ func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobSt
 	return m
 }
 
-// Verify mockDaemonClient implements daemon.Client
 var _ daemon.Client = (*mockDaemonClient)(nil)
 
 func TestSelectRefineAgentCodexFallback(t *testing.T) {
-	// With an empty PATH, no real agents are available and the test agent
-	// is excluded from production fallback, so we expect an error.
+
 	t.Setenv("PATH", "")
 
 	_, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
-	if err == nil {
-		t.Fatal("expected error when no agents are available")
-	}
+	require.Error(t, err, "expected error when no agents are available")
 	if !strings.Contains(err.Error(), "no agents available") {
-		t.Fatalf("expected 'no agents available' error, got: %v", err)
+		require.NoError(t, err)
 	}
 }
 
 func TestResolveAllowUnsafeAgents(t *testing.T) {
-	// Note: refine defaults to true because it requires file modifications to work.
-	// Priority: CLI flag > config > default (true for refine).
+
 	boolTrue := true
 	boolFalse := false
 
@@ -191,7 +182,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 			flag:        false,
 			flagChanged: false,
 			cfg:         &config.Config{AllowUnsafeAgents: &boolFalse},
-			expected:    false, // Now honors config
+			expected:    false,
 		},
 		{
 			name:        "flag explicitly enabled - uses flag over config",
@@ -233,9 +224,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result := resolveAllowUnsafeAgents(tc.flag, tc.flagChanged, tc.cfg)
-			if result != tc.expected {
-				t.Errorf("expected %v, got %v", tc.expected, result)
-			}
+			assert.Equal(t, tc.expected, result, "unexpected condition")
 		})
 	}
 }
@@ -244,17 +233,11 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	selected, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
-	if err != nil {
-		t.Fatalf("selectRefineAgent failed: %v", err)
-	}
+	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected codex agent, got %T", selected)
-	}
-	if codexAgent.Reasoning != agent.ReasoningFast {
-		t.Fatalf("expected codex to use requested reasoning (fast), got %q", codexAgent.Reasoning)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, agent.ReasoningFast, codexAgent.Reasoning, "unexpected condition")
 }
 
 func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
@@ -269,35 +252,22 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 	}
 
 	selected, err := selectRefineAgent(cfg, "codex", agent.ReasoningFast, "")
-	if err != nil {
-		t.Fatalf("selectRefineAgent failed: %v", err)
-	}
+	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	acpAgent, ok := selected.(*agent.ACPAgent)
-	if !ok {
-		t.Fatalf("expected ACP agent when codex is configured as ACP alias, got %T", selected)
-	}
-	if acpAgent.CommandName() != "acp-agent" {
-		t.Fatalf("expected configured ACP command, got %q", acpAgent.CommandName())
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, "acp-agent", acpAgent.CommandName(), "unexpected condition")
 }
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
-	// Request a known-but-unavailable agent, codex should be used as fallback
 	selected, err := selectRefineAgent(nil, "gemini", agent.ReasoningThorough, "")
-	if err != nil {
-		t.Fatalf("selectRefineAgent failed: %v", err)
-	}
+	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected codex fallback agent, got %T", selected)
-	}
-	if codexAgent.Reasoning != agent.ReasoningThorough {
-		t.Fatalf("expected codex fallback to use requested reasoning (thorough), got %q", codexAgent.Reasoning)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, agent.ReasoningThorough, codexAgent.Reasoning, "unexpected condition")
 }
 
 func TestFindFailedReviewForBranch(t *testing.T) {
@@ -306,7 +276,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		setup         func(*mockDaemonClient)
 		commits       []string
 		skip          map[int64]bool
-		wantJobID     int64 // 0 if nil expected
+		wantJobID     int64
 		wantErrs      []string
 		wantClosedIDs []int64
 	}{
@@ -447,52 +417,34 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
 
 			if len(tt.wantErrs) > 0 {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErrs)
-				}
+				require.Error(t, err, "unexpected condition")
 				for _, wantErr := range tt.wantErrs {
-					if !strings.Contains(err.Error(), wantErr) {
-						t.Errorf("expected error containing %q, got: %v", wantErr, err)
-					}
+					require.Contains(t, err.Error(), wantErr, "expected error containing %q, got: %v", wantErr, err)
 				}
-				if found != nil {
-					t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
-				}
+				require.Nil(t, found, "unexpected condition")
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("findFailedReviewForBranch failed: %v", err)
-			}
+			require.NoError(t, err, "findFailedReviewForBranch failed: %v")
 
 			if tt.wantJobID == 0 {
-				if found != nil {
-					t.Errorf("expected no failed reviews, got job %d", found.JobID)
-				}
+				assert.Nil(t, found, "unexpected condition")
 			} else {
-				if found == nil {
-					t.Fatalf("expected to find a failed review (job %d)", tt.wantJobID)
-				}
-				if found.JobID != tt.wantJobID {
-					t.Errorf("expected job %d, got job %d", tt.wantJobID, found.JobID)
-				}
+				assert.NotNil(t, found, "unexpected condition")
+				assert.Equal(t, tt.wantJobID, found.JobID, "unexpected condition")
 			}
 
 			if len(tt.wantClosedIDs) > 0 {
-				if len(client.closedJobIDs) != len(tt.wantClosedIDs) {
-					t.Errorf("expected %d reviews to be closed, got %d", len(tt.wantClosedIDs), len(client.closedJobIDs))
-				}
+				assert.Len(t, tt.wantClosedIDs, len(client.closedJobIDs), "unexpected condition")
 				closed := make(map[int64]bool)
 				for _, id := range client.closedJobIDs {
 					closed[id] = true
 				}
 				for _, id := range tt.wantClosedIDs {
-					if !closed[id] {
-						t.Errorf("expected job %d to be closed, got %v", id, client.closedJobIDs)
-					}
+					assert.True(t, closed[id], "unexpected condition")
 				}
-			} else if len(client.closedJobIDs) > 0 {
-				t.Errorf("expected no reviews to be closed, got %v", client.closedJobIDs)
+			} else {
+				assert.Empty(t, client.closedJobIDs, "unexpected condition")
 			}
 		})
 	}
@@ -503,7 +455,7 @@ func TestFindPendingJobForBranch(t *testing.T) {
 		name      string
 		setup     func(*mockDaemonClient)
 		commits   []string
-		wantJobID int64 // 0 if nil expected
+		wantJobID int64
 	}{
 		{
 			name: "finds running job",
@@ -554,21 +506,13 @@ func TestFindPendingJobForBranch(t *testing.T) {
 			tt.setup(client)
 
 			pending, err := findPendingJobForBranch(client, "/repo", tt.commits)
-			if err != nil {
-				t.Fatalf("findPendingJobForBranch failed: %v", err)
-			}
+			require.NoError(t, err, "findPendingJobForBranch failed: %v")
 
 			if tt.wantJobID == 0 {
-				if pending != nil {
-					t.Errorf("expected no pending jobs, got job %d", pending.ID)
-				}
+				assert.Nil(t, pending, "unexpected condition")
 			} else {
-				if pending == nil {
-					t.Fatalf("expected to find a pending job (job %d)", tt.wantJobID)
-				}
-				if pending.ID != tt.wantJobID {
-					t.Errorf("expected job %d, got job %d", tt.wantJobID, pending.ID)
-				}
+				assert.NotNil(t, pending, "unexpected condition")
+				assert.Equal(t, tt.wantJobID, pending.ID, "unexpected condition")
 			}
 		})
 	}
@@ -577,11 +521,9 @@ func TestFindPendingJobForBranch(t *testing.T) {
 func chdirForTest(t *testing.T, dir string) {
 	t.Helper()
 	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
 }
@@ -593,20 +535,12 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 
 	repo := testutil.InitTestRepo(t)
 
-	// Stay on main branch (don't create feature branch)
 	chdirForTest(t, repo.Root)
 
-	// Validating without --since on main should fail
 	_, _, _, _, err := validateRefineContext("", "", "")
-	if err == nil {
-		t.Fatal("expected error when validating on main without --since")
-	}
-	if !strings.Contains(err.Error(), "refusing to refine on main") {
-		t.Errorf("expected 'refusing to refine on main' error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--since") {
-		t.Errorf("expected error to mention --since flag, got: %v", err)
-	}
+	require.Error(t, err, "expected error when validating on main without --since")
+	assert.Contains(t, err.Error(), "refusing to refine on main", "unexpected condition")
+	assert.Contains(t, err.Error(), "--since", "unexpected condition")
 }
 
 func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
@@ -617,25 +551,16 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
-	// Add another commit on main
 	repo.CommitFile("second.txt", "second", "second commit")
 
 	chdirForTest(t, repo.Root)
 
-	// Validating with --since on main should pass
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
-	if err != nil {
-		t.Fatalf("validation should pass with --since on main, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "main" {
-		t.Errorf("expected currentBranch=main, got %s", currentBranch)
-	}
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
-	}
+	require.NoError(t, err, "validation should pass with --since on main, got: %v")
+
+	assert.NotEmpty(t, repoPath, "unexpected condition")
+	assert.Equal(t, "main", currentBranch, "unexpected condition")
+	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
 }
 
 func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
@@ -646,26 +571,17 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
-	// Create feature branch with commits
 	repo.RunGit("checkout", "-b", "feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 
 	chdirForTest(t, repo.Root)
 
-	// --since should work on feature branch
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
-	if err != nil {
-		t.Fatalf("--since should work on feature branch, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "feature" {
-		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
-	}
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
-	}
+	require.NoError(t, err, "--since should work on feature branch, got: %v")
+
+	assert.NotEmpty(t, repoPath, "unexpected condition")
+	assert.Equal(t, "feature", currentBranch, "unexpected condition")
+	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
 }
 
 func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
@@ -677,14 +593,9 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 
 	chdirForTest(t, repo.Root)
 
-	// Invalid --since ref should fail with clear error
 	_, _, _, _, err := validateRefineContext("", "nonexistent-ref-abc123", "")
-	if err == nil {
-		t.Fatal("expected error for invalid --since ref")
-	}
-	if !strings.Contains(err.Error(), "cannot resolve --since") {
-		t.Errorf("expected 'cannot resolve --since' error, got: %v", err)
-	}
+	require.Error(t, err, "expected error for invalid --since ref")
+	assert.Contains(t, err.Error(), "cannot resolve --since", "unexpected condition")
 }
 
 func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
@@ -694,25 +605,18 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 
 	repo := testutil.InitTestRepo(t)
 
-	// Create a commit on a separate branch that diverges from main
 	repo.RunGit("checkout", "-b", "other-branch")
 	repo.CommitFile("other.txt", "other", "commit on other branch")
 	otherBranchSHA := repo.RevParse("HEAD")
 
-	// Go back to main and create a different commit
 	repo.RunGit("checkout", "main")
 	repo.CommitFile("main2.txt", "main2", "second commit on main")
 
 	chdirForTest(t, repo.Root)
 
-	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
 	_, _, _, _, err := validateRefineContext("", otherBranchSHA, "")
-	if err == nil {
-		t.Fatal("expected error when --since is not an ancestor of HEAD")
-	}
-	if !strings.Contains(err.Error(), "not an ancestor of HEAD") {
-		t.Errorf("expected 'not an ancestor of HEAD' error, got: %v", err)
-	}
+	require.Error(t, err, "expected error when --since is not an ancestor of HEAD")
+	assert.Contains(t, err.Error(), "not an ancestor of HEAD", "unexpected condition")
 }
 
 func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
@@ -723,27 +627,18 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
-	// Create feature branch
 	repo.RunGit("checkout", "-b", "feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 
 	chdirForTest(t, repo.Root)
 
-	// Feature branch without --since should pass validation (uses merge-base)
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", "", "")
-	if err != nil {
-		t.Fatalf("feature branch without --since should work, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "feature" {
-		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
-	}
-	// mergeBase should be the base commit (merge-base of feature and main)
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s (base commit), got %s", baseSHA, mergeBase)
-	}
+	require.NoError(t, err, "feature branch without --since should work, got: %v")
+
+	assert.NotEmpty(t, repoPath, "unexpected condition")
+	assert.Equal(t, "feature", currentBranch, "unexpected condition")
+
+	assert.Equal(t, mergeBase, baseSHA, "unexpected condition")
 }
 
 func TestCommitWithHookRetrySucceeds(t *testing.T) {
@@ -753,9 +648,6 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 
 	repo := testutil.InitTestRepo(t)
 
-	// Install a pre-commit hook that fails on the first 2 calls and
-	// succeeds on the 3rd+. The hook runs twice before a retry: once
-	// by git commit, once by the hook probe. A counter file tracks calls.
 	repo.WriteNamedHook("pre-commit", `#!/bin/sh
 COUNT_FILE=".git/hook-count"
 COUNT=0
@@ -771,26 +663,18 @@ fi
 exit 0
 `)
 
-	// Make a file change to commit
 	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	testAgent := agent.NewTestAgent()
 	sha, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
-	if err != nil {
-		t.Fatalf("commitWithHookRetry should succeed: %v", err)
-	}
+	require.NoError(t, err, "commitWithHookRetry should succeed: %v")
 
-	if sha == "" {
-		t.Fatal("expected non-empty SHA")
-	}
+	require.NotEmpty(t, sha, "expected non-empty SHA")
 
-	// Verify the commit exists
 	commitSHA := repo.RevParse("HEAD")
-	if commitSHA != sha {
-		t.Errorf("expected HEAD=%s, got %s", sha, commitSHA)
-	}
+	assert.Equal(t, commitSHA, sha, "unexpected condition")
 }
 
 func TestCommitWithHookRetryExhausted(t *testing.T) {
@@ -803,19 +687,14 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
 
-	// Make a file change
 	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	testAgent := agent.NewTestAgent()
 	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	if !strings.Contains(err.Error(), "after 3 attempts") {
-		t.Errorf("expected error mentioning '3 attempts', got: %v", err)
-	}
+	require.Error(t, err, "expected error after exhausting retries")
+	assert.Contains(t, err.Error(), "after 3 attempts", "unexpected condition")
 }
 
 func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
@@ -825,21 +704,12 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 
 	repo := testutil.InitTestRepo(t)
 
-	// No pre-commit hook installed. Commit with no changes will fail
-	// for a non-hook reason ("nothing to commit").
 	testAgent := agent.NewTestAgent()
 	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
-	if err == nil {
-		t.Fatal("expected error for empty commit without hook")
-	}
+	require.Error(t, err, "expected error for empty commit without hook")
 
-	// Should return the raw git error, not a hook-retry error
-	if strings.Contains(err.Error(), "pre-commit hook failed") {
-		t.Errorf("non-hook error should not be reported as hook failure, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "after 3 attempts") {
-		t.Errorf("non-hook error should not trigger retries, got: %v", err)
-	}
+	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
+	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
 }
 
 func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
@@ -851,31 +721,22 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
-	// Make a change so there's something to commit
 	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
-	// Create index.lock to make git add fail (non-hook failure)
 	lockFile := filepath.Join(repo.Root, ".git", "index.lock")
 	if err := os.WriteFile(lockFile, []byte(""), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	defer os.Remove(lockFile)
 
 	testAgent := agent.NewTestAgent()
 	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
-	if err == nil {
-		t.Fatal("expected error with index.lock present")
-	}
+	require.Error(t, err, "expected error with index.lock present")
 
-	// Should NOT retry despite hook being present (add-phase failure)
-	if strings.Contains(err.Error(), "pre-commit hook failed") {
-		t.Errorf("add-phase error should not be reported as hook failure, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "after 3 attempts") {
-		t.Errorf("add-phase error should not trigger retries, got: %v", err)
-	}
+	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
+	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
 }
 
 func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
@@ -887,21 +748,12 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
-	// No changes to commit — "nothing to commit" is a commit-phase
-	// failure, but the hook passes, so HookFailed should be false.
 	testAgent := agent.NewTestAgent()
 	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
-	if err == nil {
-		t.Fatal("expected error for empty commit")
-	}
+	require.Error(t, err, "expected error for empty commit")
 
-	// Should NOT retry despite hook being present (hook is passing)
-	if strings.Contains(err.Error(), "pre-commit hook failed") {
-		t.Errorf("non-hook commit error should not be reported as hook failure, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "after 3 attempts") {
-		t.Errorf("non-hook commit error should not trigger retries, got: %v", err)
-	}
+	assert.NotContains(t, err.Error(), "pre-commit hook failed", "unexpected condition")
+	assert.NotContains(t, err.Error(), "after 3 attempts", "unexpected condition")
 }
 
 func TestResolveReasoningWithFast(t *testing.T) {
@@ -945,153 +797,99 @@ func TestResolveReasoningWithFast(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveReasoningWithFast(tt.reasoning, tt.fast, tt.reasoningExplicitlySet)
-			if got != tt.want {
-				t.Errorf("resolveReasoningWithFast(%q, %v, %v) = %q, want %q",
-					tt.reasoning, tt.fast, tt.reasoningExplicitlySet, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
 
-// TestApplyModelForAgent_BackupKeepsOwnModel verifies that when the backup
-// agent is selected (primary unavailable) and no backup model is configured,
-// applyModelForAgent does not apply the primary model to the backup agent.
-// Regression test for f7385273.
 func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
-	// Make only codex available (not gemini, which will be "primary").
+
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	selected, err := selectRefineAgent(
 		nil, "gemini", agent.ReasoningStandard, "codex",
 	)
-	if err != nil {
-		t.Fatalf("selectRefineAgent: %v", err)
-	}
-	if selected.Name() != "codex" {
-		t.Fatalf("expected backup agent codex, got %s", selected.Name())
-	}
+	require.NoError(t, err, "selectRefineAgent: %v")
 
-	// Call the real helper with no CLI model and no config.
-	// The primary would resolve to some default model, but the backup
-	// agent should NOT inherit it.
+	assert.Equal(t, "codex", selected.Name(), "unexpected condition")
+
 	result, model := applyModelForAgent(
 		selected,
-		"gemini", // preferred (unavailable)
-		"codex",  // backup (selected)
-		"",       // no CLI model
-		"",       // no repo path
-		nil,      // no config
+		"gemini",
+		"codex",
+		"",
+		"",
+		nil,
 		"refine",
 		"standard",
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", result)
-	}
+	assert.True(t, ok, "unexpected condition")
 	if codexAgent.Model != "" {
-		t.Errorf(
-			"backup agent should keep its default model (empty), got %q",
-			codexAgent.Model,
-		)
+		assert.Empty(t, codexAgent.Model, "backup agent should keep its default model (empty), got %q", codexAgent.Model)
 	}
-	if model != "" {
-		t.Errorf("resolved model should be empty for unconfigured backup, got %q", model)
-	}
+	assert.Empty(t, model, "unexpected condition")
 }
 
-// TestApplyModelForAgent_EmptyModelPreservesAgentDefault verifies that
-// applyModelForAgent does not clear an agent's existing model when the
-// resolved model is empty.
-// Regression test for f7385273.
 func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	a, err := agent.Get("codex")
-	if err != nil {
-		t.Fatalf("agent.Get: %v", err)
-	}
-	// Pre-set a model on the agent.
+	require.NoError(t, err, "agent.Get: %v")
+
 	a = a.WithModel("o3")
 
-	// Agent is the preferred agent (not a backup). No CLI model, no
-	// config → resolved model will be empty.
 	result, _ := applyModelForAgent(
 		a,
-		"codex", // preferred
-		"",      // no backup
-		"",      // no CLI model
-		"",      // no repo path
-		nil,     // no config
+		"codex",
+		"",
+		"",
+		"",
+		nil,
 		"review",
 		"standard",
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", result)
-	}
-	if codexAgent.Model != "o3" {
-		t.Errorf(
-			"agent model should remain %q, got %q",
-			"o3", codexAgent.Model,
-		)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, "o3", codexAgent.Model, "agent model should remain %q, got %q", "o3", codexAgent.Model)
+
 }
 
-// TestApplyModelForAgent_SameAgentPrimaryAndBackup verifies that when
-// primary and backup resolve to the same agent, the agent is treated as
-// the primary (not backup) and gets the workflow model, not the backup model.
 func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	a, err := agent.Get("codex")
-	if err != nil {
-		t.Fatalf("agent.Get: %v", err)
-	}
+	require.NoError(t, err, "agent.Get: %v")
 
-	// Config with distinct primary and backup models so we can tell
-	// which resolution path was taken.
 	cfg := &config.Config{
 		ReviewModel:       "primary-model",
 		ReviewBackupModel: "backup-model",
 	}
 
-	// Primary and backup are the same agent. The helper should NOT
-	// treat this as "using backup" — the CanonicalName comparison
-	// against preferredAgent must prevent that.
 	result, model := applyModelForAgent(
 		a,
-		"codex", // preferred (same as backup)
-		"codex", // backup (same as preferred)
-		"",      // no CLI model
-		"",      // no repo path
+		"codex",
+		"codex",
+		"",
+		"",
 		cfg,
 		"review",
 		"standard",
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", result)
-	}
-	// Should pick the primary workflow model, not the backup.
-	if model != "primary-model" {
-		t.Errorf("expected primary model %q, got %q", "primary-model", model)
-	}
-	if codexAgent.Model != "primary-model" {
-		t.Errorf(
-			"expected agent model %q, got %q",
-			"primary-model", codexAgent.Model,
-		)
-	}
+	assert.True(t, ok, "unexpected condition")
+
+	assert.Equal(t, "primary-model", model, "unexpected condition")
+	assert.Equal(t, "primary-model", codexAgent.Model, "expected agent model %q, got %q", "primary-model", codexAgent.Model)
+
 }
 
 func TestApplyModelForAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
 	a, err := agent.Get("codex")
-	if err != nil {
-		t.Fatalf("agent.Get: %v", err)
-	}
+	require.NoError(t, err, "agent.Get: %v")
 
 	cfg := &config.Config{
 		DefaultAgent: "codex",
@@ -1101,25 +899,19 @@ func TestApplyModelForAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) 
 
 	result, model := applyModelForAgent(
 		a,
-		"claude", // preferred but unavailable
-		"",       // no backup
-		"",       // no CLI model
-		"",       // no repo path
+		"claude",
+		"",
+		"",
+		"",
 		cfg,
 		"review",
 		"standard",
 	)
 
 	codexAgent, ok := result.(*agent.CodexAgent)
-	if !ok {
-		t.Fatalf("expected *CodexAgent, got %T", result)
-	}
-	if model != "gpt-5.4" {
-		t.Fatalf("expected default model for actual fallback agent, got %q", model)
-	}
-	if codexAgent.Model != "gpt-5.4" {
-		t.Fatalf("expected codex fallback agent to use default_model, got %q", codexAgent.Model)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, "gpt-5.4", model, "unexpected condition")
+	assert.Equal(t, "gpt-5.4", codexAgent.Model, "unexpected condition")
 }
 
 func TestRefineFlagValidation(t *testing.T) {
@@ -1146,8 +938,7 @@ func TestRefineFlagValidation(t *testing.T) {
 		{
 			name: "newest-first with list is accepted",
 			args: []string{"--newest-first", "--list"},
-			// This will fail for other reasons (no daemon), but
-			// flag validation itself should pass.
+
 			wantErr: "",
 		},
 		{
@@ -1171,22 +962,15 @@ func TestRefineFlagValidation(t *testing.T) {
 
 			err := cmd.Execute()
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
+				require.Error(t, err, "expected error, got nil")
 				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf(
-						"expected error containing %q, got: %v",
-						tt.wantErr, err,
-					)
+					assert.Contains(t, err.Error(), tt.wantErr)
 				}
 			} else if err != nil {
 				msg := err.Error()
 				isValidationErr := strings.Contains(msg, "mutually exclusive") ||
 					strings.Contains(msg, "requires --")
-				if isValidationErr {
-					t.Errorf("unexpected flag validation error: %v", err)
-				}
+				assert.False(t, isValidationErr, "unexpected condition")
 			}
 		})
 	}

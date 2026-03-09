@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTUIFetchReviewNotFound(t *testing.T) {
@@ -17,12 +18,8 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 	msg := cmd()
 
 	errMsg, ok := msg.(errMsg)
-	if !ok {
-		t.Fatalf("Expected errMsg for 404, got %T: %v", msg, msg)
-	}
-	if errMsg.Error() != "no review found" {
-		t.Errorf("Expected 'no review found', got: %v", errMsg)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, "no review found", errMsg.Error(), "unexpected condition")
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
@@ -33,12 +30,8 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 	msg := cmd()
 
 	errMsg, ok := msg.(errMsg)
-	if !ok {
-		t.Fatalf("Expected errMsg for 500, got %T: %v", msg, msg)
-	}
-	if errMsg.Error() != "fetch review: 500 Internal Server Error" {
-		t.Errorf("Expected status in error, got: %v", errMsg)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, "fetch review: 500 Internal Server Error", errMsg.Error(), "unexpected condition")
 }
 
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
@@ -92,9 +85,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 	msg := cmd()
 
 	reviewMsg, ok := msg.(reviewMsg)
-	if !ok {
-		t.Fatalf("Expected reviewMsg, got %T: %v", msg, msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
 	// Should have fetched both job_id and sha responses
 	foundJobIDRequest := false
@@ -108,20 +99,12 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		}
 	}
 
-	if !foundJobIDRequest {
-		t.Error("Expected request for job_id responses")
-	}
-	if !foundSHARequest {
-		t.Error("Expected fallback request for SHA responses when job_id returned empty")
-	}
+	assert.True(t, foundJobIDRequest, "unexpected condition")
+	assert.True(t, foundSHARequest, "unexpected condition")
 
 	// Should have the legacy response from SHA fallback
-	if len(reviewMsg.responses) != 1 {
-		t.Fatalf("Expected 1 response from SHA fallback, got %d", len(reviewMsg.responses))
-	}
-	if reviewMsg.responses[0].Response != "Legacy response from SHA lookup" {
-		t.Errorf("Expected legacy response, got: %s", reviewMsg.responses[0].Response)
-	}
+	assert.Len(t, reviewMsg.responses, 1, "unexpected condition")
+	assert.Equal(t, "Legacy response from SHA lookup", reviewMsg.responses[0].Response, "unexpected condition")
 }
 
 func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
@@ -161,14 +144,10 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	msg := cmd()
 
 	_, ok := msg.(reviewMsg)
-	if !ok {
-		t.Fatalf("Expected reviewMsg, got %T: %v", msg, msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
 	// Should NOT have made a SHA fallback request for range review
 	for _, path := range requestedPaths {
-		if strings.Contains(path, "sha=") {
-			t.Error("Should not make SHA fallback request for range review")
-		}
+		assert.NotContains(t, path, "sha=", "unexpected condition")
 	}
 }

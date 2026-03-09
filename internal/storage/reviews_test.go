@@ -2,6 +2,8 @@ package storage
 
 import (
 	"database/sql"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -32,37 +34,25 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 
 			// Verify job is in expected state
 			updatedJob, err := db.GetJobByID(job.ID)
-			if err != nil {
-				t.Fatalf("Failed to verify job status: %v", err)
-			}
-			if updatedJob.Status != tc.status {
-				t.Fatalf("Expected job status %s, got %s", tc.status, updatedJob.Status)
-			}
+			require.NoError(t, err, "Failed to verify job status: %v")
+
+			assert.Equal(t, updatedJob.Status, tc.status, "unexpected condition")
 
 			// Add a comment to the job
 			comment := "Test comment for " + tc.name
 			resp, err := db.AddCommentToJob(job.ID, "test-user", comment)
-			if err != nil {
-				t.Fatalf("AddCommentToJob failed for %s: %v", tc.name, err)
-			}
+			require.NoError(t, err, "AddCommentToJob failed for %s: %v", tc.name)
 
 			// Verify the comment was added
-			if resp == nil {
-				t.Fatal("Expected non-nil response")
-			}
+			assert.NotNil(t, resp, "unexpected condition")
 			verifyComment(t, *resp, "test-user", comment)
-			if resp.JobID == nil || *resp.JobID != job.ID {
-				t.Errorf("Expected job ID %d, got %v", job.ID, resp.JobID)
-			}
+			assert.False(t, resp.JobID == nil || *resp.JobID != job.ID, "unexpected condition")
 
 			// Verify we can retrieve the comment
 			comments, err := db.GetCommentsForJob(job.ID)
-			if err != nil {
-				t.Fatalf("GetCommentsForJob failed: %v", err)
-			}
-			if len(comments) != 1 {
-				t.Fatalf("Expected 1 comment, got %d", len(comments))
-			}
+			require.NoError(t, err, "GetCommentsForJob failed: %v")
+
+			assert.Len(t, comments, 1, "unexpected condition")
 			verifyComment(t, comments[0], "test-user", comment)
 		})
 	}
@@ -76,12 +66,8 @@ func TestAddCommentToJobNonExistent(t *testing.T) {
 
 	// Try to add a comment to a job that doesn't exist
 	_, err := db.AddCommentToJob(99999, "test-user", "This should fail")
-	if err == nil {
-		t.Fatal("Expected error when adding comment to non-existent job")
-	}
-	if err != sql.ErrNoRows {
-		t.Errorf("Expected sql.ErrNoRows, got: %v", err)
-	}
+	require.Error(t, err, "unexpected condition")
+	assert.Equal(t, err, sql.ErrNoRows, "unexpected condition")
 }
 
 // TestAddCommentToJobMultipleComments verifies that multiple comments
@@ -105,19 +91,15 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 
 	for _, c := range comments {
 		_, err := db.AddCommentToJob(job.ID, c.user, c.message)
-		if err != nil {
-			t.Fatalf("AddCommentToJob failed for %s: %v", c.user, err)
-		}
+		require.NoError(t, err, "AddCommentToJob failed for %s: %v", c.user)
+
 	}
 
 	// Verify all comments were added
 	retrieved, err := db.GetCommentsForJob(job.ID)
-	if err != nil {
-		t.Fatalf("GetCommentsForJob failed: %v", err)
-	}
-	if len(retrieved) != len(comments) {
-		t.Fatalf("Expected %d comments, got %d", len(comments), len(retrieved))
-	}
+	require.NoError(t, err, "GetCommentsForJob failed: %v")
+
+	assert.Len(t, comments, len(retrieved), "unexpected condition")
 
 	// Verify comments are in order
 	for i, c := range comments {
@@ -135,21 +117,14 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 
 	// Verify no review exists for this job
 	_, err := db.GetReviewByJobID(job.ID)
-	if err == nil {
-		t.Fatal("Expected error getting review for job with no review")
-	}
+	require.Error(t, err, "unexpected condition")
 
 	// Add a comment to the job (should succeed even without a review)
 	resp, err := db.AddCommentToJob(job.ID, "test-user", "Comment on job without review")
-	if err != nil {
-		t.Fatalf("AddCommentToJob failed: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("Expected non-nil response")
-	}
-	if resp.Response != "Comment on job without review" {
-		t.Errorf("Unexpected response: %q", resp.Response)
-	}
+	require.NoError(t, err, "AddCommentToJob failed: %v")
+
+	assert.NotNil(t, resp, "unexpected condition")
+	assert.Equal(t, "Comment on job without review", resp.Response, "unexpected condition")
 }
 
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
@@ -179,16 +154,10 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 			}, "Test review output\n\n## Verdict: PASS")
 
 			review, err := db.GetReviewByJobID(job.ID)
-			if err != nil {
-				t.Fatalf("GetReviewByJobID failed: %v", err)
-			}
+			require.NoError(t, err, "GetReviewByJobID failed: %v")
 
-			if review.Job == nil {
-				t.Fatal("Expected review.Job to be populated")
-			}
-			if review.Job.Model != tt.expectedModel {
-				t.Errorf("Expected model %q, got %q", tt.expectedModel, review.Job.Model)
-			}
+			assert.NotNil(t, review.Job, "unexpected condition")
+			assert.Equal(t, tt.expectedModel, review.Job.Model, "unexpected condition")
 		})
 	}
 }
@@ -216,75 +185,50 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 	t.Run("fetch multiple jobs", func(t *testing.T) {
 		jobIDs := []int64{job1.ID, job2.ID, job3.ID, nonExistentJobID}
 		results, err := db.GetJobsWithReviewsByIDs(jobIDs)
-		if err != nil {
-			t.Fatalf("GetJobsWithReviewsByIDs failed: %v", err)
-		}
+		require.NoError(t, err, "GetJobsWithReviewsByIDs failed: %v")
 
-		if len(results) != 3 {
-			t.Errorf("Expected 3 results, got %d", len(results))
-		}
+		assert.Len(t, results, 3)
 
 		// Check job 1 (with review)
 		res1, ok := results[job1.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job1.ID)
-		}
-		if res1.Job.ID != job1.ID {
-			t.Errorf("Expected job ID %d, got %d", job1.ID, res1.Job.ID)
-		}
-		if res1.Review == nil {
-			t.Error("Expected review for job 1, but got nil")
-		} else if res1.Review.Output != "output1" {
-			t.Errorf("Expected review output 'output1', got %q", res1.Review.Output)
+		assert.True(t, ok)
+		assert.Equal(t, job1.ID, res1.Job.ID)
+		assert.NotNil(t, res1.Review, "Expected review for job 1, but got nil")
+		if res1.Review != nil {
+			assert.Equal(t, "output1", res1.Review.Output)
 		}
 
 		// Check job 2 (no review)
 		res2, ok := results[job2.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job2.ID)
-		}
-		if res2.Job.ID != job2.ID {
-			t.Errorf("Expected job ID %d, got %d", job2.ID, res2.Job.ID)
-		}
-		if res2.Review != nil {
-			t.Errorf("Expected no review for job 2, but got one: %+v", res2.Review)
-		}
+		assert.True(t, ok)
+		assert.Equal(t, job2.ID, res2.Job.ID)
+		assert.Nil(t, res2.Review)
 
 		// Check job 3 (with review)
 		res3, ok := results[job3.ID]
-		if !ok {
-			t.Errorf("Expected result for job ID %d", job3.ID)
-		}
-		if res3.Review == nil {
-			t.Error("Expected review for job 3, but got nil")
-		} else if res3.Review.Output != "output3" {
-			t.Errorf("Expected review output 'output3', got %q", res3.Review.Output)
+		assert.True(t, ok)
+		assert.NotNil(t, res3.Review, "Expected review for job 3, but got nil")
+		if res3.Review != nil {
+			assert.Equal(t, "output3", res3.Review.Output)
 		}
 
 		// Check non-existent job
-		if _, ok := results[nonExistentJobID]; ok {
-			t.Errorf("Expected no result for non-existent job ID %d", nonExistentJobID)
-		}
+		_, ok = results[nonExistentJobID]
+		assert.False(t, ok)
 	})
 
 	t.Run("empty id list", func(t *testing.T) {
 		results, err := db.GetJobsWithReviewsByIDs([]int64{})
-		if err != nil {
-			t.Fatalf("GetJobsWithReviewsByIDs with empty slice failed: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("Expected 0 results for empty ID list, got %d", len(results))
-		}
+		require.NoError(t, err, "GetJobsWithReviewsByIDs with empty slice failed: %v")
+
+		assert.Empty(t, results, "unexpected condition")
 	})
 
 	t.Run("only non-existent ids", func(t *testing.T) {
 		results, err := db.GetJobsWithReviewsByIDs([]int64{999, 998, 997})
-		if err != nil {
-			t.Fatalf("GetJobsWithReviewsByIDs with non-existent IDs failed: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("Expected 0 results for non-existent IDs, got %d", len(results))
-		}
+		require.NoError(t, err, "GetJobsWithReviewsByIDs with non-existent IDs failed: %v")
+
+		assert.Empty(t, results, "unexpected condition")
 	})
 }
 
@@ -301,9 +245,7 @@ func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 	failJob := createCompletedJobWithOptions(t, db, EnqueueOpts{RepoID: repo.ID, GitRef: "fail222"}, "- High — Critical bug found")
 
 	results, err := db.GetJobsWithReviewsByIDs([]int64{passJob.ID, failJob.ID})
-	if err != nil {
-		t.Fatalf("GetJobsWithReviewsByIDs failed: %v", err)
-	}
+	require.NoError(t, err, "GetJobsWithReviewsByIDs failed: %v")
 
 	cases := []struct {
 		name        string
@@ -318,22 +260,15 @@ func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res, ok := results[tc.jobID]
-			if !ok {
-				t.Fatalf("Expected result for job ID %d", tc.jobID)
-			}
-			if res.Job.Verdict == nil {
-				t.Fatal("Expected Verdict to be populated")
-			}
-			if *res.Job.Verdict != tc.wantVerdict {
-				t.Errorf("Expected verdict %s, got %q", tc.wantVerdict, *res.Job.Verdict)
-			}
-			if res.Review == nil {
-				t.Fatal("Expected review")
-			}
-			if res.Review.VerdictBool == nil {
-				t.Fatal("Expected VerdictBool, got nil")
-			} else if *res.Review.VerdictBool != tc.wantBool {
-				t.Errorf("Expected VerdictBool=%d, got %d", tc.wantBool, *res.Review.VerdictBool)
+			assert.True(t, ok)
+			assert.NotNil(t, res.Job.Verdict)
+			assert.Equal(t, tc.wantVerdict, *res.Job.Verdict)
+			assert.NotNil(t, res.Review)
+			if res.Review != nil {
+				assert.NotNil(t, res.Review.VerdictBool)
+				if res.Review.VerdictBool != nil {
+					assert.Equal(t, tc.wantBool, *res.Review.VerdictBool)
+				}
 			}
 		})
 	}
@@ -355,18 +290,11 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 		}, "No issues found.")
 
 		review, err := db.GetReviewByJobID(job.ID)
-		if err != nil {
-			t.Fatalf("GetReviewByJobID: %v", err)
-		}
-		if review.VerdictBool == nil {
-			t.Fatal("VerdictBool should be set for new reviews")
-		}
-		if *review.VerdictBool != 1 {
-			t.Errorf("expected VerdictBool=1 (pass), got %d", *review.VerdictBool)
-		}
-		if review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P" {
-			t.Errorf("expected job verdict P, got %v", review.Job.Verdict)
-		}
+		require.NoError(t, err, "GetReviewByJobID: %v")
+
+		assert.NotNil(t, review.VerdictBool, "unexpected condition")
+		assert.Equal(t, 1, *review.VerdictBool, "unexpected condition")
+		assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P", "unexpected condition")
 	})
 
 	t.Run("legacy review with NULL verdict_bool falls back to ParseVerdict", func(t *testing.T) {
@@ -380,20 +308,15 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 
 		// Simulate legacy row by setting verdict_bool to NULL
 		if _, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID); err != nil {
-			t.Fatalf("nullify verdict_bool: %v", err)
+			require.NoError(t, err, "nullify verdict_bool: %v")
 		}
 
 		review, err := db.GetReviewByJobID(job.ID)
-		if err != nil {
-			t.Fatalf("GetReviewByJobID: %v", err)
-		}
-		if review.VerdictBool != nil {
-			t.Errorf("expected VerdictBool=nil for legacy row, got %d", *review.VerdictBool)
-		}
+		require.NoError(t, err, "GetReviewByJobID: %v")
+
+		assert.Nil(t, review.VerdictBool, "unexpected condition")
 		// Should still get correct verdict via ParseVerdict fallback
-		if review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P" {
-			t.Errorf("expected fallback verdict P, got %v", review.Job.Verdict)
-		}
+		assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "P", "unexpected condition")
 	})
 }
 
@@ -412,34 +335,23 @@ func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
 	}, "- High — Bug found")
 
 	review, err := db.GetReviewByCommitSHA("shav123")
-	if err != nil {
-		t.Fatalf("GetReviewByCommitSHA: %v", err)
-	}
-	if review.VerdictBool == nil || *review.VerdictBool != 0 {
-		t.Errorf("expected VerdictBool=0 (fail), got %v", review.VerdictBool)
-	}
-	if review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "F" {
-		t.Errorf("expected verdict F, got %v", review.Job.Verdict)
-	}
+	require.NoError(t, err, "GetReviewByCommitSHA: %v")
+
+	assert.False(t, review.VerdictBool == nil || *review.VerdictBool != 0, "unexpected condition")
+	assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "F", "unexpected condition")
 }
 
 // createCompletedJobWithOptions helper creates a job, claims it, and completes it.
 func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, output string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(opts)
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	require.NoError(t, err, "EnqueueJob failed: %v")
+
 	claimed, err := db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	if claimed == nil {
-		t.Fatal("ClaimJob returned nil; expected a queued job")
-	}
-	if claimed.ID != job.ID {
-		t.Fatalf("Claimed job ID %d, expected %d", claimed.ID, job.ID)
-	}
+	require.NoError(t, err, "ClaimJob failed: %v")
+
+	assert.NotNil(t, claimed, "unexpected condition")
+	assert.Equal(t, claimed.ID, job.ID, "unexpected condition")
 
 	agent := opts.Agent
 	if agent == "" {
@@ -447,27 +359,20 @@ func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, outpu
 	}
 
 	if err := db.CompleteJob(job.ID, agent, "prompt", output); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.NoError(t, err, "CompleteJob failed: %v")
 	}
 
 	// Refresh job to get updated status/fields
 	updatedJob, err := db.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
-	}
-	if updatedJob.Status != JobStatusDone {
-		t.Fatalf("Expected job status %s, got %s", JobStatusDone, updatedJob.Status)
-	}
+	require.NoError(t, err, "GetJobByID failed: %v")
+
+	assert.Equal(t, JobStatusDone, updatedJob.Status, "unexpected condition")
 	return updatedJob
 }
 
 // verifyComment helper checks if a comment matches expected values.
 func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg string) {
 	t.Helper()
-	if actual.Responder != expectedUser {
-		t.Errorf("Expected responder %q, got %q", expectedUser, actual.Responder)
-	}
-	if actual.Response != expectedMsg {
-		t.Errorf("Expected response %q, got %q", expectedMsg, actual.Response)
-	}
+	assert.Equal(t, expectedUser, actual.Responder, "unexpected condition")
+	assert.Equal(t, expectedMsg, actual.Response, "unexpected condition")
 }

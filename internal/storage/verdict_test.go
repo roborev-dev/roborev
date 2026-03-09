@@ -1,6 +1,10 @@
 package storage
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 const (
 	VerdictPass = "P"
@@ -14,12 +18,12 @@ type verdictTestCase struct {
 
 func runVerdictTests(t *testing.T, want string, tests []verdictTestCase) {
 	t.Helper()
+	assert := assert.New(t)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ParseVerdict(tt.output)
-			if got != want {
-				t.Errorf("ParseVerdict() = %q, want %q", got, want)
-			}
+			assert.Equal(want, got, "ParseVerdict() = %q, want %q", got, want)
 		})
 	}
 }

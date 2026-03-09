@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"reflect"
 	"strings"
@@ -45,17 +47,12 @@ func TestRemapStdinParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseRemapPairs(tt.input)
 			if tt.expectedErr != nil {
-				if !errors.Is(err, tt.expectedErr) {
-					t.Errorf("parseRemapPairs() error = %v, want %v", err, tt.expectedErr)
-				}
+				require.ErrorIs(t, err, tt.expectedErr, "unexpected condition")
 				return
 			}
-			if err != nil {
-				t.Fatalf("parseRemapPairs() unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(got, tt.expected) {
-				t.Errorf("parseRemapPairs() = %v, want %v", got, tt.expected)
-			}
+			require.NoError(t, err)
+
+			assert.True(t, reflect.DeepEqual(got, tt.expected), "unexpected condition")
 		})
 	}
 }
@@ -86,10 +83,7 @@ func TestGitSHAValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := gitSHAPattern.MatchString(tt.input)
-			if got != tt.valid {
-				t.Errorf("gitSHAPattern.MatchString(%q) = %v, want %v",
-					tt.input, got, tt.valid)
-			}
+			assert.Equal(t, got, tt.valid, "unexpected condition")
 		})
 	}
 }

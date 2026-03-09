@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,10 +14,10 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// createTestGitRepo creates a temporary git repo with an initial commit and
-// returns the repo path (symlink-resolved) and a helper to run git commands in it.
 func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -24,31 +25,24 @@ func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 		tmpDir = resolved
 	}
 	repoDir := filepath.Join(tmpDir, "repo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v\n%s", args, out)
 	}
 	run("init")
 	run("config", "user.email", "test@test.com")
 	run("config", "user.name", "Test")
 	testFile := filepath.Join(repoDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644))
 	run("add", ".")
 	run("commit", "-m", "initial")
 	return repoDir, run
 }
 
-// mockAPI creates an httptest.Server with the given handler and returns
-// an HTTPClient pointing at it. The server is closed when the test finishes.
 func mockAPI(t *testing.T, handler http.HandlerFunc) *HTTPClient {
 	t.Helper()
 	s := httptest.NewServer(handler)
@@ -58,33 +52,28 @@ func mockAPI(t *testing.T, handler http.HandlerFunc) *HTTPClient {
 
 func assertRequest(t *testing.T, r *http.Request, method, path string) {
 	t.Helper()
-	if r.Method != method || r.URL.Path != path {
-		t.Errorf("expected %s %s, got %s %s", method, path, r.Method, r.URL.Path)
-	}
+	assert.Equal(t, method, r.Method)
+	assert.Equal(t, path, r.URL.Path)
 }
 
 func assertQuery(t *testing.T, r *http.Request, key, expected string) {
 	t.Helper()
-	if got := r.URL.Query().Get(key); got != expected {
-		t.Errorf("expected %s query param %q, got %q", key, expected, got)
-	}
+	assert.Equal(t, expected, r.URL.Query().Get(key), "query param %s", key)
 }
 
 func decodeJSON(t *testing.T, r *http.Request, v any) {
 	t.Helper()
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		t.Fatalf("decode request: %v", err)
-	}
+	require.NoError(t, json.NewDecoder(r.Body).Decode(v), "decode request")
 }
 
 func writeTestJSON(t *testing.T, w http.ResponseWriter, v any) {
 	t.Helper()
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		t.Fatalf("encode response: %v", err)
-	}
+	require.NoError(t, json.NewEncoder(w).Encode(v), "encode response")
 }
 
 func TestHTTPClientAddComment(t *testing.T) {
+	assert := assert.New(t)
+
 	var received struct {
 		JobID     int    `json:"job_id"`
 		Commenter string `json:"commenter"`
@@ -96,22 +85,15 @@ func TestHTTPClientAddComment(t *testing.T) {
 		decodeJSON(t, r, &received)
 		w.WriteHeader(http.StatusCreated)
 	})
-	if err := client.AddComment(42, "test-agent", "Fixed the issue"); err != nil {
-		t.Fatalf("AddComment failed: %v", err)
-	}
-
-	if received.JobID != 42 {
-		t.Errorf("expected job_id 42, got %v", received.JobID)
-	}
-	if received.Commenter != "test-agent" {
-		t.Errorf("expected commenter test-agent, got %v", received.Commenter)
-	}
-	if received.Comment != "Fixed the issue" {
-		t.Errorf("expected comment to match, got %v", received.Comment)
-	}
+	require.NoError(t, client.AddComment(42, "test-agent", "Fixed the issue"), "AddComment failed")
+	assert.Equal(42, received.JobID)
+	assert.Equal("test-agent", received.Commenter)
+	assert.Equal("Fixed the issue", received.Comment)
 }
 
 func TestHTTPClientMarkReviewClosed(t *testing.T) {
+	assert := assert.New(t)
+
 	var received struct {
 		JobID  int  `json:"job_id"`
 		Closed bool `json:"closed"`
@@ -122,19 +104,14 @@ func TestHTTPClientMarkReviewClosed(t *testing.T) {
 		decodeJSON(t, r, &received)
 		w.WriteHeader(http.StatusOK)
 	})
-	if err := client.MarkReviewClosed(99); err != nil {
-		t.Fatalf("MarkReviewClosed failed: %v", err)
-	}
-
-	if received.JobID != 99 {
-		t.Errorf("expected job_id 99, got %v", received.JobID)
-	}
-	if received.Closed != true {
-		t.Errorf("expected closed true, got %v", received.Closed)
-	}
+	require.NoError(t, client.MarkReviewClosed(99), "MarkReviewClosed failed")
+	assert.Equal(99, received.JobID)
+	assert.True(received.Closed)
 }
 
 func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
+	assert := assert.New(t)
+
 	var reviewCalls int32
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -154,30 +131,23 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 			writeTestJSON(t, w, storage.Review{ID: 1, JobID: 1, Output: "Review complete"})
 			return
 		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			assert.Empty(t, fmt.Sprintf("%s %s", r.Method, r.URL.Path), "unexpected request")
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
 	client.SetPollInterval(1 * time.Millisecond)
 	review, err := client.WaitForReview(1)
-	if err != nil {
-		t.Fatalf("WaitForReview failed: %v", err)
-	}
-	if review.Output != "Review complete" {
-		t.Errorf("unexpected output: %s", review.Output)
-	}
-	if atomic.LoadInt32(&reviewCalls) < 2 {
-		t.Errorf("expected review to be retried after 404")
-	}
+	require.NoError(t, err, "WaitForReview failed")
+	assert.Equal("Review complete", review.Output)
+	assert.GreaterOrEqual(atomic.LoadInt32(&reviewCalls), int32(2), "expected review to be retried after 404")
 }
 
 func TestFindJobForCommit(t *testing.T) {
-	// Skip if git is not available (minimal CI environments)
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	// Create a real git repo and worktree to test path normalization
 	mainRepo, runGit := createTestGitRepo(t)
 	worktreeDir := filepath.Join(filepath.Dir(mainRepo), "worktree")
 	runGit("worktree", "add", worktreeDir, "HEAD")
@@ -199,12 +169,8 @@ func TestFindJobForCommit(t *testing.T) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 					repo := r.URL.Query().Get("repo")
-					if repo == "" {
-						t.Error("expected server to receive a repo path, got empty")
-					}
-					if repo == worktreeDir {
-						t.Errorf("expected server to NOT receive worktree path %q", worktreeDir)
-					}
+					assert.NotEmpty(t, repo, "expected server to receive a repo path")
+					assert.NotEqual(t, worktreeDir, repo, "expected server to NOT receive worktree path")
 
 					normalizedReceived := repo
 					if resolved, err := filepath.EvalSymlinks(repo); err == nil {
@@ -256,9 +222,7 @@ func TestFindJobForCommit(t *testing.T) {
 			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				var calls int
 				t.Cleanup(func() {
-					if calls != 2 {
-						t.Errorf("expected 2 calls, got %d", calls)
-					}
+					assert.Equal(t, 2, calls, "expected 2 calls")
 				})
 				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
@@ -266,19 +230,15 @@ func TestFindJobForCommit(t *testing.T) {
 
 					repo := r.URL.Query().Get("repo")
 					if calls == 1 {
-						if repo == "" {
-							t.Error("expected first call to have non-empty repo")
-						}
-						// Return empty to trigger fallback
+						assert.NotEmpty(t, repo, "expected first call to have non-empty repo")
+
 						writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
 						return
 					}
 
 					if calls == 2 {
-						if repo != "" {
-							t.Errorf("expected second call to have empty repo, got %q", repo)
-						}
-						// Fallback query (no repo filter)
+						assert.Empty(t, repo, "expected second call to have empty repo")
+
 						writeTestJSON(t, w, map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
@@ -286,7 +246,7 @@ func TestFindJobForCommit(t *testing.T) {
 						})
 						return
 					}
-					t.Errorf("unexpected call %d", calls)
+					assert.Equal(t, 0, calls, "unexpected call")
 				}
 			},
 			expectedJobID: 1,
@@ -295,26 +255,21 @@ func TestFindJobForCommit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			handler := tc.setupMock(t)
 			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				handler(t, w, r)
 			})
 			job, err := client.FindJobForCommit(tc.queryRepo, sha)
-			if err != nil {
-				t.Fatalf("FindJobForCommit failed: %v", err)
-			}
+			require.NoError(err, "FindJobForCommit failed")
 
 			if tc.expectNotFound {
-				if job != nil {
-					t.Errorf("expected no job, got ID %d", job.ID)
-				}
+				assert.Nil(job)
 			} else {
-				if job == nil {
-					t.Fatalf("expected to find job, got nil")
-				}
-				if job.ID != tc.expectedJobID {
-					t.Errorf("expected job ID %d, got %d", tc.expectedJobID, job.ID)
-				}
+				require.NotNil(job, "expected to find job")
+				assert.Equal(tc.expectedJobID, job.ID)
 			}
 		})
 	}
@@ -366,6 +321,9 @@ func TestFindPendingJobForRef(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			var requestedStatuses []string
 			var mu sync.Mutex
 
@@ -375,9 +333,8 @@ func TestFindPendingJobForRef(t *testing.T) {
 				assertQuery(t, r, "git_ref", "abc123..def456")
 
 				expectedRepo, err := filepath.Abs("/test/repo")
-				if err != nil {
-					t.Fatalf("filepath.Abs failed: %v", err)
-				}
+				assert.NoError(err, "filepath.Abs failed: %v", err)
+
 				assertQuery(t, r, "repo", expectedRepo)
 
 				status := r.URL.Query().Get("status")
@@ -393,33 +350,20 @@ func TestFindPendingJobForRef(t *testing.T) {
 			})
 
 			job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
-			if err != nil {
-				t.Fatalf("FindPendingJobForRef failed: %v", err)
-			}
+			require.NoError(err, "FindPendingJobForRef failed")
 
 			if tc.expectNotFound {
-				if job != nil {
-					t.Errorf("expected nil job, got ID %d", job.ID)
-				}
+				assert.Nil(job)
 			} else {
-				if job == nil {
-					t.Fatal("expected to find job")
-				}
-				if job.ID != tc.expectJobID {
-					t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
-				}
-				if tc.expectStatus != "" && job.Status != tc.expectStatus {
-					t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
-				}
+				require.NotNil(job, "expected to find job")
+				assert.Equal(tc.expectJobID, job.ID)
+				assert.Equal(tc.expectStatus, job.Status)
+
 			}
 
-			if len(requestedStatuses) != len(tc.expectedRequestOrder) {
-				t.Errorf("expected %d requests, got %d: %v", len(tc.expectedRequestOrder), len(requestedStatuses), requestedStatuses)
-			} else {
+			if assert.Len(requestedStatuses, len(tc.expectedRequestOrder), "request count") {
 				for i, want := range tc.expectedRequestOrder {
-					if requestedStatuses[i] != want {
-						t.Errorf("request %d: expected status %q, got %q", i, want, requestedStatuses[i])
-					}
+					assert.Equal(want, requestedStatuses[i], "request %d status", i)
 				}
 			}
 		})

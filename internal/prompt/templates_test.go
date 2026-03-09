@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type systemPromptTestCase struct {
@@ -19,43 +21,31 @@ type systemPromptTestCase struct {
 }
 
 func (tc *systemPromptTestCase) assert(t *testing.T, got string) {
+	assert := assert.New(t)
+
 	t.Helper()
 	if tc.wantEmpty {
-		if got != "" {
-			t.Errorf("got %q, want empty string", got)
-		}
+		assert.Empty(got, "got %q, want empty string", got)
 		return
 	}
 
 	if tc.wantExact != "" && got != tc.wantExact {
-		t.Errorf("got %q, want %q", got, tc.wantExact)
+		assert.Equal(tc.wantExact, got, "got %q, want %q", got, tc.wantExact)
 	}
 
 	if tc.wantNotDefault {
 		// The default prompt (SystemPromptSingle) does NOT contain "Do NOT explain your process"
 		// but let's be safer.
 		// SystemPromptSingle is the fallback base.
-		// If we got the default base, it means we didn't load the template.
-		// We can check if it contains SystemPromptSingle.
-		if strings.Contains(got, SystemPromptSingle) {
-			t.Errorf("got default SystemPromptSingle, wanted specific template")
-		}
+		assert.NotContains(got, SystemPromptSingle, "got default SystemPromptSingle, wanted specific template")
 	}
 
 	for _, substr := range tc.wantContains {
-		if !strings.Contains(got, substr) {
-			snippet := got
-			if len(got) > 100 {
-				snippet = got[:100] + "..."
-			}
-			t.Errorf("got prompt missing %q. Got start: %s", substr, snippet)
-		}
+		assert.Contains(got, substr, "got prompt missing %q", substr)
 	}
 
 	for _, substr := range tc.wantNotContains {
-		if strings.Contains(got, substr) {
-			t.Errorf("prompt should NOT contain %q", substr)
-		}
+		assert.NotContains(got, substr, "prompt should NOT contain %q", substr)
 	}
 }
 
@@ -234,18 +224,17 @@ func TestGetSystemPrompt_Instructions(t *testing.T) {
 }
 
 func TestGetSystemPrompt_Exported(t *testing.T) {
+	assert := assert.New(t)
 	before := time.Now().UTC().Truncate(24 * time.Hour)
 	got := GetSystemPrompt("gemini", "review")
 	after := time.Now().UTC().Truncate(24 * time.Hour)
 
-	if got == "" {
-		t.Error("GetSystemPrompt returned empty string for gemini review")
-	}
+	assert.NotEmpty(got, "GetSystemPrompt returned empty string for gemini review")
 
 	beforeStr := fmt.Sprintf("Current date: %s (UTC)", before.Format("2006-01-02"))
 	afterStr := fmt.Sprintf("Current date: %s (UTC)", after.Format("2006-01-02"))
 
-	if !strings.Contains(got, beforeStr) && !strings.Contains(got, afterStr) {
-		t.Errorf("prompt missing expected date string. Looked for %q or %q", beforeStr, afterStr)
-	}
+	assert.Condition(func() bool {
+		return strings.Contains(got, beforeStr) || strings.Contains(got, afterStr)
+	}, "prompt missing expected date string. Looked for %q or %q", beforeStr, afterStr)
 }

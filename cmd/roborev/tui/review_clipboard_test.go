@@ -3,14 +3,14 @@ package tui
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// mockClipboard implements ClipboardWriter for testing
 type mockClipboard struct {
 	lastText string
 	err      error
@@ -32,29 +32,18 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("This is the review content to copy"))
 
-	// Press 'y' to yank/copy
 	m, cmd := pressKey(m, 'y')
 
-	// Should return a command to copy to clipboard
-	if cmd == nil {
-		t.Fatal("Expected a command to be returned")
-	}
+	assert.NotNil(t, cmd, "Expected a command to be returned")
 
-	// Execute the command to get the result
 	msg := cmd()
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
+	require.NoError(t, result.err, "unexpected condition")
 
 	expectedContent := "Review #1\n\nThis is the review content to copy"
-	if mock.lastText != expectedContent {
-		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
-	}
+	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
 }
 
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
@@ -64,69 +53,45 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	// Simulate receiving a successful clipboard result (view captured at trigger time)
 	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewReview})
 
-	if m.flashMessage != "Copied to clipboard" {
-		t.Errorf("Expected flash message 'Copied to clipboard', got %q", m.flashMessage)
-	}
+	assert.Equal(t, "Copied to clipboard", m.flashMessage, "unexpected condition")
 
-	if m.flashExpiresAt.IsZero() {
-		t.Error("Expected flashExpiresAt to be set")
-	}
+	assert.False(t, m.flashExpiresAt.IsZero(), "unexpected condition")
 
-	if m.flashView != viewReview {
-		t.Errorf("Expected flashView to be viewReview, got %v", m.flashView)
-	}
+	assert.Equal(t, viewReview, m.flashView, "unexpected condition")
 
-	// Verify flash message appears in the rendered output
 	output := m.renderReviewView()
-	if !strings.Contains(output, "Copied to clipboard") {
-		t.Error("Expected flash message to appear in rendered output")
-	}
+	assert.Contains(t, output, "Copied to clipboard", "unexpected condition")
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
 
-	// Simulate receiving a failed clipboard result
 	m, _ = updateModel(t, m, clipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: viewQueue})
 
-	if m.err == nil {
-		t.Error("Expected error to be set")
-	}
+	require.Error(t, m.err, "unexpected condition")
 
-	if !strings.Contains(m.err.Error(), "copy failed") {
-		t.Errorf("Expected error to contain 'copy failed', got %q", m.err.Error())
-	}
+	assert.Contains(t, m.err.Error(), "copy failed", "unexpected condition")
 }
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
-	// Test that flash message is attributed to the view where copy was triggered,
-	// even if the user switches views before the clipboard result arrives.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
 	m.height = 24
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
-	// User switches to review view before clipboard result arrives
 	m.currentView = viewReview
 
-	// Clipboard result arrives with view captured at trigger time (queue)
 	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewQueue})
 
-	// Flash should be attributed to queue view, not current (review) view
-	if m.flashView != viewQueue {
-		t.Errorf("Expected flashView to be viewQueue (trigger view), got %v", m.flashView)
-	}
+	assert.Equal(t, viewQueue, m.flashView, "unexpected condition")
 
-	// Flash should NOT appear in review view since it was triggered in queue
 	output := m.renderReviewView()
-	if strings.Contains(output, "Copied to clipboard") {
-		t.Error("Flash message should not appear in review view when triggered from queue")
-	}
+	assert.NotContains(t, output, "Copied to clipboard", "unexpected condition")
 }
 
 func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
@@ -138,18 +103,12 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 	}
 	m.selectedIdx = 0
 
-	// Press 'y' on running job - should not copy
 	_, cmd := pressKey(m, 'y')
-	if cmd != nil {
-		t.Error("Expected no command for running job")
-	}
+	assert.Nil(t, cmd, "unexpected condition")
 
-	// Select completed job
 	m.selectedIdx = 1
 	_, cmd = pressKey(m, 'y')
-	if cmd == nil {
-		t.Error("Expected command for completed job")
-	}
+	assert.NotNil(t, cmd, "unexpected condition")
 }
 
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
@@ -161,24 +120,46 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	))
 	m.clipboard = mock
 
-	// Execute fetchReviewAndCopy
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
+	require.NoError(t, result.err, "unexpected condition")
 
-	// Clipboard should contain header with JobID + review content
 	expectedContent := "Review #123\n\nReview content for clipboard"
-	if mock.lastText != expectedContent {
-		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
+	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
+}
+
+func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
+	mock := &mockClipboard{}
+
+	responses := []storage.Response{
+		{
+			ID:        1,
+			Responder: "dev",
+			Response:  "This is expected behavior",
+			CreatedAt: time.Date(2025, 3, 10, 9, 0, 0, 0, time.UTC),
+		},
 	}
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Found an issue"},
+		responses,
+	))
+	m.clipboard = mock
+
+	cmd := m.fetchReviewAndCopy(123, nil)
+	msg := cmd()
+
+	result, ok := msg.(clipboardResultMsg)
+	assert.True(t, ok, "unexpected condition")
+	require.NoError(t, result.err, "unexpected condition")
+
+	assert.Contains(t, mock.lastText, "Found an issue", "unexpected condition")
+	assert.Contains(t, mock.lastText, "--- Comments ---", "unexpected condition")
+	assert.Contains(t, mock.lastText, "[Mar 10 09:00] dev:", "unexpected condition")
+	assert.Contains(t, mock.lastText, "This is expected behavior", "unexpected condition")
 }
 
 func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
@@ -224,7 +205,7 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
-	// Create test server that returns 404
+
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -233,17 +214,11 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err == nil {
-		t.Error("Expected error for 404 response")
-	}
+	require.Error(t, result.err, "unexpected condition")
 
-	if !strings.Contains(result.err.Error(), "no review found") {
-		t.Errorf("Expected 'no review found' error, got %q", result.err.Error())
-	}
+	assert.Contains(t, result.err.Error(), "no review found", "unexpected condition")
 }
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
@@ -256,17 +231,11 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err == nil {
-		t.Error("Expected error for empty output")
-	}
+	require.Error(t, result.err, "unexpected condition")
 
-	if !strings.Contains(result.err.Error(), "review has no content") {
-		t.Errorf("Expected 'review has no content' error, got %q", result.err.Error())
-	}
+	assert.Contains(t, result.err.Error(), "review has no content", "unexpected condition")
 }
 
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
@@ -278,27 +247,16 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 		withReview(makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))),
 	)
 
-	// Press 'y' to copy
 	_, cmd := pressKey(m, 'y')
-	if cmd == nil {
-		t.Fatal("Expected command to be returned")
-	}
+	assert.NotNil(t, cmd, "Expected command to be returned")
 
-	// Execute the command
 	msg := cmd()
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	// Error should propagate
-	if result.err == nil {
-		t.Error("Expected clipboard write error to propagate")
-	}
+	require.Error(t, result.err, "unexpected condition")
 
-	if !strings.Contains(result.err.Error(), "clipboard unavailable") {
-		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
-	}
+	assert.Contains(t, result.err.Error(), "clipboard unavailable", "unexpected condition")
 }
 
 func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
@@ -310,54 +268,38 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	))
 	m.clipboard = mock
 
-	// Fetch succeeds but clipboard write fails
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err == nil {
-		t.Error("Expected clipboard write error after successful fetch")
-	}
+	require.Error(t, result.err, "unexpected condition")
 
-	if !strings.Contains(result.err.Error(), "clipboard unavailable") {
-		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
-	}
+	assert.Contains(t, result.err.Error(), "clipboard unavailable", "unexpected condition")
 }
 
 func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	mock := &mockClipboard{}
 
-	// Server returns a review WITHOUT Job populated (intentionally nil)
 	_, m := mockServerModel(t, mockReviewHandler(
 		storage.Review{ID: 42, JobID: 123, Agent: "test", Output: "Review content"},
 		nil,
 	))
 	m.clipboard = mock
 
-	// Pass a job parameter - this should be injected when review.Job is nil
 	j := makeJob(123, withRepoPath("/path/to/repo"), withRef("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))
 
 	cmd := m.fetchReviewAndCopy(123, &j)
 	msg := cmd()
 
 	result, ok := msg.(clipboardResultMsg)
-	if !ok {
-		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
-	}
+	assert.True(t, ok, "unexpected condition")
 
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
+	require.NoError(t, result.err, "unexpected condition")
 
-	// Clipboard should contain header with injected job info (job ID, truncated SHA)
 	expectedContent := "Review #123 /path/to/repo a1b2c3d\n\nReview content"
-	if mock.lastText != expectedContent {
-		t.Errorf("Expected clipboard with injected job info, got %q", mock.lastText)
-	}
+	assert.Equal(t, expectedContent, mock.lastText, "unexpected condition")
 }
 
 func TestFormatClipboardContent(t *testing.T) {
@@ -382,7 +324,7 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "review with JobID only (no job struct)",
 			review: &storage.Review{
-				ID:     99, // review.ID is different from JobID
+				ID:     99,
 				JobID:  42,
 				Output: "Content here",
 			},
@@ -414,7 +356,7 @@ func TestFormatClipboardContent(t *testing.T) {
 				Job: &storage.ReviewJob{
 					ID:       99,
 					RepoPath: "/Users/test/myrepo",
-					GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", // exactly 40 hex chars
+					GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 				},
 			},
 			expected: "Review #99 /Users/test/myrepo a1b2c3d\n\nReview content",
@@ -448,7 +390,7 @@ func TestFormatClipboardContent(t *testing.T) {
 		{
 			name: "always uses job ID from Job struct",
 			review: &storage.Review{
-				ID:     999, // review.ID is ignored when Job is present with valid ID
+				ID:     999,
 				Output: "Review content",
 				Job: &storage.ReviewJob{
 					ID:       555,
@@ -465,7 +407,7 @@ func TestFormatClipboardContent(t *testing.T) {
 				JobID:  123,
 				Output: "Review content",
 				Job: &storage.ReviewJob{
-					ID:       0, // zero ID, should fall back to JobID
+					ID:       0,
 					RepoPath: "/repo/path",
 					GitRef:   "abc1234",
 				},
@@ -479,7 +421,7 @@ func TestFormatClipboardContent(t *testing.T) {
 				JobID:  0,
 				Output: "Review content",
 				Job: &storage.ReviewJob{
-					ID:       0, // zero ID, should fall back to review.ID
+					ID:       0,
 					RepoPath: "/repo/path",
 					GitRef:   "abc1234",
 				},
@@ -507,7 +449,7 @@ func TestFormatClipboardContent(t *testing.T) {
 				Job: &storage.ReviewJob{
 					ID:       102,
 					RepoPath: "/repo",
-					GitRef:   "ABCDEF1234567890ABCDEF1234567890ABCDEF12", // uppercase 40 hex chars
+					GitRef:   "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
 				},
 			},
 			expected: "Review #102 /repo ABCDEF1\n\nContent",
@@ -517,9 +459,7 @@ func TestFormatClipboardContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatClipboardContent(tt.review, nil)
-			if got != tt.expected {
-				t.Errorf("formatClipboardContent() = %q, want %q", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, got, "unexpected condition")
 		})
 	}
 }
@@ -547,29 +487,14 @@ func TestFormatClipboardContentWithResponses(t *testing.T) {
 
 	got := formatClipboardContent(review, responses)
 
-	// Should contain the review output
-	if !strings.Contains(got, "Some findings here") {
-		t.Errorf("Expected review output in result, got %q", got)
-	}
+	assert.Contains(t, got, "Some findings here", "unexpected condition")
 
-	// Should contain the comments section
-	if !strings.Contains(got, "--- Comments ---") {
-		t.Errorf("Expected comments separator, got %q", got)
-	}
+	assert.Contains(t, got, "--- Comments ---", "unexpected condition")
 
-	// Should contain each comment with timestamp and responder
-	if !strings.Contains(got, "[Mar 15 14:30] alice:") {
-		t.Errorf("Expected alice's comment header, got %q", got)
-	}
-	if !strings.Contains(got, "Known issue, ignoring") {
-		t.Errorf("Expected alice's comment body, got %q", got)
-	}
-	if !strings.Contains(got, "[Mar 15 15:00] bob:") {
-		t.Errorf("Expected bob's comment header, got %q", got)
-	}
-	if !strings.Contains(got, "Fixed in next commit") {
-		t.Errorf("Expected bob's comment body, got %q", got)
-	}
+	assert.Contains(t, got, "[Mar 15 14:30] alice:", "unexpected condition")
+	assert.Contains(t, got, "Known issue, ignoring", "unexpected condition")
+	assert.Contains(t, got, "[Mar 15 15:00] bob:", "unexpected condition")
+	assert.Contains(t, got, "Fixed in next commit", "unexpected condition")
 }
 
 func TestFormatClipboardContentNoResponses(t *testing.T) {
@@ -581,12 +506,7 @@ func TestFormatClipboardContentNoResponses(t *testing.T) {
 
 	withNil := formatClipboardContent(review, nil)
 	withEmpty := formatClipboardContent(review, []storage.Response{})
+	assert.Equal(t, withEmpty, withNil, "nil and empty responses should produce same output")
 
-	if withNil != withEmpty {
-		t.Errorf("nil and empty responses should produce same output")
-	}
-
-	if strings.Contains(withNil, "Comments") {
-		t.Error("Should not contain comments section with no responses")
-	}
+	assert.NotContains(t, withNil, "Comments", "unexpected condition")
 }

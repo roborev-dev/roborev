@@ -5,9 +5,12 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIsTaskJob(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		job  storage.ReviewJob
@@ -93,13 +96,13 @@ func TestIsTaskJob(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if tt.job.IsTaskJob() != tt.want {
-			t.Errorf("%q: IsTaskJob() = %v, want %v", tt.name, tt.job.IsTaskJob(), tt.want)
-		}
+		assert.Equal(tt.want, tt.job.IsTaskJob(), "%q: IsTaskJob() = %v, want %v", tt.name, tt.job.IsTaskJob(), tt.want)
 	}
 }
 
 func TestIsDirtyJob(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		job  storage.ReviewJob
@@ -145,13 +148,13 @@ func TestIsDirtyJob(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if tt.job.IsDirtyJob() != tt.want {
-			t.Errorf("%q: IsDirtyJob() = %v, want %v", tt.name, tt.job.IsDirtyJob(), tt.want)
-		}
+		assert.Equal(tt.want, tt.job.IsDirtyJob(), "%q: IsDirtyJob() = %v, want %v", tt.name, tt.job.IsDirtyJob(), tt.want)
 	}
 }
 
 func TestUsesStoredPrompt(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		job  storage.ReviewJob
@@ -168,9 +171,7 @@ func TestUsesStoredPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.job.UsesStoredPrompt(); got != tt.want {
-				t.Errorf("UsesStoredPrompt() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(tt.want, tt.job.UsesStoredPrompt())
 		})
 	}
 }

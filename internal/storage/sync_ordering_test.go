@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
@@ -26,19 +29,13 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 
 	// Should return nil (not error) for missing parent job
 	err := db.UpsertPulledResponse(response)
-	if err != nil {
-		t.Errorf("Expected nil error for missing parent job, got: %v", err)
-	}
+	require.NoError(t, err, "Expected nil error for missing parent job")
 
 	// Verify no response was inserted
 	var count int
 	err = db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count responses: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("Expected 0 responses for missing parent job, got %d", count)
-	}
+	require.NoError(t, err, "Failed to count responses")
+	assert.Equal(t, 0, count, "Expected 0 responses for missing parent job")
 }
 
 func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
@@ -57,19 +54,14 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 	}
 
 	err := h.db.UpsertPulledResponse(response)
-	if err != nil {
-		t.Fatalf("UpsertPulledResponse failed: %v", err)
-	}
+	require.NoError(t, err, "UpsertPulledResponse failed: %v")
 
 	// Verify response was inserted
 	var count int
 	err = h.db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count responses: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("Expected 1 response, got %d", count)
-	}
+	require.NoError(t, err, "Failed to count responses: %v")
+
+	assert.Equal(t, 1, count, "unexpected condition")
 }
 
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
@@ -82,66 +74,50 @@ func TestClearAllSyncedAt(t *testing.T) {
 
 	// Add a response
 	_, err := h.db.AddCommentToJob(job.ID, "user", "test response")
-	if err != nil {
-		t.Fatalf("AddCommentToJob failed: %v", err)
-	}
+	require.NoError(t, err, "AddCommentToJob failed: %v")
 
 	// Mark everything as synced
 	if err := h.db.MarkJobSynced(job.ID); err != nil {
-		t.Fatalf("MarkJobSynced failed: %v", err)
+		require.NoError(t, err, "MarkJobSynced failed: %v")
 	}
 	review, err := h.db.GetReviewByJobID(job.ID)
-	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
-	}
+	require.NoError(t, err, "GetReviewByJobID failed: %v")
+
 	if err := h.db.MarkReviewSynced(review.ID); err != nil {
-		t.Fatalf("MarkReviewSynced failed: %v", err)
+		require.NoError(t, err, "MarkReviewSynced failed: %v")
 	}
 
 	// Verify nothing needs to sync
 	jobs, _ := h.db.GetJobsToSync(h.machineID, 100)
-	if len(jobs) != 0 {
-		t.Errorf("Expected 0 jobs to sync before clear, got %d", len(jobs))
-	}
+	assert.Empty(t, jobs, "unexpected condition")
 	reviews, _ := h.db.GetReviewsToSync(h.machineID, 100)
-	if len(reviews) != 0 {
-		t.Errorf("Expected 0 reviews to sync before clear, got %d", len(reviews))
-	}
+	assert.Empty(t, reviews, "unexpected condition")
 
 	// Clear all synced_at
 	if err := h.db.ClearAllSyncedAt(); err != nil {
-		t.Fatalf("ClearAllSyncedAt failed: %v", err)
+		require.NoError(t, err, "ClearAllSyncedAt failed: %v")
 	}
 
 	// Now everything should need to sync again
 	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("Expected 1 job to sync after clear, got %d", len(jobs))
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Len(t, jobs, 1, "unexpected condition")
 
 	// Mark job synced so reviews become available
 	if err := h.db.MarkJobSynced(job.ID); err != nil {
-		t.Fatalf("MarkJobSynced failed: %v", err)
+		require.NoError(t, err, "MarkJobSynced failed: %v")
 	}
 
 	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 1 {
-		t.Errorf("Expected 1 review to sync after clear, got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Len(t, reviews, 1, "unexpected condition")
 
 	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response to sync after clear, got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Len(t, responses, 1, "unexpected condition")
 }
 
 // TestBatchMarkSynced verifies the batch MarkXSynced functions work correctly.
@@ -154,46 +130,36 @@ func TestBatchMarkSynced(t *testing.T) {
 		job := h.createCompletedJob(fmt.Sprintf("batch-test-sha-%d", i))
 		jobs = append(jobs, job)
 		_, err := h.db.AddCommentToJob(job.ID, "user", fmt.Sprintf("response %d", i))
-		if err != nil {
-			t.Fatalf("AddCommentToJob failed: %v", err)
-		}
+		require.NoError(t, err, "AddCommentToJob failed: %v")
+
 	}
 
 	t.Run("MarkJobsSynced marks multiple jobs", func(t *testing.T) {
 		// Get jobs to sync before
 		toSync, err := h.db.GetJobsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		if len(toSync) != 5 {
-			t.Fatalf("Expected 5 jobs to sync, got %d", len(toSync))
-		}
+		require.NoError(t, err, "GetJobsToSync failed: %v")
+
+		assert.Len(t, toSync, 5, "unexpected condition")
 
 		// Mark first 3 as synced
 		jobIDs := []int64{jobs[0].ID, jobs[1].ID, jobs[2].ID}
 		if err := h.db.MarkJobsSynced(jobIDs); err != nil {
-			t.Fatalf("MarkJobsSynced failed: %v", err)
+			require.NoError(t, err, "MarkJobsSynced failed: %v")
 		}
 
 		// Verify only 2 jobs left to sync
 		toSync, err = h.db.GetJobsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetJobsToSync failed: %v", err)
-		}
-		if len(toSync) != 2 {
-			t.Errorf("Expected 2 jobs to sync after batch mark, got %d", len(toSync))
-		}
+		require.NoError(t, err, "GetJobsToSync failed: %v")
+
+		assert.Len(t, toSync, 2, "unexpected condition")
 	})
 
 	t.Run("MarkReviewsSynced marks multiple reviews", func(t *testing.T) {
 		// Get reviews for synced jobs
 		reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		if len(reviews) != 3 {
-			t.Fatalf("Expected 3 reviews to sync (jobs 0-2 synced), got %d", len(reviews))
-		}
+		require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+		assert.Len(t, reviews, 3, "unexpected condition")
 
 		// Mark all 3 as synced
 		reviewIDs := make([]int64, len(reviews))
@@ -201,28 +167,22 @@ func TestBatchMarkSynced(t *testing.T) {
 			reviewIDs[i] = r.ID
 		}
 		if err := h.db.MarkReviewsSynced(reviewIDs); err != nil {
-			t.Fatalf("MarkReviewsSynced failed: %v", err)
+			require.NoError(t, err, "MarkReviewsSynced failed: %v")
 		}
 
 		// Verify no reviews left to sync (for synced jobs)
 		reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetReviewsToSync failed: %v", err)
-		}
-		if len(reviews) != 0 {
-			t.Errorf("Expected 0 reviews to sync after batch mark, got %d", len(reviews))
-		}
+		require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+		assert.Empty(t, reviews, "unexpected condition")
 	})
 
 	t.Run("MarkCommentsSynced marks multiple comments", func(t *testing.T) {
 		// Get responses for synced jobs
 		responses, err := h.db.GetCommentsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetCommentsToSync failed: %v", err)
-		}
-		if len(responses) != 3 {
-			t.Fatalf("Expected 3 responses to sync (jobs 0-2 synced), got %d", len(responses))
-		}
+		require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+		assert.Len(t, responses, 3, "unexpected condition")
 
 		// Mark all 3 as synced
 		responseIDs := make([]int64, len(responses))
@@ -230,29 +190,29 @@ func TestBatchMarkSynced(t *testing.T) {
 			responseIDs[i] = r.ID
 		}
 		if err := h.db.MarkCommentsSynced(responseIDs); err != nil {
-			t.Fatalf("MarkCommentsSynced failed: %v", err)
+			require.NoError(t, err, "MarkCommentsSynced failed: %v")
 		}
 
 		// Verify no responses left to sync (for synced jobs)
 		responses, err = h.db.GetCommentsToSync(h.machineID, 100)
-		if err != nil {
-			t.Fatalf("GetCommentsToSync failed: %v", err)
-		}
-		if len(responses) != 0 {
-			t.Errorf("Expected 0 responses to sync after batch mark, got %d", len(responses))
-		}
+		require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+		assert.Empty(t, responses, "unexpected condition")
 	})
 
 	t.Run("empty slice is no-op", func(t *testing.T) {
 		// Empty slices should not error
 		if err := h.db.MarkJobsSynced([]int64{}); err != nil {
-			t.Errorf("MarkJobsSynced with empty slice failed: %v", err)
+			require.NoError(t, err, "unexpected condition")
+
 		}
 		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
-			t.Errorf("MarkReviewsSynced with empty slice failed: %v", err)
+			require.NoError(t, err, "unexpected condition")
+
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
-			t.Errorf("MarkCommentsSynced with empty slice failed: %v", err)
+			require.NoError(t, err, "unexpected condition")
+
 		}
 	})
 }
@@ -267,26 +227,20 @@ func TestGetReviewsToSync_RequiresJobSynced(t *testing.T) {
 
 	// Before job is synced, GetReviewsToSync should return nothing
 	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 0 {
-		t.Errorf("Expected 0 reviews before job is synced, got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Empty(t, reviews, "unexpected condition")
 
 	// Mark job as synced
 	if err := h.db.MarkJobSynced(job.ID); err != nil {
-		t.Fatalf("Failed to mark job synced: %v", err)
+		require.NoError(t, err, "Failed to mark job synced: %v")
 	}
 
 	// Now GetReviewsToSync should return the review
 	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 1 {
-		t.Errorf("Expected 1 review after job is synced, got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Len(t, reviews, 1, "unexpected condition")
 }
 
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only
@@ -299,32 +253,24 @@ func TestGetCommentsToSync_RequiresJobSynced(t *testing.T) {
 
 	// Add a response to the job
 	_, err := h.db.AddCommentToJob(job.ID, "test-user", "test response")
-	if err != nil {
-		t.Fatalf("Failed to add response: %v", err)
-	}
+	require.NoError(t, err, "Failed to add response: %v")
 
 	// Before job is synced, GetResponsesToSync should return nothing
 	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 0 {
-		t.Errorf("Expected 0 responses before job is synced, got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Empty(t, responses, "unexpected condition")
 
 	// Mark job as synced
 	if err := h.db.MarkJobSynced(job.ID); err != nil {
-		t.Fatalf("Failed to mark job synced: %v", err)
+		require.NoError(t, err, "Failed to mark job synced: %v")
 	}
 
 	// Now GetResponsesToSync should return the response
 	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response after job is synced, got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Len(t, responses, 1, "unexpected condition")
 }
 
 // TestGetJobsToSync_RequiresRepoIdentity verifies that jobs without a
@@ -338,41 +284,28 @@ func TestGetJobsToSync_RequiresRepoIdentity(t *testing.T) {
 	// Verify repo has no identity initially (GetOrCreateRepo doesn't set one)
 	var identity sql.NullString
 	err := h.db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, h.repo.ID).Scan(&identity)
-	if err != nil {
-		t.Fatalf("Failed to query repo: %v", err)
-	}
-	if identity.Valid && identity.String != "" {
-		t.Errorf("Expected no identity, got %q", identity.String)
-	}
+	require.NoError(t, err, "Failed to query repo: %v")
+
+	assert.False(t, identity.Valid && identity.String != "", "unexpected condition")
 
 	// GetJobsToSync should return the job (with empty identity)
 	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("Expected 1 job, got %d", len(jobs))
-	}
-	if jobs[0].RepoIdentity != "" {
-		t.Errorf("Expected empty repo identity, got %q", jobs[0].RepoIdentity)
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Len(t, jobs, 1, "unexpected condition")
+	assert.Empty(t, jobs[0].RepoIdentity, "unexpected condition")
 
 	// Now set the repo identity
 	if err := h.db.SetRepoIdentity(h.repo.ID, "git@github.com:test/repo.git"); err != nil {
-		t.Fatalf("Failed to set repo identity: %v", err)
+		require.NoError(t, err, "Failed to set repo identity: %v")
 	}
 
 	// GetJobsToSync should now return the job with identity
 	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("Expected 1 job, got %d", len(jobs))
-	}
-	if jobs[0].RepoIdentity != "git@github.com:test/repo.git" {
-		t.Errorf("Expected repo identity 'git@github.com:test/repo.git', got %q", jobs[0].RepoIdentity)
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Len(t, jobs, 1, "unexpected condition")
+	assert.Equal(t, "git@github.com:test/repo.git", jobs[0].RepoIdentity, "unexpected condition")
 }
 
 // TestSyncOrder_FullWorkflow tests the complete sync ordering:
@@ -384,7 +317,7 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 
 	// Set repo identity
 	if err := h.db.SetRepoIdentity(h.repo.ID, "git@github.com:test/workflow.git"); err != nil {
-		t.Fatalf("Failed to set repo identity: %v", err)
+		require.NoError(t, err, "Failed to set repo identity: %v")
 	}
 
 	// Create 3 jobs with reviews and responses
@@ -394,95 +327,67 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 		createdJobs = append(createdJobs, job)
 		// Add a response
 		_, err := h.db.AddCommentToJob(job.ID, "user", "response")
-		if err != nil {
-			t.Fatalf("Failed to add response %d: %v", i, err)
-		}
+		require.NoError(t, err, "Failed to add response %d: %v", i)
+
 	}
 
 	// Initial state: 3 jobs to sync, 0 reviews (jobs not synced), 0 responses (jobs not synced)
 	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 3 {
-		t.Errorf("Expected 3 jobs to sync, got %d", len(jobs))
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Len(t, jobs, 3, "unexpected condition")
 
 	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 0 {
-		t.Errorf("Expected 0 reviews to sync (jobs not synced), got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Empty(t, reviews, "unexpected condition")
 
 	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 0 {
-		t.Errorf("Expected 0 responses to sync (jobs not synced), got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Empty(t, responses, "unexpected condition")
 
 	// Sync first job
 	if err := h.db.MarkJobSynced(createdJobs[0].ID); err != nil {
-		t.Fatalf("Failed to mark job synced: %v", err)
+		require.NoError(t, err, "Failed to mark job synced: %v")
 	}
 
 	// Now: 2 jobs to sync, 1 review (first job synced), 1 response (first job synced)
 	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 2 {
-		t.Errorf("Expected 2 jobs to sync, got %d", len(jobs))
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Len(t, jobs, 2, "unexpected condition")
 
 	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 1 {
-		t.Errorf("Expected 1 review to sync, got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Len(t, reviews, 1, "unexpected condition")
 
 	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response to sync, got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Len(t, responses, 1, "unexpected condition")
 
 	// Sync remaining jobs
 	for _, j := range createdJobs[1:] {
 		if err := h.db.MarkJobSynced(j.ID); err != nil {
-			t.Fatalf("Failed to mark job synced: %v", err)
+			require.NoError(t, err, "Failed to mark job synced: %v")
 		}
 	}
 
 	// Now: 0 jobs to sync, 3 reviews, 3 responses
 	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetJobsToSync failed: %v", err)
-	}
-	if len(jobs) != 0 {
-		t.Errorf("Expected 0 jobs to sync, got %d", len(jobs))
-	}
+	require.NoError(t, err, "GetJobsToSync failed: %v")
+
+	assert.Empty(t, jobs, "unexpected condition")
 
 	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetReviewsToSync failed: %v", err)
-	}
-	if len(reviews) != 3 {
-		t.Errorf("Expected 3 reviews to sync, got %d", len(reviews))
-	}
+	require.NoError(t, err, "GetReviewsToSync failed: %v")
+
+	assert.Len(t, reviews, 3, "unexpected condition")
 
 	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
-	if err != nil {
-		t.Fatalf("GetCommentsToSync failed: %v", err)
-	}
-	if len(responses) != 3 {
-		t.Errorf("Expected 3 responses to sync, got %d", len(responses))
-	}
+	require.NoError(t, err, "GetCommentsToSync failed: %v")
+
+	assert.Len(t, responses, 3, "unexpected condition")
 }

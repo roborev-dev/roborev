@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,23 +16,18 @@ import (
 )
 
 func TestAgentRegistry(t *testing.T) {
-	// Check that all agents are registered
+
 	agents := expectedAgents
 	for _, name := range agents {
 		a, err := Get(name)
-		if err != nil {
-			t.Fatalf("Failed to get %s agent: %v", name, err)
-		}
-		if a.Name() != name {
-			t.Errorf("Expected name '%s', got '%s'", name, a.Name())
-		}
+		require.NoError(t, err, "Failed to get %s agent", name)
+		assert.Equal(t, name, a.Name(), "Expected name '%s', got '%s'", name, a.Name())
+
 	}
 
-	// Check unknown agent
 	_, err := Get("unknown-agent")
-	if err == nil {
-		t.Error("Expected error for unknown agent")
-	}
+	require.Error(t, err, "Expected error for unknown agent")
+
 }
 
 func TestCanonicalNameAliases(t *testing.T) {
@@ -45,30 +42,27 @@ func TestCanonicalNameAliases(t *testing.T) {
 
 	for _, tt := range tests {
 		if got := CanonicalName(tt.input); got != tt.want {
-			t.Errorf("CanonicalName(%q) = %q, want %q", tt.input, got, tt.want)
+			assert.Equalf(t, tt.want, got, "CanonicalName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
 
 func TestGetSupportsAgentAlias(t *testing.T) {
 	a, err := Get("agent")
-	if err != nil {
-		t.Fatalf("Get(agent) returned error: %v", err)
-	}
-	if a.Name() != "cursor" {
-		t.Fatalf("Get(agent) resolved to %q, want %q", a.Name(), "cursor")
-	}
+	require.NoError(t, err, "Get(agent) returned error")
+	assert.Equal(t, "cursor", a.Name(), "Get(agent) resolved to %q, want %q", a.Name(), "cursor")
+
 }
 
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
 	if len(agents) < len(expectedAgents) {
-		t.Errorf("Expected at least %d agents, got %d: %v", len(expectedAgents), len(agents), agents)
+		assert.GreaterOrEqual(t, len(agents), len(expectedAgents), "Expected at least %d agents, got %d", len(expectedAgents), len(agents))
 	}
 
 	for _, name := range expectedAgents {
 		if !containsString(agents, name) {
-			t.Errorf("Expected %s in available agents", name)
+			assert.Contains(t, agents, name, "Expected %s in available agents", name)
 		}
 	}
 }
@@ -76,28 +70,20 @@ func TestAvailableAgents(t *testing.T) {
 func TestSyncWriter(t *testing.T) {
 	t.Run("nil input returns nil", func(t *testing.T) {
 		sw := newSyncWriter(nil)
-		if sw != nil {
-			t.Error("expected nil for nil input")
-		}
+		assert.Nil(t, sw, "expected nil for nil input")
+
 	})
 
 	t.Run("wraps writer correctly", func(t *testing.T) {
 		var buf bytes.Buffer
 		sw := newSyncWriter(&buf)
-		if sw == nil {
-			t.Fatal("expected non-nil syncWriter")
-		}
+		require.NotNil(t, sw, "expected non-nil syncWriter")
 
 		n, err := sw.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("expected 5 bytes written, got %d", n)
-		}
-		if buf.String() != "hello" {
-			t.Errorf("expected 'hello', got %q", buf.String())
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 5, n, "expected 5 bytes written, got %d", n)
+		assert.Equal(t, "hello", buf.String(), "expected 'hello', got %q", buf.String())
+
 	})
 
 	t.Run("concurrent writes are safe", func(t *testing.T) {
@@ -113,10 +99,8 @@ func TestSyncWriter(t *testing.T) {
 			}(i)
 		}
 		wg.Wait()
+		assert.Equal(t, 100, buf.Len(), "expected 100 bytes, got %d", buf.Len())
 
-		if buf.Len() != 100 {
-			t.Errorf("expected 100 bytes, got %d", buf.Len())
-		}
 	})
 }
 
@@ -133,24 +117,18 @@ func TestTestAgentStreaming(t *testing.T) {
 
 		var buf bytes.Buffer
 		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", &buf)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, result, buf.String(), "streamed output should match result\nstreamed: %q\nresult: %q", buf.String(), result)
 
-		if buf.String() != result {
-			t.Errorf("streamed output should match result\nstreamed: %q\nresult: %q", buf.String(), result)
-		}
 	})
 
 	t.Run("nil output writer works", func(t *testing.T) {
 		agent := setup()
 
 		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 		if result == "" {
-			t.Error("expected non-empty result")
+			assert.NotEmpty(t, result, "expected non-empty result")
 		}
 	})
 
@@ -159,11 +137,10 @@ func TestTestAgentStreaming(t *testing.T) {
 
 		errWriter := &FailingWriter{Err: errors.New("write failed")}
 		_, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", errWriter)
-		if err == nil {
-			t.Fatal("expected error from failing writer")
-		}
+		require.Error(t, err)
+
 		if !errors.Is(err, errWriter.Err) {
-			t.Errorf("expected wrapped write error, got: %v", err)
+			require.ErrorIs(t, err, errWriter.Err, "expected wrapped write error, got: %v", err)
 		}
 	})
 }
@@ -184,9 +161,7 @@ func TestParseReasoningLevel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := ParseReasoningLevel(tt.input); got != tt.want {
-			t.Errorf("ParseReasoningLevel(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		assert.Equal(t, tt.want, ParseReasoningLevel(tt.input), "unexpected condition")
 	}
 }
 
@@ -203,11 +178,10 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 	for _, tt := range tests {
 		a := NewCodexAgent("").WithReasoning(tt.level)
 		codex, ok := a.(*CodexAgent)
-		if !ok {
-			t.Fatalf("expected CodexAgent, got %T", a)
-		}
+		require.True(t, ok, "expected CodexAgent, got %T", a)
+
 		if got := codex.codexReasoningEffort(); got != tt.want {
-			t.Errorf("codexReasoningEffort(%q) = %q, want %q", tt.level, got, tt.want)
+			assert.Equalf(t, tt.want, got, "codexReasoningEffort(%q) = %q, want %q", tt.level, got, tt.want)
 		}
 	}
 }
@@ -235,9 +209,7 @@ var agentFixtures = []agentTestDef{
 func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
 	t.Helper()
 	for token := range strings.FieldsSeq(cmdLine) {
-		if token == flag || strings.HasPrefix(token, flag+"=") {
-			t.Errorf("command line %q unexpectedly contained flag %q", cmdLine, flag)
-		}
+		assert.False(t, token == flag || strings.HasPrefix(token, flag+"="), "unexpected condition")
 	}
 }
 
@@ -319,22 +291,24 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	cmdLine := a.CommandLine()
 
 	if !strings.Contains(cmdLine, "-m o4-mini") {
-		t.Errorf("expected -m o4-mini in command line %q", cmdLine)
+		assert.Contains(t, cmdLine, "-m o4-mini", "expected -m o4-mini in command line %q", cmdLine)
 	}
 	if !strings.Contains(cmdLine, `-c model_reasoning_effort="high"`) {
-		t.Errorf("expected reasoning effort config in command line %q", cmdLine)
+		assert.Contains(t, cmdLine, `-c model_reasoning_effort="high"`, "expected reasoning effort config in command line %q", cmdLine)
 	}
 }
 
 func assertArgsContain(t *testing.T, cmdLine, flag, value string) {
 	t.Helper()
 	tokens := strings.Fields(cmdLine)
+	got := false
 	for i := 0; i < len(tokens)-1; i++ {
 		if tokens[i] == flag && tokens[i+1] == value {
-			return
+			got = true
+			break
 		}
 	}
-	t.Errorf("command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
+	assert.True(t, got, "command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
 }
 
 func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
@@ -361,14 +335,11 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 
 			agent := tt.factory(mock.CmdPath).WithModel(tt.testModel)
 			_, err := agent.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
-			if err != nil {
-				t.Fatalf("Review failed: %v", err)
-			}
+			require.NoError(t, err, "Review failed: %v")
 
 			argsBytes, err := os.ReadFile(mock.ArgsFile)
-			if err != nil {
-				t.Fatalf("read args file: %v", err)
-			}
+			require.NoError(t, err, "read args file: %v")
+
 			args := string(argsBytes)
 
 			assertArgsContain(t, args, tt.modelFlag, tt.testModel)
@@ -378,8 +349,7 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 
 func TestAgentReviewPassesModelFlag(t *testing.T) {
 	for _, tt := range agentFixtures {
-		// opencode uses JSON streaming so verifyAgentPassesFlag (plain text echo)
-		// doesn't work; model flag is verified in TestOpenCodeReviewModelFlag.
+
 		if !tt.supportsPlainFlagEcho {
 			continue
 		}
@@ -393,18 +363,15 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 
 func TestGetAvailableRejectsUnknownAgent(t *testing.T) {
 	_, err := GetAvailable("typo-agent")
-	if err == nil {
-		t.Fatal("Expected error for unknown agent name")
-	}
+	require.Error(t, err, "Expected error for unknown agent name")
+
 	if !strings.Contains(err.Error(), "unknown agent") {
-		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
+		require.Failf(t, "unexpected error", "Expected 'unknown agent' error, got: %v", err)
 	}
 }
 
 func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
-	// Isolate registry: "codex" has a missing binary, "claude-code"
-	// has its binary on PATH. Request "codex" and verify fallback
-	// returns "claude-code" without an "unknown agent" error.
+
 	fakeBin := t.TempDir()
 	binName := "claude"
 	if runtime.GOOS == "windows" {
@@ -412,7 +379,7 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 	}
 	claudeBin := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake claude binary: %v", err)
+		require.NoError(t, err, "failed to create fake claude binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -426,13 +393,124 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 	resolved, err := GetAvailable("codex")
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown agent") {
-			t.Fatalf("Known agent should not produce unknown agent error: %v", err)
+			require.NoError(t, err, "Known agent should not produce unknown agent error")
 		}
-		t.Fatalf("Expected fallback, got error: %v", err)
+		require.NoError(t, err, "Expected fallback")
 	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("Expected fallback to 'claude-code', got %q", resolved.Name())
+	require.Equal(t, "claude-code", resolved.Name(), "Expected fallback to 'claude-code', got %q", resolved.Name())
+
+}
+
+func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
+
+	fakeBin := t.TempDir()
+	for _, bin := range []string{"gemini", "claude"} {
+		name := bin
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join(fakeBin, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			require.Errorf(t, err, "create fake %s binary: %v", bin, err)
+		}
 	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"gemini":      NewGeminiAgent(""),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex", "gemini")
+	require.NoError(t, err, "expected fallback")
+	require.Equal(t, "gemini", resolved.Name(), "expected backup agent 'gemini', got %q", resolved.Name())
+
+	resolved, err = GetAvailable("codex")
+	require.NoError(t, err, "expected fallback")
+	require.Equal(t, "claude-code", resolved.Name(), "expected chain fallback 'claude-code', got %q", resolved.Name())
+
+}
+
+func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
+
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		require.NoError(t, err, "create fake binary: %v")
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex", "codex", "")
+	require.NoError(t, err, "expected fallback")
+	require.Equal(t, "claude-code", resolved.Name(), "expected chain fallback 'claude-code', got %q", resolved.Name())
+
+}
+
+func TestGetAvailableBackupResolvesAliases(t *testing.T) {
+
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		require.NoError(t, err, "create fake binary: %v")
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex", "claude")
+	require.NoError(t, err, "expected fallback")
+	require.Equal(t, "claude-code", resolved.Name(), "expected alias-resolved 'claude-code', got %q", resolved.Name())
+
+}
+
+func TestGetAvailableBackupUnavailableFallsToChain(t *testing.T) {
+
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		require.NoError(t, err, "create fake binary: %v")
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"gemini":      NewGeminiAgent("also-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex", "gemini")
+	require.NoError(t, err, "expected fallback")
+	require.Equal(t, "claude-code", resolved.Name(), "expected chain fallback 'claude-code', got %q", resolved.Name())
+
 }
 
 func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {

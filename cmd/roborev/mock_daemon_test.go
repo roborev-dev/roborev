@@ -11,6 +11,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
@@ -21,10 +23,10 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 		name       string
 		method     string
 		path       string
-		wantMethod string // expected correct method
+		wantMethod string
 		wantStatus int
 	}{
-		// Correct methods
+
 		{
 			name:       "GET /api/status returns 200",
 			method:     http.MethodGet,
@@ -61,7 +63,7 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 			path:       "/api/comment",
 			wantStatus: http.StatusCreated,
 		},
-		// Wrong methods should return 405
+
 		{
 			name:       "POST /api/status returns 405",
 			method:     http.MethodPost,
@@ -110,7 +112,7 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 			path:       "/api/review",
 			wantStatus: http.StatusMethodNotAllowed,
 		},
-		// Unknown path returns 404
+
 		{
 			name:       "GET /api/unknown returns 404",
 			method:     http.MethodGet,
@@ -124,13 +126,8 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
+			assert.Equal(t, tt.wantStatus, w.Code, "got status %d, want %d", w.Code, tt.wantStatus)
 
-			if w.Code != tt.wantStatus {
-				t.Errorf(
-					"got status %d, want %d",
-					w.Code, tt.wantStatus,
-				)
-			}
 		})
 	}
 }
@@ -143,44 +140,35 @@ func TestCreateMockRefineHandler_405ResponseBody(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("got status %d, want 405", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "unexpected condition")
 
 	body, err := io.ReadAll(w.Body)
-	if err != nil {
-		t.Fatalf("reading body: %v", err)
-	}
+	require.NoError(t, err, "reading body: %v")
 
 	var resp map[string]string
 	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("unmarshaling body %q: %v", body, err)
+		require.Errorf(t, err, "unmarshaling body %q: %v", body, err)
 	}
-	if resp["error"] != "method not allowed" {
-		t.Errorf(
-			"got error %q, want %q",
-			resp["error"], "method not allowed",
-		)
-	}
+	assert.Equal(t, "method not allowed", resp["error"],
+
+		"got error %q, want %q",
+		resp["error"], "method not allowed")
+
 }
 
 func TestNewMockDaemon_ServerWiring(t *testing.T) {
-	// A single integration check to ensure the server actually boots
-	// and routes to the handler correctly.
+
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()
 
 	resp, err := http.DefaultClient.Do(
 		mustNewRequest(t, http.MethodGet, md.Server.URL+"/api/status"),
 	)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
+	require.NoError(t, err, "request failed: %v")
+
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("got status %d, want 200", resp.StatusCode)
-	}
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "unexpected condition")
 }
 
 func TestNewMockDaemon_HookRouting(t *testing.T) {
@@ -390,17 +378,12 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			resp, err := http.DefaultClient.Do(
 				mustNewRequest(t, tt.method, md.Server.URL+tt.path),
 			)
-			if err != nil {
-				t.Fatalf("request failed: %v", err)
-			}
+			require.NoError(t, err, "request failed: %v")
+
 			defer resp.Body.Close()
 
-			if hookCalled != tt.wantCalled {
-				t.Errorf("hookCalled = %v, want %v", hookCalled, tt.wantCalled)
-			}
-			if resp.StatusCode != tt.wantStatus {
-				t.Errorf("got status %d, want %d", resp.StatusCode, tt.wantStatus)
-			}
+			assert.Equal(t, tt.wantCalled, hookCalled, "unexpected condition")
+			assert.Equal(t, tt.wantStatus, resp.StatusCode, "unexpected condition")
 		})
 	}
 }
@@ -410,13 +393,11 @@ func mustNewRequest(
 ) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		t.Fatalf("creating request: %v", err)
-	}
+	require.NoError(t, err, "creating request: %v")
+
 	return req
 }
 
-// MockDaemonBuilder helps construct a mock daemon with specific behavior
 type MockDaemonBuilder struct {
 	t        *testing.T
 	handlers map[string]http.HandlerFunc
@@ -454,7 +435,7 @@ func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilde
 }
 
 func (b *MockDaemonBuilder) Build() *httptest.Server {
-	// Register default review handler if not already overridden
+
 	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
 		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
 			jobIDStr := r.URL.Query().Get("job_id")
@@ -467,11 +448,7 @@ func (b *MockDaemonBuilder) Build() *httptest.Server {
 			if review, ok := b.reviews[jobID]; ok {
 				json.NewEncoder(w).Encode(review)
 			} else {
-				// Fallback: if there is only one review and no job_id was requested
-				// (or even if it was), some tests might rely on "any review".
-				// But strictly, we should require job_id match.
-				// However, existing tests might be loose.
-				// For now, return 404 if not found to be strict.
+
 				http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
 			}
 		}
@@ -482,7 +459,7 @@ func (b *MockDaemonBuilder) Build() *httptest.Server {
 			h(w, r)
 			return
 		}
-		// Default handlers
+
 		switch r.URL.Path {
 		case "/api/comment":
 			w.WriteHeader(http.StatusCreated)

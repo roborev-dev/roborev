@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -47,9 +48,7 @@ func (r *GitTestRepo) Run(args ...string) string {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	require.NoError(r.t, err, "git %v failed\n%s", args, out)
 	return strings.TrimSpace(string(out))
 }
 
@@ -57,12 +56,8 @@ func (r *GitTestRepo) Run(args ...string) string {
 func (r *GitTestRepo) CommitFile(name, content, msg string) string {
 	r.t.Helper()
 	path := filepath.Join(r.Dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		r.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		r.t.Fatal(err)
-	}
+	require.NoError(r.t, os.MkdirAll(filepath.Dir(path), 0755))
+	require.NoError(r.t, os.WriteFile(path, []byte(content), 0644))
 	r.Run("add", name)
 	r.Run("commit", "-m", msg)
 	return r.Run("rev-parse", "HEAD")
@@ -175,18 +170,12 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(tmpDir, 0755), "failed to create data dir")
 	mockAddr := ts.URL[7:] // strip "http://"
 	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
 	data, err := json.Marshal(daemonInfo)
-	if err != nil {
-		t.Fatalf("failed to marshal daemon.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
-		t.Fatalf("failed to write daemon.json: %v", err)
-	}
+	require.NoError(t, err, "failed to marshal daemon.json")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644), "failed to write daemon.json")
 
 	origServerAddr := serverAddr
 	serverAddr = ts.URL
@@ -519,17 +508,11 @@ func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) 
 	defer chdirMutex.Unlock()
 
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get current directory: %v", err)
-	}
+	require.NoError(t, err, "failed to get current directory")
 
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to change directory to %s: %v", dir, err)
-	}
+	require.NoError(t, os.Chdir(dir), "failed to change directory to %s", dir)
 	defer func() {
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("failed to restore directory to %s: %v", oldWd, err)
-		}
+		require.NoError(t, os.Chdir(oldWd), "failed to restore directory to %s", oldWd)
 	}()
 
 	var output bytes.Buffer

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
@@ -21,68 +22,44 @@ func newSyncTestHelper(t *testing.T) *syncTestHelper {
 	t.Cleanup(func() { db.Close() })
 
 	machineID, err := db.GetMachineID()
-	if err != nil {
-		t.Fatalf("Failed to get machine ID: %v", err)
-	}
+	require.NoError(t, err, "Failed to get machine ID")
 
 	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("Failed to create repo: %v", err)
-	}
+	require.NoError(t, err, "Failed to create repo")
 
 	return &syncTestHelper{t: t, db: db, machineID: machineID, repo: repo}
 }
 
 func (h *syncTestHelper) createPendingJob(sha string) *ReviewJob {
 	commit, err := h.db.GetOrCreateCommit(h.repo.ID, sha, "Author", "Subject", time.Now())
-	if err != nil {
-		h.t.Fatalf("Failed to create commit: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to create commit")
 	job, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		h.t.Fatalf("Failed to enqueue job: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to enqueue job")
 	return job
 }
 
 func (h *syncTestHelper) clearSourceMachineID(jobID int64) {
 	_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, jobID)
-	if err != nil {
-		h.t.Fatalf("Failed to clear source_machine_id: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to clear source_machine_id")
 }
 
 func (h *syncTestHelper) clearRepoIdentity(repoID int64) {
 	_, err := h.db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repoID)
-	if err != nil {
-		h.t.Fatalf("Failed to clear identity: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to clear identity")
 }
 
 // createCompletedJob creates a job, marks it done, and creates a review.
 func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	commit, err := h.db.GetOrCreateCommit(h.repo.ID, sha, "Author", "Subject", time.Now())
-	if err != nil {
-		h.t.Fatalf("Failed to create commit: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to create commit")
 	job, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		h.t.Fatalf("Failed to enqueue job: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to enqueue job")
 	claimed, err := h.db.ClaimJob("worker")
-	if err != nil {
-		h.t.Fatalf("Failed to claim job: %v", err)
-	}
-	if claimed == nil {
-		h.t.Fatal("ClaimJob returned nil job")
-	}
-	if claimed.ID != job.ID {
-		h.t.Fatalf("Claimed wrong job: expected %d, got %d", job.ID, claimed.ID)
-	}
+	require.NoError(h.t, err, "Failed to claim job")
+	require.NotNil(h.t, claimed, "ClaimJob returned nil job")
+	require.Equal(h.t, job.ID, claimed.ID, "Claimed wrong job")
 	err = h.db.CompleteJob(job.ID, "test", "prompt", "output")
-	if err != nil {
-		h.t.Fatalf("Failed to complete job: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to complete job")
 	return job
 }
 
@@ -93,9 +70,7 @@ func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, upd
 	} else {
 		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
 	}
-	if err != nil {
-		h.t.Fatalf("Failed to set job timestamps: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to set job timestamps")
 }
 
 func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
@@ -105,9 +80,7 @@ func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, 
 	} else {
 		_, err = h.db.Exec(`UPDATE reviews SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
 	}
-	if err != nil {
-		h.t.Fatalf("Failed to set review timestamps: %v", err)
-	}
+	require.NoError(h.t, err, "Failed to set review timestamps")
 }
 
 // Legacy schema DDL constants for migration tests.
@@ -214,16 +187,14 @@ func createLegacyCommonTables(t *testing.T, db *sql.DB) {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`)
-	if err != nil {
-		t.Fatalf("Failed to create common legacy schema: %v", err)
-	}
+	require.NoError(t, err, "Failed to create common legacy schema")
 }
 
 func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
 	_, err := db.Exec(ddl)
-	if err != nil {
+	if err != nil { // keep explicit close path before require
 		db.Close()
-		t.Fatalf("Failed to create old schema: %v", err)
+		require.NoError(t, err, "Failed to create old schema")
 	}
 	createLegacyCommonTables(t, db)
 }

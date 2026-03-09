@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+	"github.com/stretchr/testify/require"
 )
 
 // M is a shorthand type for map[string]string to keep test tables compact
@@ -35,9 +36,7 @@ func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 		return
 	}
 	var sb strings.Builder
-	if err := toml.NewEncoder(&sb).Encode(cfg); err != nil {
-		t.Fatalf("failed to encode repo config: %v", err)
-	}
+	require.NoError(t, toml.NewEncoder(&sb).Encode(cfg), "failed to encode repo config")
 	writeRepoConfigStr(t, dir, sb.String())
 }
 
@@ -45,9 +44,7 @@ func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 func writeTestFile(t *testing.T, dir, filename, content string) {
 	t.Helper()
 	err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("failed to write %s: %v", filename, err)
-	}
+	require.NoError(t, err, "failed to write %s", filename)
 }
 
 // execGit executes a git command in the given directory and returns its output.
@@ -58,9 +55,9 @@ func execGit(t *testing.T, dir string, args ...string) string {
 	out, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			t.Fatalf("git %v failed: %v\nstderr: %s", args, err, exitError.Stderr)
+			require.NoError(t, err, "git %v failed\nstderr: %s", args, exitError.Stderr)
 		}
-		t.Fatalf("git %v failed: %v", args, err)
+		require.NoError(t, err, "git %v failed", args)
 	}
 	return strings.TrimSpace(string(out))
 }

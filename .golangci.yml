@@ -9,6 +9,7 @@ linters:
     - ineffassign
     - modernize
     - staticcheck
+    - testifylint
     - unused
   settings:
     errcheck:

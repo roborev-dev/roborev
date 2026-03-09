@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/acp-go-sdk"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper function to create int pointers for testing
@@ -79,14 +81,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &editKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
 		// Should be denied for destructive operations in read-only mode
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for destructive operation in read-only mode, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for destructive operation in read-only mode")
 	})
 
 	t.Run("RequestPermission: ReadOnlyMode allows non-destructive operations", func(t *testing.T) {
@@ -114,14 +113,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &readKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
 		// Should be allowed for non-destructive operations in read-only mode
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authAllowAlwaysOptionID {
-			t.Errorf("Expected %q for non-destructive operation in read-only mode, got '%v'", authAllowAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
+		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for non-destructive operation in read-only mode")
 	})
 
 	t.Run("RequestPermission: Empty mode defaults to read-only behavior for permissions", func(t *testing.T) {
@@ -146,12 +142,9 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &readKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed for read kind: %v", err)
-		}
-		if readResponse.Outcome.Selected == nil || readResponse.Outcome.Selected.OptionId != authAllowAlwaysOptionID {
-			t.Errorf("Expected %q for non-destructive operation when mode is disabled, got '%v'", authAllowAlwaysOptionID, readResponse.Outcome)
-		}
+		require.NoError(t, err, "RequestPermission failed for read kind: %v", err)
+		require.NotNil(t, readResponse.Outcome.Selected, "Expected a selected permission option when mode is disabled")
+		assert.Equal(t, authAllowAlwaysOptionID, readResponse.Outcome.Selected.OptionId, "Unexpected permission option for non-destructive operation when mode is disabled")
 
 		editKind := acp.ToolKind("edit")
 		editResponse, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
@@ -160,12 +153,9 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &editKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed for edit kind: %v", err)
-		}
-		if editResponse.Outcome.Selected == nil || editResponse.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for destructive operation when mode is disabled, got '%v'", authRejectAlwaysOptionID, editResponse.Outcome)
-		}
+		require.NoError(t, err, "RequestPermission failed for edit kind: %v", err)
+		require.NotNil(t, editResponse.Outcome.Selected, "Expected a selected permission option when mode is disabled")
+		assert.Equal(t, authRejectAlwaysOptionID, editResponse.Outcome.Selected.OptionId, "Unexpected permission option for destructive operation when mode is disabled")
 	})
 
 	t.Run("RequestPermission: AutoApproveMode allows all known operations", func(t *testing.T) {
@@ -193,14 +183,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &editKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
 		// Should be allowed for known operations in auto-approve mode
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authAllowAlwaysOptionID {
-			t.Errorf("Expected %q for known operation in auto-approve mode, got '%v'", authAllowAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in auto-approve mode")
+		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for known operation in auto-approve mode")
 	})
 
 	t.Run("RequestPermission: Unknown tool kinds are always denied", func(t *testing.T) {
@@ -228,14 +215,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &unknownKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
 		// Unknown tool kinds should always be denied for safety
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for unknown operation, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for unknown operation")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for unknown operation")
 	})
 
 	t.Run("RequestPermission: Known destructive operations are denied outside explicit auto-approve mode", func(t *testing.T) {
@@ -260,12 +244,9 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: &editKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q outside explicit auto-approve mode, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option outside explicit auto-approve mode")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option outside explicit auto-approve mode")
 	})
 
 	t.Run("RequestPermission: Nil ToolCall.Kind is denied", func(t *testing.T) {
@@ -292,14 +273,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 				Kind: nil, // Explicitly nil
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
 		// Nil ToolCall.Kind should always be denied
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for nil ToolCall.Kind, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for nil ToolCall.Kind")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for nil ToolCall.Kind")
 	})
 
 	t.Run("Mode switching: WithAgentic sets correct mode", func(t *testing.T) {
@@ -316,15 +294,11 @@ func TestACPAuthPermissionModes(t *testing.T) {
 
 		// Test non-agentic mode (should use read-only mode)
 		nonAgenticAgent := baseAgent.WithAgentic(false).(*ACPAgent)
-		if nonAgenticAgent.Mode != "plan" {
-			t.Errorf("Non-agentic mode should be 'plan', got '%s'", nonAgenticAgent.Mode)
-		}
+		assert.Equal(t, "plan", nonAgenticAgent.Mode, "Non-agentic mode should be read-only mode")
 
 		// Test agentic mode (should use auto-approve mode)
 		agenticAgent := baseAgent.WithAgentic(true).(*ACPAgent)
-		if agenticAgent.Mode != "auto-approve" {
-			t.Errorf("Agentic mode should be 'auto-approve', got '%s'", agenticAgent.Mode)
-		}
+		assert.Equal(t, "auto-approve", agenticAgent.Mode, "Agentic mode should be auto-approve mode")
 	})
 }
 
@@ -359,11 +333,8 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Path:    "test.txt",
 			Content: "test content",
 		})
-		if err == nil {
-			t.Errorf("Expected authorization error in read-only mode, got nil")
-		} else if !strings.Contains(err.Error(), "write operation not permitted in read-only mode") {
-			t.Errorf("Expected specific authorization error message, got: %v", err)
-		}
+		require.Error(t, err, "Expected authorization error in read-only mode")
+		assert.Contains(t, err.Error(), "write operation not permitted in read-only mode")
 	})
 
 	t.Run("H2: CreateTerminal authorization in read-only mode", func(t *testing.T) {
@@ -373,11 +344,8 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Command: cmd,
 			Args:    args,
 		})
-		if err == nil {
-			t.Errorf("Expected authorization error in read-only mode, got nil")
-		} else if !strings.Contains(err.Error(), "terminal creation not permitted in read-only mode") {
-			t.Errorf("Expected specific authorization error message, got: %v", err)
-		}
+		require.Error(t, err, "Expected authorization error in read-only mode")
+		assert.Contains(t, err.Error(), "terminal creation not permitted in read-only mode")
 	})
 
 	t.Run("H2: Authorization bypass prevention - direct method calls", func(t *testing.T) {
@@ -412,11 +380,8 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				err := tc.exec()
-				if err == nil {
-					t.Errorf("Expected authorization error for %s, got nil", tc.name)
-				} else if !strings.Contains(err.Error(), "not permitted in read-only mode") {
-					t.Errorf("Expected authorization error for %s, got: %v", tc.name, err)
-				}
+				require.Error(t, err, "Expected authorization error for %s", tc.name)
+				assert.Contains(t, err.Error(), "not permitted in read-only mode")
 			})
 		}
 	})
@@ -445,14 +410,11 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Path:    "auto-approve-test.txt",
 			Content: "test content",
 		})
-		if err != nil {
-			t.Errorf("Expected success in auto-approve mode, got error: %v", err)
-		} else {
-			// Verify file was actually created
-			defer os.Remove(tempFile)
-			if _, err := os.Stat(tempFile); os.IsNotExist(err) {
-				t.Errorf("File was not created despite successful WriteTextFile call")
-			}
+		require.NoError(t, err, "Expected success in auto-approve mode")
+		// Verify file was actually created
+		defer os.Remove(tempFile)
+		if _, err := os.Stat(tempFile); os.IsNotExist(err) {
+			require.Error(t, err, "File was not created despite successful WriteTextFile call")
 		}
 
 		t.Run("WriteTextFile preserves existing executable bit", func(t *testing.T) {
@@ -462,29 +424,23 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 			targetPath := filepath.Join(tempDir, "exec-mode.sh")
 			if err := os.WriteFile(targetPath, []byte("#!/bin/sh\necho old\n"), 0o755); err != nil {
-				t.Fatalf("Failed to create executable test file: %v", err)
+				require.NoError(t, err, "Failed to create executable test file: %v", err)
 			}
 			defer os.Remove(targetPath)
 			originalInfo, err := os.Stat(targetPath)
-			if err != nil {
-				t.Fatalf("Failed to stat original file: %v", err)
-			}
+			require.NoError(t, err, "Failed to stat original file: %v", err)
 			originalMode := originalInfo.Mode().Perm()
 
 			if _, err := autoApproveClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
 				Path:    "exec-mode.sh",
 				Content: "#!/bin/sh\necho new\n",
 			}); err != nil {
-				t.Fatalf("WriteTextFile failed: %v", err)
+				require.NoError(t, err, "WriteTextFile failed: %v", err)
 			}
 
 			info, err := os.Stat(targetPath)
-			if err != nil {
-				t.Fatalf("Failed to stat updated file: %v", err)
-			}
-			if info.Mode().Perm() != originalMode {
-				t.Fatalf("Expected mode %04o to be preserved, got %04o", originalMode, info.Mode().Perm())
-			}
+			require.NoError(t, err, "Failed to stat updated file: %v", err)
+			assert.Equal(t, originalMode, info.Mode().Perm(), "Expected mode to be preserved")
 		})
 
 		t.Run("WriteTextFile respects existing read-only file permissions", func(t *testing.T) {
@@ -494,7 +450,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 			targetPath := filepath.Join(tempDir, "read-only.txt")
 			if err := os.WriteFile(targetPath, []byte("old"), 0o444); err != nil {
-				t.Fatalf("Failed to create read-only test file: %v", err)
+				require.NoError(t, err, "Failed to create read-only test file: %v", err)
 			}
 			defer func() {
 				_ = os.Chmod(targetPath, 0o644)
@@ -513,7 +469,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 				Path:    "read-only.txt",
 				Content: "new",
 			}); err == nil {
-				t.Fatal("Expected WriteTextFile to fail for read-only existing file")
+				require.Error(t, err, "Expected WriteTextFile to fail for read-only existing file")
 			}
 		})
 
@@ -523,9 +479,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Command: cmd,
 			Args:    args,
 		})
-		if err != nil {
-			t.Errorf("Expected success in auto-approve mode, got error: %v", err)
-		}
+		require.NoError(t, err, "Expected success in auto-approve mode")
 	})
 
 	t.Run("H2: Mode switching validation", func(t *testing.T) {
@@ -551,9 +505,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Path:    "test.txt",
 			Content: "test",
 		})
-		if err == nil {
-			t.Errorf("Expected authorization error in read-only mode")
-		}
+		require.Error(t, err, "Expected authorization error in read-only mode")
 
 		// Switch to auto-approve mode
 		switchableAgent.Mode = "auto-approve"
@@ -564,11 +516,8 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Path:    "switch-test.txt",
 			Content: "test",
 		})
-		if err != nil {
-			t.Errorf("Expected success after switching to auto-approve mode, got: %v", err)
-		} else {
-			defer os.Remove(tempFile)
-		}
+		require.NoError(t, err, "Expected success after switching to auto-approve mode")
+		defer os.Remove(tempFile)
 	})
 
 	t.Run("H2: Non-read-only custom mode still blocks mutating operations", func(t *testing.T) {
@@ -592,24 +541,16 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Path:    "custom-mode.txt",
 			Content: "test",
 		})
-		if err == nil {
-			t.Fatalf("Expected write to be blocked outside explicit auto-approve mode")
-		}
-		if !strings.Contains(err.Error(), "auto-approve mode is explicitly enabled") {
-			t.Fatalf("Expected explicit auto-approve mode error, got: %v", err)
-		}
+		require.Error(t, err, "Expected write to be blocked outside explicit auto-approve mode")
+		assert.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
 
 		cmd, args := acpTestEchoCommand("test")
 		_, err = customModeClient.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 			Command: cmd,
 			Args:    args,
 		})
-		if err == nil {
-			t.Fatalf("Expected terminal creation to be blocked outside explicit auto-approve mode")
-		}
-		if !strings.Contains(err.Error(), "auto-approve mode is explicitly enabled") {
-			t.Fatalf("Expected explicit auto-approve mode error, got: %v", err)
-		}
+		require.Error(t, err, "Expected terminal creation to be blocked outside explicit auto-approve mode")
+		assert.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
 	})
 }
 
@@ -644,9 +585,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Run("Path validation prevents directory traversal", func(t *testing.T) {
 		// Test path traversal attempt
 		_, err := client.validateAndResolvePath("../../../etc/passwd", false) // false = read operation
-		if err == nil {
-			t.Errorf("Expected error for path traversal, got nil")
-		}
+		require.Error(t, err, "Expected error for path traversal, got nil")
 	})
 
 	t.Run("Path validation prevents symlink traversal", func(t *testing.T) {
@@ -661,16 +600,14 @@ func TestACPAuthEdgeCases(t *testing.T) {
 
 		// Test symlink traversal attempt
 		_, err = client.validateAndResolvePath("symlink", false) // false = read operation
-		if err == nil {
-			t.Errorf("Expected error for symlink traversal, got nil")
-		}
+		require.Error(t, err, "Expected error for symlink traversal, got nil")
 	})
 
 	t.Run("Path validation blocks writes to symlinks escaping repo root", func(t *testing.T) {
 		externalDir := t.TempDir()
 		externalTarget := filepath.Join(externalDir, "outside.txt")
 		if err := os.WriteFile(externalTarget, []byte("outside"), 0644); err != nil {
-			t.Fatalf("Failed to create external target: %v", err)
+			require.NoError(t, err, "Failed to create external target: %v", err)
 		}
 
 		symlinkPath := filepath.Join(tempDir, "write-link-outside")
@@ -680,15 +617,13 @@ func TestACPAuthEdgeCases(t *testing.T) {
 		defer os.Remove(symlinkPath)
 
 		_, err := client.validateAndResolvePath("write-link-outside", true) // true = write operation
-		if err == nil {
-			t.Fatal("Expected error for write symlink traversal, got nil")
-		}
+		require.Error(t, err, "Expected error for write symlink traversal, got nil")
 	})
 
 	t.Run("Path validation allows writes to symlinks that resolve inside repo root", func(t *testing.T) {
 		internalTarget := filepath.Join(tempDir, "inside.txt")
 		if err := os.WriteFile(internalTarget, []byte("inside"), 0644); err != nil {
-			t.Fatalf("Failed to create internal target: %v", err)
+			require.NoError(t, err, "Failed to create internal target: %v", err)
 		}
 		defer os.Remove(internalTarget)
 
@@ -699,35 +634,24 @@ func TestACPAuthEdgeCases(t *testing.T) {
 		defer os.Remove(symlinkPath)
 
 		resolvedPath, err := client.validateAndResolvePath("write-link-inside", true) // true = write operation
-		if err != nil {
-			t.Fatalf("Unexpected error for in-repo symlink write target: %v", err)
-		}
-		if !strings.HasSuffix(resolvedPath, "inside.txt") {
-			t.Fatalf("Expected resolved path to use resolved target path, got %s", resolvedPath)
-		}
+		require.NoError(t, err, "Unexpected error for in-repo symlink write target: %v", err)
+		assert.True(t, strings.HasSuffix(resolvedPath, "inside.txt"), "Expected resolved path to use resolved target path")
 	})
 
 	t.Run("Path validation allows valid paths", func(t *testing.T) {
 		// Create a valid file
 		validFile := filepath.Join(tempDir, "valid.txt")
 		err := os.WriteFile(validFile, []byte("test"), 0644)
-		if err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
+		require.NoError(t, err, "Failed to create test file: %v", err)
 		defer os.Remove(validFile)
 
 		// Test valid path
 		resolvedPath, err := client.validateAndResolvePath("valid.txt", false) // false = read operation
-		if err != nil {
-			t.Errorf("Unexpected error for valid path: %v", err)
-		}
-		// Check that the resolved path is within the temp directory
-		if !strings.HasSuffix(resolvedPath, "valid.txt") {
-			t.Errorf("Expected resolved path to end with 'valid.txt', got %s", resolvedPath)
-		}
-		if !strings.Contains(resolvedPath, tempDir) {
-			t.Errorf("Expected resolved path to contain temp dir %s, got %s", tempDir, resolvedPath)
-		}
+		require.NoError(t, err, "Unexpected error for valid path: %v", err)
+		assert.
+			// Check that the resolved path is within the temp directory
+			True(t, strings.HasSuffix(resolvedPath, "valid.txt"), "Expected resolved path to end with 'valid.txt'")
+		assert.Contains(t, resolvedPath, tempDir, "Expected resolved path to contain temp dir")
 	})
 
 	t.Run("Numeric parameter validation", func(t *testing.T) {
@@ -736,44 +660,34 @@ func TestACPAuthEdgeCases(t *testing.T) {
 			Path: "test.txt",
 			Line: authTestIntPtr(-1),
 		})
-		if err == nil {
-			t.Errorf("Expected error for negative line number, got nil")
-		}
+		require.Error(t, err, "Expected error for negative line number, got nil")
 
 		// Test negative limit
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
 			Limit: authTestIntPtr(-1),
 		})
-		if err == nil {
-			t.Errorf("Expected error for negative limit, got nil")
-		}
+		require.Error(t, err, "Expected error for negative limit, got nil")
 
 		// Test empty path
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "",
 		})
-		if err == nil {
-			t.Errorf("Expected error for empty path, got nil")
-		}
+		require.Error(t, err, "Expected error for empty path, got nil")
 
 		// Test excessively large line number
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "test.txt",
 			Line: authTestIntPtr(2000000),
 		})
-		if err == nil {
-			t.Errorf("Expected error for excessively large line number, got nil")
-		}
+		require.Error(t, err, "Expected error for excessively large line number, got nil")
 
 		// Test excessively large limit
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
 			Limit: authTestIntPtr(2000000),
 		})
-		if err == nil {
-			t.Errorf("Expected error for excessively large limit, got nil")
-		}
+		require.Error(t, err, "Expected error for excessively large limit, got nil")
 	})
 
 	t.Run("WriteTextFile input validation", func(t *testing.T) {
@@ -797,9 +711,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 			Path:    "",
 			Content: "test content",
 		})
-		if err == nil {
-			t.Errorf("Expected error for empty path, got nil")
-		}
+		require.Error(t, err, "Expected error for empty path, got nil")
 
 		// Test excessively large content
 		largeContent := string(make([]byte, 11000000)) // 11MB > 10MB limit
@@ -807,9 +719,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 			Path:    "test.txt",
 			Content: largeContent,
 		})
-		if err == nil {
-			t.Errorf("Expected error for excessively large content, got nil")
-		}
+		require.Error(t, err, "Expected error for excessively large content, got nil")
 	})
 
 	t.Run("Permission logic defaults to deny", func(t *testing.T) {
@@ -821,13 +731,10 @@ func TestACPAuthEdgeCases(t *testing.T) {
 				Kind: &unknownKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for unknown operation, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for unknown operation")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected reject-always option for unknown operation")
 	})
 
 	t.Run("Read-only mode denies destructive operations", func(t *testing.T) {
@@ -839,13 +746,10 @@ func TestACPAuthEdgeCases(t *testing.T) {
 				Kind: &editKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authRejectAlwaysOptionID {
-			t.Errorf("Expected %q for destructive operation in read-only mode, got '%v'", authRejectAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
+		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected reject-always option for destructive operation in read-only mode")
 	})
 
 	t.Run("Read-only mode allows non-destructive operations", func(t *testing.T) {
@@ -857,12 +761,9 @@ func TestACPAuthEdgeCases(t *testing.T) {
 				Kind: &readKind,
 			},
 		})
-		if err != nil {
-			t.Fatalf("RequestPermission failed: %v", err)
-		}
+		require.NoError(t, err, "RequestPermission failed: %v", err)
 
-		if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != authAllowAlwaysOptionID {
-			t.Errorf("Expected %q for non-destructive operation in read-only mode, got '%v'", authAllowAlwaysOptionID, response.Outcome)
-		}
+		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
+		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected allow-always option for non-destructive operation in read-only mode")
 	})
 }

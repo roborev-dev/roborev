@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -56,7 +58,7 @@ func TestEnqueueIfNeeded(t *testing.T) {
 				case "/api/jobs":
 					n := jobCheckCalls.Add(1)
 					if len(tt.jobResponses) == 0 {
-						t.Errorf("jobResponses must not be empty")
+						assert.Equal(t, false, len(tt.jobResponses) == 0, "jobResponses must not be empty")
 						http.Error(w, "jobResponses empty", http.StatusInternalServerError)
 						return
 					}
@@ -78,23 +80,15 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			defer ts.Close()
 
 			err := enqueueIfNeeded(context.Background(), ts.URL, tmpDir, sha)
-			if err != nil {
-				t.Fatalf("enqueueIfNeeded: %v", err)
-			}
+			require.NoError(t, err, "enqueueIfNeeded: %v")
 
 			if tt.checkExact {
-				if jobCheckCalls.Load() != tt.expectedChecks {
-					t.Errorf("expected %d job checks, got %d", tt.expectedChecks, jobCheckCalls.Load())
-				}
+				assert.Equal(t, false, jobCheckCalls.Load() != tt.expectedChecks, "unexpected condition")
 			} else {
-				if jobCheckCalls.Load() < tt.minChecks {
-					t.Errorf("expected at least %d job checks, got %d", tt.minChecks, jobCheckCalls.Load())
-				}
+				assert.Equal(t, false, jobCheckCalls.Load() < tt.minChecks, "unexpected condition")
 			}
 
-			if enqueueCalls.Load() != tt.expectedEnqueues {
-				t.Errorf("expected %d enqueues, got %d", tt.expectedEnqueues, enqueueCalls.Load())
-			}
+			assert.Equal(t, false, enqueueCalls.Load() != tt.expectedEnqueues, "unexpected condition")
 		})
 	}
 }

@@ -4,18 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func assertContains(t *testing.T, s, substr string) {
 	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Errorf("expected string to contain %q, but got:\n%s", substr, s)
-	}
+	assert.Contains(t, s, substr)
 }
 
 // commonMockAgent provides default no-op chaining methods
@@ -130,8 +129,10 @@ func TestSynthesize_Formatting(t *testing.T) {
 				context.Background(), tt.results, SynthesizeOpts{
 					HeadSHA: "abc123456789",
 				})
-			if !errors.Is(err, tt.expectedErr) {
-				t.Fatalf("expected error %v, got: %v", tt.expectedErr, err)
+			if tt.expectedErr != nil {
+				require.ErrorIs(t, err, tt.expectedErr)
+			} else {
+				require.NoError(t, err)
 			}
 			for _, text := range tt.expectedTexts {
 				assertContains(t, comment, text)
@@ -168,9 +169,7 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 			Agent:   "failing-synth",
 			HeadSHA: "def456789012",
 		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should fall back to raw format
 	assertContains(t, comment, "Synthesis unavailable")
@@ -199,9 +198,7 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 			Agent:   "nonexistent-synthesis-agent",
 			HeadSHA: "abc123456789",
 		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should fall back to raw format since synthesis agent
 	// doesn't exist
@@ -234,15 +231,8 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 			GitRef:  "aaa111..bbb222",
 			HeadSHA: "bbb222",
 		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cap.capturedGitRef != "aaa111..bbb222" {
-		t.Errorf(
-			"gitRef = %q, want %q",
-			cap.capturedGitRef, "aaa111..bbb222")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "aaa111..bbb222", cap.capturedGitRef, "gitRef")
 }
 
 func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
@@ -285,14 +275,8 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 		HeadSHA:      "abc123",
 		GitRef:       "abc123..def456",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if seenAgent != "custom-acp" {
-		t.Fatalf("resolver agent = %q, want %q", seenAgent, "custom-acp")
-	}
-	if seenCfg != cfg {
-		t.Fatalf("resolver cfg pointer mismatch: got %p want %p", seenCfg, cfg)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "custom-acp", seenAgent, "resolver agent")
+	require.Same(t, cfg, seenCfg, "resolver cfg pointer mismatch")
 	assertContains(t, comment, "synthesized output")
 }

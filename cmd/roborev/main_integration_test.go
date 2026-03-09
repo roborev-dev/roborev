@@ -15,6 +15,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
@@ -41,35 +43,23 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	output := captureStdout(t, func() {
 		// With 2 iterations and a failing agent, should exhaust iterations
 		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
-		if err == nil {
-			t.Fatal("expected error after exhausting iterations, got nil")
-		}
+		require.NoError(t, err)
+		
 	})
 
 	// Verify agent error message is printed (not shadowed by ResolveSHA)
-	if !strings.Contains(output, "Agent error: test agent failure") {
-		t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
-	}
+	assert.Equal(t, false, !strings.Contains(output, "Agent error: test agent failure"), "unexpected condition")
 
 	// Verify "Will retry in next iteration" message
-	if !strings.Contains(output, "Will retry in next iteration") {
-		t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
-	}
+	assert.Equal(t, false, !strings.Contains(output, "Will retry in next iteration"), "unexpected condition")
 
 	// Verify no commit was created (HEAD unchanged)
 	headAfter := gitRevParse(t, repoDir, "HEAD")
-	if headBefore != headAfter {
-		t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
-			headBefore, headAfter)
-	}
+	assert.Equal(t, false, headBefore != headAfter, "unexpected condition")
 
 	// Verify we attempted 2 iterations (both printed)
-	if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
-		t.Errorf("expected iteration 1/2 in output, got: %q", output)
-	}
-	if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
-		t.Errorf("expected iteration 2/2 in output, got: %q", output)
-	}
+	assert.Equal(t, false, !strings.Contains(output, "=== Refinement iteration 1/2 ==="), "unexpected condition")
+	assert.Equal(t, false, !strings.Contains(output, "=== Refinement iteration 2/2 ==="), "unexpected condition")
 }
 
 func handleMockRefineGetJobs(t *testing.T) func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
@@ -130,15 +120,13 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	repoDir, _ := setupRefineRepo(t)
 
 	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	execGit(t, repoDir, "add", "second.txt")
 	execGit(t, repoDir, "commit", "-m", "second commit")
 
 	commitList := strings.Fields(execGit(t, repoDir, "rev-list", "--reverse", "main..HEAD"))
-	if len(commitList) < 2 {
-		t.Fatalf("expected two commits on branch, got %d", len(commitList))
-	}
+	assert.Equal(t, false, len(commitList) < 2, "unexpected condition")
 	oldestCommit := commitList[0]
 	newestCommit := commitList[1]
 
@@ -172,12 +160,12 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	ctx := defaultTestRunContext(repoDir)
 
 	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true}); err == nil {
-		t.Fatal("expected error from reaching max iterations")
+		require.NoError(t, err)
 	}
 
 	for _, call := range md.State.respondCalled {
 		if call.jobID == 2 {
-			t.Fatalf("expected to stay on failed fix chain; saw response for newer commit job 2")
+			require.NoError(t, err, "expected to stay on failed fix chain; saw response for newer commit job 2")
 		}
 	}
 }

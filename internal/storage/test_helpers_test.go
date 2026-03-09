@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 )
 
 // MigrationTestEnv manages the environment for schema migration tests.
@@ -22,13 +23,9 @@ func NewMigrationTestEnv(t *testing.T) *MigrationTestEnv {
 	t.Helper()
 	connString := getTestPostgresURL(t)
 	cfg, err := pgxpool.ParseConfig(connString)
-	if err != nil {
-		t.Fatalf("Failed to parse config: %v", err)
-	}
+	require.NoError(t, err, "Failed to parse config")
 	p, err := pgxpool.NewWithConfig(t.Context(), cfg)
-	if err != nil {
-		t.Fatalf("Failed to create pool: %v", err)
-	}
+	require.NoError(t, err, "Failed to create pool")
 	t.Cleanup(func() { p.Close() })
 
 	return &MigrationTestEnv{
@@ -41,17 +38,13 @@ func NewMigrationTestEnv(t *testing.T) *MigrationTestEnv {
 func (e *MigrationTestEnv) DropSchema(schema string) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-	if err != nil {
-		e.t.Fatalf("Failed to drop schema %s: %v", schema, err)
-	}
+	require.NoError(e.t, err, "Failed to drop schema %s", schema)
 }
 
 func (e *MigrationTestEnv) DropTable(schema, table string) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
-	if err != nil {
-		e.t.Fatalf("Failed to drop table %s.%s: %v", schema, table, err)
-	}
+	require.NoError(e.t, err, "Failed to drop table %s.%s", schema, table)
 }
 
 func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
@@ -93,9 +86,7 @@ func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 			WHERE table_schema = $1 AND table_name = $2
 		)
 	`, schema, table).Scan(&exists)
-	if err != nil {
-		e.t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
-	}
+	require.NoError(e.t, err, "Failed to check %s.%s", schema, table)
 	if exists {
 		e.t.Skipf("Skipping: %s.%s already exists", schema, table)
 	}
@@ -104,9 +95,7 @@ func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 func (e *MigrationTestEnv) Exec(sql string, args ...any) {
 	e.t.Helper()
 	_, err := e.pool.Exec(e.ctx, sql, args...)
-	if err != nil {
-		e.t.Fatalf("Failed to execute SQL: %v\nSQL: %s", err, sql)
-	}
+	require.NoError(e.t, err, "Failed to execute SQL\nSQL: %s", sql)
 }
 
 func (e *MigrationTestEnv) QueryRow(sql string, args ...any) pgx.Row {
@@ -137,9 +126,7 @@ func createTestRepo(t *testing.T, pool *pgxpool.Pool, opts TestRepoOpts) int64 {
 		ON CONFLICT (identity) DO UPDATE SET identity = EXCLUDED.identity
 		RETURNING id
 	`, opts.Identity).Scan(&id)
-	if err != nil {
-		t.Fatalf("Failed to create repo %s: %v", opts.Identity, err)
-	}
+	require.NoError(t, err, "Failed to create repo %s", opts.Identity)
 	return id
 }
 
@@ -177,9 +164,7 @@ func createTestCommit(t *testing.T, pool *pgxpool.Pool, opts TestCommitOpts) int
 		ON CONFLICT (repo_id, sha) DO UPDATE SET author = EXCLUDED.author
 		RETURNING id
 	`, opts.RepoID, opts.SHA, opts.Author, opts.Subject, opts.Timestamp).Scan(&id)
-	if err != nil {
-		t.Fatalf("Failed to create commit %s: %v", opts.SHA, err)
-	}
+	require.NoError(t, err, "Failed to create commit %s", opts.SHA)
 	return id
 }
 
@@ -233,9 +218,7 @@ func createTestJob(t *testing.T, pool *pgxpool.Pool, opts TestJobOpts) {
 		INSERT INTO review_jobs (uuid, repo_id, commit_id, git_ref, agent, status, source_machine_id, enqueued_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, opts.UUID, opts.RepoID, opts.CommitID, opts.GitRef, opts.Agent, opts.Status, opts.SourceMachineID, opts.EnqueuedAt, opts.CreatedAt, opts.UpdatedAt)
-	if err != nil {
-		t.Fatalf("Failed to create job %s: %v", opts.UUID, err)
-	}
+	require.NoError(t, err, "Failed to create job %s", opts.UUID)
 }
 
 type TestReviewOpts struct {
@@ -277,9 +260,7 @@ func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
 		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
-	if err != nil {
-		t.Fatalf("Failed to create review %s: %v", opts.UUID, err)
-	}
+	require.NoError(t, err, "Failed to create review %s", opts.UUID)
 }
 
 func hasExecutableCode(stmt string) bool {

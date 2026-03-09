@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/streamfmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func toJSON(v any) string {
@@ -24,42 +26,32 @@ func toJSON(v any) string {
 func executeRenderJobLog(t *testing.T, input string, isTTY bool) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := streamfmt.RenderLog(strings.NewReader(input), &buf, isTTY); err != nil {
-		t.Fatalf("RenderLog: %v", err)
-	}
+	require.NoError(t, streamfmt.RenderLog(strings.NewReader(input), &buf, isTTY), "RenderLog")
 	return buf.String()
 }
 
 func assertLogContains(t *testing.T, got, want string) {
 	t.Helper()
-	if !strings.Contains(got, want) {
-		t.Errorf("expected output to contain %q, got:\n%s", want, got)
-	}
+	assert.Contains(t, got, want)
 }
 
 func assertLogNotContains(t *testing.T, got, want string) {
 	t.Helper()
-	if strings.Contains(got, want) {
-		t.Errorf("expected output to NOT contain %q, got:\n%s", want, got)
-	}
+	assert.NotContains(t, got, want)
 }
 
 func TestLogCleanCmd_NegativeDays(t *testing.T) {
 	cmd := logCleanCmd()
 	cmd.SetArgs([]string{"--days", "-1"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for negative --days")
-	}
+	require.Error(t, err, "expected error for negative --days")
 }
 
 func TestLogCleanCmd_OverflowDays(t *testing.T) {
 	cmd := logCleanCmd()
 	cmd.SetArgs([]string{"--days", "999999"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for oversized --days")
-	}
+	require.Error(t, err, "expected error for oversized --days")
 }
 
 func TestRenderJobLog_JSONL(t *testing.T) {
@@ -150,9 +142,7 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			out := executeRenderJobLog(t, tt.input, tt.isJSON)
 			if tt.wantEmpty {
-				if out != "" {
-					t.Errorf("expected empty output, got %q", out)
-				}
+				assert.Empty(t, out)
 			}
 			for _, want := range tt.wantContain {
 				assertLogContains(t, out, want)
@@ -165,21 +155,16 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 }
 
 func TestIsBrokenPipe(t *testing.T) {
-	if isBrokenPipe(nil) {
-		t.Error("nil should not be broken pipe")
-	}
-	if isBrokenPipe(fmt.Errorf("other error")) {
-		t.Error("non-EPIPE error should not be broken pipe")
-	}
-	if !isBrokenPipe(syscall.EPIPE) {
-		t.Error("bare EPIPE should be broken pipe")
-	}
-	if !isBrokenPipe(fmt.Errorf("write: %w", syscall.EPIPE)) {
-		t.Error("wrapped EPIPE should be broken pipe")
-	}
+	assert := assert.New(t)
+	assert.False(isBrokenPipe(nil), "nil should not be broken pipe")
+	assert.False(isBrokenPipe(fmt.Errorf("other error")), "non-EPIPE error should not be broken pipe")
+	assert.True(isBrokenPipe(syscall.EPIPE), "bare EPIPE should be broken pipe")
+	assert.True(isBrokenPipe(fmt.Errorf("write: %w", syscall.EPIPE)), "wrapped EPIPE should be broken pipe")
 }
 
 func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
+	assert := assert.New(t)
+
 	// Non-JSON lines after JSON events should be preserved (e.g.
 	// agent stderr/diagnostics mixed with JSONL stream output).
 	input := strings.Join([]string{
@@ -201,40 +186,36 @@ func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
 	stderrIdx := strings.Index(out, "stderr: warning")
 	doneIdx := strings.Index(out, "Done")
 	exitIdx := strings.Index(out, "exit status 0")
-	if helloIdx >= stderrIdx || stderrIdx >= doneIdx || doneIdx >= exitIdx {
-		t.Errorf("output order wrong: Hello@%d stderr@%d Done@%d exit@%d",
-			helloIdx, stderrIdx, doneIdx, exitIdx)
-	}
+	assert.True(helloIdx < stderrIdx && stderrIdx < doneIdx && doneIdx < exitIdx, "output order wrong: Hello@%d stderr@%d Done@%d exit@%d",
+		helloIdx, stderrIdx, doneIdx, exitIdx)
 }
 
 func TestLogCmd_InvalidJobID(t *testing.T) {
+	assert := assert.New(t)
+
 	cmd := logCmd()
 	cmd.SetArgs([]string{"abc"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for non-numeric job ID")
-	}
-	if !strings.Contains(err.Error(), "invalid job ID") {
-		t.Fatalf("expected 'invalid job ID' error, got: %s", err)
-	}
+	require.Error(t, err, "expected error for non-numeric job ID")
+	assert.Contains(err.Error(), "invalid job ID")
 }
 
 func TestLogCmd_MissingLogFile(t *testing.T) {
+	assert := assert.New(t)
+
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	cmd := logCmd()
 	cmd.SetArgs([]string{"99999"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for missing log file")
-	}
-	if !strings.Contains(err.Error(), "no log for job") {
-		t.Fatalf("expected 'no log for job' error, got: %s", err)
-	}
+	require.Error(t, err, "expected error for missing log file")
+	assert.Contains(err.Error(), "no log for job")
 }
 
 func TestLogCmd_PathFlag(t *testing.T) {
+	assert := assert.New(t)
+
 	dir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dir)
 
@@ -245,18 +226,16 @@ func TestLogCmd_PathFlag(t *testing.T) {
 	cmd.SilenceUsage = true
 	// --path succeeds even if log file doesn't exist.
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("--path should succeed: %v", err)
-	}
+	require.NoError(t, err, "--path should succeed")
 
 	out := strings.TrimSpace(buf.String())
 	want := filepath.Join(dir, "logs", "jobs", "42.log")
-	if out != want {
-		t.Errorf("--path output = %q, want %q", out, want)
-	}
+	assert.Equal(want, out)
 }
 
 func TestLogCmd_RawFlag(t *testing.T) {
+	assert := assert.New(t)
+
 	dir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dir)
 
@@ -273,16 +252,8 @@ func TestLogCmd_RawFlag(t *testing.T) {
 	cmd.SetArgs([]string{"--raw", "42"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("--raw should succeed: %v", err)
-	}
-
-	if buf.String() != rawContent {
-		t.Errorf(
-			"--raw output = %q, want %q",
-			buf.String(), rawContent,
-		)
-	}
+	require.NoError(t, err, "--raw should succeed")
+	assert.Equal(rawContent, buf.String())
 }
 
 func TestLooksLikeJSON(t *testing.T) {
@@ -302,11 +273,9 @@ func TestLooksLikeJSON(t *testing.T) {
 		{`{"type":""}`, false},
 	}
 	for _, tt := range tests {
+		assert := assert.New(t)
 		got := streamfmt.LooksLikeJSON(tt.input)
-		if got != tt.want {
-			t.Errorf("streamfmt.LooksLikeJSON(%q) = %v, want %v",
-				tt.input, got, tt.want)
-		}
+		assert.Equal(tt.want, got, "streamfmt.LooksLikeJSON(%q)", tt.input)
 	}
 }
 

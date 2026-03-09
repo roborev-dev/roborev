@@ -3,36 +3,32 @@ package agent
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTruncateStderr(t *testing.T) {
+	assert := assert.New(t)
+
 	// Short string - no truncation
 	short := "short stderr"
-	if got := truncateStderr(short); got != short {
-		t.Errorf("expected no truncation for short string, got %q", got)
-	}
+	assert.Equal(short, truncateStderr(short))
 
 	// Exactly at limit - no truncation
 	exact := strings.Repeat("x", maxStderrLen)
-	if got := truncateStderr(exact); got != exact {
-		t.Errorf("expected no truncation at exact limit, got len=%d", len(got))
-	}
+	assert.Equal(exact, truncateStderr(exact))
 
 	// Over limit - should truncate
 	over := strings.Repeat("x", maxStderrLen+100)
 	got := truncateStderr(over)
-	if !strings.HasSuffix(got, "... (truncated)") {
-		t.Errorf("expected truncation suffix, got %q", got)
-	}
-	if len(got) != maxStderrLen+len("... (truncated)") {
-		t.Errorf("expected truncated length %d, got %d", maxStderrLen+len("... (truncated)"), len(got))
-	}
+	assert.True(strings.HasSuffix(got, "... (truncated)"), "expected truncation suffix")
+	assert.Len(got, maxStderrLen+len("... (truncated)"))
 }
 
 func TestGeminiBuildArgs(t *testing.T) {
@@ -68,14 +64,14 @@ func TestGeminiBuildArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			a := NewGeminiAgent("gemini")
 			args := a.buildArgs(tc.agentic)
 
 			// Check standalone boolean flags
 			for _, flag := range tc.wantFlags {
-				if !slices.Contains(args, flag) {
-					t.Errorf("missing flag %q in args %v", flag, args)
-				}
+				assert.Contains(args, flag, "missing flag %q", flag)
 			}
 
 			// Check flag-value pairs by exact next token
@@ -85,9 +81,7 @@ func TestGeminiBuildArgs(t *testing.T) {
 
 			// Check absence of specific tokens
 			for _, unwanted := range tc.unwantedArgs {
-				if slices.Contains(args, unwanted) {
-					t.Errorf("unexpected token %q in args %v", unwanted, args)
-				}
+				assert.NotContains(args, unwanted, "unexpected token %q", unwanted)
 			}
 		})
 	}
@@ -95,28 +89,20 @@ func TestGeminiBuildArgs(t *testing.T) {
 
 func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {
 	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+
 	count := 0
 	for _, a := range args {
 		if a == flag {
 			count++
 		}
 	}
-	if count != 1 {
-		t.Errorf(
-			"flag %q appears %d times, want exactly 1 in args %v",
-			flag, count, args,
-		)
-		return
-	}
+	require.Equal(1, count, "flag %q count in args %v", flag, args)
 
 	idx := slices.Index(args, flag)
-	if idx+1 >= len(args) {
-		t.Errorf("flag %q is last arg, expected value %q", flag, expectedVal)
-		return
-	}
-	if args[idx+1] != expectedVal {
-		t.Errorf("flag %q: got value %q, want %q", flag, args[idx+1], expectedVal)
-	}
+	require.Less(idx+1, len(args), "flag %q is last arg", flag)
+	assert.Equal(expectedVal, args[idx+1], "flag %q value", flag)
 }
 
 func TestGeminiParseStreamJSON(t *testing.T) {
@@ -134,9 +120,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"result","result":"Done! Review complete."}
 `,
 			assertResult: func(t *testing.T, res string) {
-				if res != "Done! Review complete." {
-					t.Errorf("expected result %q, got %q", "Done! Review complete.", res)
-				}
+				assert.Equal(t, "Done! Review complete.", res, "unexpected condition")
 			},
 		},
 		{
@@ -147,9 +131,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				for _, s := range []string{"Changes:", "filtering logic"} {
-					if !strings.Contains(res, s) {
-						t.Errorf("expected result to contain %q, got %q", s, res)
-					}
+					assert.Contains(t, res, s, "unexpected condition")
 				}
 			},
 		},
@@ -161,9 +143,31 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "First message\nSecond message"
-				if res != want {
-					t.Errorf("expected result %q, got %q", want, res)
-				}
+				assert.Equal(t, want, res, "unexpected condition")
+			},
+		},
+		{
+			name: "AssistantFallbackDropsNarrationBeforeToolUse",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"I am checking the relevant files first."}}
+{"type":"tool","name":"Read"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
+				assert.Equal(t, want, res, "unexpected condition")
+			},
+		},
+		{
+			name: "AssistantFallbackPrefersFinalPostToolSegment",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}
+{"type":"tool","name":"Read"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
+				assert.Equal(t, want, res, "unexpected condition")
 			},
 		},
 		{
@@ -207,9 +211,7 @@ still not json
 {"type":"result","result":"Done"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				if res != "Done" {
-					t.Errorf("expected result %q, got %q", "Done", res)
-				}
+				assert.Equal(t, "Done", res, "unexpected condition")
 			},
 			wantOutput: true,
 		},
@@ -219,9 +221,7 @@ still not json
 {"type":"tool","name":"Read"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				if res != "" {
-					t.Errorf("expected empty result, got %q", res)
-				}
+				assert.Empty(t, res, "unexpected condition")
 			},
 		},
 		{
@@ -236,6 +236,9 @@ No issues found in the code.
 	a := NewGeminiAgent("gemini")
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			var sw *syncWriter
 			var output bytes.Buffer
 			if tc.wantOutput {
@@ -245,24 +248,18 @@ No issues found in the code.
 			parsed, err := a.parseStreamJSON(strings.NewReader(tc.input), sw)
 
 			if tc.wantErr != nil {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("expected %v, got %v", tc.wantErr, err)
-				}
+				require.Error(err)
+				require.ErrorIs(err, tc.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(err)
 
 			if tc.assertResult != nil {
 				tc.assertResult(t, parsed.result)
 			}
 
-			if tc.wantOutput && output.Len() == 0 {
-				t.Fatal("expected output to be written")
+			if tc.wantOutput {
+				assert.NotZero(output.Len(), "expected output to be written")
 			}
 		})
 	}
@@ -284,15 +281,9 @@ echo "Plain text review output"
 echo "No issues found."
 `,
 			checkErr: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), "stream-json") {
-					t.Errorf("expected error to contain %q, got %q", "stream-json", err.Error())
-				}
-				if !errors.Is(err, errNoStreamJSON) {
-					t.Errorf("expected error type %v, got %v", errNoStreamJSON, err)
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "stream-json")
+				require.ErrorIs(t, err, errNoStreamJSON)
 			},
 		},
 		{
@@ -302,12 +293,8 @@ echo "Plain text review output"
 echo "Some stderr message" >&2
 `,
 			checkErr: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), "Some stderr message") {
-					t.Errorf("expected error to contain %q, got %q", "Some stderr message", err.Error())
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "Some stderr message")
 			},
 		},
 		{
@@ -317,12 +304,8 @@ echo "Plain text"
 yes "This is a long stderr line that will contribute to the total size" | head -n 200 >&2
 `,
 			checkErr: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), "... (truncated)") {
-					t.Errorf("expected error to contain %q, got %q", "... (truncated)", err.Error())
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "... (truncated)")
 			},
 		},
 		{
@@ -349,18 +332,17 @@ echo "Error message" >&2
 exit 1
 `,
 			checkErr: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), "gemini failed") {
-					t.Errorf("expected error to contain %q, got %q", "gemini failed", err.Error())
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "gemini failed")
 			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			scriptPath := writeTempCommand(t, tc.script)
 			a := NewGeminiAgent(scriptPath)
 			var output bytes.Buffer
@@ -371,17 +353,15 @@ exit 1
 				tc.checkErr(t, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if res != tc.wantResult {
-				t.Errorf("expected result %q, got %q", tc.wantResult, res)
-			}
+			require.NoError(err)
+			assert.Equal(tc.wantResult, res)
 		})
 	}
 }
 
 func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
+	assert := assert.New(t)
+
 	skipIfWindows(t)
 
 	stdinFile := filepath.Join(t.TempDir(), "stdin.txt")
@@ -396,16 +376,10 @@ echo '{"type":"result","result":"Done"}'
 	var output bytes.Buffer
 	expectedPrompt := "Please review this code for security issues"
 	_, err := a.Review(context.Background(), t.TempDir(), "abc123", expectedPrompt, &output)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed")
 
 	// Verify the prompt was received
 	receivedPrompt, err := os.ReadFile(stdinFile)
-	if err != nil {
-		t.Fatalf("failed to read prompt file: %v", err)
-	}
-	if string(receivedPrompt) != expectedPrompt {
-		t.Errorf("prompt not delivered correctly: expected %q, got %q", expectedPrompt, string(receivedPrompt))
-	}
+	require.NoError(t, err, "failed to read prompt file")
+	assert.Equal(expectedPrompt, string(receivedPrompt), "prompt not delivered correctly")
 }

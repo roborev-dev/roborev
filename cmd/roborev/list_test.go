@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type repoSetupResult struct {
@@ -36,18 +38,14 @@ type listTestCase struct {
 func assertListContainsAll(t *testing.T, name, subject string, wants []string) {
 	t.Helper()
 	for _, want := range wants {
-		if !strings.Contains(subject, want) {
-			t.Errorf("expected %s to contain %q, got: %s", name, want, subject)
-		}
+		assert.Contains(t, subject, want, "expected %s to contain %q", name, want)
 	}
 }
 
 func assertListNotContainsAny(t *testing.T, name, subject string, notWants []string) {
 	t.Helper()
 	for _, notWant := range notWants {
-		if strings.Contains(subject, notWant) {
-			t.Errorf("expected %s NOT to contain %q, got: %s", name, notWant, subject)
-		}
+		assert.NotContains(t, subject, notWant, "expected %s NOT to contain %q", name, notWant)
 	}
 }
 
@@ -109,12 +107,8 @@ func TestListCommand(t *testing.T) {
 			handler: jobsHandler(testJobs, true),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				var parsed []storage.ReviewJob
-				if err := json.Unmarshal([]byte(output), &parsed); err != nil {
-					t.Fatalf("json output not valid JSON: %v\noutput: %s", err, output)
-				}
-				if len(parsed) != 2 {
-					t.Errorf("expected 2 jobs, got %d", len(parsed))
-				}
+				require.NoError(t, json.Unmarshal([]byte(output), &parsed), "json output not valid JSON\noutput: %s", output)
+				assert.Len(t, parsed, 2)
 			},
 		},
 		{
@@ -179,15 +173,9 @@ func TestListCommand(t *testing.T) {
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
-				if !strings.Contains(query, url.QueryEscape(repo.Dir)) {
-					t.Errorf("expected main repo path %q in query, got: %s", repo.Dir, query)
-				}
-				if !strings.Contains(query, "branch=wt-branch") {
-					t.Errorf("expected branch=wt-branch in query, got: %s", query)
-				}
-				if strings.Contains(query, url.QueryEscape(wd)) {
-					t.Errorf("expected worktree path %q NOT in query, got: %s", wd, query)
-				}
+				assert.Contains(t, query, url.QueryEscape(repo.Dir), "expected main repo path in query")
+				assert.Contains(t, query, "branch=wt-branch", "expected branch in query")
+				assert.NotContains(t, query, url.QueryEscape(wd), "expected worktree path NOT in query")
 			},
 		},
 		{
@@ -232,12 +220,8 @@ func TestListCommand(t *testing.T) {
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
-				if !strings.Contains(query, url.QueryEscape(repo.Dir)) {
-					t.Errorf("expected main repo path %q in query, got: %s", repo.Dir, query)
-				}
-				if strings.Contains(query, url.QueryEscape(wd)) {
-					t.Errorf("expected worktree path %q NOT in query, got: %s", wd, query)
-				}
+				assert.Contains(t, query, url.QueryEscape(repo.Dir), "expected main repo path in query")
+				assert.NotContains(t, query, url.QueryEscape(wd), "expected worktree path NOT in query")
 			},
 		},
 		{
@@ -278,6 +262,9 @@ func TestListCommand(t *testing.T) {
 }
 
 func runListTest(t *testing.T, tc listTestCase) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	// Setup mock daemon to capture query and handle request
 	var capturedQuery string
 	wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,14 +302,10 @@ func runListTest(t *testing.T, tc listTestCase) {
 
 	// Verify error
 	if tc.wantError != "" {
-		if cmdErr == nil {
-			t.Fatal("expected error but got none")
-		}
-		if !strings.Contains(cmdErr.Error(), tc.wantError) {
-			t.Errorf("expected error containing %q, got %q", tc.wantError, cmdErr.Error())
-		}
-	} else if cmdErr != nil {
-		t.Fatalf("unexpected error: %v", cmdErr)
+		assert.Equal(t, true, cmdErr != nil, "expected error but got none")
+		assert.Contains(cmdErr.Error(), tc.wantError)
+	} else {
+		assert.Equal(t, false, cmdErr != nil, "unexpected error")
 	}
 
 	// Verify string output

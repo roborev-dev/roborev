@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +28,7 @@ func decodeActivityResponse(t *testing.T, w *httptest.ResponseRecorder) activity
 	t.Helper()
 	var resp activityResponse
 	if err := json.NewDecoder(w.Result().Body).Decode(&resp); err != nil {
-		t.Fatalf("decode activity response: %v", err)
+		require.NoError(t, err, "decode activity response: %v", err)
 	}
 	return resp
 }
@@ -34,9 +36,9 @@ func decodeActivityResponse(t *testing.T, w *httptest.ResponseRecorder) activity
 func TestHandleActivity_MethodNotAllowed(t *testing.T) {
 	s := setupTestServer(t)
 	w := requestActivity(s, http.MethodPost, "")
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code,
+		"assertion failed", "expected 405, got %d", w.Code)
+
 }
 
 func TestHandleActivity_Limits(t *testing.T) {
@@ -62,13 +64,11 @@ func TestHandleActivity_Limits(t *testing.T) {
 			}
 
 			w := requestActivity(s, http.MethodGet, tt.query)
-			if w.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d", w.Code)
-			}
+			assert.Equal(t, http.StatusOK, w.Code, "expected 200, got %d", w.Code)
 
 			resp := decodeActivityResponse(t, w)
 			if len(resp.Entries) != tt.expectedCount {
-				t.Errorf("expected %d entries, got %d", tt.expectedCount, len(resp.Entries))
+				assert.Len(t, resp.Entries, tt.expectedCount, "expected %d entries, got %d", tt.expectedCount, len(resp.Entries))
 			}
 		})
 	}
@@ -80,11 +80,11 @@ func TestHandleActivity_NilActivityLog(t *testing.T) {
 	s.activityLog = nil
 
 	w := requestActivity(s, http.MethodGet, "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusOK, w.Code,
+		"assertion failed", "expected 200, got %d", w.Code)
+
 	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 0 {
-		t.Errorf("expected 0 entries with nil log, got %d", len(resp.Entries))
-	}
+	assert.Empty(t, resp.Entries,
+		"assertion failed", "expected 0 entries with nil log, got %d", len(resp.Entries))
+
 }

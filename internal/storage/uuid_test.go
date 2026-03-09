@@ -3,6 +3,9 @@ package storage
 import (
 	"regexp"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -14,9 +17,7 @@ const (
 
 func assertUUIDFormat(t *testing.T, uuid string) {
 	t.Helper()
-	if !uuidV4Pattern.MatchString(uuid) {
-		t.Errorf("UUID %q does not match expected v4 format", uuid)
-	}
+	assert.Regexp(t, uuidV4Pattern, uuid, "UUID format mismatch")
 }
 
 func checkUniqueness(t *testing.T, generator func() string, iterations int) {
@@ -24,9 +25,11 @@ func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 	seen := make(map[string]struct{}, iterations)
 	for i := range iterations {
 		uuid := generator()
-		if _, exists := seen[uuid]; exists {
-			t.Fatalf("Collision detected at iteration %d: %s", i, uuid)
-		}
+		require.Condition(t, func() bool {
+			_, exists := seen[uuid]
+			return !exists
+		}, "UUID collision detected: iteration %d: %s", i, uuid)
+
 		seen[uuid] = struct{}{}
 	}
 }

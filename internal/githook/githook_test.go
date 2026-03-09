@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -24,36 +26,23 @@ func TestGeneratePostCommit(t *testing.T) {
 	lines := strings.Split(content, "\n")
 
 	t.Run("has shebang", func(t *testing.T) {
-		if !strings.HasPrefix(content, shebang) {
-			t.Error("hook should start with #!/bin/sh")
-		}
+		assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
 	})
 
 	t.Run("has roborev comment", func(t *testing.T) {
-		if !strings.Contains(content, "# roborev") {
-			t.Error("hook should contain roborev comment")
-		}
+		assert.Contains(t, content, "# roborev", "hook should contain roborev comment")
 	})
 
 	t.Run("baked path comes first", func(t *testing.T) {
 		bakedIdx := strings.Index(content, "ROBOREV=\"")
 		pathIdx := strings.Index(content, "command -v roborev")
-
-		if bakedIdx == -1 {
-			t.Error("hook should have baked ROBOREV= assignment")
-		}
-		if pathIdx == -1 {
-			t.Error("hook should have PATH fallback")
-		}
-		if bakedIdx > pathIdx {
-			t.Error("baked path should come before PATH lookup")
-		}
+		assert.NotEqual(t, -1, bakedIdx, "hook should have baked ROBOREV= assignment")
+		assert.NotEqual(t, -1, pathIdx, "hook should have PATH fallback")
+		assert.Less(t, bakedIdx, pathIdx, "baked path should come before PATH lookup")
 	})
 
 	t.Run("post-commit line without background", func(t *testing.T) {
-		if !strings.Contains(content, "post-commit") || !strings.Contains(content, "2>/dev/null") {
-			t.Error("hook should call post-commit with 2>/dev/null")
-		}
+		require.True(t, strings.Contains(content, "post-commit") && strings.Contains(content, "2>/dev/null"), "hook should call post-commit with 2>/dev/null")
 
 		idx := strings.Index(content, "\" post-commit")
 		if idx != -1 {
@@ -62,31 +51,19 @@ func TestGeneratePostCommit(t *testing.T) {
 				lineEnd = len(content[idx:])
 			}
 			line := strings.TrimSpace(content[idx : idx+lineEnd])
-			if strings.HasSuffix(line, "&") {
-				t.Error("post-commit line should not have trailing &")
-			}
+			assert.False(t, strings.HasSuffix(line, "&"), "post-commit line should not have trailing &")
 		}
 	})
 
 	t.Run("has version marker", func(t *testing.T) {
-		if !strings.Contains(content, PostCommitVersionMarker) {
-			t.Errorf(
-				"hook should contain %q",
-				PostCommitVersionMarker,
-			)
-		}
+		assert.Contains(t, content, PostCommitVersionMarker, "hook should contain %q", PostCommitVersionMarker)
 	})
 
 	t.Run("baked path is quoted", func(t *testing.T) {
 		for _, line := range lines {
 			if strings.HasPrefix(line, "ROBOREV=") &&
 				!strings.Contains(line, "command -v") {
-				if !strings.Contains(line, `ROBOREV="`) {
-					t.Errorf(
-						"baked path should be quoted: %s",
-						line,
-					)
-				}
+				assert.Contains(t, line, `ROBOREV="`, "baked path should be quoted: %s", line)
 				break
 			}
 		}
@@ -100,12 +77,7 @@ func TestGeneratePostCommit(t *testing.T) {
 				end := strings.LastIndex(line, `"`)
 				if start != -1 && end > start {
 					path := line[start+1 : end]
-					if !filepath.IsAbs(path) {
-						t.Errorf(
-							"baked path should be absolute: %s",
-							path,
-						)
-					}
+					assert.True(t, filepath.IsAbs(path), "baked path should be absolute: %s", path)
 				}
 				break
 			}
@@ -115,47 +87,24 @@ func TestGeneratePostCommit(t *testing.T) {
 
 func TestGeneratePostRewrite(t *testing.T) {
 	content := GeneratePostRewrite()
-
-	if !strings.HasPrefix(content, shebang) {
-		t.Error("hook should start with #!/bin/sh")
-	}
-	if !strings.Contains(content, PostRewriteVersionMarker) {
-		t.Error("hook should contain version marker")
-	}
-	if !strings.Contains(content, "remap --quiet") {
-		t.Error("hook should call remap --quiet")
-	}
+	assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
+	assert.Contains(t, content, PostRewriteVersionMarker, "hook should contain version marker")
+	assert.Contains(t, content, "remap --quiet", "hook should call remap --quiet")
 }
 
 func TestGenerateEmbeddablePostCommit(t *testing.T) {
 	content := generateEmbeddablePostCommit()
-
-	if strings.HasPrefix(content, "#!") {
-		t.Error("embeddable should not have shebang")
-	}
-	if !strings.Contains(content, "_roborev_hook() {") {
-		t.Error("embeddable should use function wrapper")
-	}
-	if !strings.Contains(content, "return 0") {
-		t.Error("embeddable should use return, not exit")
-	}
-	if strings.Contains(content, "exit 0") {
-		t.Error("embeddable must not use exit 0")
-	}
-	if !strings.Contains(content, PostCommitVersionMarker) {
-		t.Error("embeddable should contain version marker")
-	}
+	assert.False(t, strings.HasPrefix(content, "#!"), "embeddable should not have shebang")
+	assert.Contains(t, content, "_roborev_hook() {", "embeddable should use function wrapper")
+	assert.Contains(t, content, "return 0", "embeddable should use return, not exit")
+	assert.NotContains(t, content, "exit 0", "embeddable must not use exit 0")
+	assert.Contains(t, content, PostCommitVersionMarker, "embeddable should contain version marker")
 	// Ends with function call
 	lines := strings.Split(
 		strings.TrimRight(content, "\n"), "\n",
 	)
 	last := strings.TrimSpace(lines[len(lines)-1])
-	if last != "_roborev_hook" {
-		t.Errorf(
-			"embeddable should end with function call, got: %s",
-			last,
-		)
-	}
+	assert.Equal(t, "_roborev_hook", last, "embeddable should end with function call, got: %s", last)
 }
 
 func TestGenerateEmbeddablePostRewrite(t *testing.T) {

@@ -153,6 +153,15 @@ Test conventions:
 - PostgreSQL-only tests use `//go:build postgres`.
 - ACP adapter integration tests use `//go:build integration && acp`.
 - Shared helpers live in `internal/testenv/`, `internal/testutil/`, and package-local `*_test_helpers*.go`.
+- In tests with more than three assertions, prefer `assert := assert.New(t)` to make grouped assertions cleaner.
+- Avoid `assert.False*` / `require.False*` and do not use `assert.Fail`/`require.Fail` in tests.
+- Prefer `assert.Equal` for explicit expectations and avoid `assert.True*` / `require.True*` unless checking a boolean result directly.
+- Convert redundant `if` wrappers around assertions into direct assertions (for example, `if err != nil { require.NoError(t, err) }` should become `require.NoError(t, err)`).
+- Do not replace assertions with manual control-flow (`if`, `t.Fatal*`, `t.Error*`) when a direct testify check covers the same condition.
+- Enforce a no-redundant-guards policy for assertions:
+  - replace `if err != nil { require.NoError(t, err, ...) }` and `if err == nil { ... } else { ... }` with direct `require.Error`/`require.NoError`/`require.NotNil` statements.
+  - avoid manual `if` prechecks such as `if got != want` or `if cfg != nil`; convert to direct `assert.Equal`/`assert.NotNil` assertions.
+  - remove `assert`/`require` fail helpers and `t.Fatal`/`t.Fatalf`/`t.Error` usage when a direct assertion provides the same check.
 
 ## Search Shortcuts
 

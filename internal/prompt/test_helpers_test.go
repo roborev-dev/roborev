@@ -10,6 +10,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type testRepo struct {
@@ -57,24 +59,18 @@ func (r *testRepo) git(args ...string) string {
 		"GIT_COMMITTER_EMAIL="+testGitEmail,
 	)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	require.NoError(r.t, err, "git %v failed\n%s", args, out)
 	return strings.TrimSpace(string(out))
 }
 
 func assertContains(t *testing.T, doc, substring, msg string) {
 	t.Helper()
-	if !strings.Contains(doc, substring) {
-		t.Errorf("%s: expected to find %q in document:\n%s", msg, substring, doc)
-	}
+	assert.Contains(t, doc, substring, msg)
 }
 
 func assertNotContains(t *testing.T, doc, substring, msg string) {
 	t.Helper()
-	if strings.Contains(doc, substring) {
-		t.Errorf("%s: expected NOT to find %q in document:\n%s", msg, substring, doc)
-	}
+	assert.NotContains(t, doc, substring, msg)
 }
 
 const testAuthor = "test"
@@ -90,9 +86,7 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	for i := 1; i <= 6; i++ {
 		filename := filepath.Join(r.dir, "file.txt")
 		content := strings.Repeat("x", i) // Different content each time
-		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filename, []byte(content), 0644))
 		r.git("add", "file.txt")
 		r.git("commit", "-m", "commit "+string(rune('0'+i)))
 
@@ -107,13 +101,10 @@ func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*stora
 	t.Helper()
 	db := testutil.OpenTestDB(t)
 	repo, err := db.GetOrCreateRepo(repoPath)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateRepo failed")
 	for _, sha := range commits {
-		if _, err := db.GetOrCreateCommit(repo.ID, sha, testAuthor, "commit message", time.Now()); err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
+		_, err = db.GetOrCreateCommit(repo.ID, sha, testAuthor, "commit message", time.Now())
+		require.NoError(t, err, "GetOrCreateCommit failed")
 	}
 	return db, repo.ID
 }
@@ -146,13 +137,9 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	// Initial commit with base guidelines
 	if baseGuidelines != "" {
 		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644); err != nil {
-			t.Fatalf("write .roborev.toml: %v", err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644), "write .roborev.toml")
 	} else {
-		if err := os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644); err != nil {
-			t.Fatalf("write README.md: %v", err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644), "write README.md")
 	}
 	r.git("add", "-A")
 	r.git("commit", "-m", "initial")
@@ -169,9 +156,7 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	if branchGuidelines != "" {
 		r.git("checkout", "-b", "feature-branch")
 		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644); err != nil {
-			t.Fatalf("write .roborev.toml: %v", err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644), "write .roborev.toml")
 		r.git("add", ".roborev.toml")
 		r.git("commit", "-m", "update guidelines on branch")
 		featureSHA = r.git("rev-parse", "HEAD")

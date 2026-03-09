@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestOpenAndClose(t *testing.T) {
@@ -11,13 +13,10 @@ func TestOpenAndClose(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open failed: %v", err)
-	}
+	require.NoError(t, err, "Open failed")
 	defer db.Close()
 
 	// Verify file exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Error("Database file was not created")
-	}
+	_, err = os.Stat(dbPath)
+	require.NoError(t, err, "Database file was not created")
 }

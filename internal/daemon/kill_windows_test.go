@@ -4,6 +4,8 @@ package daemon
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
@@ -117,9 +119,8 @@ func TestClassifyCommandLine(t *testing.T) {
 			for _, tt := range g.cases {
 				t.Run(tt.name, func(t *testing.T) {
 					got := classifyCommandLine(tt.cmdLine)
-					if got != tt.want {
-						t.Errorf("classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
-					}
+					assert.Equal(t, tt.want, got,
+						"classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
 				})
 			}
 		})
@@ -160,9 +161,8 @@ func TestParseWmicOutput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parseWmicOutput(tt.wmicOutput)
-			if result != tt.want {
-				t.Errorf("parseWmicOutput(%q) = %q, want %q", tt.wmicOutput, result, tt.want)
-			}
+			assert.Equal(t, tt.want, result,
+				"parseWmicOutput(%q) = %q, want %q", tt.wmicOutput, result, tt.want)
 		})
 	}
 }
@@ -238,9 +238,8 @@ func TestNormalizeCommandLine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := normalizeCommandLine(tt.input)
-			if got != tt.want {
-				t.Errorf("normalizeCommandLine(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got,
+				"normalizeCommandLine(%q) = %q, want %q", tt.input, got, tt.want)
 		})
 	}
 }

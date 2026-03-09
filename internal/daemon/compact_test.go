@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestEnv(t *testing.T) string {
@@ -61,19 +64,19 @@ func TestReadCompactMetadata(t *testing.T) {
 			if tt.mockFile != nil {
 				path := compactMetadataPath(tt.jobID)
 				if err := os.WriteFile(path, tt.mockFile, 0644); err != nil {
-					t.Fatalf("Setup failed: %v", err)
+					require.NoError(t, err, "Setup failed: %v")
 				}
 			}
 
 			got, err := ReadCompactMetadata(tt.jobID)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ReadCompactMetadata() error = %v, wantErr %v", err, tt.wantErr)
+				assert.Equal(t, tt.wantErr, err != nil, "ReadCompactMetadata() error mismatch")
 				return
 			}
 
 			if !tt.wantErr {
 				if !slices.Equal(got.SourceJobIDs, tt.wantIDs) {
-					t.Errorf("ReadCompactMetadata() = %v, want %v", got.SourceJobIDs, tt.wantIDs)
+					assert.Equal(t, tt.wantIDs, got.SourceJobIDs, "ReadCompactMetadata() result mismatch")
 				}
 			}
 		})
@@ -88,19 +91,16 @@ func TestDeleteCompactMetadata(t *testing.T) {
 		// Create a metadata file
 		path := compactMetadataPath(jobID)
 		if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0644); err != nil {
-			t.Fatalf("Failed to write metadata file: %v", err)
+			require.NoError(t, err, "Failed to write metadata file: %v")
 		}
 
 		// Delete it
 		err := DeleteCompactMetadata(jobID)
-		if err != nil {
-			t.Errorf("DeleteCompactMetadata failed: %v", err)
-		}
+		require.NoError(t, err, "DeleteCompactMetadata should succeed")
 
 		// Verify it's gone
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Error("Metadata file should be deleted")
-		}
+		_, err = os.Stat(path)
+		assert.True(t, os.IsNotExist(err), "Metadata file should be deleted")
 	})
 
 	t.Run("delete_nonexistent_file", func(t *testing.T) {
@@ -109,9 +109,7 @@ func TestDeleteCompactMetadata(t *testing.T) {
 
 		// Try to delete non-existent file (should not error)
 		err := DeleteCompactMetadata(jobID)
-		if err != nil {
-			t.Errorf("DeleteCompactMetadata should not error on missing file, got: %v", err)
-		}
+		require.NoError(t, err, "DeleteCompactMetadata should not error on missing file")
 	})
 }
 
@@ -131,10 +129,7 @@ func TestIsValidCompactOutput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsValidCompactOutput(tt.input); got != tt.want {
-				t.Errorf("IsValidCompactOutput(%q) = %v, want %v",
-					tt.input, got, tt.want)
-			}
+			assert.Equal(t, tt.want, IsValidCompactOutput(tt.input), "IsValidCompactOutput result mismatch")
 		})
 	}
 }
@@ -147,7 +142,5 @@ func TestCompactMetadataPath(t *testing.T) {
 	path := compactMetadataPath(jobID)
 
 	expected := filepath.Join(tmpDir, "compact-123.json")
-	if path != expected {
-		t.Errorf("compactMetadataPath(123) = %q, want %q", path, expected)
-	}
+	assert.Equal(t, expected, path, "compactMetadataPath(123) path mismatch")
 }

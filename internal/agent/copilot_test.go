@@ -2,7 +2,8 @@ package agent
 
 import (
 	"context"
-	"strings"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestCopilotReview(t *testing.T) {
 			mockOpts: MockCLIOpts{
 				CaptureArgs:  true,
 				CaptureStdin: true,
-				StdoutLines:  []string{}, // empty output
+				StdoutLines:  []string{},
 			},
 			wantErr:    false,
 			wantResult: "No review output generated",
@@ -61,20 +62,16 @@ func TestCopilotReview(t *testing.T) {
 			)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("Review() expected error, got nil")
-				}
-				if tt.wantErrStr != "" && !strings.Contains(err.Error(), tt.wantErrStr) {
-					t.Errorf("Review() error = %v, want to contain %v", err, tt.wantErrStr)
+				require.Error(t, err)
+				if tt.wantErrStr != "" {
+					require.Contains(t, err.Error(), tt.wantErrStr, "Review() error = %v, want to contain %v", err, tt.wantErrStr)
 				}
 			} else {
-				assertNoError(t, err, "Review failed")
-				if res != tt.wantResult {
-					t.Errorf("Review() result = %q, want %q", res, tt.wantResult)
-				}
-				// Prompt must be in stdin
+				require.NoError(t, err, "Review failed")
+				assert.Equal(t, tt.wantResult, res, "Review() result = %q, want %q", res, tt.wantResult)
+
 				assertFileContent(t, mock.StdinFile, tt.prompt)
-				// Prompt must not be in argv
+
 				assertFileNotContains(t, mock.ArgsFile, tt.prompt)
 			}
 		})

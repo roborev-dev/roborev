@@ -2,7 +2,11 @@
 
 package daemon
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestIsRoborevDaemonCommand(t *testing.T) {
 	tests := []struct {
@@ -122,9 +126,8 @@ func TestIsRoborevDaemonCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isRoborevDaemonCommand(tt.cmdLine)
-			if got != tt.want {
-				t.Errorf("isRoborevDaemonCommand(%q) = %v, want %v", tt.cmdLine, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got,
+				"isRoborevDaemonCommand(%q) = %v, want %v", tt.cmdLine, got, tt.want)
 		})
 	}
 }

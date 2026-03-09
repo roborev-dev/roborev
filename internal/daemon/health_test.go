@@ -68,7 +68,7 @@ func TestHealth(t *testing.T) {
 		w := executeHealthCheck(server, http.MethodGet)
 		health := decodeHealthStatus(t, w)
 
-		assert.Greater(t, health.ErrorCount, 0, "Expected error count > 0")
+		assert.Positive(t, health.ErrorCount, "Expected error count > 0")
 		assert.True(t, hasError(health.RecentErrors, "worker", 456), "Expected error for component 'worker' with JobID 456")
 	})
 

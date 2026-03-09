@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type normalizeTestCase struct {
@@ -19,22 +22,19 @@ func runNormalizeTests(t *testing.T, fn func(string) *OutputLine, cases []normal
 		t.Run(tc.name, func(t *testing.T) {
 			result := fn(tc.input)
 			if tc.wantNil {
-				if result != nil {
-					t.Errorf("input %q: expected nil, got %+v", tc.input, result)
-				}
+				assert.Nil(t, result, "input %q: expected nil, got %+v", tc.input, result)
 				return
 			}
-			if result == nil {
-				t.Fatalf("input %q: expected non-nil result", tc.input)
+			require.NotNil(t, result, "input %q: expected non-nil result", tc.input)
+			assert.Equal(t, tc.wantText, result.Text,
+				"input %q: text = %q, want %q", tc.input, result.Text, tc.wantText)
+			if tc.wantType != "" {
+				assert.Equal(t, tc.wantType, result.Type, "input %q: type = %q, want %q", tc.input, result.Type, tc.wantType)
 			}
-			if result.Text != tc.wantText {
-				t.Errorf("input %q: text = %q, want %q", tc.input, result.Text, tc.wantText)
-			}
-			if tc.wantType != "" && result.Type != tc.wantType {
-				t.Errorf("input %q: type = %q, want %q", tc.input, result.Type, tc.wantType)
-			}
-			if tc.notWantType != "" && result.Type == tc.notWantType {
-				t.Errorf("input %q: type = %q, should not be %q", tc.input, result.Type, tc.notWantType)
+
+			if tc.notWantType != "" {
+				assert.NotEqual(t, tc.notWantType, result.Type,
+					"input %q: type = %q, should not be %q", tc.input, result.Type, tc.notWantType)
 			}
 		})
 	}
@@ -185,7 +185,7 @@ func TestGetNormalizer(t *testing.T) {
 		{
 			agent:    "gemini",
 			input:    `{"type":"assistant","message":{"content":"hi"}}`,
-			wantText: `{"type":"assistant","message":{"content":"hi"}}`, // Generic treats JSON as plain text
+			wantText: `{"type":"assistant","message":{"content":"hi"}}`,
 		},
 		{
 			agent:    "unknown",
@@ -197,21 +197,17 @@ func TestGetNormalizer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			fn := GetNormalizer(tc.agent)
-			if fn == nil {
-				t.Fatalf("GetNormalizer(%q) returned nil", tc.agent)
-			}
+			require.NotNil(t, fn, "GetNormalizer(%q) returned nil", tc.agent)
 
 			result := fn(tc.input)
-			if result == nil {
-				t.Fatalf("Normalizer for %q returned nil for input %q", tc.agent, tc.input)
+			require.NotNil(t, result, "Normalizer for %q returned nil for input %q", tc.agent, tc.input)
+
+			assert.Equal(t, tc.wantText, result.Text,
+				"Normalizer for %q: got text %q, want %q", tc.agent, result.Text, tc.wantText)
+			if tc.wantType != "" {
+				assert.Equal(t, tc.wantType, result.Type, "Normalizer for %q: got type %q, want %q", tc.agent, result.Type, tc.wantType)
 			}
 
-			if result.Text != tc.wantText {
-				t.Errorf("Normalizer for %q: got text %q, want %q", tc.agent, result.Text, tc.wantText)
-			}
-			if tc.wantType != "" && result.Type != tc.wantType {
-				t.Errorf("Normalizer for %q: got type %q, want %q", tc.agent, result.Type, tc.wantType)
-			}
 		})
 	}
 }
@@ -356,9 +352,8 @@ func TestStripANSI(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			result := stripANSI(tc.input)
-			if result != tc.expected {
-				t.Errorf("stripANSI(%q) = %q, want %q", tc.input, result, tc.expected)
-			}
+			assert.Equal(t, tc.expected, result,
+				"stripANSI(%q) = %q, want %q", tc.input, result, tc.expected)
 		})
 	}
 }
@@ -380,9 +375,8 @@ func TestIsToolCallJSON(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			result := isToolCallJSON(tc.input)
-			if result != tc.expected {
-				t.Errorf("isToolCallJSON(%q) = %v, want %v", tc.input, result, tc.expected)
-			}
+			assert.Equal(t, tc.expected, result,
+				"isToolCallJSON(%q) = %v, want %v", tc.input, result, tc.expected)
 		})
 	}
 }

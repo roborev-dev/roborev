@@ -1,16 +1,14 @@
 package storage
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 )
-
-// templateDB holds a pre-migrated SQLite database file. Tests copy this
-// file instead of re-running the full migration chain on every call to
-// openTestDB, which is the dominant cost on macOS ARM64 with -race.
 
 var (
 	templateOnce sync.Once
@@ -40,77 +38,62 @@ func getTemplatePath() (string, error) {
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 	tmpl, err := getTemplatePath()
-	if err != nil {
-		t.Fatalf("Failed to create template DB: %v", err)
-	}
+	require.NoError(t, err, "Failed to create template DB: %v")
 
 	data, err := os.ReadFile(tmpl)
-	if err != nil {
-		t.Fatalf("Failed to read template DB: %v", err)
-	}
+	require.NoError(t, err, "Failed to read template DB: %v")
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	if err := os.WriteFile(dbPath, data, 0644); err != nil {
-		t.Fatalf("Failed to write test DB: %v", err)
+		require.NoError(t, err, "Failed to write test DB: %v")
 	}
 
 	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
+	require.NoError(t, err, "Failed to open test DB: %v")
+
 	return db
 }
 
 func createRepo(t *testing.T, db *DB, path string) *Repo {
 	t.Helper()
 	repo, err := db.GetOrCreateRepo(path)
-	if err != nil {
-		t.Fatalf("Failed to create repo: %v", err)
-	}
+	require.NoError(t, err, "Failed to create repo: %v")
+
 	return repo
 }
 
 func createCommit(t *testing.T, db *DB, repoID int64, sha string) *Commit {
 	t.Helper()
 	commit, err := db.GetOrCreateCommit(repoID, sha, "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("Failed to create commit: %v", err)
-	}
+	require.NoError(t, err, "Failed to create commit: %v")
+
 	return commit
 }
 
 func enqueueJob(t *testing.T, db *DB, repoID, commitID int64, sha string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: commitID, GitRef: sha, Agent: "codex"})
-	if err != nil {
-		t.Fatalf("Failed to enqueue job: %v", err)
-	}
+	require.NoError(t, err, "Failed to enqueue job: %v")
+
 	return job
 }
 
 func claimJob(t *testing.T, db *DB, workerID string) *ReviewJob {
 	t.Helper()
 	job, err := db.ClaimJob(workerID)
-	if err != nil {
-		t.Fatalf("Failed to claim job: %v", err)
-	}
-	if job == nil {
-		t.Fatal("Expected to claim a job, got nil")
-	}
+	require.NoError(t, err, "Failed to claim job: %v")
+	assert.NotNil(t, job, "Expected to claim a job, got nil")
+
 	return job
 }
 
 func mustEnqueuePromptJob(t *testing.T, db *DB, opts EnqueueOpts) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(opts)
-	if err != nil {
-		t.Fatalf("Failed to enqueue prompt job: %v", err)
-	}
+	require.NoError(t, err, "Failed to enqueue prompt job: %v")
+
 	return job
 }
-
-// setJobStatus forces a job into a specific state via raw SQL, replacing
-// manual UPDATE statements scattered across tests.
 
 func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	t.Helper()
@@ -130,51 +113,36 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 		t.Fatalf("Unknown job status: %s", status)
 	}
 	res, err := db.Exec(query, jobID)
-	if err != nil {
-		t.Fatalf("Failed to set job status to %s: %v", status, err)
-	}
+	require.NoError(t, err, "Failed to set job status to %s: %v", status)
+
 	rows, err := res.RowsAffected()
-	if err != nil {
-		t.Fatalf("Failed to get rows affected: %v", err)
-	}
-	if rows != 1 {
-		t.Fatalf("Expected exactly 1 row updated for jobID %d, got %d", jobID, rows)
-	}
+	require.NoError(t, err, "Failed to get rows affected: %v")
+
+	assert.EqualValues(t, 1, rows, "unexpected condition")
 }
 
-// backdateJobStart updates a job's started_at time to the specified duration ago.
 func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
 	t.Helper()
 	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
-	if err != nil {
-		t.Fatalf("failed to backdate job: %v", err)
-	}
-}
+	require.NoError(t, err, "failed to backdate job: %v")
 
-// backdateJobStartWithOffset updates a job's started_at time to the specified duration ago,
-// preserving the timezone offset of the generated time.
+}
 
 func backdateJobStartWithOffset(t *testing.T, db *DB, jobID int64, d time.Duration, loc *time.Location) {
 	t.Helper()
 	startTime := time.Now().Add(-d).In(loc).Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
-	if err != nil {
-		t.Fatalf("failed to backdate job with offset: %v", err)
-	}
-}
+	require.NoError(t, err, "failed to backdate job with offset: %v")
 
-// setJobBranch updates a job's branch.
+}
 
 func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobID)
-	if err != nil {
-		t.Fatalf("failed to set job branch: %v", err)
-	}
-}
+	require.NoError(t, err, "failed to set job branch: %v")
 
-// createJobChain creates a repo, commit, and enqueued job, returning all three.
+}
 
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
 	t.Helper()

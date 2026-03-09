@@ -10,44 +10,34 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/testenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.ServerAddr != "127.0.0.1:7373" {
-		t.Errorf("Expected ServerAddr '127.0.0.1:7373', got '%s'", cfg.ServerAddr)
-	}
-	if cfg.MaxWorkers != 4 {
-		t.Errorf("Expected MaxWorkers 4, got %d", cfg.MaxWorkers)
-	}
-	if cfg.DefaultAgent != "codex" {
-		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
-	}
-	if !cfg.MouseEnabled {
-		t.Error("Expected MouseEnabled to default to true")
-	}
+	require.Equal(t, "127.0.0.1:7373", cfg.ServerAddr, "Expected ServerAddr '127.0.0.1:7373'")
+	require.Equal(t, 4, cfg.MaxWorkers, "Expected MaxWorkers 4")
+	require.Equal(t, "codex", cfg.DefaultAgent, "Expected DefaultAgent 'codex'")
+	require.True(t, cfg.MouseEnabled, "Expected MouseEnabled to default to true")
 }
 
 func TestDataDir(t *testing.T) {
 	t.Run("default uses home directory", func(t *testing.T) {
-		t.Setenv("ROBOREV_DATA_DIR", "") // DataDir() treats empty the same as unset
+		t.Setenv("ROBOREV_DATA_DIR", "")
 
 		dir := DataDir()
 		home, _ := os.UserHomeDir()
 		expected := filepath.Join(home, ".roborev")
-		if dir != expected {
-			t.Errorf("Expected %s, got %s", expected, dir)
-		}
+		require.Equal(t, expected, dir, "Expected %s, got %s", expected, dir)
 	})
 
 	t.Run("env var overrides default", func(t *testing.T) {
 		t.Setenv("ROBOREV_DATA_DIR", "/custom/data/dir")
 
 		dir := DataDir()
-		if dir != "/custom/data/dir" {
-			t.Errorf("Expected /custom/data/dir, got %s", dir)
-		}
+		require.Equal(t, "/custom/data/dir", dir, "Expected /custom/data/dir, got %s", dir)
 	})
 
 	t.Run("GlobalConfigPath uses DataDir", func(t *testing.T) {
@@ -56,9 +46,7 @@ func TestDataDir(t *testing.T) {
 
 		path := GlobalConfigPath()
 		expected := filepath.Join(testDir, "config.toml")
-		if path != expected {
-			t.Errorf("Expected %s, got %s", expected, path)
-		}
+		require.Equal(t, expected, path, "Expected %s, got %s", expected, path)
 	})
 }
 
@@ -66,31 +54,19 @@ func TestResolveAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	tmpDir := t.TempDir()
 
-	// Test explicit agent takes precedence
 	agent := ResolveAgent("claude-code", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code', got '%s'", agent)
-	}
+	require.Equal(t, "claude-code", agent, "Expected 'claude-code'")
 
-	// Test empty explicit falls back to global config
 	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (from global), got '%s'", agent)
-	}
+	require.Equal(t, "codex", agent, "Expected 'codex' (from global)")
 
-	// Test per-repo config
 	writeRepoConfigStr(t, tmpDir, `agent = "claude-code"`)
 
 	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code' (from repo config), got '%s'", agent)
-	}
+	require.Equal(t, "claude-code", agent, "Expected 'claude-code' (from repo config)")
 
-	// Explicit still takes precedence over repo config
 	agent = ResolveAgent("codex", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (explicit), got '%s'", agent)
-	}
+	require.Equal(t, "codex", agent, "Expected 'codex' (explicit)")
 }
 
 func TestSaveAndLoadGlobal(t *testing.T) {
@@ -101,21 +77,72 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	cfg.MaxWorkers = 8
 
 	err := SaveGlobal(cfg)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+	require.NoError(t, err, "SaveGlobal failed: %v")
+
+	loaded, err := LoadGlobal()
+	require.NoError(t, err, "LoadGlobal failed: %v")
+	assert.Equal(t, "claude-code", loaded.DefaultAgent, "Expected DefaultAgent 'claude-code'")
+	assert.Equal(t, 8, loaded.MaxWorkers, "Expected MaxWorkers 8")
+
+}
+
+func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := DefaultConfig()
+	cfg.AutoFilterBranch = true
+
+	if err := SaveGlobal(cfg); err != nil {
+		require.NoError(t, err, "SaveGlobal failed: %v")
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.True(t, loaded.AutoFilterBranch, "AutoFilterBranch should be true after round-trip")
+
+}
+
+func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0644); err != nil {
+		require.NoError(t, err, "write config: %v")
 	}
 
-	if loaded.DefaultAgent != "claude-code" {
-		t.Errorf("Expected DefaultAgent 'claude-code', got '%s'", loaded.DefaultAgent)
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err, "LoadGlobalFrom failed: %v")
+
+	assert.True(t, cfg.AutoFilterBranch, "AutoFilterBranch should be true when loaded from TOML")
+}
+
+func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := DefaultConfig()
+	cfg.MouseEnabled = false
+
+	if err := SaveGlobal(cfg); err != nil {
+		require.NoError(t, err, "SaveGlobal failed: %v")
 	}
-	if loaded.MaxWorkers != 8 {
-		t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
+
+	loaded, err := LoadGlobal()
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.False(t, loaded.MouseEnabled, "MouseEnabled should be false after round-trip")
+}
+
+func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0644); err != nil {
+		require.NoError(t, err, "write config: %v")
 	}
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err, "LoadGlobalFrom failed: %v")
+
+	assert.False(t, cfg.MouseEnabled, "MouseEnabled should be false when loaded from TOML")
 }
 
 func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
@@ -203,56 +230,34 @@ All public APIs must have documentation comments.
 `)
 
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
+	require.NoError(t, err, "LoadRepoConfig failed: %v")
+	assert.NotNil(t, cfg, "Expected non-nil config")
+	assert.Equal(t, "claude-code", cfg.Agent, "Expected agent 'claude-code', got '%s'", cfg.Agent)
 
-	if cfg == nil {
-		t.Fatal("Expected non-nil config")
-	}
+	assert.Contains(t, cfg.ReviewGuidelines, "database migrations", "Expected guidelines to contain 'database migrations', got '%s'", cfg.ReviewGuidelines)
+	assert.Contains(t, cfg.ReviewGuidelines, "composition over inheritance", "Expected guidelines to contain 'composition over inheritance'")
 
-	if cfg.Agent != "claude-code" {
-		t.Errorf("Expected agent 'claude-code', got '%s'", cfg.Agent)
-	}
-
-	if !strings.Contains(cfg.ReviewGuidelines, "database migrations") {
-		t.Errorf("Expected guidelines to contain 'database migrations', got '%s'", cfg.ReviewGuidelines)
-	}
-
-	if !strings.Contains(cfg.ReviewGuidelines, "composition over inheritance") {
-		t.Errorf("Expected guidelines to contain 'composition over inheritance'")
-	}
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `agent = "codex"`)
 
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
-
-	if cfg == nil {
-		t.Fatal("Expected non-nil config")
-	}
+	require.NoError(t, err, "LoadRepoConfig failed: %v")
+	assert.NotNil(t, cfg, "Expected non-nil config")
 
 	if cfg.ReviewGuidelines != "" {
-		t.Errorf("Expected empty guidelines, got '%s'", cfg.ReviewGuidelines)
+		assert.Empty(t, cfg.ReviewGuidelines, "Expected empty guidelines, got '%s'", cfg.ReviewGuidelines)
 	}
 }
 
 func TestLoadRepoConfigMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Test loading from directory with no config file
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
+	require.NoError(t, err, "LoadRepoConfig failed: %v")
 
-	if cfg != nil {
-		t.Error("Expected nil config when file doesn't exist")
-	}
+	assert.Nil(t, cfg, "Expected nil config when file doesn't exist")
 }
 
 func TestResolveJobTimeout(t *testing.T) {
@@ -317,9 +322,7 @@ func TestResolveJobTimeout(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveJobTimeout(tmpDir, tt.globalConfig)
-			if got != tt.want {
-				t.Errorf("ResolveJobTimeout() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -348,12 +351,8 @@ func TestResolveReasoning(t *testing.T) {
 				t.Run(tt.testName, func(t *testing.T) {
 					tmpDir := newTempRepo(t, tt.repoConfig)
 					got, err := fn(tt.explicit, tmpDir)
-					if (err != nil) != tt.wantErr {
-						t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
-					}
-					if !tt.wantErr && got != tt.want {
-						t.Errorf("got %q, want %q", got, tt.want)
-					}
+					assert.Equal(t, tt.wantErr, (err != nil), "unexpected condition")
+					assert.False(t, !tt.wantErr && got != tt.want, "unexpected condition")
 				})
 			}
 		})
@@ -365,8 +364,7 @@ func TestResolveReasoning(t *testing.T) {
 }
 
 func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
-	// End-to-end: empty --reasoning resolves to "standard" via ResolveFixReasoning,
-	// then ResolveAgentForWorkflow selects fix_agent_standard over fix_agent.
+
 	tmpDir := t.TempDir()
 	writeRepoConfig(t, tmpDir, M{
 		"fix_agent":          "codex",
@@ -375,21 +373,15 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 	})
 
 	reasoning, err := ResolveFixReasoning("", tmpDir)
-	if err != nil {
-		t.Fatalf("ResolveFixReasoning: %v", err)
-	}
-	if reasoning != "standard" {
-		t.Fatalf("expected default reasoning 'standard', got %q", reasoning)
-	}
+	require.NoError(t, err, "ResolveFixReasoning: %v")
+	assert.Equal(t, "standard", reasoning, "expected default reasoning 'standard', got %q", reasoning)
 
 	agent := ResolveAgentForWorkflow("", tmpDir, nil, "fix", reasoning)
-	if agent != "claude" {
-		t.Errorf("expected fix_agent_standard 'claude', got %q", agent)
-	}
+	assert.Equal(t, "claude", agent, "expected fix_agent_standard 'claude', got %q", agent)
 
 	model := ResolveModelForWorkflow("", tmpDir, nil, "fix", reasoning)
 	if model != "" {
-		t.Errorf("expected empty model (none configured), got %q", model)
+		assert.Empty(t, model, "expected empty model (none configured), got %q", model)
 	}
 }
 
@@ -458,12 +450,126 @@ func TestIsBranchExcluded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
-			// For "no config file", we just don't write anything.
 
 			got := IsBranchExcluded(tmpDir, tt.branch)
-			if got != tt.want {
-				t.Errorf("IsBranchExcluded(%q) = %v, want %v", tt.branch, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
+		})
+	}
+}
+
+func TestIsCommitMessageExcluded(t *testing.T) {
+	tests := []struct {
+		name       string
+		repoConfig string
+		message    string
+		want       bool
+	}{
+		{
+			name:    "no config file",
+			message: "fix: update handler",
+			want:    false,
+		},
+		{
+			name:       "empty excluded_commit_patterns",
+			repoConfig: `agent = "codex"`,
+			message:    "fix: update handler",
+			want:       false,
+		},
+		{
+			name:       "message matches pattern",
+			repoConfig: `excluded_commit_patterns = ["[skip review]"]`,
+			message:    "wip: quick fix [skip review]",
+			want:       true,
+		},
+		{
+			name:       "message matches one of several patterns",
+			repoConfig: `excluded_commit_patterns = ["[skip review]", "[wip]", "[no review]"]`,
+			message:    "checkpoint [wip]",
+			want:       true,
+		},
+		{
+			name:       "message does not match",
+			repoConfig: `excluded_commit_patterns = ["[skip review]", "[wip]"]`,
+			message:    "feat: add new endpoint",
+			want:       false,
+		},
+		{
+			name:       "case insensitive match",
+			repoConfig: `excluded_commit_patterns = ["[Skip Review]"]`,
+			message:    "wip: quick fix [SKIP REVIEW]",
+			want:       true,
+		},
+		{
+			name:       "pattern in body not just subject",
+			repoConfig: `excluded_commit_patterns = ["[skip review]"]`,
+			message:    "feat: add feature\n\nsome details [skip review]",
+			want:       true,
+		},
+		{
+			name:       "empty pattern is ignored",
+			repoConfig: `excluded_commit_patterns = [""]`,
+			message:    "any commit message",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			got := IsCommitMessageExcluded(tmpDir, tt.message)
+			assert.Equal(t, tt.want, got, "unexpected condition")
+		})
+	}
+}
+
+func TestAllCommitMessagesExcluded(t *testing.T) {
+	tests := []struct {
+		name       string
+		repoConfig string
+		messages   []string
+		want       bool
+	}{
+		{
+			name:     "empty messages returns false",
+			messages: nil,
+			want:     false,
+		},
+		{
+			name:       "all match",
+			repoConfig: `excluded_commit_patterns = ["[wip]"]`,
+			messages: []string{
+				"[wip] checkpoint 1",
+				"[wip] checkpoint 2",
+			},
+			want: true,
+		},
+		{
+			name:       "one does not match",
+			repoConfig: `excluded_commit_patterns = ["[wip]"]`,
+			messages: []string{
+				"[wip] checkpoint",
+				"feat: real work",
+			},
+			want: false,
+		},
+		{
+			name:     "no config file",
+			messages: []string{"[wip] anything"},
+			want:     false,
+		},
+		{
+			name:       "no patterns configured",
+			repoConfig: `agent = "codex"`,
+			messages:   []string{"[wip] anything"},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			got := AllCommitMessagesExcluded(tmpDir, tt.messages)
+			assert.Equal(t, tt.want, got, "AllCommitMessagesExcluded() = %v, want %v", got, tt.want)
 		})
 	}
 }
@@ -595,16 +701,12 @@ func TestAllCommitMessagesExcluded(t *testing.T) {
 func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	t.Run("empty URL returns empty", func(t *testing.T) {
 		cfg := SyncConfig{}
-		if got := cfg.PostgresURLExpanded(); got != "" {
-			t.Errorf("Expected empty string, got %q", got)
-		}
+		assert.Empty(t, cfg.PostgresURLExpanded())
 	})
 
 	t.Run("URL without env vars unchanged", func(t *testing.T) {
 		cfg := SyncConfig{PostgresURL: "postgres://user:pass@localhost:5432/db"}
-		if got := cfg.PostgresURLExpanded(); got != cfg.PostgresURL {
-			t.Errorf("Expected %q, got %q", cfg.PostgresURL, got)
-		}
+		assert.Equal(t, cfg.PostgresURL, cfg.PostgresURLExpanded())
 	})
 
 	t.Run("URL with env var is expanded", func(t *testing.T) {
@@ -612,34 +714,26 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 
 		cfg := SyncConfig{PostgresURL: "postgres://user:${TEST_PG_PASS}@localhost:5432/db"}
 		expected := "postgres://user:secret123@localhost:5432/db"
-		if got := cfg.PostgresURLExpanded(); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
-		}
+		assert.Equal(t, expected, cfg.PostgresURLExpanded())
 	})
 
 	t.Run("missing env var becomes empty", func(t *testing.T) {
 		t.Setenv("NONEXISTENT_VAR", "")
 		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
 		expected := "postgres://user:@localhost:5432/db"
-		if got := cfg.PostgresURLExpanded(); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
-		}
+		assert.Equal(t, expected, cfg.PostgresURLExpanded())
 	})
 }
 
 func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 	t.Run("nil receiver returns empty", func(t *testing.T) {
 		var cfg *SyncConfig
-		if got := cfg.GetRepoDisplayName("any"); got != "" {
-			t.Errorf("Expected empty string for nil receiver, got %q", got)
-		}
+		assert.Empty(t, cfg.GetRepoDisplayName("any"))
 	})
 
 	t.Run("nil map returns empty", func(t *testing.T) {
 		cfg := &SyncConfig{}
-		if got := cfg.GetRepoDisplayName("any"); got != "" {
-			t.Errorf("Expected empty string for nil map, got %q", got)
-		}
+		assert.Empty(t, cfg.GetRepoDisplayName("any"), "expected empty display name for missing key")
 	})
 
 	t.Run("missing key returns empty", func(t *testing.T) {
@@ -648,9 +742,7 @@ func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 				"git@github.com:org/repo.git": "my-repo",
 			},
 		}
-		if got := cfg.GetRepoDisplayName("unknown"); got != "" {
-			t.Errorf("Expected empty string for missing key, got %q", got)
-		}
+		assert.Empty(t, cfg.GetRepoDisplayName("unknown"))
 	})
 
 	t.Run("returns configured name", func(t *testing.T) {
@@ -660,9 +752,7 @@ func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 			},
 		}
 		expected := "my-custom-name"
-		if got := cfg.GetRepoDisplayName("git@github.com:org/repo.git"); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
-		}
+		assert.Equal(t, expected, cfg.GetRepoDisplayName("git@github.com:org/repo.git"))
 	})
 }
 
@@ -670,20 +760,14 @@ func TestSyncConfigValidate(t *testing.T) {
 	t.Run("disabled returns no warnings", func(t *testing.T) {
 		cfg := SyncConfig{Enabled: false}
 		warnings := cfg.Validate()
-		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings when disabled, got %v", warnings)
-		}
+		assert.Empty(t, warnings, "unexpected condition")
 	})
 
 	t.Run("enabled without URL warns", func(t *testing.T) {
 		cfg := SyncConfig{Enabled: true, PostgresURL: ""}
 		warnings := cfg.Validate()
-		if len(warnings) != 1 {
-			t.Errorf("Expected 1 warning, got %d", len(warnings))
-		}
-		if !strings.Contains(warnings[0], "postgres_url is not set") {
-			t.Errorf("Expected warning about missing URL, got %q", warnings[0])
-		}
+		assert.Len(t, warnings, 1, "unexpected condition")
+		assert.Contains(t, warnings[0], "postgres_url is not set", "unexpected condition")
 	})
 
 	t.Run("valid config no warnings", func(t *testing.T) {
@@ -692,9 +776,7 @@ func TestSyncConfigValidate(t *testing.T) {
 			PostgresURL: "postgres://user:pass@localhost:5432/db",
 		}
 		warnings := cfg.Validate()
-		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings for valid config, got %v", warnings)
-		}
+		assert.Empty(t, warnings, "unexpected condition")
 	})
 
 	t.Run("unexpanded env var warns", func(t *testing.T) {
@@ -704,12 +786,8 @@ func TestSyncConfigValidate(t *testing.T) {
 			PostgresURL: "postgres://user:${MISSING_VAR}@localhost:5432/db",
 		}
 		warnings := cfg.Validate()
-		if len(warnings) != 1 {
-			t.Errorf("Expected 1 warning for unexpanded var, got %d: %v", len(warnings), warnings)
-		}
-		if !strings.Contains(warnings[0], "unexpanded") {
-			t.Errorf("Expected warning about unexpanded vars, got %q", warnings[0])
-		}
+		assert.Len(t, warnings, 1, "unexpected condition")
+		assert.Contains(t, warnings[0], "unexpanded", "unexpected condition")
 	})
 
 	t.Run("expanded env var no warning", func(t *testing.T) {
@@ -720,9 +798,7 @@ func TestSyncConfigValidate(t *testing.T) {
 			PostgresURL: "postgres://user:${TEST_PG_PASS2}@localhost:5432/db",
 		}
 		warnings := cfg.Validate()
-		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings when env var is set, got %v", warnings)
-		}
+		assert.Empty(t, warnings, "unexpected condition")
 	})
 }
 
@@ -739,54 +815,36 @@ interval = "10m"
 machine_name = "test-machine"
 connect_timeout = "10s"
 `), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+		require.NoError(t, err, "Failed to write config: %v")
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom failed: %v", err)
-	}
+	require.NoError(t, err, "LoadGlobalFrom failed: %v")
+	assert.True(t, cfg.Sync.Enabled, "Expected Sync.Enabled to be true")
 
-	if !cfg.Sync.Enabled {
-		t.Error("Expected Sync.Enabled to be true")
-	}
-	if cfg.Sync.PostgresURL != "postgres://roborev:pass@localhost:5432/roborev" {
-		t.Errorf("Unexpected PostgresURL: %s", cfg.Sync.PostgresURL)
-	}
-	if cfg.Sync.Interval != "10m" {
-		t.Errorf("Expected Interval '10m', got '%s'", cfg.Sync.Interval)
-	}
-	if cfg.Sync.MachineName != "test-machine" {
-		t.Errorf("Expected MachineName 'test-machine', got '%s'", cfg.Sync.MachineName)
-	}
-	if cfg.Sync.ConnectTimeout != "10s" {
-		t.Errorf("Expected ConnectTimeout '10s', got '%s'", cfg.Sync.ConnectTimeout)
-	}
+	assert.Equal(t, "postgres://roborev:pass@localhost:5432/roborev", cfg.Sync.PostgresURL, "unexpected condition")
+	assert.Equal(t, "10m", cfg.Sync.Interval, "unexpected condition")
+	assert.Equal(t, "test-machine", cfg.Sync.MachineName, "unexpected condition")
+	assert.Equal(t, "10s", cfg.Sync.ConnectTimeout, "unexpected condition")
 }
 
 func TestGetDisplayName(t *testing.T) {
 	t.Run("no config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		name := GetDisplayName(tmpDir)
-		if name != "" {
-			t.Errorf("Expected empty display name when no config file, got '%s'", name)
-		}
+		assert.Empty(t, name, "unexpected condition")
 	})
 
 	t.Run("display_name not set", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `agent = "codex"`)
 		name := GetDisplayName(tmpDir)
-		if name != "" {
-			t.Errorf("Expected empty display name when not set, got '%s'", name)
-		}
+		assert.Empty(t, name, "unexpected condition")
 	})
 
 	t.Run("display_name is set", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `display_name = "My Cool Project"`)
 		name := GetDisplayName(tmpDir)
-		if name != "My Cool Project" {
-			t.Errorf("Expected display name 'My Cool Project', got '%s'", name)
-		}
+		assert.Equal(t, "My Cool Project", name, "unexpected condition")
 	})
 
 	t.Run("display_name with other config", func(t *testing.T) {
@@ -796,9 +854,7 @@ display_name = "Backend Service"
 excluded_branches = ["wip"]
 `)
 		name := GetDisplayName(tmpDir)
-		if name != "Backend Service" {
-			t.Errorf("Expected display name 'Backend Service', got '%s'", name)
-		}
+		assert.Equal(t, "Backend Service", name, "unexpected condition")
 	})
 }
 
@@ -831,9 +887,7 @@ func TestValidateRoborevID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errMsg := ValidateRoborevID(tt.id)
 			gotErr := errMsg != ""
-			if gotErr != tt.wantErr {
-				t.Errorf("ValidateRoborevID(%q) error = %q, wantErr = %v", tt.id, errMsg, tt.wantErr)
-			}
+			assert.Equal(t, tt.wantErr, gotErr, "unexpected condition")
 		})
 	}
 }
@@ -842,67 +896,53 @@ func TestReadRoborevID(t *testing.T) {
 	t.Run("file does not exist", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		id, err := ReadRoborevID(tmpDir)
-		if err != nil {
-			t.Errorf("Expected no error for missing file, got: %v", err)
-		}
-		if id != "" {
-			t.Errorf("Expected empty ID for missing file, got: %q", id)
-		}
+		require.NoError(t, err, "unexpected condition")
+		assert.Empty(t, id, "unexpected condition")
 	})
 
 	t.Run("valid file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-		if id != "my-project" {
-			t.Errorf("Expected 'my-project', got: %q", id)
-		}
+		require.NoError(t, err, "unexpected condition")
+		assert.Equal(t, "my-project", id, "unexpected condition")
 	})
 
 	t.Run("valid file with whitespace", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-		if id != "my-project" {
-			t.Errorf("Expected 'my-project', got: %q", id)
-		}
+		require.NoError(t, err, "unexpected condition")
+		assert.Equal(t, "my-project", id, "unexpected condition")
 	})
 
 	t.Run("invalid file content", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
-		if err == nil {
-			t.Error("Expected error for invalid content")
-		}
+		require.Error(t, err, "Expected error for invalid content")
+
 		if id != "" {
-			t.Errorf("Expected empty ID on error, got: %q", id)
+			assert.Empty(t, id, "Expected empty ID on error, got: %q", id)
 		}
 	})
 
 	t.Run("empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
-		if err == nil {
-			t.Error("Expected error for empty file")
-		}
+		require.Error(t, err, "Expected error for empty file")
+
 		if id != "" {
-			t.Errorf("Expected empty ID on error, got: %q", id)
+			assert.Empty(t, id, "Expected empty ID on error, got: %q", id)
 		}
 	})
 }
@@ -911,7 +951,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("uses roborev-id when present", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 
 		mockRemote := func(repoPath, remoteName string) string {
@@ -919,9 +959,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 		}
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
-		if id != "my-custom-id" {
-			t.Errorf("Expected 'my-custom-id', got: %q", id)
-		}
+		assert.Equal(t, "my-custom-id", id, "unexpected condition")
 	})
 
 	t.Run("falls back to git remote when no roborev-id", func(t *testing.T) {
@@ -932,9 +970,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 		}
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
-		if id != "https://github.com/user/repo.git" {
-			t.Errorf("Expected git remote URL, got: %q", id)
-		}
+		assert.Equal(t, "https://github.com/user/repo.git", id, "unexpected condition")
 	})
 
 	t.Run("falls back to local path when no remote", func(t *testing.T) {
@@ -946,41 +982,32 @@ func TestResolveRepoIdentity(t *testing.T) {
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		expected := "local://" + tmpDir
-		if id != expected {
-			t.Errorf("Expected %q, got: %q", expected, id)
-		}
+		assert.Equal(t, expected, id, "unexpected condition")
 	})
 
 	t.Run("uses default git.GetRemoteURL when getRemoteURL is nil", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// Initialize a git repo with a remote
 		execGit(t, tmpDir, "init")
 		execGit(t, tmpDir, "remote", "add", "origin", "https://github.com/test/repo.git")
 
-		// With nil getRemoteURL, should use git.GetRemoteURL and find the remote
 		id := ResolveRepoIdentity(tmpDir, nil)
-		if id != "https://github.com/test/repo.git" {
-			t.Errorf("Expected 'https://github.com/test/repo.git', got: %q", id)
-		}
+		assert.Equal(t, "https://github.com/test/repo.git", id, "unexpected condition")
 	})
 
 	t.Run("falls back to local path when nil and no git remote", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// With nil getRemoteURL and no git repo, should fall back to local path
 		id := ResolveRepoIdentity(tmpDir, nil)
 		expected := "local://" + tmpDir
-		if id != expected {
-			t.Errorf("Expected %q, got: %q", expected, id)
-		}
+		assert.Equal(t, expected, id, "unexpected condition")
 	})
 
 	t.Run("skips invalid roborev-id and uses remote", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Write invalid content (starts with dot)
+
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 
 		mockRemote := func(repoPath, remoteName string) string {
@@ -988,9 +1015,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 		}
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
-		if id != "https://github.com/user/repo.git" {
-			t.Errorf("Expected git remote URL when roborev-id is invalid, got: %q", id)
-		}
+		assert.Equal(t, "https://github.com/user/repo.git", id, "unexpected condition")
 	})
 
 	t.Run("strips credentials from remote URL", func(t *testing.T) {
@@ -1001,9 +1026,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 		}
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
-		if id != "https://github.com/org/repo.git" {
-			t.Errorf("Expected credentials stripped from URL, got: %q", id)
-		}
+		assert.Equal(t, "https://github.com/org/repo.git", id, "unexpected condition")
 	})
 }
 
@@ -1090,9 +1113,7 @@ func TestResolveModel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveModel(tt.explicit, tmpDir, tt.globalConfig)
-			if got != tt.want {
-				t.Errorf("ResolveModel() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -1101,63 +1122,49 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	t.Run("default when no config", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		size := ResolveMaxPromptSize(tmpDir, nil)
-		if size != DefaultMaxPromptSize {
-			t.Errorf("Expected default %d, got %d", DefaultMaxPromptSize, size)
-		}
+		assert.Equal(t, DefaultMaxPromptSize, size, "unexpected condition")
 	})
 
 	t.Run("default when global config has zero", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		cfg := &Config{DefaultMaxPromptSize: 0}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != DefaultMaxPromptSize {
-			t.Errorf("Expected default %d when global is 0, got %d", DefaultMaxPromptSize, size)
-		}
+		assert.Equal(t, DefaultMaxPromptSize, size, "unexpected condition")
 	})
 
 	t.Run("global config takes precedence over default", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global config, got %d", size)
-		}
+		assert.Equal(t, 500*1024, size, "unexpected condition")
 	})
 
 	t.Run("repo config takes precedence over global", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `max_prompt_size = 300000`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != 300000 {
-			t.Errorf("Expected 300000 from repo config, got %d", size)
-		}
+		assert.Equal(t, 300000, size, "unexpected condition")
 	})
 
 	t.Run("repo config zero falls through to global", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `max_prompt_size = 0`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global (repo is 0), got %d", size)
-		}
+		assert.Equal(t, 500*1024, size, "unexpected condition")
 	})
 
 	t.Run("repo config without max_prompt_size falls through to global", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `agent = "codex"`)
 		cfg := &Config{DefaultMaxPromptSize: 600 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != 600*1024 {
-			t.Errorf("Expected 600KB from global (repo has no max_prompt_size), got %d", size)
-		}
+		assert.Equal(t, 600*1024, size, "unexpected condition")
 	})
 
 	t.Run("malformed repo config falls through to global", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
-		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global (repo config malformed), got %d", size)
-		}
+		assert.Equal(t, 500*1024, size, "unexpected condition")
 	})
 }
 
@@ -1171,44 +1178,36 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		level    string
 		expect   string
 	}{
-		// Defaults
+
 		{"empty config", "", nil, nil, "review", "fast", "codex"},
 		{"global default only", "", nil, &Config{DefaultAgent: "claude"}, "review", "fast", "claude"},
 
-		// Global specificity ladder
 		{"global workflow > global default", "", nil, &Config{DefaultAgent: "codex", ReviewAgent: "claude"}, "review", "fast", "claude"},
 		{"global level > global workflow", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "fast", "claude"},
 		{"global level ignored for wrong level", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "thorough", "codex"},
 
-		// Repo specificity ladder
 		{"repo generic only", "", M{"agent": "claude"}, nil, "review", "fast", "claude"},
 		{"repo workflow > repo generic", "", M{"agent": "codex", "review_agent": "claude"}, nil, "review", "fast", "claude"},
 		{"repo level > repo workflow", "", M{"review_agent": "codex", "review_agent_fast": "claude"}, nil, "review", "fast", "claude"},
 
-		// Layer beats specificity (Option A)
 		{"repo generic > global level-specific", "", M{"agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
 		{"repo generic > global workflow-specific", "", M{"agent": "claude"}, &Config{ReviewAgent: "gemini"}, "review", "fast", "claude"},
 		{"repo workflow > global level-specific", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
 
-		// CLI wins all
 		{"cli > repo level-specific", "droid", M{"review_agent_fast": "claude"}, nil, "review", "fast", "droid"},
 		{"cli > everything", "droid", M{"review_agent_fast": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "droid"},
 
-		// Refine workflow isolation
 		{"refine uses refine_agent not review_agent", "", M{"review_agent": "claude", "refine_agent": "gemini"}, nil, "refine", "fast", "gemini"},
 		{"refine level-specific", "", M{"refine_agent": "codex", "refine_agent_fast": "claude"}, nil, "refine", "fast", "claude"},
 		{"review config ignored for refine", "", M{"review_agent_fast": "claude"}, &Config{DefaultAgent: "codex"}, "refine", "fast", "codex"},
 
-		// Level isolation
 		{"fast config ignored for standard", "", M{"review_agent_fast": "claude", "review_agent": "codex"}, nil, "review", "standard", "codex"},
 		{"standard config used for standard", "", M{"review_agent_standard": "claude"}, nil, "review", "standard", "claude"},
 		{"thorough config used for thorough", "", M{"review_agent_thorough": "claude"}, nil, "review", "thorough", "claude"},
 
-		// Mixed layers
 		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini", ReviewAgentThorough: "droid"}, "review", "fast", "claude"},
 		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, &Config{ReviewAgentFast: "claude"}, "review", "standard", "codex"},
 
-		// Fix workflow
 		{"fix uses fix_agent", "", M{"fix_agent": "claude"}, nil, "fix", "fast", "claude"},
 		{"fix level-specific", "", M{"fix_agent": "codex", "fix_agent_fast": "claude"}, nil, "fix", "fast", "claude"},
 		{"fix falls back to generic agent", "", M{"agent": "claude"}, nil, "fix", "fast", "claude"},
@@ -1219,7 +1218,6 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"fix isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
 		{"fix isolated from refine", "", M{"refine_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
 
-		// Design workflow
 		{"design uses design_agent", "", M{"design_agent": "claude"}, nil, "design", "fast", "claude"},
 		{"design level-specific", "", M{"design_agent": "codex", "design_agent_fast": "claude"}, nil, "design", "fast", "claude"},
 		{"design falls back to generic agent", "", M{"agent": "claude"}, nil, "design", "fast", "claude"},
@@ -1234,9 +1232,7 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 			tmpDir := t.TempDir()
 			writeRepoConfig(t, tmpDir, tt.repo)
 			got := ResolveAgentForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
-			if got != tt.expect {
-				t.Errorf("got %q, want %q", got, tt.expect)
-			}
+			assert.Equal(t, got, tt.expect, "unexpected condition")
 		})
 	}
 }
@@ -1251,35 +1247,28 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		level    string
 		expect   string
 	}{
-		// Defaults (model defaults to empty, not "codex")
+
 		{"empty config", "", nil, nil, "review", "fast", ""},
 		{"global default only", "", nil, &Config{DefaultModel: "gpt-4"}, "review", "fast", "gpt-4"},
 
-		// Global specificity ladder
 		{"global workflow > global default", "", nil, &Config{DefaultModel: "gpt-4", ReviewModel: "claude-3"}, "review", "fast", "claude-3"},
 		{"global level > global workflow", "", nil, &Config{ReviewModel: "gpt-4", ReviewModelFast: "claude-3"}, "review", "fast", "claude-3"},
 
-		// Repo specificity ladder
 		{"repo generic only", "", M{"model": "gpt-4"}, nil, "review", "fast", "gpt-4"},
 		{"repo workflow > repo generic", "", M{"model": "gpt-4", "review_model": "claude-3"}, nil, "review", "fast", "claude-3"},
 		{"repo level > repo workflow", "", M{"review_model": "gpt-4", "review_model_fast": "claude-3"}, nil, "review", "fast", "claude-3"},
 
-		// Layer beats specificity (Option A)
 		{"repo generic > global level-specific", "", M{"model": "gpt-4"}, &Config{ReviewModelFast: "claude-3"}, "review", "fast", "gpt-4"},
 
-		// CLI wins all
 		{"cli > everything", "o1", M{"review_model_fast": "gpt-4"}, &Config{ReviewModelFast: "claude-3"}, "review", "fast", "o1"},
 
-		// Refine workflow isolation
 		{"refine uses refine_model", "", M{"review_model": "gpt-4", "refine_model": "claude-3"}, nil, "refine", "fast", "claude-3"},
 
-		// Fix workflow
 		{"fix uses fix_model", "", M{"fix_model": "gpt-4"}, nil, "fix", "fast", "gpt-4"},
 		{"fix level-specific model", "", M{"fix_model": "gpt-4", "fix_model_fast": "claude-3"}, nil, "fix", "fast", "claude-3"},
 		{"fix falls back to generic model", "", M{"model": "gpt-4"}, nil, "fix", "fast", "gpt-4"},
 		{"fix isolated from review model", "", M{"review_model": "gpt-4"}, nil, "fix", "fast", ""},
 
-		// Design workflow
 		{"design uses design_model", "", M{"design_model": "gpt-4"}, nil, "design", "fast", "gpt-4"},
 		{"design level-specific model", "", M{"design_model": "gpt-4", "design_model_fast": "claude-3"}, nil, "design", "fast", "claude-3"},
 		{"design falls back to generic model", "", M{"model": "gpt-4"}, nil, "design", "fast", "gpt-4"},
@@ -1291,9 +1280,96 @@ func TestResolveModelForWorkflow(t *testing.T) {
 			tmpDir := t.TempDir()
 			writeRepoConfig(t, tmpDir, tt.repo)
 			got := ResolveModelForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
-			if got != tt.expect {
-				t.Errorf("got %q, want %q", got, tt.expect)
-			}
+			assert.Equal(t, got, tt.expect, "unexpected condition")
+		})
+	}
+}
+
+func TestResolveWorkflowModel(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     map[string]string
+		global   *Config
+		workflow string
+		level    string
+		expect   string
+	}{
+
+		{
+			"empty config",
+			nil, nil,
+			"fix", "fast", "",
+		},
+
+		{
+			"skips global default_model",
+			nil, &Config{DefaultModel: "gpt-5.4"},
+			"fix", "fast", "",
+		},
+
+		{
+			"skips repo generic model",
+			M{"model": "gpt-5.4"}, nil,
+			"fix", "fast", "",
+		},
+
+		{
+			"global fix_model",
+			nil, &Config{DefaultModel: "gpt-5.4", FixModel: "gemini-2.5-pro"},
+			"fix", "fast", "gemini-2.5-pro",
+		},
+
+		{
+			"global fix_model_fast",
+			nil, &Config{DefaultModel: "gpt-5.4", FixModelFast: "gemini-2.5-flash"},
+			"fix", "fast", "gemini-2.5-flash",
+		},
+
+		{
+			"global level > global workflow",
+			nil, &Config{FixModel: "gpt-4", FixModelFast: "claude-3"},
+			"fix", "fast", "claude-3",
+		},
+
+		{
+			"repo fix_model",
+			M{"model": "gpt-5.4", "fix_model": "gemini-2.5-pro"}, nil,
+			"fix", "fast", "gemini-2.5-pro",
+		},
+
+		{
+			"repo fix_model_fast",
+			M{"fix_model_fast": "claude-3"}, nil,
+			"fix", "fast", "claude-3",
+		},
+
+		{
+			"repo workflow > global workflow",
+			M{"fix_model": "repo-model"},
+			&Config{FixModel: "global-model"},
+			"fix", "fast", "repo-model",
+		},
+
+		{
+			"review workflow uses review_model",
+			M{"fix_model": "fix-only", "review_model": "review-only"}, nil,
+			"review", "standard", "review-only",
+		},
+
+		{
+			"skips both generic defaults",
+			M{"model": "repo-generic"},
+			&Config{DefaultModel: "global-generic"},
+			"fix", "fast", "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeRepoConfig(t, tmpDir, tt.repo)
+			got := ResolveWorkflowModel(tmpDir, tt.global, tt.workflow, tt.level)
+			assert.Equal(t, got, tt.expect, "unexpected condition")
 		})
 	}
 }
@@ -1397,34 +1473,28 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		workflow string
 		expect   string
 	}{
-		// No backup configured
+
 		{"empty config", nil, nil, "review", ""},
 		{"only primary agent configured", M{"review_agent": "claude"}, nil, "review", ""},
 
-		// Global backup agent
 		{"global backup only", nil, &Config{ReviewBackupAgent: "test"}, "review", "test"},
 		{"global backup for refine", nil, &Config{RefineBackupAgent: "claude"}, "refine", "claude"},
 		{"global backup for fix", nil, &Config{FixBackupAgent: "codex"}, "fix", "codex"},
 		{"global backup for security", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "gemini"},
 		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
 
-		// Repo backup agent overrides global
 		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
 		{"repo backup only", M{"review_backup_agent": "test"}, nil, "review", "test"},
 
-		// Different workflows resolve independently
 		{"review backup doesn't affect refine", M{"review_backup_agent": "claude"}, nil, "refine", ""},
 		{"each workflow has own backup", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "review", "claude"},
 		{"each workflow has own backup - refine", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "refine", "codex"},
 
-		// Unknown workflow returns empty
 		{"unknown workflow", M{"review_backup_agent": "test"}, nil, "unknown", ""},
 
-		// No reasoning level support for backup agents
 		{"no level variants recognized", M{"review_backup_agent_fast": "claude"}, nil, "review", ""},
 		{"backup agent doesn't use levels", M{"review_backup_agent": "claude"}, nil, "review", "claude"},
 
-		// Default/generic backup agent fallback
 		{"global default_backup_agent", nil, &Config{DefaultBackupAgent: "test"}, "review", "test"},
 		{"global default_backup_agent for any workflow", nil, &Config{DefaultBackupAgent: "test"}, "fix", "test"},
 		{"global workflow-specific overrides default", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "review", "claude"},
@@ -1438,21 +1508,16 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create temp dir for repo config
+
 			repoDir := t.TempDir()
 
-			// Write repo config if provided
 			if tt.repo != nil {
 				writeRepoConfig(t, repoDir, tt.repo)
 			}
 
-			// Test the function
 			result := ResolveBackupAgentForWorkflow(repoDir, tt.global, tt.workflow)
 
-			if result != tt.expect {
-				t.Errorf("ResolveBackupAgentForWorkflow(%q, global, %q) = %q, want %q",
-					repoDir, tt.workflow, result, tt.expect)
-			}
+			assert.Equal(t, result, tt.expect, "unexpected condition")
 		})
 	}
 }
@@ -1465,30 +1530,25 @@ func TestResolveBackupModelForWorkflow(t *testing.T) {
 		workflow string
 		expect   string
 	}{
-		// No backup model configured
+
 		{"empty config", nil, nil, "review", ""},
 		{"only backup agent configured", M{"review_backup_agent": "claude"}, nil, "review", ""},
 
-		// Global backup model
 		{"global backup model only", nil, &Config{ReviewBackupModel: "gpt-4"}, "review", "gpt-4"},
 		{"global backup model for refine", nil, &Config{RefineBackupModel: "claude-3"}, "refine", "claude-3"},
 		{"global backup model for fix", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "o3-mini"},
 		{"global backup model for security", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "gpt-4"},
 		{"global backup model for design", nil, &Config{DesignBackupModel: "claude-3"}, "design", "claude-3"},
 
-		// Repo backup model overrides global
 		{"repo overrides global", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "repo-model"},
 		{"repo backup model only", M{"review_backup_model": "gpt-4"}, nil, "review", "gpt-4"},
 
-		// Different workflows resolve independently
 		{"review backup model doesn't affect refine", M{"review_backup_model": "gpt-4"}, nil, "refine", ""},
 		{"each workflow has own backup model", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "review", "gpt-4"},
 		{"each workflow has own backup model - refine", M{"review_backup_model": "gpt-4", "refine_backup_model": "claude-3"}, nil, "refine", "claude-3"},
 
-		// Unknown workflow returns empty
 		{"unknown workflow", M{"review_backup_model": "gpt-4"}, nil, "unknown", ""},
 
-		// Default/generic backup model fallback
 		{"global default_backup_model", nil, &Config{DefaultBackupModel: "gpt-4"}, "review", "gpt-4"},
 		{"global default_backup_model for any workflow", nil, &Config{DefaultBackupModel: "gpt-4"}, "fix", "gpt-4"},
 		{"global workflow-specific overrides default", nil, &Config{DefaultBackupModel: "gpt-4", ReviewBackupModel: "claude-3"}, "review", "claude-3"},
@@ -1507,10 +1567,7 @@ func TestResolveBackupModelForWorkflow(t *testing.T) {
 				writeRepoConfig(t, repoDir, tt.repo)
 			}
 			result := ResolveBackupModelForWorkflow(repoDir, tt.global, tt.workflow)
-			if result != tt.expect {
-				t.Errorf("ResolveBackupModelForWorkflow(%q, global, %q) = %q, want %q",
-					repoDir, tt.workflow, result, tt.expect)
-			}
+			assert.Equal(t, result, tt.expect, "unexpected condition")
 		})
 	}
 }
@@ -1519,17 +1576,13 @@ func TestResolvedReviewTypes(t *testing.T) {
 	t.Run("uses configured types", func(t *testing.T) {
 		ci := CIConfig{ReviewTypes: []string{"security", "review"}}
 		got := ci.ResolvedReviewTypes()
-		if len(got) != 2 || got[0] != "security" || got[1] != "review" {
-			t.Errorf("got %v, want [security review]", got)
-		}
+		assert.False(t, len(got) != 2 || got[0] != "security" || got[1] != "review", "unexpected condition")
 	})
 
 	t.Run("defaults to security", func(t *testing.T) {
 		ci := CIConfig{}
 		got := ci.ResolvedReviewTypes()
-		if len(got) != 1 || got[0] != "security" {
-			t.Errorf("got %v, want [security]", got)
-		}
+		assert.False(t, len(got) != 1 || got[0] != "security", "unexpected condition")
 	})
 }
 
@@ -1537,17 +1590,13 @@ func TestResolvedAgents(t *testing.T) {
 	t.Run("uses configured agents", func(t *testing.T) {
 		ci := CIConfig{Agents: []string{"codex", "gemini"}}
 		got := ci.ResolvedAgents()
-		if len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
-			t.Errorf("got %v, want [codex gemini]", got)
-		}
+		assert.False(t, len(got) != 2 || got[0] != "codex" || got[1] != "gemini", "unexpected condition")
 	})
 
 	t.Run("defaults to auto-detect", func(t *testing.T) {
 		ci := CIConfig{}
 		got := ci.ResolvedAgents()
-		if len(got) != 1 || got[0] != "" {
-			t.Errorf("got %v, want [\"\"]", got)
-		}
+		assert.False(t, len(got) != 1 || got[0] != "", "unexpected condition")
 	})
 }
 
@@ -1568,9 +1617,7 @@ func TestResolvedMaxRepos(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ci := CIConfig{MaxRepos: tt.maxRepos}
 			got := ci.ResolvedMaxRepos()
-			if got != tt.want {
-				t.Errorf("ResolvedMaxRepos() = %d, want %d", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -1586,26 +1633,16 @@ repos = ["myorg/*", "other/repo"]
 exclude_repos = ["myorg/archived-*", "myorg/internal-*"]
 max_repos = 50
 `), 0644); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 
 		cfg, err := LoadGlobalFrom(configPath)
-		if err != nil {
-			t.Fatalf("LoadGlobalFrom: %v", err)
-		}
+		require.NoError(t, err, "LoadGlobalFrom: %v")
 
-		if len(cfg.CI.Repos) != 2 {
-			t.Errorf("got %d repos, want 2", len(cfg.CI.Repos))
-		}
-		if len(cfg.CI.ExcludeRepos) != 2 {
-			t.Errorf("got %d exclude_repos, want 2", len(cfg.CI.ExcludeRepos))
-		}
-		if cfg.CI.MaxRepos != 50 {
-			t.Errorf("got max_repos %d, want 50", cfg.CI.MaxRepos)
-		}
-		if cfg.CI.ResolvedMaxRepos() != 50 {
-			t.Errorf("ResolvedMaxRepos() = %d, want 50", cfg.CI.ResolvedMaxRepos())
-		}
+		assert.Len(t, cfg.CI.Repos, 2, "unexpected condition")
+		assert.Len(t, cfg.CI.ExcludeRepos, 2, "unexpected condition")
+		assert.Equal(t, 50, cfg.CI.MaxRepos, "unexpected condition")
+		assert.Equal(t, 50, cfg.CI.ResolvedMaxRepos(), "unexpected condition")
 	})
 }
 
@@ -1631,11 +1668,10 @@ func TestNormalizeMinSeverity(t *testing.T) {
 		t.Run("input_"+tt.input, func(t *testing.T) {
 			got, err := NormalizeMinSeverity(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("NormalizeMinSeverity(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+				require.Errorf(t, err, "NormalizeMinSeverity(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Errorf("NormalizeMinSeverity(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "NormalizeMinSeverity(%q) = %q, want %q", tt.input, got, tt.want)
+
 		})
 	}
 }
@@ -1651,35 +1687,21 @@ review_types = ["security", "review"]
 reasoning = "standard"
 `)
 		cfg, err := LoadRepoConfig(tmpDir)
-		if err != nil {
-			t.Fatalf("LoadRepoConfig: %v", err)
-		}
-		if len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != "claude" {
-			t.Errorf("got agents %v, want [gemini claude]", cfg.CI.Agents)
-		}
-		if len(cfg.CI.ReviewTypes) != 2 || cfg.CI.ReviewTypes[0] != "security" || cfg.CI.ReviewTypes[1] != "review" {
-			t.Errorf("got review_types %v, want [security review]", cfg.CI.ReviewTypes)
-		}
-		if cfg.CI.Reasoning != "standard" {
-			t.Errorf("got reasoning %q, want %q", cfg.CI.Reasoning, "standard")
-		}
+		require.NoError(t, err, "LoadRepoConfig: %v")
+
+		assert.False(t, len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != "claude", "unexpected condition")
+		assert.False(t, len(cfg.CI.ReviewTypes) != 2 || cfg.CI.ReviewTypes[0] != "security" || cfg.CI.ReviewTypes[1] != "review", "unexpected condition")
+		assert.Equal(t, "standard", cfg.CI.Reasoning, "unexpected condition")
 	})
 
 	t.Run("empty CI section", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `agent = "codex"`)
 		cfg, err := LoadRepoConfig(tmpDir)
-		if err != nil {
-			t.Fatalf("LoadRepoConfig: %v", err)
-		}
-		if len(cfg.CI.Agents) != 0 {
-			t.Errorf("got agents %v, want empty", cfg.CI.Agents)
-		}
-		if len(cfg.CI.ReviewTypes) != 0 {
-			t.Errorf("got review_types %v, want empty", cfg.CI.ReviewTypes)
-		}
-		if cfg.CI.Reasoning != "" {
-			t.Errorf("got reasoning %q, want empty", cfg.CI.Reasoning)
-		}
+		require.NoError(t, err, "LoadRepoConfig: %v")
+
+		assert.Empty(t, cfg.CI.Agents, "unexpected condition")
+		assert.Empty(t, cfg.CI.ReviewTypes, "unexpected condition")
+		assert.Empty(t, cfg.CI.Reasoning, "unexpected condition")
 	})
 }
 
@@ -1692,12 +1714,8 @@ func TestInstallationIDForOwner(t *testing.T) {
 			},
 			GitHubAppInstallationID: 999999,
 		}}
-		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
-		}
-		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
-			t.Errorf("got %d, want 222222", got)
-		}
+		assert.Equal(t, int64(111111), ci.InstallationIDForOwner("wesm"))
+		assert.Equal(t, int64(222222), ci.InstallationIDForOwner("roborev-dev"))
 	})
 
 	t.Run("falls back to singular", func(t *testing.T) {
@@ -1705,16 +1723,12 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallations:  map[string]int64{"wesm": 111111},
 			GitHubAppInstallationID: 999999,
 		}}
-		if got := ci.InstallationIDForOwner("unknown-org"); got != 999999 {
-			t.Errorf("got %d, want 999999", got)
-		}
+		assert.Equal(t, int64(999999), ci.InstallationIDForOwner("unknown-org"))
 	})
 
 	t.Run("zero when unset", func(t *testing.T) {
 		ci := CIConfig{}
-		if got := ci.InstallationIDForOwner("wesm"); got != 0 {
-			t.Errorf("got %d, want 0", got)
-		}
+		assert.Equal(t, int64(0), ci.InstallationIDForOwner("wesm"))
 	})
 
 	t.Run("zero mapped value falls back to singular", func(t *testing.T) {
@@ -1722,9 +1736,7 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallations:  map[string]int64{"wesm": 0},
 			GitHubAppInstallationID: 999999,
 		}}
-		if got := ci.InstallationIDForOwner("wesm"); got != 999999 {
-			t.Errorf("got %d, want 999999 (fallback to singular)", got)
-		}
+		assert.Equal(t, int64(999999), ci.InstallationIDForOwner("wesm"))
 	})
 
 	t.Run("case-insensitive lookup after normalization", func(t *testing.T) {
@@ -1732,17 +1744,11 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations: %v", err)
+			require.NoError(t, err, "NormalizeInstallations: %v")
 		}
-		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
-		}
-		if got := ci.InstallationIDForOwner("WESM"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
-		}
-		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
-			t.Errorf("got %d, want 222222", got)
-		}
+		assert.Equal(t, int64(111111), ci.InstallationIDForOwner("wesm"))
+		assert.Equal(t, int64(111111), ci.InstallationIDForOwner("WESM"))
+		assert.Equal(t, int64(222222), ci.InstallationIDForOwner("roborev-dev"))
 	})
 }
 
@@ -1752,23 +1758,20 @@ func TestNormalizeInstallations(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations: %v", err)
+			require.NoError(t, err, "NormalizeInstallations: %v")
 		}
-		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
-			t.Error("expected lowercase key 'wesm' after normalization")
-		}
-		if _, ok := ci.GitHubAppInstallations["roborev-dev"]; !ok {
-			t.Error("expected lowercase key 'roborev-dev' after normalization")
-		}
-		if _, ok := ci.GitHubAppInstallations["Wesm"]; ok {
-			t.Error("original mixed-case key 'Wesm' should not exist after normalization")
-		}
+		_, ok := ci.GitHubAppInstallations["wesm"]
+		assert.True(t, ok, "expected lowercase key 'wesm' after normalization")
+		_, ok = ci.GitHubAppInstallations["roborev-dev"]
+		assert.True(t, ok, "expected lowercase key 'roborev-dev' after normalization")
+		_, ok = ci.GitHubAppInstallations["Wesm"]
+		assert.False(t, ok, "original mixed-case key 'Wesm' should not exist after normalization")
 	})
 
 	t.Run("noop on nil map", func(t *testing.T) {
 		ci := CIConfig{}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations on nil map: %v", err)
+			require.NoError(t, err, "NormalizeInstallations on nil map: %v")
 		}
 	})
 
@@ -1777,11 +1780,10 @@ func TestNormalizeInstallations(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"wesm": 111111, "Wesm": 222222},
 		}}
 		err := ci.NormalizeInstallations()
-		if err == nil {
-			t.Fatal("expected error for case-colliding keys")
-		}
+		require.Error(t, err, "expected error for case-colliding keys")
+
 		if !strings.Contains(err.Error(), "case-colliding") {
-			t.Errorf("expected case-colliding error, got: %v", err)
+			assert.Contains(t, err.Error(), "case-colliding", "expected case-colliding error, got: %v", err)
 		}
 	})
 }
@@ -1798,19 +1800,17 @@ github_app_private_key = "~/.roborev/app.pem"
 Wesm = 111111
 RoboRev-Dev = 222222
 `), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom: %v", err)
-	}
+	require.NoError(t, err, "LoadGlobalFrom: %v")
 
 	if got := cfg.CI.InstallationIDForOwner("wesm"); got != 111111 {
-		t.Errorf("got %d, want 111111 for normalized 'wesm'", got)
+		assert.Equal(t, 111111, got, "got %d, want 111111 for normalized 'wesm'", got)
 	}
 	if got := cfg.CI.InstallationIDForOwner("roborev-dev"); got != 222222 {
-		t.Errorf("got %d, want 222222 for normalized 'roborev-dev'", got)
+		assert.Equal(t, 222222, got, "got %d, want 222222 for normalized 'wesm'", got)
 	}
 }
 
@@ -1821,9 +1821,8 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppPrivateKey:    "~/.roborev/app.pem",
 			GitHubAppInstallations: map[string]int64{"wesm": 111111},
 		}}
-		if !ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == true with map only")
-		}
+		assert.True(t, ci.GitHubAppConfigured(), "expected GitHubAppConfigured() == true with map only")
+
 	})
 
 	t.Run("configured with singular only", func(t *testing.T) {
@@ -1832,9 +1831,8 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppPrivateKey:     "~/.roborev/app.pem",
 			GitHubAppInstallationID: 111111,
 		}}
-		if !ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == true with singular only")
-		}
+		assert.True(t, ci.GitHubAppConfigured(), "expected GitHubAppConfigured() == true with singular only")
+
 	})
 
 	t.Run("not configured without any installation", func(t *testing.T) {
@@ -1843,7 +1841,7 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppPrivateKey: "~/.roborev/app.pem",
 		}}
 		if ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == false without any installation ID")
+			assert.False(t, ci.GitHubAppConfigured(), "expected GitHubAppConfigured() == false without any installation ID")
 		}
 	})
 
@@ -1853,72 +1851,60 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppInstallationID: 111111,
 		}}
 		if ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == false without private key")
+			assert.False(t, ci.GitHubAppConfigured(), "expected GitHubAppConfigured() == false without private key")
 		}
 	})
 }
 
 func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
-	// Create a temp PEM file
+
 	dir := t.TempDir()
-	pemFile := filepath.Join(dir, "test.pem")
+	pemFile := filepath.Join(dir, "assertion_failed.pem")
 	pemContent := "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----"
 	if err := os.WriteFile(pemFile, []byte(pemContent), 0600); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	t.Run("inline PEM returned directly", func(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemContent}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != pemContent {
-			t.Errorf("got %q, want inline PEM", got)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, got, pemContent, "unexpected condition")
 	})
 
 	t.Run("absolute path reads file", func(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemFile}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != pemContent {
-			t.Errorf("got %q, want %q", got, pemContent)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, got, pemContent, "unexpected condition")
 	})
 
 	t.Run("tilde path expands to home", func(t *testing.T) {
-		// Use a fake HOME so we don't touch the real home directory
+
 		fakeHome := t.TempDir()
 		t.Setenv("HOME", fakeHome)
-		t.Setenv("USERPROFILE", fakeHome) // Windows compatibility
+		t.Setenv("USERPROFILE", fakeHome)
 
 		fakePem := filepath.Join(fakeHome, ".roborev", "test.pem")
 		if err := os.MkdirAll(filepath.Dir(fakePem), 0700); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 		if err := os.WriteFile(fakePem, []byte(pemContent), 0600); err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
-		if err != nil {
-			t.Fatalf("tilde expansion failed: %v", err)
-		}
-		if got != pemContent {
-			t.Errorf("got %q, want %q", got, pemContent)
-		}
+		require.NoError(t, err, "tilde expansion failed: %v")
+
+		assert.Equal(t, got, pemContent, "unexpected condition")
 	})
 
 	t.Run("empty after expansion returns error", func(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: ""}}
 		_, err := ci.GitHubAppPrivateKeyResolved()
-		if err == nil {
-			t.Error("expected error for empty key")
-		}
+		require.Error(t, err, "expected error for empty key")
+
 	})
 }
 
@@ -1973,9 +1959,7 @@ func TestStripURLCredentials(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := stripURLCredentials(tt.input)
-			if result != tt.expected {
-				t.Errorf("stripURLCredentials(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result, "unexpected condition")
 		})
 	}
 }
@@ -1983,36 +1967,50 @@ func TestStripURLCredentials(t *testing.T) {
 func TestHideClosedDefaultPersistence(t *testing.T) {
 	testenv.SetDataDir(t)
 
-	// Test saving hide_closed_by_default as true
 	cfg := &Config{HideClosedByDefault: true}
 	err := SaveGlobal(cfg)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
-	}
+	require.NoError(t, err, "SaveGlobal failed: %v")
 
-	// Load and verify it persisted
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if !loaded.HideClosedByDefault {
-		t.Error("Expected HideClosedByDefault to be true")
-	}
+	require.NoError(t, err, "LoadGlobal failed: %v")
 
-	// Toggle to false and verify
+	assert.True(t, loaded.HideClosedByDefault, "Expected HideClosedByDefault to be true")
+
 	loaded.HideClosedByDefault = false
 	err = SaveGlobal(loaded)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+	require.NoError(t, err, "SaveGlobal failed: %v")
+
+	reloaded, err := LoadGlobal()
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.False(t, reloaded.HideClosedByDefault, "Expected HideClosedByDefault to be false")
+
+}
+
+func TestAdvancedTasksEnabledPersistence(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := &Config{}
+	cfg.Advanced.TasksEnabled = true
+	if err := SaveGlobal(cfg); err != nil {
+		require.NoError(t, err, "SaveGlobal failed: %v")
+	}
+
+	loaded, err := LoadGlobal()
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.True(t, loaded.Advanced.TasksEnabled, "Expected Advanced.TasksEnabled to be true")
+
+	loaded.Advanced.TasksEnabled = false
+	if err := SaveGlobal(loaded); err != nil {
+		require.NoError(t, err, "SaveGlobal failed: %v")
 	}
 
 	reloaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if reloaded.HideClosedByDefault {
-		t.Error("Expected HideClosedByDefault to be false")
-	}
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.False(t, reloaded.Advanced.TasksEnabled, "Expected Advanced.TasksEnabled to be false")
+
 }
 
 func TestAdvancedTasksEnabledPersistence(t *testing.T) {
@@ -2081,120 +2079,95 @@ func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
 func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	testenv.SetDataDir(t)
 
-	// Write a config using the deprecated hide_addressed_by_default key
 	cfgPath := GlobalConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+		require.NoError(t, err, "mkdir failed: %v")
 	}
 	if err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+		require.NoError(t, err, "WriteFile failed: %v")
 	}
 
-	// Load should migrate to HideClosedByDefault
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if !loaded.HideClosedByDefault {
-		t.Error("Expected deprecated hide_addressed_by_default to migrate to HideClosedByDefault")
-	}
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.True(t, loaded.HideClosedByDefault, "Expected deprecated hide_addressed_by_default to migrate to HideClosedByDefault")
+
 	if loaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be cleared after migration")
+		assert.Empty(t, loaded.HideAddressedByDefault, "Expected HideAddressedByDefault to be cleared after migration")
 	}
 }
 
 func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
 	testenv.SetDataDir(t)
 
-	// Both deprecated and new key set — explicit new key should win
 	cfgPath := GlobalConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+		require.NoError(t, err, "mkdir failed: %v")
 	}
 	content := "hide_addressed_by_default = true\nhide_closed_by_default = false\n"
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+		require.NoError(t, err, "WriteFile failed: %v")
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if loaded.HideClosedByDefault {
-		t.Error("Deprecated key should not override explicit hide_closed_by_default = false")
-	}
+	require.NoError(t, err, "LoadGlobal failed: %v")
+
+	assert.False(t, loaded.HideClosedByDefault, "Deprecated key should not override explicit hide_closed_by_default = false")
 	if loaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be cleared after migration")
+		assert.Empty(t, loaded.HideAddressedByDefault, "Expected HideAddressedByDefault to be cleared after migration")
 	}
 }
 
 func TestIsDefaultReviewType(t *testing.T) {
 	defaults := []string{"", "default", "general", "review"}
 	for _, rt := range defaults {
-		if !IsDefaultReviewType(rt) {
-			t.Errorf("expected %q to be default review type", rt)
-		}
+		assert.True(t, IsDefaultReviewType(rt), "expected %q to be default review type", rt)
 	}
 	nonDefaults := []string{"security", "design", "bogus"}
 	for _, rt := range nonDefaults {
-		if IsDefaultReviewType(rt) {
-			t.Errorf("expected %q to NOT be default review type", rt)
-		}
+		assert.False(t, IsDefaultReviewType(rt), "expected %q to NOT be default review type", rt)
 	}
 }
 
 func TestLoadRepoConfigFromRef(t *testing.T) {
-	// Create a real git repo with .roborev.toml at a commit
+
 	dir := t.TempDir()
 	execGit(t, dir, "init")
 	execGit(t, dir, "config", "user.email", "test@test.com")
 	execGit(t, dir, "config", "user.name", "Test")
 
-	// Write .roborev.toml and commit
 	configContent := `review_guidelines = "Use descriptive variable names."` + "\n"
 	writeTestFile(t, dir, ".roborev.toml", configContent)
 	execGit(t, dir, "add", ".roborev.toml")
 	execGit(t, dir, "commit", "-m", "add config")
 
-	// Get the commit SHA
 	sha := execGit(t, dir, "rev-parse", "HEAD")
 
 	t.Run("loads config from ref", func(t *testing.T) {
 		cfg, err := LoadRepoConfigFromRef(dir, sha)
-		if err != nil {
-			t.Fatalf("LoadRepoConfigFromRef: %v", err)
-		}
-		if cfg == nil {
-			t.Fatal("expected non-nil config")
-		}
-		if cfg.ReviewGuidelines != "Use descriptive variable names." {
-			t.Errorf("got %q", cfg.ReviewGuidelines)
-		}
+		require.NoError(t, err, "LoadRepoConfigFromRef: %v")
+		assert.NotNil(t, cfg, "expected non-nil config")
+		assert.Equal(t, "Use descriptive variable names.", cfg.ReviewGuidelines, "got %q, cfg.ReviewGuidelines", cfg.ReviewGuidelines)
+
 	})
 
 	t.Run("returns nil for nonexistent ref", func(t *testing.T) {
 		cfg, err := LoadRepoConfigFromRef(dir, "0000000000000000000000000000000000000000")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg != nil {
-			t.Error("expected nil config for nonexistent ref")
-		}
+		require.NoError(t, err)
+
+		assert.Nil(t, cfg, "expected nil config for nonexistent ref")
 	})
 
 	t.Run("returns nil when file missing from ref", func(t *testing.T) {
-		// Remove .roborev.toml and commit
+
 		execGit(t, dir, "rm", ".roborev.toml")
 		execGit(t, dir, "commit", "-m", "remove config")
 		headSHA := execGit(t, dir, "rev-parse", "HEAD")
 
 		cfg, err := LoadRepoConfigFromRef(dir, headSHA)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg != nil {
-			t.Error("expected nil config when file removed from ref")
-		}
+		require.NoError(t, err)
+
+		assert.Nil(t, cfg, "expected nil config when file removed from ref")
 	})
 }
 
@@ -2250,23 +2223,18 @@ func TestValidateReviewTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ValidateReviewTypes(tt.input)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
+				require.Error(t, err, "expected error")
+
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
+
 			if len(got) != len(tt.want) {
-				t.Fatalf("got %v, want %v", got, tt.want)
+				assert.Len(t, got, len(tt.want), "got %v, want %v", got, tt.want)
 			}
 			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf(
-						"got[%d] = %q, want %q",
-						i, got[i], tt.want[i])
-				}
+				assert.Equal(t, tt.want[i], got[i], "got[%d] = %q, want %q", i, got[i], tt.want[i])
+
 			}
 		})
 	}
@@ -2280,9 +2248,9 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 4 {
-			t.Fatalf("got %d entries, want 4", len(matrix))
+			assert.Len(t, matrix, 4, "got %d entries, want 4, len(matrix)")
 		}
-		// Cross-product: reviewTypes outer, agents inner
+
 		want := []AgentReviewType{
 			{"codex", "security"},
 			{"gemini", "security"},
@@ -2290,12 +2258,8 @@ func TestResolvedReviewMatrix(t *testing.T) {
 			{"gemini", "default"},
 		}
 		for i, got := range matrix {
-			if got != want[i] {
-				t.Errorf(
-					"matrix[%d] = %v, want %v",
-					i, got, want[i],
-				)
-			}
+			assert.Equal(t, want[i], got, "matrix[%d] = %v, want %v", i, got, want[i])
+
 		}
 	})
 
@@ -2305,15 +2269,15 @@ func TestResolvedReviewMatrix(t *testing.T) {
 				"codex":  {"security", "default"},
 				"gemini": {"default"},
 			},
-			// These should be ignored when Reviews is set
+
 			Agents:      []string{"ignored"},
 			ReviewTypes: []string{"ignored"},
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 3 {
-			t.Fatalf("got %d entries, want 3", len(matrix))
+			assert.Len(t, matrix, 3, "got %d entries, want 3, len(matrix)")
 		}
-		// Sort for deterministic comparison (map iteration order)
+
 		sort.Slice(matrix, func(i, j int) bool {
 			if matrix[i].Agent != matrix[j].Agent {
 				return matrix[i].Agent < matrix[j].Agent
@@ -2326,24 +2290,20 @@ func TestResolvedReviewMatrix(t *testing.T) {
 			{"gemini", "default"},
 		}
 		for i, got := range matrix {
-			if got != want[i] {
-				t.Errorf(
-					"matrix[%d] = %v, want %v",
-					i, got, want[i],
-				)
-			}
+			assert.Equal(t, want[i], got, "matrix[%d] = %v, want %v", i, got, want[i])
+
 		}
 	})
 
 	t.Run("defaults when empty", func(t *testing.T) {
 		ci := CIConfig{}
 		matrix := ci.ResolvedReviewMatrix()
-		// Default: [""] x ["security"]
+
 		if len(matrix) != 1 {
-			t.Fatalf("got %d entries, want 1", len(matrix))
+			assert.Len(t, matrix, 1, "got %d entries, want 1, len(matrix)")
 		}
 		if matrix[0].Agent != "" || matrix[0].ReviewType != "security" {
-			t.Errorf("got %v, want {\"\" security}", matrix[0])
+			assert.Equal(t, AgentReviewType{Agent: "", ReviewType: "security"}, matrix[0], "got %v, want {\"\" security}", matrix[0])
 		}
 	})
 }
@@ -2355,7 +2315,7 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 			ReviewTypes: []string{"security"},
 		}
 		if matrix := ci.ResolvedReviewMatrix(); matrix != nil {
-			t.Errorf("expected nil, got %v", matrix)
+			assert.Nil(t, matrix, "expected nil, got %v", matrix)
 		}
 	})
 
@@ -2367,11 +2327,11 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 1 {
-			t.Fatalf("got %d entries, want 1", len(matrix))
+			assert.Len(t, matrix, 1, "got %d entries, want 1, len(matrix)")
 		}
 		if matrix[0].Agent != "codex" ||
 			matrix[0].ReviewType != "security" {
-			t.Errorf("got %v", matrix[0])
+			assert.Equal(t, AgentReviewType{Agent: "codex", ReviewType: "security"}, matrix[0], "got %v, matrix[0]")
 		}
 	})
 
@@ -2380,11 +2340,10 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 			Reviews: map[string][]string{},
 		}
 		matrix := ci.ResolvedReviewMatrix()
-		if matrix == nil {
-			t.Fatal("expected non-nil empty slice, got nil")
-		}
+		assert.NotNil(t, matrix, "expected non-nil empty slice, got nil")
+
 		if len(matrix) != 0 {
-			t.Errorf("expected 0 entries, got %d", len(matrix))
+			assert.Empty(t, matrix, "expected 0 entries, got %d", len(matrix))
 		}
 	})
 
@@ -2393,11 +2352,10 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 			Reviews: map[string][]string{"codex": {}},
 		}
 		matrix := ci.ResolvedReviewMatrix()
-		if matrix == nil {
-			t.Fatal("expected non-nil empty slice, got nil")
-		}
+		assert.NotNil(t, matrix, "expected non-nil empty slice, got nil")
+
 		if len(matrix) != 0 {
-			t.Errorf("expected 0 entries, got %d", len(matrix))
+			assert.Empty(t, matrix, "expected 0 entries, got %d", len(matrix))
 		}
 	})
 }
@@ -2424,106 +2382,7 @@ func TestResolvePostCommitReview(t *testing.T) {
 				dir = newTempRepo(t, tt.config)
 			}
 			got := ResolvePostCommitReview(dir)
-			if got != tt.want {
-				t.Errorf("ResolvePostCommitReview() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestResolveReuseReviewSession(t *testing.T) {
-	boolTrue := true
-	boolFalse := false
-
-	tests := []struct {
-		name   string
-		global *Config
-		repo   string
-		want   bool
-	}{
-		{
-			name:   "default false",
-			global: DefaultConfig(),
-			want:   false,
-		},
-		{
-			name:   "global true",
-			global: &Config{ReuseReviewSession: &boolTrue},
-			want:   true,
-		},
-		{
-			name:   "repo overrides global true to false",
-			global: &Config{ReuseReviewSession: &boolTrue},
-			repo:   `reuse_review_session = false`,
-			want:   false,
-		},
-		{
-			name:   "repo true",
-			global: &Config{ReuseReviewSession: &boolFalse},
-			repo:   `reuse_review_session = true`,
-			want:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tt.repo != "" {
-				writeRepoConfigStr(t, dir, tt.repo)
-			}
-			if got := ResolveReuseReviewSession(dir, tt.global); got != tt.want {
-				t.Fatalf("ResolveReuseReviewSession() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestResolveReuseReviewSessionLookback(t *testing.T) {
-	tests := []struct {
-		name   string
-		global *Config
-		repo   string
-		want   int
-	}{
-		{
-			name:   "default",
-			global: DefaultConfig(),
-			want:   0,
-		},
-		{
-			name:   "global override",
-			global: &Config{ReuseReviewSessionLookback: 25},
-			want:   25,
-		},
-		{
-			name:   "repo overrides global",
-			global: &Config{ReuseReviewSessionLookback: 25},
-			repo:   `reuse_review_session_lookback = 5`,
-			want:   5,
-		},
-		{
-			name:   "repo zero disables cap",
-			global: &Config{ReuseReviewSessionLookback: 25},
-			repo:   `reuse_review_session_lookback = 0`,
-			want:   0,
-		},
-		{
-			name:   "repo negative disables cap",
-			global: &Config{ReuseReviewSessionLookback: 25},
-			repo:   `reuse_review_session_lookback = -1`,
-			want:   0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tt.repo != "" {
-				writeRepoConfigStr(t, dir, tt.repo)
-			}
-			if got := ResolveReuseReviewSessionLookback(dir, tt.global); got != tt.want {
-				t.Fatalf("ResolveReuseReviewSessionLookback() = %d, want %d", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -2545,12 +2404,8 @@ func TestResolvedThrottleInterval(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ci := CIConfig{ThrottleInterval: tt.value}
 			got := ci.ResolvedThrottleInterval()
-			if got != tt.want {
-				t.Errorf(
-					"ResolvedThrottleInterval() = %v, want %v",
-					got, tt.want,
-				)
-			}
+			assert.Equal(t, tt.want, got, "ResolvedThrottleInterval() = %v, want %v", got, tt.want)
+
 		})
 	}
 }
@@ -2567,31 +2422,21 @@ throttle_interval = "30m"
 codex = ["security", "default"]
 gemini = ["default"]
 `), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom: %v", err)
-	}
+	require.NoError(t, err, "LoadGlobalFrom: %v")
+	assert.Equal(t, "30m", cfg.CI.ThrottleInterval, "got throttle_interval %q, want %q", cfg.CI.ThrottleInterval, "30m")
 
-	if cfg.CI.ThrottleInterval != "30m" {
-		t.Errorf(
-			"got throttle_interval %q, want %q",
-			cfg.CI.ThrottleInterval, "30m",
-		)
-	}
 	if len(cfg.CI.Reviews) != 2 {
-		t.Fatalf(
-			"got %d review entries, want 2",
-			len(cfg.CI.Reviews),
-		)
+		assert.Len(t, cfg.CI.Reviews, 2, "assertion failed, got %d review entries, want 2", len(cfg.CI.Reviews))
 	}
 	codexTypes := cfg.CI.Reviews["codex"]
 	if len(codexTypes) != 2 ||
 		codexTypes[0] != "security" ||
 		codexTypes[1] != "default" {
-		t.Errorf("got codex types %v", codexTypes)
+		assert.Equal(t, []string{"security", "default"}, codexTypes, "got codex types %v, codexTypes")
 	}
 }
 
@@ -2606,8 +2451,8 @@ func TestIsThrottleBypassed(t *testing.T) {
 	}{
 		{"wesm", true},
 		{"mariusvniekerk", true},
-		{"Wesm", true}, // case-insensitive
-		{"WESM", true}, // all caps
+		{"Wesm", true},
+		{"WESM", true},
 		{"MariusVNiekerk", true},
 		{"someone-else", false},
 		{"", false},
@@ -2615,19 +2460,15 @@ func TestIsThrottleBypassed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.login, func(t *testing.T) {
 			got := ci.IsThrottleBypassed(tt.login)
-			if got != tt.want {
-				t.Errorf(
-					"IsThrottleBypassed(%q) = %v, want %v",
-					tt.login, got, tt.want,
-				)
-			}
+			assert.Equal(t, tt.want, got, "IsThrottleBypassed(%q) = %v, want %v", tt.login, got, tt.want)
+
 		})
 	}
 
 	t.Run("empty list", func(t *testing.T) {
 		empty := CIConfig{}
 		if empty.IsThrottleBypassed("wesm") {
-			t.Error("expected false for empty bypass list")
+			assert.False(t, empty.IsThrottleBypassed("wesm"), "expected false for empty bypass list")
 		}
 	})
 }
@@ -2644,14 +2485,10 @@ codex = ["security"]
 gemini = ["default"]
 `)
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig: %v", err)
-	}
+	require.NoError(t, err, "LoadRepoConfig: %v")
+
 	if len(cfg.CI.Reviews) != 2 {
-		t.Fatalf(
-			"got %d review entries, want 2",
-			len(cfg.CI.Reviews),
-		)
+		assert.Len(t, cfg.CI.Reviews, 2, "assertion failed, got %d review entries, want 2", len(cfg.CI.Reviews))
 	}
 }
 

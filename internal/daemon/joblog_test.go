@@ -9,24 +9,23 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJobLogDir(t *testing.T) {
 	tmpDir := setupTestEnv(t)
 	got := JobLogDir()
 	want := filepath.Join(tmpDir, "logs", "jobs")
-	if got != want {
-		t.Errorf("JobLogDir() = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestJobLogPath(t *testing.T) {
 	tmpDir := setupTestEnv(t)
 	got := JobLogPath(42)
 	want := filepath.Join(tmpDir, "logs", "jobs", "42.log")
-	if got != want {
-		t.Errorf("JobLogPath(42) = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func assertStrictPerms(t *testing.T, path string) {
@@ -35,46 +34,35 @@ func assertStrictPerms(t *testing.T, path string) {
 		return
 	}
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		t.Errorf("permissions for %s = %o, want strict (no group/other)", path, info.Mode().Perm())
-	}
+	require.NoError(t, err, "stat")
+	assert.Zero(t, info.Mode().Perm()&0o077, "permissions for %s should be strict", path)
 }
 
 func TestOpenJobLog(t *testing.T) {
 	t.Run("creates_and_writes", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
 		setupTestEnv(t)
 
 		f := openJobLog(99)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		require.NotNil(f, "openJobLog returned nil")
 		defer f.Close()
 
 		// Write some data and verify it lands on disk
 		_, err := f.WriteString("hello\n")
-		if err != nil {
-			t.Fatalf("write: %v", err)
-		}
+		require.NoError(err, "write")
 		f.Close()
 
 		data, err := os.ReadFile(JobLogPath(99))
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if string(data) != "hello\n" {
-			t.Errorf("file contents = %q, want %q", data, "hello\n")
-		}
+		require.NoError(err, "read")
+		assert.Equal("hello\n", string(data))
 	})
 
 	t.Run("strict_permissions", func(t *testing.T) {
 		setupTestEnv(t)
 		f := openJobLog(99)
-		if f == nil {
-			t.Fatal("openJobLog returned nil")
-		}
+		require.NotNil(t, f, "openJobLog returned nil")
 		f.Close()
 
 		assertStrictPerms(t, JobLogPath(99))
@@ -83,6 +71,8 @@ func TestOpenJobLog(t *testing.T) {
 }
 
 func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
+	require := require.New(t)
+
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permissions not applicable on Windows")
 	}
@@ -91,18 +81,12 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 	// Pre-create dir and file with permissive modes, simulating
 	// an install upgraded from a version that used 0755/0644.
 	dir := JobLogDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.MkdirAll(dir, 0755))
 	path := JobLogPath(500)
-	if err := os.WriteFile(path, []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(os.WriteFile(path, []byte("old"), 0644))
 
 	f := openJobLog(500)
-	if f == nil {
-		t.Fatal("openJobLog returned nil")
-	}
+	require.NotNil(f, "openJobLog returned nil")
 	f.Close()
 
 	assertStrictPerms(t, dir)
@@ -111,22 +95,19 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 
 func createLogFile(t *testing.T, path, content string, mtime time.Time) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(path, mtime, mtime); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+	require.NoError(t, os.Chtimes(path, mtime, mtime))
 }
 
 func TestCleanJobLogs(t *testing.T) {
 	t.Run("removes_old_keeps_new", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
 		setupTestEnv(t)
 
 		dir := JobLogDir()
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(os.MkdirAll(dir, 0755))
 
 		// Create an "old" log file by writing and then back-dating its mtime
 		oldPath := filepath.Join(dir, "1.log")
@@ -141,33 +122,26 @@ func TestCleanJobLogs(t *testing.T) {
 		createLogFile(t, txtPath, "ignore", time.Now())
 
 		removed := CleanJobLogs(7 * 24 * time.Hour)
-		if removed != 1 {
-			t.Errorf("CleanJobLogs removed %d files, want 1", removed)
-		}
+		assert.Equal(1, removed)
 
 		// Old file should be gone
-		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-			t.Error("old log file should be removed")
-		}
+		_, err := os.Stat(oldPath)
+		assert.True(os.IsNotExist(err), "old log file should be removed")
 
 		// New file should remain
-		if _, err := os.Stat(newPath); err != nil {
-			t.Error("new log file should still exist")
-		}
+		_, err = os.Stat(newPath)
+		require.NoError(err, "new log file should still exist")
 
 		// Non-log file should remain
-		if _, err := os.Stat(txtPath); err != nil {
-			t.Error("non-log file should still exist")
-		}
+		_, err = os.Stat(txtPath)
+		require.NoError(err, "non-log file should still exist")
 	})
 
 	t.Run("no_dir", func(t *testing.T) {
 		setupTestEnv(t)
 		// No logs/jobs directory exists — should return 0 without error
 		removed := CleanJobLogs(7 * 24 * time.Hour)
-		if removed != 0 {
-			t.Errorf("CleanJobLogs on missing dir = %d, want 0", removed)
-		}
+		assert.Zero(t, removed)
 	})
 }
 

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
@@ -39,21 +41,17 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			u, err := url.Parse(fmt.Sprintf("%s/api/review", ts.URL))
-			if err != nil {
-				t.Fatalf("failed to parse base URL: %v", err)
-			}
+			require.NoError(t, err, "failed to parse base URL: %v")
+
 			if tt.query != "" {
 				u.RawQuery = tt.query
 			}
 			resp, err := http.Get(u.String())
-			if err != nil {
-				t.Fatalf("failed to make request: %v", err)
-			}
+			require.NoError(t, err, "failed to make request: %v")
+
 			defer resp.Body.Close()
 
-			if resp.StatusCode != tt.wantStatus {
-				t.Fatalf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
-			}
+			assert.Equal(t, tt.wantStatus, resp.StatusCode, "unexpected condition")
 
 			if tt.wantStatus != http.StatusOK {
 				return
@@ -61,15 +59,11 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 
 			var review storage.Review
 			if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-				t.Fatalf("failed to decode response: %v", err)
+				require.NoError(t, err, "failed to decode response: %v")
 			}
 
-			if review.JobID != tt.wantJobID {
-				t.Errorf("expected JobID %d, got %d", tt.wantJobID, review.JobID)
-			}
-			if review.Output != tt.wantOutput {
-				t.Errorf("expected output %q, got %q", tt.wantOutput, review.Output)
-			}
+			assert.Equal(t, tt.wantJobID, review.JobID, "unexpected condition")
+			assert.Equal(t, tt.wantOutput, review.Output, "unexpected condition")
 		})
 	}
 }

@@ -1,7 +1,5 @@
 package main
 
-// Tests for the review command (enqueue, wait, branch mode)
-
 import (
 	"bytes"
 	"encoding/json"
@@ -12,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func respondJSON(
@@ -58,11 +58,8 @@ func mockEnqueue(
 		w http.ResponseWriter, r *http.Request,
 	) {
 		var req capturedEnqueue
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("mockEnqueue: decode body: %v", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
+		err := json.NewDecoder(r.Body).Decode(&req)
+		assert.NoError(t, err, "decode enqueue request")
 		select {
 		case ch <- req:
 		default:
@@ -119,17 +116,11 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 
 		shortFirstSHA := firstSHA[:7]
 		_, _, err := executeReviewCmd("--repo", repo.Dir, shortFirstSHA)
-		if err != nil {
-			t.Fatalf("enqueue failed: %v", err)
-		}
+		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		if req.GitRef != shortFirstSHA {
-			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
-		}
-		if req.GitRef == "HEAD" {
-			t.Error("Received HEAD instead of positional arg - bug not fixed!")
-		}
+		assert.Equal(t, req.GitRef, shortFirstSHA, "unexpected condition")
+		assert.NotEqual(t, "HEAD", req.GitRef, "unexpected condition")
 	})
 
 	t.Run("sha flag works", func(t *testing.T) {
@@ -141,14 +132,10 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 
 		shortFirstSHA := firstSHA[:7]
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--sha", shortFirstSHA)
-		if err != nil {
-			t.Fatalf("enqueue failed: %v", err)
-		}
+		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		if req.GitRef != shortFirstSHA {
-			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
-		}
+		assert.Equal(t, req.GitRef, shortFirstSHA, "unexpected condition")
 	})
 
 	t.Run("defaults to HEAD", func(t *testing.T) {
@@ -158,14 +145,10 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		repo.CommitFile("file1.txt", "first", "first commit")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir)
-		if err != nil {
-			t.Fatalf("enqueue failed: %v", err)
-		}
+		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
-		if req.GitRef != "HEAD" {
-			t.Errorf("Expected HEAD, got %s", req.GitRef)
-		}
+		assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 	})
 }
 
@@ -182,13 +165,9 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial commit")
 
 		stdout, _, err := executeReviewCmd("--repo", repo.Dir)
-		if err != nil {
-			t.Errorf("enqueue should succeed (exit 0) for skipped branch, got error: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if !strings.Contains(stdout, "Skipped") {
-			t.Errorf("expected output to contain 'Skipped', got: %q", stdout)
-		}
+		assert.Contains(t, stdout, "Skipped", "unexpected condition")
 	})
 
 	t.Run("skipped response in quiet mode suppresses output", func(t *testing.T) {
@@ -203,13 +182,9 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial commit")
 
 		stdout, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-		if err != nil {
-			t.Errorf("enqueue --quiet should succeed for skipped branch, got error: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		if stdout != "" {
-			t.Errorf("expected no output in quiet mode, got: %q", stdout)
-		}
+		assert.Empty(t, stdout, "unexpected condition")
 	})
 }
 
@@ -223,15 +198,9 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
-		if err != nil {
-			t.Errorf("expected exit 0 for passing review, got error: %v", err)
-		}
-		if stdout != "" {
-			t.Errorf("expected no stdout in quiet mode, got: %q", stdout)
-		}
-		if stderr != "" {
-			t.Errorf("expected no stderr in quiet mode, got: %q", stderr)
-		}
+		require.NoError(t, err, "unexpected condition")
+		assert.Empty(t, stdout, "unexpected condition")
+		assert.Empty(t, stderr, "unexpected condition")
 	})
 
 	t.Run("failing review exits 1 with no output", func(t *testing.T) {
@@ -243,22 +212,12 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
-		if err == nil {
-			t.Error("expected exit 1 for failing review, got success")
-		} else {
-			exitErr, ok := err.(*exitError)
-			if !ok {
-				t.Errorf("expected exitError, got: %T %v", err, err)
-			} else if exitErr.code != 1 {
-				t.Errorf("expected exit code 1, got: %d", exitErr.code)
-			}
-		}
-		if stdout != "" {
-			t.Errorf("expected no stdout in quiet mode, got: %q", stdout)
-		}
-		if stderr != "" {
-			t.Errorf("expected no stderr in quiet mode, got: %q", stderr)
-		}
+		require.Error(t, err, "expected review command to fail in this case")
+		exitErr, ok := err.(*exitError)
+		require.True(t, ok, "expected exitError, got: %T %v", err)
+		require.Equal(t, 1, exitErr.code, "expected exit code 1")
+		assert.Empty(t, stdout, "unexpected condition")
+		assert.Empty(t, stderr, "unexpected condition")
 	})
 }
 
@@ -288,9 +247,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 		assertErrorContains(t, err, "unknown status")
 		assertErrorContains(t, err, "daemon may be newer than CLI")
 
-		if callCount != 10 {
-			t.Errorf("expected 10 retries, got %d", callCount)
-		}
+		assert.Equal(t, 10, callCount, "unexpected condition")
 	})
 
 	t.Run("counter resets on known status", func(t *testing.T) {
@@ -315,12 +272,8 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
-		if err != nil {
-			t.Errorf("expected success (counter should reset on known status), got error: %v", err)
-		}
-		if poller.callCount != 12 {
-			t.Errorf("expected 12 calls, got %d", poller.callCount)
-		}
+		require.NoError(t, err, "unexpected condition")
+		assert.Equal(t, 12, poller.callCount, "unexpected condition")
 	})
 }
 
@@ -410,17 +363,11 @@ func TestReviewSinceFlag(t *testing.T) {
 		repo.CommitFile("file2.txt", "second", "second commit")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", firstSHA[:7])
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 
 		req := <-reqCh
-		if !strings.Contains(req.GitRef, firstSHA) {
-			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, req.GitRef)
-		}
-		if !strings.HasSuffix(req.GitRef, "..HEAD") {
-			t.Errorf("expected git_ref to end with ..HEAD, got %s", req.GitRef)
-		}
+		assert.Contains(t, req.GitRef, firstSHA, "unexpected condition")
+		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"), "unexpected condition")
 	})
 
 	t.Run("since with invalid ref fails", func(t *testing.T) {
@@ -473,17 +420,11 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 
 		req := <-reqCh
-		if !strings.Contains(req.GitRef, mainSHA) {
-			t.Errorf("expected git_ref to contain main SHA %s, got %s", mainSHA, req.GitRef)
-		}
-		if !strings.HasSuffix(req.GitRef, "..HEAD") {
-			t.Errorf("expected git_ref to end with ..HEAD, got %s", req.GitRef)
-		}
+		assert.Contains(t, req.GitRef, mainSHA, "unexpected condition")
+		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"), "unexpected condition")
 	})
 }
 
@@ -495,14 +436,10 @@ func TestReviewFastFlag(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 
 		req := <-reqCh
-		if req.Reasoning != "fast" {
-			t.Errorf("expected reasoning 'fast', got %q", req.Reasoning)
-		}
+		assert.Equal(t, "fast", req.Reasoning, "unexpected condition")
 	})
 
 	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
@@ -512,24 +449,18 @@ func TestReviewFastFlag(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast", "--reasoning", "thorough")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 
 		req := <-reqCh
-		if req.Reasoning != "thorough" {
-			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", req.Reasoning)
-		}
+		assert.Equal(t, "thorough", req.Reasoning, "unexpected condition")
 	})
 }
 
 func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 
-	// Catch-all handler to fail the test if any request is made
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		t.Error("daemon should not be contacted on invalid args")
-		w.WriteHeader(http.StatusOK)
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 	})
 
 	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
@@ -537,15 +468,11 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 	_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--dirty")
 	assertErrorContains(t, err, "cannot use --branch with --dirty")
 
-	// Hooks directory should have no roborev-generated files.
 	for _, name := range []string{"post-commit", "post-rewrite"} {
-		if _, statErr := os.Stat(
+		_, statErr := os.Stat(
 			filepath.Join(hooksDir, name),
-		); statErr == nil {
-			t.Errorf(
-				"%s should not exist after invalid args", name,
-			)
-		}
+		)
+		require.ErrorIs(t, statErr, os.ErrNotExist, "%s should not exist after invalid args", name)
 	}
 }
 
@@ -555,7 +482,7 @@ func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
 		filepath.Join(repo.Dir, ".roborev.toml"),
 		[]byte(content), 0644,
 	); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.NoError(t, err, "write .roborev.toml: %v")
 	}
 }
 
@@ -568,9 +495,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		if ok {
-			t.Error("expected false with no config")
-		}
+		assert.False(t, ok, "unexpected condition")
 	})
 
 	t.Run("returns false when config is commit", func(t *testing.T) {
@@ -582,9 +507,7 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		if ok {
-			t.Error("expected false with explicit commit config")
-		}
+		assert.False(t, ok, "unexpected condition")
 	})
 
 	t.Run("returns merge-base range when config is branch", func(t *testing.T) {
@@ -597,15 +520,10 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(repo.Dir, "")
-		if !ok {
-			t.Fatal("expected true with branch config")
-		}
-		if !strings.Contains(ref, mainSHA) {
-			t.Errorf("expected ref to contain merge-base %s, got %q", mainSHA, ref)
-		}
-		if !strings.HasSuffix(ref, "..HEAD") {
-			t.Errorf("expected ref ending with ..HEAD, got %q", ref)
-		}
+		require.True(t, ok, "expected true with branch config")
+
+		assert.Contains(t, ref, mainSHA, "unexpected condition")
+		assert.True(t, strings.HasSuffix(ref, "..HEAD"), "unexpected condition")
 	})
 
 	t.Run("covers multiple commits on feature branch", func(t *testing.T) {
@@ -620,14 +538,10 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(repo.Dir, "")
-		if !ok {
-			t.Fatal("expected true")
-		}
-		// Range should start from merge-base (main HEAD) and cover all 3 commits
+		require.True(t, ok, "expected true")
+
 		want := mainSHA + "..HEAD"
-		if ref != want {
-			t.Errorf("expected %q, got %q", want, ref)
-		}
+		assert.Equal(t, want, ref, "unexpected condition")
 	})
 
 	t.Run("returns false on base branch", func(t *testing.T) {
@@ -637,9 +551,7 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		_, ok := tryBranchReview(repo.Dir, "")
-		if ok {
-			t.Error("expected false when on base branch")
-		}
+		assert.False(t, ok, "unexpected condition")
 	})
 
 	t.Run("uses baseBranch override", func(t *testing.T) {
@@ -652,13 +564,10 @@ func TestTryBranchReview(t *testing.T) {
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(repo.Dir, "develop")
-		if !ok {
-			t.Fatal("expected true with baseBranch override")
-		}
+		require.True(t, ok, "expected true with baseBranch override")
+
 		want := developSHA + "..HEAD"
-		if ref != want {
-			t.Errorf("expected %q, got %q", want, ref)
-		}
+		assert.Equal(t, want, ref, "unexpected condition")
 	})
 
 	t.Run("returns false on detached HEAD", func(t *testing.T) {
@@ -666,22 +575,14 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
 		sha := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", sha) // detach HEAD
+		repo.Run("checkout", sha)
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		// GetCurrentBranch returns "HEAD" for detached state, which != "main",
-		// so merge-base lookup proceeds. But the range has 0 commits since
-		// HEAD == merge-base, so it falls back gracefully.
 		_, ok := tryBranchReview(repo.Dir, "")
-		if ok {
-			t.Error("expected false on detached HEAD (no commits beyond base)")
-		}
+		assert.False(t, ok, "unexpected condition")
 	})
 }
 
-// TestReviewIgnoresBranchConfig verifies that reviewCmd always reviews
-// individual commits, even with post_commit_review = "branch" configured.
-// Branch review logic only applies in the post-commit command.
 func TestReviewIgnoresBranchConfig(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
@@ -693,18 +594,12 @@ func TestReviewIgnoresBranchConfig(t *testing.T) {
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 	_, _, err := executeReviewCmd("--repo", repo.Dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
-	if req.GitRef != "HEAD" {
-		t.Errorf("review should always use HEAD, got %q", req.GitRef)
-	}
+	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 }
 
-// TestReviewQuietIgnoresBranchConfig verifies that even --quiet mode
-// does not trigger branch review logic in reviewCmd.
 func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
@@ -716,25 +611,19 @@ func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 	_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
-	if req.GitRef != "HEAD" {
-		t.Errorf("review --quiet should use HEAD, got %q", req.GitRef)
-	}
+	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 }
 
 func TestFindChildGitRepos(t *testing.T) {
 	parent := t.TempDir()
 
-	// Create a regular git repo (directory .git)
 	regularRepo := filepath.Join(parent, "regular")
 	os.Mkdir(regularRepo, 0755)
 	os.Mkdir(filepath.Join(regularRepo, ".git"), 0755)
 
-	// Create a worktree-style repo (.git is a file)
 	worktreeRepo := filepath.Join(parent, "worktree")
 	os.Mkdir(worktreeRepo, 0755)
 	os.WriteFile(
@@ -743,60 +632,38 @@ func TestFindChildGitRepos(t *testing.T) {
 		0644,
 	)
 
-	// Create a non-repo directory (no .git at all)
 	plainDir := filepath.Join(parent, "plain")
 	os.Mkdir(plainDir, 0755)
 
-	// Create a hidden directory (should be skipped)
 	hiddenDir := filepath.Join(parent, ".hidden")
 	os.Mkdir(hiddenDir, 0755)
 	os.Mkdir(filepath.Join(hiddenDir, ".git"), 0755)
 
 	repos := findChildGitRepos(parent)
 
-	if len(repos) != 2 {
-		t.Fatalf("Expected 2 repos, got %d: %v", len(repos), repos)
-	}
+	assert.Len(t, repos, 2, "unexpected condition")
 
 	found := make(map[string]bool)
 	for _, r := range repos {
 		found[r] = true
 	}
-	if !found["regular"] {
-		t.Error("Expected 'regular' in results")
-	}
-	if !found["worktree"] {
-		t.Error("Expected 'worktree' in results (has .git file)")
-	}
-	if found["plain"] {
-		t.Error("'plain' should not be in results")
-	}
-	if found[".hidden"] {
-		t.Error("'.hidden' should not be in results")
-	}
+	assert.True(t, found["regular"], "unexpected condition")
+	assert.True(t, found["worktree"], "unexpected condition")
+	assert.False(t, found["plain"], "unexpected condition")
+	assert.False(t, found[".hidden"], "unexpected condition")
 }
 
 func TestFindChildGitReposHintPaths(t *testing.T) {
 	parent := t.TempDir()
 
-	// Create a regular git repo
 	repoDir := filepath.Join(parent, "my-repo")
 	os.Mkdir(repoDir, 0755)
 	os.Mkdir(filepath.Join(repoDir, ".git"), 0755)
 
-	// Run the review command against the parent dir (not a git repo)
-	// to verify the hint message contains full paths
 	_, _, err := executeReviewCmd("--repo", parent)
-	if err == nil {
-		t.Fatal("Expected error for non-git directory")
-	}
+	require.Error(t, err, "Expected error for non-git directory")
 
 	errMsg := err.Error()
 	expectedPath := filepath.Join(parent, "my-repo")
-	if !strings.Contains(errMsg, expectedPath) {
-		t.Errorf(
-			"Hint should contain full path %q, got: %s",
-			expectedPath, errMsg,
-		)
-	}
+	assert.Contains(t, errMsg, expectedPath, "Hint should contain full path %q, got: %s", expectedPath, errMsg)
 }

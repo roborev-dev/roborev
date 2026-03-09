@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,28 +15,23 @@ func TestJobCounts(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/test-repo")
 
-	// Create 3 jobs that will stay queued
 	for i := range 3 {
 		sha := fmt.Sprintf("queued%d", i)
 		commit := createCommit(t, db, repo.ID, sha)
 		enqueueJob(t, db, repo.ID, commit.ID, sha)
 	}
 
-	// Create a job, claim it, and complete it
 	commit := createCommit(t, db, repo.ID, "done1")
 	job := enqueueJob(t, db, repo.ID, commit.ID, "done1")
-	_, _ = db.ClaimJob("drain1")    // Claims oldest queued job (one of queued0-2)
-	_, _ = db.ClaimJob("drain2")    // Claims next
-	_, _ = db.ClaimJob("drain3")    // Claims next
-	claimed, _ := db.ClaimJob("w1") // Should claim "done1" job now
+	_, _ = db.ClaimJob("drain1")
+	_, _ = db.ClaimJob("drain2")
+	_, _ = db.ClaimJob("drain3")
+	claimed, _ := db.ClaimJob("w1")
 	if claimed != nil {
-		if claimed.ID != job.ID {
-			t.Errorf("Expected to claim job 'done1' (ID %d), got %d", job.ID, claimed.ID)
-		}
+		assert.Equal(t, claimed.ID, job.ID, "unexpected condition")
 		db.CompleteJob(claimed.ID, "codex", "p", "o")
 	}
 
-	// Create a job, claim it, and fail it
 	commit2 := createCommit(t, db, repo.ID, "fail1")
 	enqueueJob(t, db, repo.ID, commit2.ID, "fail1")
 	claimed2, _ := db.ClaimJob("w2")
@@ -43,23 +40,12 @@ func TestJobCounts(t *testing.T) {
 	}
 
 	queued, running, done, failed, _, _, _, err := db.GetJobCounts()
-	if err != nil {
-		t.Fatalf("GetJobCounts failed: %v", err)
-	}
+	require.NoError(t, err, "GetJobCounts failed: %v")
 
-	// We expect: 0 queued (all were claimed), 1 done, 1 failed, 3 running
-	if queued != 0 {
-		t.Errorf("Expected 0 queued jobs, got %d", queued)
-	}
-	if running != 3 {
-		t.Errorf("Expected 3 running jobs, got %d", running)
-	}
-	if done != 1 {
-		t.Errorf("Expected 1 done, got %d", done)
-	}
-	if failed != 1 {
-		t.Errorf("Expected 1 failed, got %d", failed)
-	}
+	assert.Equal(t, 0, queued, "unexpected condition")
+	assert.Equal(t, 3, running, "unexpected condition")
+	assert.Equal(t, 1, done, "unexpected condition")
+	assert.Equal(t, 1, failed, "unexpected condition")
 }
 
 func TestCountStalledJobs(t *testing.T) {
@@ -69,55 +55,35 @@ func TestCountStalledJobs(t *testing.T) {
 	repo, _, _ := createJobChain(t, db, "/tmp/test-repo", "recent1")
 	_, _ = db.ClaimJob("worker-1")
 
-	// No stalled jobs yet (just started)
 	count, err := db.CountStalledJobs(30 * time.Minute)
-	if err != nil {
-		t.Fatalf("CountStalledJobs failed: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("Expected 0 stalled jobs for recently started job, got %d", count)
-	}
+	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	// Create a job and manually set started_at to 1 hour ago (simulating stalled job)
-	// Use UTC format (ends with Z) to test basic case
+	assert.Equal(t, 0, count, "unexpected condition")
+
 	commit2 := createCommit(t, db, repo.ID, "stalled1")
 	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stalled1")
 	backdateJobStart(t, db, job2.ID, 1*time.Hour)
 
-	// Now we should have 1 stalled job (running > 30 min)
 	count, err = db.CountStalledJobs(30 * time.Minute)
-	if err != nil {
-		t.Fatalf("CountStalledJobs failed: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("Expected 1 stalled job for job started 1 hour ago (UTC), got %d", count)
-	}
+	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	// Create another stalled job with a non-UTC timezone offset to verify datetime() handles offsets
-	// This exercises the fix for RFC3339 timestamps with timezone offsets like "-07:00"
+	assert.Equal(t, 1, count, "unexpected condition")
+
 	commit3 := createCommit(t, db, repo.ID, "stalled2")
 	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stalled2")
-	// Use a fixed timezone offset (e.g., UTC-7) instead of UTC
+
 	tzMinus7 := time.FixedZone("UTC-7", -7*60*60)
 	backdateJobStartWithOffset(t, db, job3.ID, 1*time.Hour, tzMinus7)
 
-	// Should now have 2 stalled jobs - verifies datetime() parses both Z and offset formats
 	count, err = db.CountStalledJobs(30 * time.Minute)
-	if err != nil {
-		t.Fatalf("CountStalledJobs failed: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("Expected 2 stalled jobs (UTC and offset timestamp), got %d", count)
-	}
+	require.NoError(t, err, "CountStalledJobs failed: %v")
 
-	// With a longer threshold (2 hours), neither job should be considered stalled
+	assert.Equal(t, 2, count, "unexpected condition")
+
 	count, err = db.CountStalledJobs(2 * time.Hour)
-	if err != nil {
-		t.Fatalf("CountStalledJobs failed: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("Expected 0 stalled jobs with 2 hour threshold, got %d", count)
-	}
+	require.NoError(t, err, "CountStalledJobs failed: %v")
+
+	assert.Equal(t, 0, count, "unexpected condition")
 }
 
 func TestListReposWithReviewCounts(t *testing.T) {
@@ -126,30 +92,22 @@ func TestListReposWithReviewCounts(t *testing.T) {
 
 	t.Run("empty database", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 0 {
-			t.Errorf("Expected 0 repos, got %d", len(repos))
-		}
-		if totalCount != 0 {
-			t.Errorf("Expected total count 0, got %d", totalCount)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Empty(t, repos, "unexpected condition")
+		assert.Equal(t, 0, totalCount, "unexpected condition")
 	})
 
-	// Create repos and jobs
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
-	_ = createRepo(t, db, "/tmp/repo3") // will have 0 jobs
+	_ = createRepo(t, db, "/tmp/repo3")
 
-	// Add jobs to repo1 (3 jobs)
 	for i := range 3 {
 		sha := fmt.Sprintf("repo1-sha%d", i)
 		commit := createCommit(t, db, repo1.ID, sha)
 		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
-	// Add jobs to repo2 (2 jobs)
 	for i := range 2 {
 		sha := fmt.Sprintf("repo2-sha%d", i)
 		commit := createCommit(t, db, repo2.ID, sha)
@@ -158,68 +116,45 @@ func TestListReposWithReviewCounts(t *testing.T) {
 
 	t.Run("repos with varying job counts", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		// Should have 3 repos
-		if len(repos) != 3 {
-			t.Errorf("Expected 3 repos, got %d", len(repos))
-		}
+		assert.Len(t, repos, 3, "unexpected condition")
 
-		// Total count should be 5 (3 + 2 + 0)
-		if totalCount != 5 {
-			t.Errorf("Expected total count 5, got %d", totalCount)
-		}
+		assert.Equal(t, 5, totalCount, "unexpected condition")
 
-		// Build map for easier assertions
 		repoMap := make(map[string]int)
 		for _, r := range repos {
 			repoMap[r.Name] = r.Count
 		}
 
-		if repoMap["repo1"] != 3 {
-			t.Errorf("Expected repo1 count 3, got %d", repoMap["repo1"])
-		}
-		if repoMap["repo2"] != 2 {
-			t.Errorf("Expected repo2 count 2, got %d", repoMap["repo2"])
-		}
-		if repoMap["repo3"] != 0 {
-			t.Errorf("Expected repo3 count 0, got %d", repoMap["repo3"])
-		}
+		assert.Equal(t, 3, repoMap["repo1"], "unexpected condition")
+		assert.Equal(t, 2, repoMap["repo2"], "unexpected condition")
+		assert.Equal(t, 0, repoMap["repo3"], "unexpected condition")
 	})
 
 	t.Run("counts include all job statuses", func(t *testing.T) {
-		// Claim and complete one job in repo1
+
 		claimed, _ := db.ClaimJob("worker-1")
 		if claimed != nil {
 			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
 		}
 
-		// Claim and fail another job
 		claimed2, _ := db.ClaimJob("worker-1")
 		if claimed2 != nil {
 			db.FailJob(claimed2.ID, "", "test error")
 		}
 
-		// Counts should still be the same (counts all jobs, not just completed)
 		repos, totalCount, err := db.ListReposWithReviewCounts()
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
 
-		if totalCount != 5 {
-			t.Errorf("Expected total count 5 (all statuses), got %d", totalCount)
-		}
+		assert.Equal(t, 5, totalCount, "unexpected condition")
 
 		repoMap := make(map[string]int)
 		for _, r := range repos {
 			repoMap[r.Name] = r.Count
 		}
 
-		if repoMap["repo1"] != 3 {
-			t.Errorf("Expected repo1 count 3 (all statuses), got %d", repoMap["repo1"])
-		}
+		assert.Equal(t, 3, repoMap["repo1"], "unexpected condition")
 	})
 }
 
@@ -227,18 +162,15 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Create repos and jobs
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
 
-	// Add 3 jobs to repo1
 	for i := range 3 {
 		sha := fmt.Sprintf("repo1-sha%d", i)
 		commit := createCommit(t, db, repo1.ID, sha)
 		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
-	// Add 2 jobs to repo2
 	for i := range 2 {
 		sha := fmt.Sprintf("repo2-sha%d", i)
 		commit := createCommit(t, db, repo2.ID, sha)
@@ -247,125 +179,84 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 
 	t.Run("no filter returns all jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 5, "unexpected condition")
 	})
 
 	t.Run("repo filter returns only matching jobs", func(t *testing.T) {
-		// Filter by root_path (not name) since repos with same name could exist at different paths
+
 		jobs, err := db.ListJobs("", repo1.RootPath, 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 3 {
-			t.Errorf("Expected 3 jobs for repo1, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 3, "unexpected condition")
 		for _, job := range jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
-			}
+			assert.Equal(t, "repo1", job.RepoName, "unexpected condition")
 		}
 	})
 
 	t.Run("limit parameter works", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 2, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs with limit=2, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 
 	t.Run("limit=0 returns all jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 0, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 5, "unexpected condition")
 	})
 
 	t.Run("repo filter with limit", func(t *testing.T) {
 		jobs, err := db.ListJobs("", repo1.RootPath, 2, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 		for _, job := range jobs {
-			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
-			}
+			assert.Equal(t, "repo1", job.RepoName, "unexpected condition")
 		}
 	})
 
 	t.Run("status and repo filter combined", func(t *testing.T) {
-		// Complete one job from repo1
+
 		claimed, err := db.ClaimJob("worker-1")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
+		require.NoError(t, err, "ClaimJob failed: %v")
+
 		if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output"); err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
+			require.NoError(t, err, "CompleteJob failed: %v")
 		}
 
-		// Query for done jobs in repo1
 		jobs, err := db.ListJobs("done", repo1.RootPath, 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 done job for repo1, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].Status != JobStatusDone {
-			t.Errorf("Expected status 'done', got '%s'", jobs[0].Status)
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.False(t, len(jobs) > 0 && jobs[0].Status != JobStatusDone, "unexpected condition")
 	})
 
 	t.Run("offset pagination", func(t *testing.T) {
-		// Get first 2 jobs
+
 		jobs1, err := db.ListJobs("", "", 2, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs1) != 2 {
-			t.Errorf("Expected 2 jobs, got %d", len(jobs1))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
 
-		// Get next 2 jobs with offset
+		assert.Len(t, jobs1, 2, "unexpected condition")
+
 		jobs2, err := db.ListJobs("", "", 2, 2)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs2) != 2 {
-			t.Errorf("Expected 2 jobs with offset=2, got %d", len(jobs2))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
 
-		// Ensure no overlap
+		assert.Len(t, jobs2, 2, "unexpected condition")
+
 		for _, j1 := range jobs1 {
 			for _, j2 := range jobs2 {
-				if j1.ID == j2.ID {
-					t.Errorf("Job %d appears in both pages", j1.ID)
-				}
+				assert.NotEqual(t, j1.ID, j2.ID, "unexpected condition")
 			}
 		}
 
-		// Get remaining job with offset=4
 		jobs3, err := db.ListJobs("", "", 2, 4)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		// 5 jobs total, offset 4 should give 1
-		if len(jobs3) != 1 {
-			t.Errorf("Expected 1 job with offset=4, got %d", len(jobs3))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs3, 1, "unexpected condition")
 	})
 }
 
@@ -375,7 +266,6 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/repo-gitref")
 
-	// Create jobs with different git refs
 	refs := []string{"abc123", "def456", "abc123..def456", "dirty"}
 	for _, ref := range refs {
 		commit := createCommit(t, db, repo.ID, ref)
@@ -384,58 +274,39 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with git_ref=abc123, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].GitRef != "abc123" {
-			t.Errorf("Expected GitRef 'abc123', got '%s'", jobs[0].GitRef)
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123", "unexpected condition")
 	})
 
 	t.Run("git_ref filter with range ref", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123..def456"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with range ref, got %d", len(jobs))
-		}
-		if len(jobs) > 0 && jobs[0].GitRef != "abc123..def456" {
-			t.Errorf("Expected GitRef 'abc123..def456', got '%s'", jobs[0].GitRef)
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
+		assert.False(t, len(jobs) > 0 && jobs[0].GitRef != "abc123..def456", "unexpected condition")
 	})
 
 	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("nonexistent"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 0 {
-			t.Errorf("Expected 0 jobs with nonexistent git_ref, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Empty(t, jobs, "unexpected condition")
 	})
 
 	t.Run("empty git_ref filter returns all jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 4 {
-			t.Errorf("Expected 4 jobs with empty git_ref filter, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 4, "unexpected condition")
 	})
 
 	t.Run("git_ref filter combined with repo filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", repo.RootPath, 50, 0, WithGitRef("def456"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job with git_ref and repo filter, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
 	})
 }
 
@@ -444,27 +315,20 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 	defer db.Close()
 
 	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-addr")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	// Create jobs on different branches
 	branches := []string{"main", "main", "feature"}
 	for i, br := range branches {
 		sha := fmt.Sprintf("sha%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateCommit failed: %v")
+
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: br, Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		// Complete the job so it has a review
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
 		db.ClaimJob("w")
 		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
 
-		// Mark first job as closed
 		if i == 0 {
 			db.MarkReviewClosedByJobID(job.ID, true)
 		}
@@ -472,42 +336,30 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 
 	t.Run("branch filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs on main, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 
 	t.Run("closed=false filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 open jobs, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 
 	t.Run("closed=true filter", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(true))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 closed job, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
 	})
 
 	t.Run("branch + closed combined", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithClosed(false))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 open job on main, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
 	})
 }
 
@@ -516,146 +368,103 @@ func TestWithBranchOrEmpty(t *testing.T) {
 	defer db.Close()
 
 	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-empty")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	// Create jobs: one on "main", one on "feature", one branchless
 	for i, br := range []string{"main", "feature", ""} {
 		sha := fmt.Sprintf("sha-be-%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateCommit failed: %v")
+
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: br, Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
 		db.ClaimJob("w")
 		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
 	}
 
 	t.Run("WithBranch strict excludes branchless", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
 	})
 
 	t.Run("WithBranchOrEmpty includes branchless", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs (main + branchless), got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 }
 
 func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
-	// Test that agentic field is properly returned by ListJobs and GetJobByID
+
 	db := openTestDB(t)
 	defer db.Close()
 
 	repoPath := filepath.Join(t.TempDir(), "agentic-test-repo")
 	repo, err := db.GetOrCreateRepo(repoPath)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	// Enqueue a prompt job with agentic=true
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID:  repo.ID,
 		Agent:   "test-agent",
 		Prompt:  "Review this code",
 		Agentic: true,
 	})
-	if err != nil {
-		t.Fatalf("EnqueuePromptJob failed: %v", err)
-	}
+	require.NoError(t, err, "EnqueuePromptJob failed: %v")
 
-	// Verify the returned job has Agentic set
-	if !job.Agentic {
-		t.Error("EnqueuePromptJob should return job with Agentic=true")
-	}
+	assert.True(t, job.Agentic, "EnqueuePromptJob should return job with Agentic=true")
 
 	t.Run("ListJobs returns agentic field", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) == 0 {
-			t.Fatal("Expected at least one job")
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
 
-		// Find our job
+		assert.NotEmpty(t, jobs, "unexpected condition")
+
 		var found bool
 		for _, j := range jobs {
 			if j.ID == job.ID {
 				found = true
-				if !j.Agentic {
-					t.Errorf("ListJobs should return Agentic=true for job %d", j.ID)
-				}
+				assert.True(t, j.Agentic, "unexpected condition")
 				break
 			}
 		}
-		if !found {
-			t.Errorf("Job %d not found in ListJobs result", job.ID)
-		}
+		assert.True(t, found, "unexpected condition")
 	})
 
 	t.Run("GetJobByID returns agentic field", func(t *testing.T) {
 		fetchedJob, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if !fetchedJob.Agentic {
-			t.Errorf("GetJobByID should return Agentic=true for job %d", job.ID)
-		}
+		require.NoError(t, err, "GetJobByID failed: %v")
+
+		assert.True(t, fetchedJob.Agentic, "unexpected condition")
 	})
 
-	// Also test with agentic=false to ensure we're not just always returning true
 	t.Run("non-agentic job returns Agentic=false", func(t *testing.T) {
 		nonAgenticJob, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "test-agent",
 			Prompt: "Another review",
 		})
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueuePromptJob failed: %v")
 
-		// Check via GetJobByID
 		fetchedJob, err := db.GetJobByID(nonAgenticJob.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if fetchedJob.Agentic {
-			t.Errorf("GetJobByID should return Agentic=false for non-agentic job %d", nonAgenticJob.ID)
-		}
+		require.NoError(t, err, "GetJobByID failed: %v")
 
-		// Check via ListJobs
+		assert.False(t, fetchedJob.Agentic, "unexpected condition")
+
 		jobs, err := db.ListJobs("", "", 50, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
 		var found bool
 		for _, j := range jobs {
 			if j.ID == nonAgenticJob.ID {
 				found = true
-				if j.Agentic {
-					t.Errorf("ListJobs should return Agentic=false for non-agentic job %d", j.ID)
-				}
+				assert.False(t, j.Agentic, "unexpected condition")
 				break
 			}
 		}
-		if !found {
-			t.Errorf("Non-agentic job %d not found in ListJobs result", nonAgenticJob.ID)
-		}
+		assert.True(t, found, "unexpected condition")
 	})
 }
 
@@ -663,11 +472,9 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Create repos
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
 
-	// Create commits and jobs with different branches
 	commit1 := createCommit(t, db, repo1.ID, "abc123")
 	commit2 := createCommit(t, db, repo1.ID, "def456")
 	commit3 := createCommit(t, db, repo2.ID, "ghi789")
@@ -676,62 +483,43 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	job2 := enqueueJob(t, db, repo1.ID, commit2.ID, "def456")
 	job3 := enqueueJob(t, db, repo2.ID, commit3.ID, "ghi789")
 
-	// Update some jobs with branches
 	setJobBranch(t, db, job1.ID, "main")
 	setJobBranch(t, db, job3.ID, "main")
 	setJobBranch(t, db, job2.ID, "feature")
 
 	t.Run("filter by main branch", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("main"))
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts(branch=main) failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
-		}
-		if totalCount != 2 {
-			t.Errorf("Expected total count 2, got %d", totalCount)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts(branch=main) failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Equal(t, 2, totalCount, "unexpected condition")
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("feature"))
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts(branch=feature) failed: %v", err)
-		}
-		if len(repos) != 1 {
-			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
-		}
-		if totalCount != 1 {
-			t.Errorf("Expected total count 1, got %d", totalCount)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts(branch=feature) failed: %v")
+
+		assert.Len(t, repos, 1, "unexpected condition")
+		assert.Equal(t, 1, totalCount, "unexpected condition")
 	})
 
 	t.Run("filter by (none) branch", func(t *testing.T) {
-		// Add a job with no branch
+
 		commit4 := createCommit(t, db, repo1.ID, "jkl012")
 		enqueueJob(t, db, repo1.ID, commit4.ID, "jkl012")
 
 		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("(none)"))
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts(branch=(none)) failed: %v", err)
-		}
-		if len(repos) != 1 {
-			t.Errorf("Expected 1 repo with (none) branch, got %d", len(repos))
-		}
-		if totalCount != 1 {
-			t.Errorf("Expected total count 1, got %d", totalCount)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts(branch=(none)) failed: %v")
+
+		assert.Len(t, repos, 1, "unexpected condition")
+		assert.Equal(t, 1, totalCount, "unexpected condition")
 	})
 
 	t.Run("empty filter returns all", func(t *testing.T) {
 		repos, _, err := db.ListReposWithReviewCounts()
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts() failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos, got %d", len(repos))
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts() failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
 	})
 }
 
@@ -739,11 +527,9 @@ func TestListBranchesWithCounts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Create repos
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
 
-	// Create commits and jobs with different branches
 	commit1 := createCommit(t, db, repo1.ID, "abc123")
 	commit2 := createCommit(t, db, repo1.ID, "def456")
 	commit3 := createCommit(t, db, repo1.ID, "ghi789")
@@ -756,113 +542,76 @@ func TestListBranchesWithCounts(t *testing.T) {
 	job4 := enqueueJob(t, db, repo2.ID, commit4.ID, "jkl012")
 	job5 := enqueueJob(t, db, repo2.ID, commit5.ID, "mno345")
 
-	// Update branches
 	setJobBranch(t, db, job1.ID, "main")
 	setJobBranch(t, db, job2.ID, "main")
 	setJobBranch(t, db, job4.ID, "main")
 	setJobBranch(t, db, job3.ID, "feature")
-	// job 5 has no branch (NULL)
 
 	t.Run("list all branches", func(t *testing.T) {
 		result, err := db.ListBranchesWithCounts(nil)
-		if err != nil {
-			t.Fatalf("ListBranchesWithCounts failed: %v", err)
-		}
-		if len(result.Branches) != 3 {
-			t.Errorf("Expected 3 branches, got %d", len(result.Branches))
-		}
-		if result.TotalCount != 5 {
-			t.Errorf("Expected total count 5, got %d", result.TotalCount)
-		}
-		if result.NullsRemaining != 1 {
-			t.Errorf("Expected 1 null remaining, got %d", result.NullsRemaining)
-		}
+		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
+
+		assert.Len(t, result.Branches, 3, "unexpected condition")
+		assert.Equal(t, 5, result.TotalCount, "unexpected condition")
+		assert.Equal(t, 1, result.NullsRemaining, "unexpected condition")
 	})
 
 	t.Run("filter by single repo", func(t *testing.T) {
-		// Use repo1.RootPath which is the normalized path stored in the DB
+
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath})
-		if err != nil {
-			t.Fatalf("ListBranchesWithCounts failed: %v", err)
-		}
-		if len(result.Branches) != 2 {
-			t.Errorf("Expected 2 branches for repo1, got %d", len(result.Branches))
-		}
-		if result.TotalCount != 3 {
-			t.Errorf("Expected total count 3 for repo1, got %d", result.TotalCount)
-		}
+		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
+
+		assert.Len(t, result.Branches, 2, "unexpected condition")
+		assert.Equal(t, 3, result.TotalCount, "unexpected condition")
 	})
 
 	t.Run("filter by multiple repos", func(t *testing.T) {
-		// Use repo RootPath values which are the normalized paths stored in the DB
+
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath, repo2.RootPath})
-		if err != nil {
-			t.Fatalf("ListBranchesWithCounts failed: %v", err)
-		}
-		if len(result.Branches) != 3 {
-			t.Errorf("Expected 3 branches for both repos, got %d", len(result.Branches))
-		}
-		if result.TotalCount != 5 {
-			t.Errorf("Expected total count 5 for both repos, got %d", result.TotalCount)
-		}
+		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
+
+		assert.Len(t, result.Branches, 3, "unexpected condition")
+		assert.Equal(t, 5, result.TotalCount, "unexpected condition")
 	})
 
 	t.Run("no nulls when all have branches", func(t *testing.T) {
 		setJobBranch(t, db, job5.ID, "develop")
 		result, err := db.ListBranchesWithCounts(nil)
-		if err != nil {
-			t.Fatalf("ListBranchesWithCounts failed: %v", err)
-		}
-		if result.NullsRemaining != 0 {
-			t.Errorf("Expected 0 nulls remaining, got %d", result.NullsRemaining)
-		}
+		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
+
+		assert.Equal(t, 0, result.NullsRemaining, "unexpected condition")
 	})
 }
 
 func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
-	// Regression test: branch range reviews (commit_id NULL, git_ref contains "..")
-	// should have their verdict parsed, not be misclassified as task jobs.
+
 	db := openTestDB(t)
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "range-verdict-repo"))
 
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc123..def456", Agent: "codex"})
-	if err != nil {
-		t.Fatalf("EnqueueRangeJob failed: %v", err)
-	}
+	require.NoError(t, err, "EnqueueRangeJob failed: %v")
 
-	// Claim and complete with findings output
 	_, err = db.ClaimJob("worker-0")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
+	require.NoError(t, err, "ClaimJob failed: %v")
+
 	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
-	if err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
-	}
+	require.NoError(t, err, "CompleteJob failed: %v")
 
 	jobs, err := db.ListJobs("", "", 50, 0)
-	if err != nil {
-		t.Fatalf("ListJobs failed: %v", err)
-	}
+	require.NoError(t, err, "ListJobs failed: %v")
 
 	var found bool
 	for _, j := range jobs {
 		if j.ID == job.ID {
 			found = true
-			if j.Verdict == nil {
-				t.Fatal("expected verdict to be parsed for branch range review, got nil")
-			}
-			if *j.Verdict != "F" {
-				t.Errorf("expected verdict F for review with findings, got %q", *j.Verdict)
-			}
+			assert.NotNil(t, j.Verdict, "unexpected condition")
+			assert.Equal(t, "F", *j.Verdict, "unexpected condition")
 			break
 		}
 	}
-	if !found {
-		t.Fatal("branch range job not found in ListJobs result")
-	}
+	assert.True(t, found, "unexpected condition")
 }
 
 func TestListJobsWithJobTypeFilter(t *testing.T) {
@@ -871,7 +620,6 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 
 	repo, commit, reviewJob := createJobChain(t, db, "/tmp/repo-jobtype", "jt-sha")
 
-	// Create a fix job parented to the review
 	_, err := db.EnqueueJob(EnqueueOpts{
 		RepoID:      repo.ID,
 		CommitID:    commit.ID,
@@ -880,15 +628,13 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 		JobType:     JobTypeFix,
 		ParentJobID: reviewJob.ID,
 	})
-	if err != nil {
-		t.Fatalf("EnqueueJob fix failed: %v", err)
-	}
+	require.NoError(t, err, "EnqueueJob fix failed: %v")
 
 	tests := []struct {
 		name          string
 		opts          []ListJobsOption
 		expectedLen   int
-		expectedTypes []string // if nil, only checks length
+		expectedTypes []string
 	}{
 		{"filter by fix returns only fix jobs", []ListJobsOption{WithJobType("fix")}, 1, []string{JobTypeFix}},
 		{"filter by review returns only review jobs", []ListJobsOption{WithJobType("review")}, 1, []string{JobTypeReview}},
@@ -901,17 +647,14 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			jobs, err := db.ListJobs("", "", 50, 0, tt.opts...)
-			if err != nil {
-				t.Fatalf("ListJobs failed: %v", err)
-			}
+			require.NoError(t, err, "ListJobs failed: %v")
+
 			if len(jobs) != tt.expectedLen {
-				t.Fatalf("Expected %d jobs, got %d", tt.expectedLen, len(jobs))
+				assert.Len(t, jobs, tt.expectedLen, "Expected %d jobs, got %d", tt.expectedLen, len(jobs))
 			}
 			if tt.expectedTypes != nil {
 				for i, typ := range tt.expectedTypes {
-					if jobs[i].JobType != typ {
-						t.Errorf("Expected job_type %q, got %q", typ, jobs[i].JobType)
-					}
+					assert.Equal(t, jobs[i].JobType, typ, "unexpected condition")
 				}
 			}
 		})
@@ -932,12 +675,8 @@ func TestEscapeLike(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := escapeLike(tt.input)
-		if got != tt.want {
-			t.Errorf(
-				"escapeLike(%q) = %q, want %q",
-				tt.input, got, tt.want,
-			)
-		}
+		assert.Equal(t, tt.want, got, "escapeLike(%q) = %q, want %q", tt.input, got, tt.want)
+
 	}
 }
 
@@ -945,19 +684,16 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Use t.TempDir() so paths are absolute on all platforms.
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")
 	other := filepath.Join(base, "other")
 	wsPrefix := filepath.ToSlash(workspace)
 	otherPrefix := filepath.ToSlash(other)
 
-	// Create repos with LIKE-special chars in path
 	createRepo(t, db, filepath.Join(workspace, "repo_one"))
 	createRepo(t, db, filepath.Join(workspace, "repo%two"))
 	createRepo(t, db, filepath.Join(other, "repo"))
 
-	// Add a job to each repo
 	repo1, _ := db.GetRepoByPath(filepath.Join(workspace, "repo_one"))
 	commit1 := createCommit(t, db, repo1.ID, "sha1")
 	enqueueJob(t, db, repo1.ID, commit1.ID, "sha1")
@@ -974,33 +710,24 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		jobs, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(wsPrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs under workspace, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 
 	t.Run("prefix filter excludes non-matching", func(t *testing.T) {
 		jobs, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(otherPrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 1 {
-			t.Errorf("Expected 1 job under other, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 1, "unexpected condition")
 	})
 
-	// Complete workspace jobs so CountJobStats has done counts to verify.
-	// repo1 (repo_one) job -> done, repo2 (repo%two) job -> done,
-	// repo3 (other) job -> done (outside prefix).
 	for range 3 {
 		claimed := claimJob(t, db, "w1")
 		if err := db.CompleteJob(claimed.ID, "codex", "p", "o"); err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
+			require.NoError(t, err, "CompleteJob failed: %v")
 		}
 	}
 
@@ -1008,67 +735,44 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		stats, err := db.CountJobStats(
 			"", WithRepoPrefix(wsPrefix),
 		)
-		if err != nil {
-			t.Fatalf("CountJobStats failed: %v", err)
-		}
-		// 2 done jobs under workspace (repo_one + repo%two),
-		// not 3 (repo3 is under other).
-		if stats.Done != 2 {
-			t.Errorf("Expected 2 done under prefix, got %d", stats.Done)
-		}
-		if stats.Open != 2 {
-			t.Errorf("Expected 2 open under prefix, got %d", stats.Open)
-		}
+		require.NoError(t, err, "CountJobStats failed: %v")
+
+		assert.Equal(t, 2, stats.Done, "unexpected condition")
+		assert.Equal(t, 2, stats.Open, "unexpected condition")
 	})
 
 	t.Run("ListReposWithReviewCounts with special-char prefix", func(t *testing.T) {
 		repos, total, err := db.ListReposWithReviewCounts(
 			WithRepoPathPrefix(wsPrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos, got %d", len(repos))
-		}
-		if total != 2 {
-			t.Errorf("Expected total 2, got %d", total)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Equal(t, 2, total, "unexpected condition")
 	})
 
 	t.Run("backslash in path does not cause SQL error", func(t *testing.T) {
-		// Verify that backslashes in paths are passed through correctly
-		// to LIKE (no longer escaped as ESCAPE char). The LIKE pattern
-		// uses '/' as separator so Windows-native paths with '\' won't
-		// match the prefix filter — on Windows, filepath.ToSlash should
-		// normalize paths before storage. This test ensures no SQL errors.
+
 		createRepo(t, db, `C:\Users\dev\workspace\project-a`)
 		rA, _ := db.GetRepoByPath(`C:\Users\dev\workspace\project-a`)
 		cA := createCommit(t, db, rA.ID, "win-a")
 		enqueueJob(t, db, rA.ID, cA.ID, "win-a")
 
-		// Should not error — the old '\' ESCAPE char would have
-		// caused invalid escape sequences with Windows paths.
 		_, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(`C:\Users\dev\workspace`),
 		)
-		if err != nil {
-			t.Fatalf("ListJobs with backslash prefix should not error: %v", err)
-		}
+		require.NoError(t, err, "ListJobs with backslash prefix should not error: %v")
 
 		_, err = db.CountJobStats(
 			"", WithRepoPrefix(`C:\Users\dev\workspace`),
 		)
-		if err != nil {
-			t.Fatalf("CountJobStats with backslash prefix should not error: %v", err)
-		}
+		require.NoError(t, err, "CountJobStats with backslash prefix should not error: %v")
 
 		_, _, err = db.ListReposWithReviewCounts(
 			WithRepoPathPrefix(`C:\Users\dev\workspace`),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts with backslash prefix should not error: %v", err)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts with backslash prefix should not error: %v")
+
 	})
 }
 
@@ -1076,7 +780,6 @@ func TestRootPrefixMatchesAllRepos(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Use t.TempDir() as parent so paths are absolute on all platforms.
 	base := t.TempDir()
 	basePrefix := filepath.ToSlash(base)
 
@@ -1095,27 +798,19 @@ func TestRootPrefixMatchesAllRepos(t *testing.T) {
 		jobs, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(basePrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
-		if len(jobs) != 2 {
-			t.Errorf("Expected 2 jobs with parent prefix, got %d", len(jobs))
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
+		assert.Len(t, jobs, 2, "unexpected condition")
 	})
 
 	t.Run("parent prefix returns all repos via ListReposWithReviewCounts", func(t *testing.T) {
 		repos, total, err := db.ListReposWithReviewCounts(
 			WithRepoPathPrefix(basePrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos with parent prefix, got %d", len(repos))
-		}
-		if total != 2 {
-			t.Errorf("Expected total 2, got %d", total)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Equal(t, 2, total, "unexpected condition")
 	})
 }
 
@@ -1123,17 +818,14 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Use t.TempDir() so paths are absolute on all platforms.
 	base := t.TempDir()
 	ws := filepath.Join(base, "ws")
 	wsPrefix := filepath.ToSlash(ws)
 
-	// Create repos under workspace and one outside
 	r1 := createRepo(t, db, filepath.Join(ws, "repo-a"))
 	r2 := createRepo(t, db, filepath.Join(ws, "repo-b"))
 	r3 := createRepo(t, db, filepath.Join(base, "other", "repo-c"))
 
-	// repo-a: 2 jobs on main, 1 on feature
 	c1 := createCommit(t, db, r1.ID, "a1")
 	c2 := createCommit(t, db, r1.ID, "a2")
 	c3 := createCommit(t, db, r1.ID, "a3")
@@ -1144,12 +836,10 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 	setJobBranch(t, db, j2.ID, "main")
 	setJobBranch(t, db, j3.ID, "feature")
 
-	// repo-b: 1 job on main
 	c4 := createCommit(t, db, r2.ID, "b1")
 	j4 := enqueueJob(t, db, r2.ID, c4.ID, "b1")
 	setJobBranch(t, db, j4.ID, "main")
 
-	// repo-c (outside workspace): 1 job on main
 	c5 := createCommit(t, db, r3.ID, "c1")
 	j5 := enqueueJob(t, db, r3.ID, c5.ID, "c1")
 	setJobBranch(t, db, j5.ID, "main")
@@ -1159,15 +849,10 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 			WithRepoPathPrefix(wsPrefix),
 			WithRepoBranch("main"),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos under ws with main, got %d", len(repos))
-		}
-		if total != 3 {
-			t.Errorf("Expected total 3 (2+1), got %d", total)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Equal(t, 3, total, "unexpected condition")
 	})
 
 	t.Run("prefix + feature branch", func(t *testing.T) {
@@ -1175,29 +860,19 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 			WithRepoPathPrefix(wsPrefix),
 			WithRepoBranch("feature"),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 1 {
-			t.Errorf("Expected 1 repo, got %d", len(repos))
-		}
-		if total != 1 {
-			t.Errorf("Expected total 1, got %d", total)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Len(t, repos, 1, "unexpected condition")
+		assert.Equal(t, 1, total, "unexpected condition")
 	})
 
 	t.Run("prefix only returns all branches", func(t *testing.T) {
 		repos, total, err := db.ListReposWithReviewCounts(
 			WithRepoPathPrefix(wsPrefix),
 		)
-		if err != nil {
-			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos under ws, got %d", len(repos))
-		}
-		if total != 4 {
-			t.Errorf("Expected total 4 (3+1), got %d", total)
-		}
+		require.NoError(t, err, "ListReposWithReviewCounts failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
+		assert.Equal(t, 4, total, "unexpected condition")
 	})
 }

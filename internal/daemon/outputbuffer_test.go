@@ -5,6 +5,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // simpleNormalizer matches the common pattern used in Writer tests.
@@ -15,15 +18,14 @@ func simpleNormalizer(line string) *OutputLine {
 // assertLines verifies the count and content of lines for a job.
 func assertLines(t *testing.T, lines []OutputLine, expected ...OutputLine) {
 	t.Helper()
-	if len(lines) != len(expected) {
-		t.Fatalf("expected %d lines, got %d", len(expected), len(lines))
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+
+	require.Len(lines, len(expected))
 	for i, want := range expected {
 		actual := lines[i]
 		actual.Timestamp = time.Time{}
-		if actual != want {
-			t.Errorf("line[%d]: expected %+v, got %+v", i, want, actual)
-		}
+		assert.Equal(want, actual, "line[%d]", i)
 	}
 }
 
@@ -41,9 +43,7 @@ func TestOutputBuffer_GetLinesEmpty(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
 
 	lines := ob.GetLines(999)
-	if lines != nil {
-		t.Errorf("expected nil for non-existent job, got %v", lines)
-	}
+	assert.Nil(t, lines)
 }
 
 func TestOutputBuffer_Limits(t *testing.T) {
@@ -171,26 +171,24 @@ func TestOutputBuffer_Limits(t *testing.T) {
 }
 
 func TestOutputBuffer_CloseJob(t *testing.T) {
+	assert := assert.New(t)
+
 	ob := NewOutputBuffer(1024, 4096)
 
 	ob.Append(1, OutputLine{Text: "test", Type: "text"})
-	if !ob.IsActive(1) {
-		t.Error("expected job to be active")
-	}
+	assert.True(ob.IsActive(1), "expected job to be active")
 
 	ob.CloseJob(1)
-
-	if ob.IsActive(1) {
-		t.Error("expected job to be inactive after close")
-	}
+	assert.False(ob.IsActive(1), "expected job to be inactive after close")
 
 	lines := ob.GetLines(1)
-	if lines != nil {
-		t.Error("expected nil lines after close")
-	}
+	assert.Nil(lines, "expected nil lines after close")
 }
 
 func TestOutputBuffer_Subscribe(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ob := NewOutputBuffer(1024, 4096)
 
 	// Add initial line
@@ -200,12 +198,8 @@ func TestOutputBuffer_Subscribe(t *testing.T) {
 	initial, ch, cancel := ob.Subscribe(1)
 	defer cancel()
 
-	if len(initial) != 1 {
-		t.Fatalf("expected 1 initial line, got %d", len(initial))
-	}
-	if initial[0].Text != "initial" {
-		t.Errorf("expected 'initial', got %q", initial[0].Text)
-	}
+	require.Len(initial, 1)
+	assert.Equal("initial", initial[0].Text)
 
 	// Add more lines after subscription
 	go func() {
@@ -214,15 +208,15 @@ func TestOutputBuffer_Subscribe(t *testing.T) {
 
 	select {
 	case line := <-ch:
-		if line.Text != "new" {
-			t.Errorf("expected 'new', got %q", line.Text)
-		}
+		assert.Equal("new", line.Text)
 	case <-time.After(100 * time.Millisecond):
-		t.Error("timeout waiting for subscribed line")
+		require.Condition(func() bool { return false }, "timeout waiting for subscribed line")
 	}
 }
 
 func TestOutputBuffer_SubscribeCancel(t *testing.T) {
+	assert := assert.New(t)
+
 	ob := NewOutputBuffer(1024, 4096)
 
 	_, ch, cancel := ob.Subscribe(1)
@@ -231,15 +225,16 @@ func TestOutputBuffer_SubscribeCancel(t *testing.T) {
 	// Channel should be closed
 	select {
 	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed")
-		}
+		assert.False(ok, "expected channel to be closed")
 	default:
 		// Channel closed, as expected
 	}
 }
 
 func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	ob := NewOutputBuffer(1024, 4096)
 
 	ob.Append(1, OutputLine{Text: "test", Type: "text"})
@@ -250,11 +245,9 @@ func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 	// Channel should be closed
 	select {
 	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed after CloseJob")
-		}
+		assert.False(ok, "expected channel to be closed after CloseJob")
 	case <-time.After(100 * time.Millisecond):
-		t.Error("channel not closed after CloseJob")
+		require.Condition(func() bool { return false }, "channel not closed after CloseJob")
 	}
 }
 
@@ -298,6 +291,8 @@ func TestOutputWriter_Flush(t *testing.T) {
 }
 
 func TestOutputWriter_NormalizeFilters(t *testing.T) {
+	require := require.New(t)
+
 	ob := NewOutputBuffer(1024, 4096)
 	// Normalizer that filters out empty lines
 	normalize := func(line string) *OutputLine {
@@ -312,12 +307,13 @@ func TestOutputWriter_NormalizeFilters(t *testing.T) {
 	w.Write([]byte("keep\n\nskip empty\n"))
 
 	lines := ob.GetLines(1)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines (empty filtered), got %d", len(lines))
-	}
+	require.Len(lines, 2, "expected 2 lines (empty filtered)")
 }
 
 func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	// Per-job limit: 50 bytes
 	ob := NewOutputBuffer(50, 1000)
 	w := ob.Writer(1, simpleNormalizer)
@@ -328,17 +324,11 @@ func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
 
 	lines := ob.GetLines(1)
 	// Should have at least one line from forced flush
-	if len(lines) == 0 {
-		t.Fatalf("expected at least 1 line after forced flush, got 0")
-	}
+	require.NotEmpty(lines, "expected at least 1 line after forced flush")
 
 	// First line should be truncated to maxLine-3 + "..." = 50 bytes total
-	if len(lines[0].Text) != 50 {
-		t.Errorf("expected truncated line to be 50 bytes, got %d bytes: %q", len(lines[0].Text), lines[0].Text)
-	}
-	if !strings.HasSuffix(lines[0].Text, "...") {
-		t.Errorf("expected line to end with '...', got %q", lines[0].Text)
-	}
+	assert.Len(lines[0].Text, 50, "expected truncated line length")
+	assert.True(strings.HasSuffix(lines[0].Text, "..."), "expected line to end with ellipsis")
 }
 
 func TestOutputWriter_SmallMaxLine(t *testing.T) {
@@ -359,31 +349,32 @@ func TestOutputWriter_SmallMaxLine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			ob := NewOutputBuffer(tt.maxLine, 10000)
 			w := ob.Writer(1, simpleNormalizer)
 			w.Write([]byte(tt.input)) // No newline, triggers truncation
 
 			lines := ob.GetLines(1)
-			if len(lines) != 1 {
-				t.Fatalf("expected 1 line, got %d", len(lines))
-			}
+			require.Len(lines, 1)
 
-			if len(lines[0].Text) != tt.expectLen {
-				t.Errorf("expected line length %d, got %d: %q", tt.expectLen, len(lines[0].Text), lines[0].Text)
-			}
+			assert.Len(lines[0].Text, tt.expectLen)
 
 			hasEllipsis := strings.HasSuffix(lines[0].Text, "...")
-			if tt.expectNoEll && hasEllipsis {
-				t.Errorf("expected no ellipsis for maxLine=%d, got %q", tt.maxLine, lines[0].Text)
-			}
-			if !tt.expectNoEll && !hasEllipsis {
-				t.Errorf("expected ellipsis for maxLine=%d, got %q", tt.maxLine, lines[0].Text)
+			if tt.expectNoEll {
+				assert.False(hasEllipsis, "expected no ellipsis for maxLine=%d", tt.maxLine)
+			} else {
+				assert.True(hasEllipsis, "expected ellipsis for maxLine=%d", tt.maxLine)
 			}
 		})
 	}
 }
 
 func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	// Test that after truncating a long line, subsequent writes for the
 	// same line are discarded until a newline is seen.
 	// Key invariant: repeated writes without newlines produce at most ONE truncated line
@@ -398,17 +389,16 @@ func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 
 	// Should only have 1 line (the truncated one), not 5 fragments
 	lines := ob.GetLines(1)
-	if len(lines) != 1 {
-		t.Fatalf("expected exactly 1 truncated line (not multiple fragments), got %d", len(lines))
-	}
+	require.Len(lines, 1, "expected exactly 1 truncated line")
+	assert.
 
-	// Verify it's truncated
-	if !strings.HasSuffix(lines[0].Text, "...") {
-		t.Errorf("expected truncated line to end with '...', got %q", lines[0].Text)
-	}
+		// Verify it's truncated
+		True(strings.HasSuffix(lines[0].Text, "..."), "expected truncated line to end with ellipsis")
 }
 
 func TestOutputBuffer_Concurrent(t *testing.T) {
+	assert := assert.New(t)
+
 	ob := NewOutputBuffer(10240, 40960)
 
 	var wg sync.WaitGroup
@@ -427,8 +417,6 @@ func TestOutputBuffer_Concurrent(t *testing.T) {
 	// All jobs should have lines
 	for i := range 10 {
 		lines := ob.GetLines(int64(i))
-		if len(lines) == 0 {
-			t.Errorf("job %d has no lines", i)
-		}
+		assert.NotEmpty(lines, "job %d has no lines", i)
 	}
 }

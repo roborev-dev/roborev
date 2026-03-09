@@ -3,6 +3,8 @@ package testutil
 import (
 	"os/exec"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func findBaselineCommand(t *testing.T) string {
@@ -26,11 +28,9 @@ func TestMockExecutableIsolated(t *testing.T) {
 	cleanup := MockExecutableIsolated(t, "my-mock-tool", 0)
 	defer cleanup()
 
-	if _, err := exec.LookPath("my-mock-tool"); err != nil {
-		t.Errorf("expected to find my-mock-tool in PATH, got: %v", err)
-	}
+	_, err := exec.LookPath("my-mock-tool")
+	require.NoError(t, err, "expected to find my-mock-tool in PATH")
 
-	if _, err := exec.LookPath(baseline); err == nil {
-		t.Errorf("expected %q to be absent from isolated PATH, but it was found", baseline)
-	}
+	_, err = exec.LookPath(baseline)
+	require.Error(t, err, "expected %q to be absent from isolated PATH", baseline)
 }

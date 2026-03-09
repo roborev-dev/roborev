@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"slices"
 	"strings"
@@ -52,20 +54,17 @@ func TestCodex_buildArgs(t *testing.T) {
 
 			for _, flag := range tt.wantFlags {
 				if !slices.Contains(args, flag) {
-					t.Errorf("buildArgs() missing expected flag %q, args: %v", flag, args)
+					assert.Contains(t, args, flag, "buildArgs() missing expected flag %q, args: %v", flag, args)
 				}
 			}
 
 			for _, flag := range tt.wantMissingFlags {
 				if slices.Contains(args, flag) {
-					t.Errorf("buildArgs() contains unexpected flag %q, args: %v", flag, args)
+					assert.NotContains(t, args, flag, "buildArgs() contains unexpected flag %q, args: %v", flag, args)
 				}
 			}
+			assert.Equal(t, "-", args[len(args)-1], "expected stdin marker '-' at end of args, got %v", args)
 
-			// Verify stdin marker "-" is at the end (after all flags)
-			if args[len(args)-1] != "-" {
-				t.Errorf("expected stdin marker '-' at end of args, got %v", args)
-			}
 		})
 	}
 }
@@ -100,12 +99,10 @@ func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 
 	supported, err := codexSupportsDangerousFlag(context.Background(), cmdPath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if !supported {
-		t.Fatalf("expected dangerous flag support, got false")
-	}
+	require.NoError(t, err)
+
+	require.True(t, supported)
+
 }
 
 func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
@@ -113,11 +110,10 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 		HelpOutput: "usage",
 	})
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
+
 	if !strings.Contains(err.Error(), "does not support") {
-		t.Fatalf("expected unsupported flag error, got %v", err)
+		require.Failf(t, "unexpected error", "%v", err)
 	}
 }
 
@@ -131,15 +127,47 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 	})
 
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		require.NoError(t, err)
 	}
 
 	args, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("read args: %v", err)
-	}
+	require.NoError(t, err, "read args: %v")
+
 	if !strings.Contains(string(args), codexAutoApproveFlag) {
-		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+		require.Contains(t, strings.TrimSpace(string(args)), codexAutoApproveFlag, "expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+	}
+}
+
+func TestCodexReviewTimeoutClosesStdoutPipe(t *testing.T) {
+	skipIfWindows(t)
+
+	prevWaitDelay := subprocessWaitDelay
+	subprocessWaitDelay = 20 * time.Millisecond
+	t.Cleanup(func() {
+		subprocessWaitDelay = prevWaitDelay
+	})
+
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo "usage `+codexAutoApproveFlag+`"
+  exit 0
+fi
+(sleep 2) &
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+exit 0
+`)
+
+	a := NewCodexAgent(cmdPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := a.Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		require.NoError(t, err, "expected context deadline exceeded, got %v")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		require.LessOrEqual(t, elapsed, time.Second, "Review hung for %v after timeout", elapsed)
 	}
 }
 
@@ -311,31 +339,23 @@ func TestCodexParseStreamJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			w := newSyncWriter(&buf) // Always initialize
+			w := newSyncWriter(&buf)
 
 			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w)
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
-				}
-				if result != "" {
-					t.Errorf("parseStreamJSON() result = %q, want empty string on error", result)
-				}
-			} else if err != nil {
-				t.Fatalf("parseStreamJSON() unexpected error: %v", err)
+				require.ErrorIs(t, err, tt.wantErr, "parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
+				require.Empty(t, result, "unexpected condition")
+			} else {
+				require.NoError(t, err)
 			}
 
-			if tt.notWantErr != nil && errors.Is(err, tt.notWantErr) {
-				t.Errorf("got unwanted error: %v", err)
+			if tt.notWantErr != nil {
+				require.NotErrorIs(t, err, tt.notWantErr, "got unwanted error: %v", err)
 			}
 
-			if err == nil && result != tt.want {
-				t.Errorf("parseStreamJSON() = %q, want %q", result, tt.want)
-			}
+			assert.False(t, err == nil && result != tt.want, "unexpected condition")
 
-			if tt.wantWriterContent != "" && !strings.Contains(buf.String(), tt.wantWriterContent) {
-				t.Errorf("writer output = %q, expected to contain %q", buf.String(), tt.wantWriterContent)
-			}
+			assert.False(t, tt.wantWriterContent != "" && !strings.Contains(buf.String(), tt.wantWriterContent), "unexpected condition")
 		})
 	}
 }
@@ -351,16 +371,13 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		require.NoError(t, err)
 	}
 
 	received, err := os.ReadFile(mock.StdinFile)
-	if err != nil {
-		t.Fatalf("read stdin file: %v", err)
-	}
-	if string(received) != testPrompt {
-		t.Fatalf("prompt not piped correctly via stdin\nexpected: %q\ngot: %q", testPrompt, string(received))
-	}
+	require.NoError(t, err, "read stdin file: %v")
+	require.Equal(t, testPrompt, string(received), "prompt not piped correctly via stdin\nexpected: %q\ngot: %q", testPrompt, string(received))
+
 }
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
@@ -370,13 +387,12 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 	})
 
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
+
 	if !strings.Contains(err.Error(), "did not emit valid --json events") {
-		t.Fatalf("expected compatibility error, got %v", err)
+		require.Failf(t, "unexpected error", "%v", err)
 	}
 	if !errors.Is(err, errNoCodexJSON) {
-		t.Fatalf("expected wrapped errNoCodexJSON, got %v", err)
+		require.Failf(t, "unexpected error", "expected wrapped errNoCodexJSON, got %v", err)
 	}
 }

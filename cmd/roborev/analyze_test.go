@@ -17,6 +17,8 @@ import (
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExpandAndReadFiles(t *testing.T) {
@@ -82,14 +84,10 @@ func TestExpandAndReadFiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			files, err := expandAndReadFiles(tmpDir, tmpDir, tt.patterns)
 			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
+				require.Error(t, err, "expected error, got nil")
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
 			assertFilesExist(t, files, tt.wantKeys)
 		})
@@ -106,9 +104,7 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 	})
 
 	result, err := expandAndReadFiles(tmpDir, tmpDir, []string{"./..."})
-	if err != nil {
-		t.Fatalf("expandAndReadFiles error: %v", err)
-	}
+	require.NoError(t, err, "expandAndReadFiles error")
 
 	// Should include main.go, cmd/app/app.go, internal/util.go
 	// Should NOT include vendor/dep/dep.go or .git/config
@@ -117,9 +113,8 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 	noWant := []string{"vendor/dep/dep.go", ".git/config"}
 	for _, nw := range noWant {
 		nativeNW := filepath.FromSlash(nw)
-		if _, ok := result[nativeNW]; ok {
-			t.Errorf("should not include %q", nativeNW)
-		}
+		_, exists := result[nativeNW]
+		assert.False(t, exists, "should not include %q", nativeNW)
 	}
 }
 
@@ -138,9 +133,7 @@ func TestExpandAndReadFiles_ShellExpanded(t *testing.T) {
 
 	// Shell in sub/ expands *.go → ["helper.go", "helper_test.go"]
 	files, err := expandAndReadFiles(workDir, repoRoot, []string{"helper.go", "helper_test.go"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Keys should be relative to repoRoot
 	assertFilesExist(t, files, []string{"sub/helper.go", "sub/helper_test.go"})
@@ -158,9 +151,7 @@ func TestExpandAndReadFiles_RecursiveFromSubdir(t *testing.T) {
 	workDir := filepath.Join(tmpDir, "sub")
 
 	files, err := expandAndReadFiles(workDir, repoRoot, []string{"./..."})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should find files across the entire repo, not just the subdirectory
 	assertFilesExist(t, files, []string{"main.go", "sub/helper.go"})
@@ -191,18 +182,14 @@ func TestIsSourceFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			got := isSourceFile(tt.path)
-			if got != tt.want {
-				t.Errorf("isSourceFile(%q) = %v, want %v", tt.path, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "isSourceFile(%q)", tt.path)
 		})
 	}
 }
 
 func assertContains(t *testing.T, s, substr, msg string) {
 	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Errorf("%s: expected string to contain %q\nDocument content:\n%s", msg, substr, s)
-	}
+	require.Contains(t, s, substr, "%s: expected string to contain %q\nDocument content:\n%s", msg, substr, s)
 }
 
 func TestBuildFixPrompt(t *testing.T) {
@@ -238,15 +225,11 @@ func TestAnalyzeOptionsDefaults(t *testing.T) {
 	if fixAgent == "" {
 		fixAgent = opts.agentName
 	}
-	if fixAgent != "gemini" {
-		t.Errorf("fixAgent should default to agentName, got %q", fixAgent)
-	}
+	require.Equal(t, "gemini", fixAgent, "fixAgent should default to agentName")
 
 	// When fixAgent is set, it should be used
 	opts.fixAgent = "claude-code"
-	if opts.fixAgent != "claude-code" {
-		t.Errorf("fixAgent should be 'claude-code', got %q", opts.fixAgent)
-	}
+	require.Equal(t, "claude-code", opts.fixAgent, "fixAgent should be 'claude-code'")
 }
 
 func TestWaitForAnalysisJob_Timeout(t *testing.T) {
@@ -265,37 +248,23 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	defer cancel()
 
 	_, err := waitForAnalysisJob(ctx, ts.URL, 42)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Errorf("expected context deadline error, got: %v", err)
-	}
+	require.Error(t, err, "expected timeout error")
+	require.ErrorContains(t, err, "context deadline exceeded", "expected context deadline error")
 }
 
 func mockCloseServer(t *testing.T, expectedID int64, statusCode int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/close" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
+		assert.Equal(t, "/api/review/close", r.URL.Path, "unexpected path")
+		assert.Equal(t, http.MethodPost, r.Method, "unexpected method")
 
 		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode body: %v", err)
-		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "failed to decode body")
 		gotJobID := int64(req["job_id"].(float64))
 		gotClosed := req["closed"].(bool)
 
-		if gotJobID != expectedID {
-			t.Errorf("job_id = %d, want %d", gotJobID, expectedID)
-		}
-		if !gotClosed {
-			t.Error("closed should be true")
-		}
+		assert.Equal(t, expectedID, gotJobID, "job_id")
+		assert.True(t, gotClosed, "closed should be true")
 
 		w.WriteHeader(statusCode)
 	}))
@@ -320,15 +289,11 @@ func TestMarkJobClosed(t *testing.T) {
 			err := markJobClosed(context.Background(), ts.URL, 123)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
+				require.Error(t, err, "expected error, got nil")
 				return
 			}
 
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 		})
 	}
 }
@@ -336,21 +301,17 @@ func TestMarkJobClosed(t *testing.T) {
 func TestRunFixAgent(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+		require.NoError(t, err, "MkdirAll: %v")
 	}
 
 	cmd, output := newTestCmd(t)
 
 	// Use the built-in test agent
 	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false)
-	if err != nil {
-		t.Fatalf("runFixAgent failed: %v", err)
-	}
+	require.NoError(t, err, "runFixAgent failed: %v")
 
 	// Test agent should produce output
-	if output.Len() == 0 {
-		t.Error("expected output from test agent")
-	}
+	require.NotZero(t, output.Len(), "expected output from test agent")
 }
 
 func TestBuildCommitPrompt(t *testing.T) {
@@ -362,28 +323,20 @@ func TestBuildCommitPrompt(t *testing.T) {
 	prompt := buildCommitPrompt(analysisType)
 
 	// Should mention the analysis type
-	if !strings.Contains(prompt, "duplication") {
-		t.Error("prompt should reference the analysis type")
-	}
+	assert.Contains(t, prompt, "duplication", "prompt should reference the analysis type")
 
 	// Should have instructions for committing
-	if !strings.Contains(prompt, "git commit") {
-		t.Error("prompt should mention git commit")
-	}
+	assert.Contains(t, prompt, "git commit", "prompt should mention git commit")
 
 	// Should ask for a descriptive message
-	if !strings.Contains(prompt, "descriptive") {
-		t.Error("prompt should request a descriptive message")
-	}
+	assert.Contains(t, prompt, "descriptive", "prompt should request a descriptive message")
 }
 
 func TestListAnalysisTypes(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	err := listAnalysisTypes(cmd)
-	if err != nil {
-		t.Fatalf("listAnalysisTypes failed: %v", err)
-	}
+	require.NoError(t, err, "listAnalysisTypes failed: %v")
 
 	outputStr := output.String()
 
@@ -409,24 +362,21 @@ func TestShowAnalysisPrompt(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	err := showAnalysisPrompt(cmd, "test-fixtures")
-	if err != nil {
-		t.Fatalf("showAnalysisPrompt failed: %v", err)
-	}
+	require.NoError(t, err, "showAnalysisPrompt failed")
 
 	outputStr := output.String()
 
-	assertContains(t, outputStr, "# test-fixtures", "output should contain type name header")
-	assertContains(t, outputStr, "Description:", "output should contain description")
-	assertContains(t, outputStr, "## Prompt Template", "output should contain prompt template section")
+	assert.Contains(t, outputStr, "# test-fixtures", "output should contain type name header")
+	assert.Contains(t, outputStr, "Description:", "output should contain description")
+	assert.Contains(t, outputStr, "## Prompt Template", "output should contain prompt template section")
 
 	// Verify there's substantial content after the template header
 	// (the prompt templates are all multi-line with instructions)
 	_, after, ok := strings.Cut(outputStr, "## Prompt Template")
+	assert.True(t, ok, "should have prompt template section")
 	if ok {
 		afterHeader := after
-		if len(strings.TrimSpace(afterHeader)) < 50 {
-			t.Error("prompt template section should have substantial content")
-		}
+		assert.GreaterOrEqual(t, len(strings.TrimSpace(afterHeader)), 50, "prompt template section should have substantial content")
 	}
 }
 
@@ -434,20 +384,16 @@ func TestShowAnalysisPromptUnknown(t *testing.T) {
 	cmd, _ := newTestCmd(t)
 
 	err := showAnalysisPrompt(cmd, "unknown-type")
-	if err == nil {
-		t.Error("expected error for unknown type")
-	}
-	assertContains(t, err.Error(), "unknown analysis type", "error should mention 'unknown analysis type'")
+	require.Error(t, err, "expected error for unknown type")
+	assert.Contains(t, err.Error(), "unknown analysis type", "error should mention 'unknown analysis type'")
 }
 
 func TestShowPromptRequiresType(t *testing.T) {
 	cmd := analyzeCmd()
 	cmd.SetArgs([]string{"--show-prompt"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Error("expected error when --show-prompt used without type")
-	}
-	assertContains(t, err.Error(), "requires an analysis type", "error should mention 'requires an analysis type'")
+	require.Error(t, err, "expected error when --show-prompt used without type")
+	assert.Contains(t, err.Error(), "requires an analysis type", "error should mention 'requires an analysis type'")
 }
 
 func TestPerFileAnalysis(t *testing.T) {
@@ -460,28 +406,20 @@ func TestPerFileAnalysis(t *testing.T) {
 	})
 
 	files, err := expandAndReadFiles(tmpDir, tmpDir, []string{"*.go"})
-	if err != nil {
-		t.Fatalf("expandAndReadFiles: %v", err)
-	}
+	require.NoError(t, err, "expandAndReadFiles")
 
 	cmd, output := newTestCmd(t)
 
 	analysisType := analyze.GetType("refactor")
 	err = runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
-	if err != nil {
-		t.Fatalf("runPerFileAnalysis: %v", err)
-	}
+	require.NoError(t, err, "runPerFileAnalysis")
 
 	// Should have created 3 jobs (one per file)
-	if atomic.LoadInt32(&state.EnqueueCount) != 3 {
-		t.Errorf("expected 3 jobs, got %d", atomic.LoadInt32(&state.EnqueueCount))
-	}
+	assert.Equal(t, int32(3), atomic.LoadInt32(&state.EnqueueCount), "expected 3 jobs")
 
 	// Output should mention all job IDs
 	outputStr := output.String()
-	if !strings.Contains(outputStr, "Created 3 jobs") {
-		t.Error("output should mention 3 jobs created")
-	}
+	assert.Contains(t, outputStr, "Created 3 jobs", "output should mention 3 jobs created")
 }
 
 func TestEnqueueAnalysisJob(t *testing.T) {
@@ -490,13 +428,8 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
 			var req daemon.EnqueueRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-
-			if req.Agentic != true {
-				t.Error("agentic should be true for analysis")
-			}
-			if req.CustomPrompt == "" {
-				t.Error("custom_prompt should be set")
-			}
+			assert.True(t, req.Agentic, "agentic should be true for analysis")
+			assert.NotEmpty(t, req.CustomPrompt, "custom_prompt should be set")
 
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
@@ -508,13 +441,9 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	})
 
 	job, err := enqueueAnalysisJob(ts.URL, "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
-	if err != nil {
-		t.Fatalf("enqueueAnalysisJob: %v", err)
-	}
+	require.NoError(t, err, "enqueueAnalysisJob")
 
-	if job.ID != 42 {
-		t.Errorf("job.ID = %d, want 42", job.ID)
-	}
+	assert.Equal(t, int64(42), job.ID, "job.ID")
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {
@@ -542,36 +471,24 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
 		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{})
-		if err != nil {
-			t.Fatalf("enqueueAnalysisJob: %v", err)
-		}
-		if *gotBranch != "test-current" {
-			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
-		}
+		require.NoError(t, err, "enqueueAnalysisJob")
+		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
 
 	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
 		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
-		if err != nil {
-			t.Fatalf("enqueueAnalysisJob: %v", err)
-		}
-		if *gotBranch != "test-current" {
-			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
-		}
+		require.NoError(t, err, "enqueueAnalysisJob")
+		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
 
 	t.Run("named branch overrides current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
 		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
-		if err != nil {
-			t.Fatalf("enqueueAnalysisJob: %v", err)
-		}
-		if *gotBranch != "feature-xyz" {
-			t.Errorf("expected branch 'feature-xyz', got %q", *gotBranch)
-		}
+		require.NoError(t, err, "enqueueAnalysisJob")
+		assert.Equal(t, "feature-xyz", *gotBranch, "expected branch 'feature-xyz'")
 	})
 }
 
@@ -596,15 +513,9 @@ func TestGetBranchFiles(t *testing.T) {
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
-		if err != nil {
-			t.Fatalf("getBranchFiles: %v", err)
-		}
-		if len(files) != 1 {
-			t.Fatalf("expected 1 code file, got %d: %v", len(files), testutil.MapKeys(files))
-		}
-		if _, ok := files["new.go"]; !ok {
-			t.Errorf("expected new.go in results, got %v", testutil.MapKeys(files))
-		}
+		require.NoError(t, err, "getBranchFiles")
+		assert.Len(t, files, 1, "expected 1 code file")
+		assert.Contains(t, files, "new.go", "expected new.go in results")
 	})
 
 	t.Run("reads from git not working tree", func(t *testing.T) {
@@ -616,16 +527,10 @@ func TestGetBranchFiles(t *testing.T) {
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
-		if err != nil {
-			t.Fatalf("getBranchFiles: %v", err)
-		}
+		require.NoError(t, err, "getBranchFiles")
 		content := files["new.go"]
-		if strings.Contains(content, "DIRTY") {
-			t.Error("getBranchFiles should read from git HEAD, not working tree")
-		}
-		if !strings.Contains(content, "func New()") {
-			t.Errorf("expected committed content, got %q", content)
-		}
+		assert.NotContains(t, content, "DIRTY", "getBranchFiles should read from git HEAD, not working tree")
+		assert.Contains(t, content, "func New()", "expected committed content")
 	})
 
 	t.Run("named branch reads from that branch", func(t *testing.T) {
@@ -637,12 +542,8 @@ func TestGetBranchFiles(t *testing.T) {
 			branch:     "feature",
 			baseBranch: "main",
 		})
-		if err != nil {
-			t.Fatalf("getBranchFiles: %v", err)
-		}
-		if _, ok := files["new.go"]; !ok {
-			t.Errorf("expected new.go from feature branch, got %v", testutil.MapKeys(files))
-		}
+		require.NoError(t, err, "getBranchFiles")
+		assert.Contains(t, files, "new.go", "expected new.go from feature branch")
 	})
 
 	t.Run("no code files returns error", func(t *testing.T) {
@@ -654,12 +555,8 @@ func TestGetBranchFiles(t *testing.T) {
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
-		if err == nil {
-			t.Fatal("expected error for no code files")
-		}
-		if !strings.Contains(err.Error(), "no code files changed") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		require.Error(t, err, "expected error for no code files")
+		assert.Contains(t, err.Error(), "no code files changed", "unexpected error")
 	})
 
 	t.Run("on base branch returns error", func(t *testing.T) {
@@ -670,12 +567,8 @@ func TestGetBranchFiles(t *testing.T) {
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
-		if err == nil {
-			t.Fatal("expected error when on base branch")
-		}
-		if !strings.Contains(err.Error(), "already on main") {
-			t.Errorf("unexpected error: %v", err)
-		}
+		require.Error(t, err, "expected error when on base branch")
+		assert.Contains(t, err.Error(), "already on main", "unexpected error")
 	})
 }
 
@@ -685,12 +578,8 @@ func TestAnalyzeBranchSpaceSeparated(t *testing.T) {
 	cmd := analyzeCmd()
 	cmd.SetArgs([]string{"refactor", "--branch", "feature-xyz"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "--branch=<name>") {
-		t.Errorf("error should suggest --branch=<name> syntax, got: %v", err)
-	}
+	require.Error(t, err, "expected error")
+	assert.Contains(t, err.Error(), "--branch=<name>", "error should suggest --branch=<name> syntax")
 }
 
 func TestAnalyzeJSONOutput(t *testing.T) {
@@ -705,30 +594,16 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		cmd, output := newTestCmd(t)
 
 		err := runSingleAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
-		if err != nil {
-			t.Fatalf("runSingleAnalysis: %v", err)
-		}
+		require.NoError(t, err, "runSingleAnalysis: %v")
 
 		var result AnalyzeResult
-		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
-			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
-		}
+		require.NoError(t, json.Unmarshal(output.Bytes(), &result), "failed to parse JSON output")
 
-		if len(result.Jobs) != 1 {
-			t.Errorf("expected 1 job, got %d", len(result.Jobs))
-		}
-		if result.Jobs[0].ID != 1 {
-			t.Errorf("expected job ID 1, got %d", result.Jobs[0].ID)
-		}
-		if result.Jobs[0].Agent != "test-agent" {
-			t.Errorf("expected agent 'test-agent', got %q", result.Jobs[0].Agent)
-		}
-		if result.AnalysisType != "refactor" {
-			t.Errorf("expected analysis type 'refactor', got %q", result.AnalysisType)
-		}
-		if len(result.Files) != 1 || result.Files[0] != "test.go" {
-			t.Errorf("expected files ['test.go'], got %v", result.Files)
-		}
+		assert.Len(t, result.Jobs, 1, "expected 1 job")
+		assert.Equal(t, int64(1), result.Jobs[0].ID, "job ID")
+		assert.Equal(t, "test-agent", result.Jobs[0].Agent, "agent")
+		assert.Equal(t, "refactor", result.AnalysisType, "analysis type")
+		assert.Equal(t, []string{"test.go"}, result.Files, "files")
 	})
 
 	t.Run("per-file analysis JSON output", func(t *testing.T) {
@@ -746,132 +621,28 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		cmd, output := newTestCmd(t)
 
 		err := runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
-		if err != nil {
-			t.Fatalf("runPerFileAnalysis: %v", err)
-		}
+		require.NoError(t, err, "runPerFileAnalysis")
 
 		var result AnalyzeResult
-		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
-			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
-		}
+		require.NoError(t, json.Unmarshal(output.Bytes(), &result), "failed to parse JSON output")
 
-		if len(result.Jobs) != 3 {
-			t.Errorf("expected 3 jobs, got %d", len(result.Jobs))
-		}
+		assert.Len(t, result.Jobs, 3, "expected 3 jobs")
 		// Jobs should be in sorted file order
 		expectedFiles := []string{"a.go", "b.go", "c.go"}
 		for i, info := range result.Jobs {
-			if info.File != expectedFiles[i] {
-				t.Errorf("job %d: expected file %q, got %q", i, expectedFiles[i], info.File)
-			}
-			if info.ID != int64(i+1) {
-				t.Errorf("job %d: expected ID %d, got %d", i, i+1, info.ID)
-			}
+			assert.Equal(t, expectedFiles[i], info.File, "job %d: expected file", i)
+			assert.Equal(t, int64(i+1), info.ID, "job %d: expected ID", i)
 		}
-		if result.AnalysisType != "complexity" {
-			t.Errorf("expected analysis type 'complexity', got %q", result.AnalysisType)
-		}
-		if len(result.Files) != 3 {
-			t.Errorf("expected 3 files, got %d", len(result.Files))
-		}
-	})
-}
-
-func TestIsCodeFile(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		// Code files
-		{"main.go", true},
-		{"script.py", true},
-		{"app.js", true},
-		{"app.ts", true},
-		{"app.tsx", true},
-		{"lib.rs", true},
-		{"main.c", true},
-		{"main.cpp", true},
-		{"App.java", true},
-		{"run.sh", true},
-		{"query.sql", true},
-		{"schema.proto", true},
-
-		// Non-code files (excluded from branch analysis)
-		{"README.md", false},
-		{"notes.txt", false},
-		{"config.yml", false},
-		{"config.yaml", false},
-		{"data.json", false},
-		{"pyproject.toml", false},
-		{"index.html", false},
-		{"style.css", false},
-		{"style.scss", false},
-
-		// Not source at all
-		{"image.png", false},
-		{"binary.exe", false},
-		{".gitignore", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			got := isCodeFile(tt.path)
-			if got != tt.want {
-				t.Errorf("isCodeFile(%q) = %v, want %v", tt.path, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestAnalyzeBranchFlagValidation(t *testing.T) {
-	t.Run("branch requires analysis type", func(t *testing.T) {
-		cmd := analyzeCmd()
-		cmd.SetArgs([]string{"--branch"})
-		err := cmd.Execute()
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if !strings.Contains(err.Error(), "--branch requires an analysis type") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("branch cannot be combined with file patterns", func(t *testing.T) {
-		cmd := analyzeCmd()
-		cmd.SetArgs([]string{"--branch", "refactor", "*.go"})
-		err := cmd.Execute()
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if !strings.Contains(err.Error(), "cannot specify file patterns with --branch") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("branch with only analysis type is accepted by arg validation", func(t *testing.T) {
-		// Validate args directly instead of cmd.Execute() which would
-		// try to connect to a daemon and waste ~3s on timeout.
-		cmd := analyzeCmd()
-		cmd.SetArgs([]string{"--branch", "refactor"})
-		// ParseFlags + ValidateArgs exercises the Args validator without RunE
-		if err := cmd.ParseFlags([]string{"--branch"}); err != nil {
-			t.Fatalf("parse flags: %v", err)
-		}
-		if err := cmd.ValidateArgs([]string{"refactor"}); err != nil {
-			t.Errorf("arg validation should pass with --branch and analysis type, got: %v", err)
-		}
+		assert.Equal(t, "complexity", result.AnalysisType, "expected analysis type 'complexity'")
+		assert.Len(t, result.Files, 3, "expected 3 files")
 	})
 }
 
 func assertFilesExist(t *testing.T, files map[string]string, wantKeys []string) {
 	t.Helper()
-	if len(files) != len(wantKeys) {
-		t.Errorf("got %d files, want %d: %v", len(files), len(wantKeys), testutil.MapKeys(files))
-	}
+	require.Len(t, files, len(wantKeys), "got %d files, want %d: %v", len(files), len(wantKeys), testutil.MapKeys(files))
 	for _, key := range wantKeys {
 		nativeKey := filepath.FromSlash(key)
-		if _, ok := files[nativeKey]; !ok {
-			t.Errorf("missing expected file %q, got keys: %v", nativeKey, testutil.MapKeys(files))
-		}
+		require.Contains(t, files, nativeKey, "missing expected file %q, got keys: %v", nativeKey, testutil.MapKeys(files))
 	}
 }

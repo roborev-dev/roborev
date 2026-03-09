@@ -4,20 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func appendToFile(t *testing.T, path, content string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("failed to open file: %v", err)
-	}
+	require.NoError(t, err, "failed to open file")
 	defer f.Close()
-	if _, err := fmt.Fprintln(f, content); err != nil {
-		t.Fatalf("failed to write to file: %v", err)
-	}
+	_, err = fmt.Fprintln(f, content)
+	require.NoError(t, err, "failed to write to file")
 }
 
 func TestBarrierDetectsTestEventPollution(t *testing.T) {
@@ -25,11 +24,10 @@ func TestBarrierDetectsTestEventPollution(t *testing.T) {
 	logPath := filepath.Join(dir, "activity.log")
 
 	// Write a "pre-existing" prod entry.
-	if err := os.WriteFile(logPath, []byte(
+	err := os.WriteFile(logPath, []byte(
 		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644); err != nil {
-		t.Fatalf("failed to write initial file: %v", err)
-	}
+	), 0644)
+	require.NoError(t, err, "failed to write initial file")
 
 	barrier := NewProdLogBarrier(dir)
 
@@ -37,9 +35,7 @@ func TestBarrierDetectsTestEventPollution(t *testing.T) {
 	appendToFile(t, logPath, `{"event":"test","component":"test","message":"msg"}`)
 
 	msg := barrier.Check()
-	if msg == "" {
-		t.Fatal("barrier should detect test event pollution")
-	}
+	require.NotEmpty(t, msg, "barrier should detect test event pollution")
 }
 
 func TestBarrierDetectsDevDaemonStart(t *testing.T) {
@@ -51,9 +47,7 @@ func TestBarrierDetectsDevDaemonStart(t *testing.T) {
 	appendToFile(t, logPath, `{"event":"daemon.started","details":{"version":"dev","pid":"999"}}`)
 
 	msg := barrier.Check()
-	if msg == "" {
-		t.Fatal("barrier should detect dev daemon start")
-	}
+	require.NotEmpty(t, msg, "barrier should detect dev daemon start")
 }
 
 func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
@@ -64,14 +58,11 @@ func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
 	// Create a daemon.<our-pid>.json file.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
-		t.Fatalf("failed to write initial file: %v", err)
-	}
+	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+	require.NoError(t, err, "failed to write initial file")
 
 	msg := barrier.Check()
-	if msg == "" {
-		t.Fatal("barrier should detect daemon runtime file")
-	}
+	require.NotEmpty(t, msg, "barrier should detect daemon runtime file")
 }
 
 func TestBarrierDetectsErrorsLogPollution(t *testing.T) {
@@ -83,12 +74,9 @@ func TestBarrierDetectsErrorsLogPollution(t *testing.T) {
 	appendToFile(t, errPath, `{"event":"test","component":"test","message":"err"}`)
 
 	msg := barrier.Check()
-	if msg == "" {
-		t.Fatal("barrier should detect test pollution in errors.log")
-	}
-	if !strings.Contains(msg, "errors.log") {
-		t.Fatalf("message should mention errors.log, got: %s", msg)
-	}
+	require.NotEmpty(t, msg, "barrier should detect test pollution in errors.log")
+	assert.Contains(t, msg, "errors.log",
+		"message should mention errors.log, got: %s", msg)
 }
 
 func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
@@ -97,17 +85,14 @@ func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
 	// Create a daemon.<our-pid>.json BEFORE the barrier.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
-		t.Fatalf("failed to write initial file: %v", err)
-	}
+	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+	require.NoError(t, err, "failed to write initial file")
 
 	barrier := NewProdLogBarrier(dir)
 
 	// File still exists but was there before tests.
 	msg := barrier.Check()
-	if msg != "" {
-		t.Fatalf("barrier should ignore pre-existing runtime file, got: %s", msg)
-	}
+	assert.Empty(t, msg, "barrier should ignore pre-existing runtime file, got: %s", msg)
 }
 
 func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
@@ -116,34 +101,28 @@ func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
 	// Create a daemon.<our-pid>.json BEFORE the barrier.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
-		t.Fatalf("failed to write initial file: %v", err)
-	}
+	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+	require.NoError(t, err, "failed to write initial file")
 
 	barrier := NewProdLogBarrier(dir)
 
 	// Modify the file after barrier creation.
-	if err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644); err != nil {
-		t.Fatalf("failed to modify file: %v", err)
-	}
+	err = os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
+	require.NoError(t, err, "failed to modify file")
 
 	msg := barrier.Check()
-	if msg == "" {
-		t.Fatal("barrier should detect modified runtime file")
-	}
-	if !strings.Contains(msg, "modified") {
-		t.Fatalf("message should mention modification, got: %s", msg)
-	}
+	require.NotEmpty(t, msg, "barrier should detect modified runtime file")
+	assert.Contains(t, msg, "modified",
+		"message should mention modification, got: %s", msg)
 }
 
 func TestBarrierPassesWhenClean(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "activity.log")
-	if err := os.WriteFile(logPath, []byte(
+	err := os.WriteFile(logPath, []byte(
 		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644); err != nil {
-		t.Fatalf("failed to write initial file: %v", err)
-	}
+	), 0644)
+	require.NoError(t, err, "failed to write initial file")
 
 	barrier := NewProdLogBarrier(dir)
 
@@ -151,7 +130,5 @@ func TestBarrierPassesWhenClean(t *testing.T) {
 	appendToFile(t, logPath, `{"event":"job.completed","component":"worker","details":{"job_id":"6638"}}`)
 
 	msg := barrier.Check()
-	if msg != "" {
-		t.Fatalf("barrier should pass for clean logs, got: %s", msg)
-	}
+	assert.Empty(t, msg, "barrier should pass for clean logs, got: %s", msg)
 }

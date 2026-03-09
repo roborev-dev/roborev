@@ -3,8 +3,10 @@ package config
 import (
 	"math"
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func toMap(kvs []KeyValue) map[string]string {
@@ -25,16 +27,14 @@ func toOriginMap(kvos []KeyValueOrigin) map[string]KeyValueOrigin {
 
 func assertConfigValues(t *testing.T, actual []KeyValue, expected map[string]string) {
 	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+
 	m := toMap(actual)
 	for k, want := range expected {
 		got, ok := m[k]
-		if !ok {
-			t.Errorf("missing key %q", k)
-			continue
-		}
-		if got != want {
-			t.Errorf("key %q = %q, want %q", k, got, want)
-		}
+		require.True(ok, "missing key %q", k)
+		assert.Equal(want, got, "key %q", k)
 	}
 }
 
@@ -45,31 +45,31 @@ type expectedOrigin struct {
 
 func assertOrigins(t *testing.T, actual []KeyValueOrigin, expected map[string]expectedOrigin) {
 	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+
 	m := toOriginMap(actual)
 	for k, want := range expected {
 		got, ok := m[k]
-		if !ok {
-			t.Errorf("missing key %q", k)
-			continue
-		}
-		if got.Value != want.Value {
-			t.Errorf("key %q value = %q, want %q", k, got.Value, want.Value)
-		}
-		if got.Origin != want.Origin {
-			t.Errorf("key %q origin = %q, want %q", k, got.Origin, want.Origin)
-		}
+		require.True(ok, "missing key %q", k)
+		assert.Equal(want.Value, got.Value, "key %q value", k)
+		assert.Equal(want.Origin, got.Origin, "key %q origin", k)
 	}
 }
 
 func assertDeterministic(t *testing.T, fn func() string) {
 	t.Helper()
+	require := require.New(t)
 
 	var prev string
 	for i := range 20 {
 		got := fn()
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
+		if i == 0 {
+			prev = got
+			continue
 		}
+		require.Equal(prev, got, "non-deterministic output on iteration %d", i)
+
 		prev = got
 	}
 }
@@ -112,13 +112,11 @@ func TestGetConfigValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			got, err := GetConfigValue(cfg, tt.key)
-			if err != nil {
-				t.Fatalf("GetConfigValue(%q) error: %v", tt.key, err)
-			}
-			if got != tt.want {
-				t.Errorf("GetConfigValue(%q) = %q, want %q", tt.key, got, tt.want)
-			}
+			require.NoError(err, "GetConfigValue(%q) error", tt.key)
+			assert.Equal(tt.want, got)
 		})
 	}
 }
@@ -126,9 +124,7 @@ func TestGetConfigValue(t *testing.T) {
 func TestGetConfigValueUnknownKey(t *testing.T) {
 	cfg := &Config{}
 	_, err := GetConfigValue(cfg, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for unknown key")
-	}
+	require.Error(t, err, "expected error for unknown key")
 }
 
 func TestSetConfigValue(t *testing.T) {
@@ -144,9 +140,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "default_agent",
 			val:  "claude-code",
 			verify: func(t *testing.T, c *Config) {
-				if c.DefaultAgent != "claude-code" {
-					t.Errorf("DefaultAgent = %q, want claude-code", c.DefaultAgent)
-				}
+				assert.Equal(t, "claude-code", c.DefaultAgent, "unexpected condition")
 			},
 		},
 		{
@@ -154,9 +148,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "max_workers",
 			val:  "8",
 			verify: func(t *testing.T, c *Config) {
-				if c.MaxWorkers != 8 {
-					t.Errorf("MaxWorkers = %d, want 8", c.MaxWorkers)
-				}
+				assert.Equal(t, 8, c.MaxWorkers, "unexpected condition")
 			},
 		},
 		{
@@ -164,9 +156,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "sync.enabled",
 			val:  "true",
 			verify: func(t *testing.T, c *Config) {
-				if !c.Sync.Enabled {
-					t.Errorf("Sync.Enabled = %v, want true", c.Sync.Enabled)
-				}
+				assert.True(t, c.Sync.Enabled, "unexpected condition")
 			},
 		},
 		{
@@ -174,9 +164,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.github_app_id",
 			val:  "98765",
 			verify: func(t *testing.T, c *Config) {
-				if c.CI.GitHubAppID != 98765 {
-					t.Errorf("CI.GitHubAppID = %d, want 98765", c.CI.GitHubAppID)
-				}
+				assert.EqualValues(t, 98765, c.CI.GitHubAppID, "unexpected condition")
 			},
 		},
 		{
@@ -184,9 +172,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.github_app_private_key",
 			val:  "private-key-data",
 			verify: func(t *testing.T, c *Config) {
-				if c.CI.GitHubAppPrivateKey != "private-key-data" {
-					t.Errorf("CI.GitHubAppPrivateKey = %q, want private-key-data", c.CI.GitHubAppPrivateKey)
-				}
+				assert.Equal(t, "private-key-data", c.CI.GitHubAppPrivateKey, "unexpected condition")
 			},
 		},
 		{
@@ -194,9 +180,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "allow_unsafe_agents",
 			val:  "true",
 			verify: func(t *testing.T, c *Config) {
-				if c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents {
-					t.Errorf("AllowUnsafeAgents = %v, want true", c.AllowUnsafeAgents)
-				}
+				assert.False(t, c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents, "unexpected condition")
 			},
 		},
 		{
@@ -204,9 +188,7 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
 			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
-					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
-				}
+				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2", "unexpected condition")
 			},
 		},
 		{
@@ -215,9 +197,7 @@ func TestSetConfigValue(t *testing.T) {
 			val:  "org/repo1,org/repo2",
 			init: func() *Config { return &Config{} },
 			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
-					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
-				}
+				assert.False(t, len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2", "unexpected condition")
 			},
 		},
 		{
@@ -225,15 +205,14 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "",
 			verify: func(t *testing.T, c *Config) {
-				if len(c.CI.Repos) != 0 {
-					t.Errorf("CI.Repos = %v, want empty", c.CI.Repos)
-				}
+				assert.Empty(t, c.CI.Repos, "unexpected condition")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
 			var cfg *Config
 			if tt.init != nil {
 				cfg = tt.init()
@@ -245,15 +224,15 @@ func TestSetConfigValue(t *testing.T) {
 				}
 			}
 			err := SetConfigValue(cfg, tt.key, tt.val)
-			if err != nil {
-				t.Fatalf("SetConfigValue(%q, %q) error: %v", tt.key, tt.val, err)
-			}
+			require.NoError(err, "SetConfigValue(%q, %q) error", tt.key, tt.val)
 			tt.verify(t, cfg)
 		})
 	}
 }
 
 func TestSetConfigValueMultipleKeys(t *testing.T) {
+	require := require.New(t)
+
 	cfg := &Config{}
 	updates := []struct {
 		key string
@@ -267,9 +246,7 @@ func TestSetConfigValueMultipleKeys(t *testing.T) {
 	}
 
 	for _, update := range updates {
-		if err := SetConfigValue(cfg, update.key, update.val); err != nil {
-			t.Fatalf("SetConfigValue(%q, %q) error: %v", update.key, update.val, err)
-		}
+		require.NoError(SetConfigValue(cfg, update.key, update.val), "SetConfigValue(%q, %q) error", update.key, update.val)
 	}
 
 	assertConfigValues(t, ListConfigKeys(cfg), map[string]string{
@@ -283,14 +260,12 @@ func TestSetConfigValueMultipleKeys(t *testing.T) {
 
 func TestSetConfigValueInvalidType(t *testing.T) {
 	cfg := &Config{}
-	if err := SetConfigValue(cfg, "max_workers", "notanumber"); err == nil {
-		t.Fatal("expected error for invalid integer")
-	}
+	require.Error(t, SetConfigValue(cfg, "max_workers", "notanumber"), "expected error for invalid integer")
 }
 
 func TestListConfigKeys(t *testing.T) {
 	cfg := newComplexTestConfig()
-	// Set the key so it matches what we expect from the old test.
+
 	cfg.CI.GitHubAppPrivateKey = "private-key-data"
 
 	assertConfigValues(t, ListConfigKeys(cfg), map[string]string{
@@ -318,6 +293,9 @@ func TestListConfigKeysRepo(t *testing.T) {
 }
 
 func TestListConfigKeysIncludesComplexNonZeroFields(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	cfg := &Config{
 		Hooks: []HookConfig{
 			{
@@ -342,15 +320,15 @@ func TestListConfigKeysIncludesComplexNonZeroFields(t *testing.T) {
 
 	found := toMap(ListConfigKeys(cfg))
 
-	if got, ok := found["sync.repo_names"]; !ok || !strings.Contains(got, "org/repo:my-project") {
-		t.Errorf("missing or wrong sync.repo_names: %q", got)
-	}
-	if got, ok := found["ci.github_app_installations"]; !ok || !strings.Contains(got, "org:1234") {
-		t.Errorf("missing or wrong ci.github_app_installations: %q", got)
-	}
-	if got, ok := found["hooks"]; !ok || !strings.Contains(got, "review.failed") {
-		t.Errorf("missing or wrong hooks: %q", got)
-	}
+	got, ok := found["sync.repo_names"]
+	require.True(ok, "missing sync.repo_names")
+	assert.Contains(got, "org/repo:my-project")
+	got, ok = found["ci.github_app_installations"]
+	require.True(ok, "missing ci.github_app_installations")
+	assert.Contains(got, "org:1234")
+	got, ok = found["hooks"]
+	require.True(ok, "missing hooks")
+	assert.Contains(got, "review.failed")
 }
 
 func TestMergedConfigWithOrigin(t *testing.T) {
@@ -378,11 +356,10 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 				"agent":         {Value: "claude-code", Origin: "local"},
 			},
 			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				assert := assert.New(t)
 				found := toOriginMap(kvos)
 				if kvo, ok := found["max_workers"]; ok {
-					if kvo.Origin != "default" {
-						t.Errorf("max_workers origin = %q, want default", kvo.Origin)
-					}
+					assert.Equal("default", kvo.Origin, "max_workers origin")
 				}
 			},
 		},
@@ -404,7 +381,7 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 			name: "shows all origins",
 			global: func() *Config {
 				g := DefaultConfig()
-				g.DefaultAgent = "gemini" // override from default
+				g.DefaultAgent = "gemini"
 				return g
 			}(),
 			rawGlobal: map[string]any{"default_agent": "gemini"},
@@ -412,10 +389,9 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 				"default_agent": {Value: "gemini", Origin: "global"},
 			},
 			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				assert := assert.New(t)
 				found := toOriginMap(kvos)
-				if found["max_workers"].Origin != "default" {
-					t.Errorf("max_workers origin = %q, want default", found["max_workers"].Origin)
-				}
+				assert.Equal("default", found["max_workers"].Origin, "max_workers origin")
 			},
 		},
 		{
@@ -443,29 +419,27 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 			name:   "omits unset complex fields",
 			global: DefaultConfig(),
 			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				assert := assert.New(t)
 				found := toOriginMap(kvos)
-				if _, ok := found["hooks"]; ok {
-					t.Error("merged output should not include unset hooks")
-				}
-				if _, ok := found["sync.repo_names"]; ok {
-					t.Error("merged output should not include unset sync.repo_names")
-				}
-				if _, ok := found["ci.github_app_installations"]; ok {
-					t.Error("merged output should not include unset ci.github_app_installations")
-				}
+				_, ok := found["hooks"]
+				assert.False(ok, "merged output should not include unset hooks")
+				_, ok = found["sync.repo_names"]
+				assert.False(ok, "merged output should not include unset sync.repo_names")
+				_, ok = found["ci.github_app_installations"]
+				assert.False(ok, "merged output should not include unset ci.github_app_installations")
 			},
 		},
 		{
 			name:      "explicit global matching default shows global origin",
 			global:    DefaultConfig(),
-			rawGlobal: map[string]any{"max_workers": int64(4)}, // Explicitly set to default value
+			rawGlobal: map[string]any{"max_workers": int64(4)},
 			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				assert := assert.New(t)
+				require := require.New(t)
 				found := toOriginMap(kvos)
-				if kvo, ok := found["max_workers"]; !ok {
-					t.Error("expected max_workers in output")
-				} else if kvo.Origin != "global" {
-					t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
-				}
+				kvo, ok := found["max_workers"]
+				require.True(ok, "expected max_workers in output")
+				assert.Equal("global", kvo.Origin, "max_workers origin")
 			},
 		},
 	}
@@ -484,26 +458,22 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 }
 
 func TestIsConfigValueSet(t *testing.T) {
+	assert := assert.New(t)
+
 	cfg := &Config{
 		DefaultAgent: "codex",
 		MaxWorkers:   4,
 	}
 
-	if !IsConfigValueSet(cfg, "default_agent") {
-		t.Error("expected default_agent to be set")
-	}
-	if !IsConfigValueSet(cfg, "max_workers") {
-		t.Error("expected max_workers to be set")
-	}
-	if IsConfigValueSet(cfg, "cursor_cmd") {
-		t.Error("expected cursor_cmd to not be set")
-	}
-	if IsConfigValueSet(cfg, "nonexistent") {
-		t.Error("expected nonexistent to not be set")
-	}
+	assert.True(IsConfigValueSet(cfg, "default_agent"))
+	assert.True(IsConfigValueSet(cfg, "max_workers"))
+	assert.False(IsConfigValueSet(cfg, "cursor_cmd"))
+	assert.False(IsConfigValueSet(cfg, "nonexistent"))
 }
 
 func TestFormatMapDeterministic(t *testing.T) {
+	assert := assert.New(t)
+
 	cfg := &Config{
 		Sync: SyncConfig{
 			RepoNames: map[string]string{
@@ -514,83 +484,66 @@ func TestFormatMapDeterministic(t *testing.T) {
 		},
 	}
 
-	// Run multiple times to verify determinism
 	assertDeterministic(t, func() string {
 		kvs := ListConfigKeys(cfg)
 		found := toMap(kvs)
 		return found["sync.repo_names"]
 	})
 
-	// Verify sorted order
 	kvs := ListConfigKeys(cfg)
 	found := toMap(kvs)
 	want := "a/repo:alpha,b/repo:bravo,c/repo:charlie"
-	if found["sync.repo_names"] != want {
-		t.Errorf("sync.repo_names = %q, want %q", found["sync.repo_names"], want)
-	}
+	assert.Equal(want, found["sync.repo_names"])
 }
 
-// collidingKey is a custom type whose String() always returns the same value,
-// used to test formatMap's tie-breaking behavior with colliding keys.
 type collidingKey int
 
 func (k collidingKey) String() string { return "same" }
 
 func TestFormatMapCollidingKeys(t *testing.T) {
-	// Build a map[collidingKey]string where all keys stringify to "same"
+	assert := assert.New(t)
+
 	m := map[collidingKey]string{
 		collidingKey(1): "alpha",
 		collidingKey(2): "bravo",
 		collidingKey(3): "charlie",
 	}
 
-	// Run multiple times to verify determinism despite colliding String() output
 	assertDeterministic(t, func() string {
 		return formatMap(reflect.ValueOf(m))
 	})
 
-	// All three entries must be present
 	result := formatMap(reflect.ValueOf(m))
 	for _, val := range []string{"alpha", "bravo", "charlie"} {
-		if !strings.Contains(result, val) {
-			t.Errorf("result %q missing value %q", result, val)
-		}
+		assert.Contains(result, val)
 	}
 
-	// Verify exact expected output: keys sorted by %#v tie-breaker
-	// collidingKey(1) < collidingKey(2) < collidingKey(3) by %#v
 	want := "same:alpha,same:bravo,same:charlie"
-	if result != want {
-		t.Errorf("formatMap = %q, want %q", result, want)
-	}
+	assert.Equal(want, result)
 }
 
-// fullyCollidingKey has both String() and GoString() returning constants,
-// so %v and %#v both collide. Only structural comparison can distinguish keys.
 type fullyCollidingKey int
 
 func (k fullyCollidingKey) String() string   { return "same" }
 func (k fullyCollidingKey) GoString() string { return "same" }
 
 func TestFormatMapFullyCollidingKeys(t *testing.T) {
+	assert := assert.New(t)
+
 	m := map[fullyCollidingKey]string{
 		fullyCollidingKey(10): "x",
 		fullyCollidingKey(20): "y",
 		fullyCollidingKey(30): "z",
 	}
 
-	// Run multiple times to verify determinism despite colliding %v and %#v
 	assertDeterministic(t, func() string {
 		return formatMap(reflect.ValueOf(m))
 	})
 
-	// Structural comparison orders by underlying int: 10 < 20 < 30
 	want := "same:x,same:y,same:z"
-	// Note: previous implementation compared prev with want, here we check deterministic result
+
 	got := formatMap(reflect.ValueOf(m))
-	if got != want {
-		t.Errorf("formatMap = %q, want %q", got, want)
-	}
+	assert.Equal(want, got)
 }
 
 func TestIsValidKey(t *testing.T) {
@@ -598,36 +551,30 @@ func TestIsValidKey(t *testing.T) {
 		key  string
 		want bool
 	}{
-		{"default_agent", true},             // Config only
-		{"agent", true},                     // RepoConfig only
-		{"max_workers", true},               // Config only
-		{"sync.enabled", true},              // nested Config
-		{"ci.github_app_id", true},          // inline embedded config
-		{"ci.github_app_private_key", true}, // inline embedded sensitive config
+		{"default_agent", true},
+		{"agent", true},
+		{"max_workers", true},
+		{"sync.enabled", true},
+		{"ci.github_app_id", true},
+		{"ci.github_app_private_key", true},
 		{"nonexistent", false},
 		{"fake.key", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
+			assert := assert.New(t)
 			got := IsValidKey(tt.key)
-			if got != tt.want {
-				t.Errorf("IsValidKey(%q) = %v, want %v", tt.key, got, tt.want)
-			}
+			assert.Equal(tt.want, got)
 		})
 	}
 }
 
 func TestIsSensitiveKey(t *testing.T) {
-	if !IsSensitiveKey("ci.github_app_private_key") {
-		t.Error("expected ci.github_app_private_key to be sensitive")
-	}
-	if IsSensitiveKey("ci.github_app_id") {
-		t.Error("expected ci.github_app_id to not be sensitive")
-	}
-	if !IsSensitiveKey("hooks.url") {
-		t.Error("expected hooks.url to be sensitive")
-	}
+	assert := assert.New(t)
+	assert.True(IsSensitiveKey("ci.github_app_private_key"))
+	assert.False(IsSensitiveKey("ci.github_app_id"))
+	assert.True(IsSensitiveKey("hooks.url"))
 }
 
 func TestIsGlobalKey(t *testing.T) {
@@ -635,20 +582,19 @@ func TestIsGlobalKey(t *testing.T) {
 		key  string
 		want bool
 	}{
-		{"default_agent", true},      // Config only
-		{"max_workers", true},        // Config only
-		{"sync.enabled", true},       // nested Config
-		{"agent", false},             // RepoConfig only
-		{"review_guidelines", false}, // RepoConfig only
+		{"default_agent", true},
+		{"max_workers", true},
+		{"sync.enabled", true},
+		{"agent", false},
+		{"review_guidelines", false},
 		{"nonexistent", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
+			assert := assert.New(t)
 			got := IsGlobalKey(tt.key)
-			if got != tt.want {
-				t.Errorf("IsGlobalKey(%q) = %v, want %v", tt.key, got, tt.want)
-			}
+			assert.Equal(tt.want, got)
 		})
 	}
 }
@@ -669,13 +615,12 @@ func TestListExplicitKeys(t *testing.T) {
 			}(),
 			raw: map[string]any{"max_workers": int64(8)},
 			verify: func(t *testing.T, kvs []KeyValue) {
+				assert := assert.New(t)
 				found := toMap(kvs)
-				if _, ok := found["max_workers"]; !ok {
-					t.Error("expected max_workers to be listed (explicitly in TOML)")
-				}
-				if _, ok := found["default_agent"]; ok {
-					t.Error("default_agent should NOT be listed (not in raw TOML)")
-				}
+				_, ok := found["max_workers"]
+				assert.True(ok, "expected max_workers to be listed (explicitly in TOML)")
+				_, ok = found["default_agent"]
+				assert.False(ok, "default_agent should NOT be listed (not in raw TOML)")
 			},
 		},
 		{
@@ -689,17 +634,15 @@ func TestListExplicitKeys(t *testing.T) {
 				"sync":        map[string]any{"enabled": false},
 			},
 			verify: func(t *testing.T, kvs []KeyValue) {
+				assert := assert.New(t)
+				require := require.New(t)
 				found := toMap(kvs)
-				if got, ok := found["max_workers"]; !ok {
-					t.Error("expected max_workers to be listed (explicit zero in TOML)")
-				} else if got != "0" {
-					t.Errorf("max_workers = %q, want %q", got, "0")
-				}
-				if got, ok := found["sync.enabled"]; !ok {
-					t.Error("expected sync.enabled to be listed (explicit false in TOML)")
-				} else if got != "false" {
-					t.Errorf("sync.enabled = %q, want %q", got, "false")
-				}
+				got, ok := found["max_workers"]
+				require.True(ok, "expected max_workers to be listed (explicit zero in TOML)")
+				assert.Equal("0", got)
+				got, ok = found["sync.enabled"]
+				require.True(ok, "expected sync.enabled to be listed (explicit false in TOML)")
+				assert.Equal("false", got)
 			},
 		},
 		{
@@ -715,16 +658,14 @@ func TestListExplicitKeys(t *testing.T) {
 				"sync":          map[string]any{"repo_names": map[string]any{}},
 			},
 			verify: func(t *testing.T, kvs []KeyValue) {
+				assert := assert.New(t)
 				found := toMap(kvs)
-				if _, ok := found["default_model"]; !ok {
-					t.Error("expected default_model to be listed (explicit empty string in TOML)")
-				}
-				if _, ok := found["ci.repos"]; !ok {
-					t.Error("expected ci.repos to be listed (explicit empty slice in TOML)")
-				}
-				if _, ok := found["sync.repo_names"]; !ok {
-					t.Error("expected sync.repo_names to be listed (explicit empty map in TOML)")
-				}
+				_, ok := found["default_model"]
+				assert.True(ok, "expected default_model to be listed (explicit empty string in TOML)")
+				_, ok = found["ci.repos"]
+				assert.True(ok, "expected ci.repos to be listed (explicit empty slice in TOML)")
+				_, ok = found["sync.repo_names"]
+				assert.True(ok, "expected sync.repo_names to be listed (explicit empty map in TOML)")
 			},
 		},
 		{
@@ -732,9 +673,8 @@ func TestListExplicitKeys(t *testing.T) {
 			cfg:  DefaultConfig(),
 			raw:  nil,
 			verify: func(t *testing.T, kvs []KeyValue) {
-				if len(kvs) != 0 {
-					t.Errorf("expected empty result for nil raw, got %d entries", len(kvs))
-				}
+				assert := assert.New(t)
+				assert.Empty(kvs, "expected empty result for nil raw")
 			},
 		},
 	}
@@ -748,23 +688,20 @@ func TestListExplicitKeys(t *testing.T) {
 }
 
 func TestDetermineOriginExplicitGlobalMatchingDefault(t *testing.T) {
-	// When a key is explicitly set in global TOML to the same value as the
-	// default, origin should be "global", not "default".
+	assert := assert.New(t)
+	require := require.New(t)
+
 	rawGlobal := map[string]any{
 		"max_workers": int64(4),
 	}
 	origin, ok := determineOrigin("max_workers", "4", "4", rawGlobal)
-	if !ok {
-		t.Fatal("expected key to be included in output")
-	}
-	if origin != "global" {
-		t.Errorf("origin = %q, want %q", origin, "global")
-	}
+	require.True(ok, "expected key to be included in output")
+	assert.Equal("global", origin)
 }
 
 func TestFormatMapNilInterfaceKeys(t *testing.T) {
-	// Map with interface keys where some are nil.
-	// This previously panicked because compareKeys called Elem() on nil interfaces.
+	assert := assert.New(t)
+
 	m := map[any]string{
 		nil:   "null-val",
 		"abc": "string-val",
@@ -775,23 +712,18 @@ func TestFormatMapNilInterfaceKeys(t *testing.T) {
 		return formatMap(reflect.ValueOf(m))
 	})
 
-	// All entries must be present (nil interface key should not panic)
 	result := formatMap(reflect.ValueOf(m))
 	for _, val := range []string{"null-val", "string-val", "int-val"} {
-		if !strings.Contains(result, val) {
-			t.Errorf("result %q missing value %q", result, val)
-		}
+		assert.Contains(result, val)
 	}
-	if !strings.Contains(result, "<nil>:null-val") {
-		t.Errorf("result %q missing nil key entry", result)
-	}
+	assert.Contains(result, "<nil>:null-val")
 }
 
 func TestFormatMapNaNFloatKeys(t *testing.T) {
-	// Map with NaN float keys. Different NaN bit patterns should produce
-	// deterministic ordering via bit-pattern comparison.
+	assert := assert.New(t)
+
 	nan1 := math.NaN()
-	nan2 := math.Float64frombits(math.Float64bits(nan1) ^ 1) // different NaN payload
+	nan2 := math.Float64frombits(math.Float64bits(nan1) ^ 1)
 
 	m := map[float64]string{
 		nan1: "first",
@@ -803,35 +735,23 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 		return formatMap(reflect.ValueOf(m))
 	})
 
-	// All entries must be present
 	result := formatMap(reflect.ValueOf(m))
 	for _, val := range []string{"first", "second", "one"} {
-		if !strings.Contains(result, val) {
-			t.Errorf("result %q missing value %q", result, val)
-		}
+		assert.Contains(result, val)
 	}
 }
 
 func TestCompareKeysNilInterfaces(t *testing.T) {
-	// Direct unit tests for compareKeys nil-interface handling.
+	assert := assert.New(t)
 
-	// Two nil interfaces are equal.
 	var i1, i2 any
 	v1 := reflect.ValueOf(&i1).Elem()
 	v2 := reflect.ValueOf(&i2).Elem()
-	if c := compareKeys(v1, v2); c != 0 {
-		t.Errorf("compareKeys(nil, nil) = %d, want 0", c)
-	}
+	assert.Equal(0, compareKeys(v1, v2))
 
-	// nil < non-nil
 	i2 = 42
 	v2 = reflect.ValueOf(&i2).Elem()
-	if c := compareKeys(v1, v2); c != -1 {
-		t.Errorf("compareKeys(nil, 42) = %d, want -1", c)
-	}
+	assert.Equal(-1, compareKeys(v1, v2))
 
-	// non-nil > nil
-	if c := compareKeys(v2, v1); c != 1 {
-		t.Errorf("compareKeys(42, nil) = %d, want 1", c)
-	}
+	assert.Equal(1, compareKeys(v2, v1))
 }

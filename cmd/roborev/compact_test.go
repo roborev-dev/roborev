@@ -5,16 +5,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsValidConsolidatedReview(t *testing.T) {
@@ -118,9 +115,7 @@ func TestIsValidConsolidatedReview(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isValidConsolidatedReview(tt.output)
-			if got != tt.want {
-				t.Errorf("isValidConsolidatedReview(%q) = %v, want %v", tt.output, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "isValidConsolidatedReview(%q)", tt.output)
 		})
 	}
 }
@@ -155,7 +150,7 @@ func TestFilterReviewJobs(t *testing.T) {
 		{
 			name:    "empty_input",
 			jobs:    []storage.ReviewJob{},
-			wantIDs: []int64{},
+			wantIDs: nil,
 		},
 		{
 			name: "all_excluded",
@@ -163,7 +158,7 @@ func TestFilterReviewJobs(t *testing.T) {
 				{ID: 1, JobType: "compact"},
 				{ID: 2, JobType: "task"},
 			},
-			wantIDs: []int64{},
+			wantIDs: nil,
 		},
 		{
 			name: "empty_job_type_kept",
@@ -184,9 +179,7 @@ func TestFilterReviewJobs(t *testing.T) {
 				gotIDs = append(gotIDs, j.ID)
 			}
 
-			if !slices.Equal(gotIDs, tt.wantIDs) {
-				t.Errorf("filterReviewJobs() = %v, want %v", gotIDs, tt.wantIDs)
-			}
+			assert.Equal(t, tt.wantIDs, gotIDs, "filterReviewJobs()")
 		})
 	}
 }
@@ -224,9 +217,7 @@ func TestExtractJobIDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractJobIDs(tt.reviews)
 
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("extractJobIDs() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "extractJobIDs()")
 		})
 	}
 }
@@ -296,15 +287,11 @@ func TestBuildCompactPrompt(t *testing.T) {
 			got := buildCompactPrompt(tt.jobReviews, tt.branch, "")
 
 			for _, want := range tt.wantContains {
-				if !strings.Contains(got, want) {
-					t.Errorf("buildCompactPrompt() missing %q\nGot:\n%s", want, got)
-				}
+				assert.Contains(t, got, want, "buildCompactPrompt() missing")
 			}
 
 			for _, notWant := range tt.wantNotContain {
-				if strings.Contains(got, notWant) {
-					t.Errorf("buildCompactPrompt() should not contain %q\nGot:\n%s", notWant, got)
-				}
+				assert.NotContains(t, got, notWant, "buildCompactPrompt() should not contain")
 			}
 		})
 	}
@@ -355,9 +342,7 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			got := buildCompactOutputPrefix(tt.jobCount, tt.branch, tt.jobIDs)
 
 			for _, want := range tt.wantContains {
-				if !strings.Contains(got, want) {
-					t.Errorf("buildCompactOutputPrefix() missing %q\nGot:\n%s", want, got)
-				}
+				assert.Contains(t, got, want, "buildCompactOutputPrefix() missing")
 			}
 		})
 	}
@@ -396,34 +381,25 @@ func TestWriteCompactMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := writeCompactMetadata(tt.consolidatedID, tt.sourceIDs)
-			if err != nil {
-				t.Fatalf("writeCompactMetadata failed: %v", err)
-			}
+			require.NoError(t, err, "writeCompactMetadata")
 
 			path := filepath.Join(tmpDir, getCompactMetadataFilename(tt.consolidatedID))
 
 			if !tt.expectFile {
-				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("Expected os.ErrNotExist, got: %v", err)
-				}
+				_, err := os.Stat(path)
+				require.ErrorIs(t, err, os.ErrNotExist, "Expected os.ErrNotExist")
 				return
 			}
 
 			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("Failed to read metadata file: %v", err)
-			}
+			require.NoError(t, err, "Failed to read metadata file")
 
 			var metadata struct {
 				SourceJobIDs []int64 `json:"source_job_ids"`
 			}
-			if err := json.Unmarshal(data, &metadata); err != nil {
-				t.Fatalf("Failed to parse metadata JSON: %v", err)
-			}
+			require.NoError(t, json.Unmarshal(data, &metadata), "Failed to parse metadata JSON")
 
-			if !slices.Equal(metadata.SourceJobIDs, tt.sourceIDs) {
-				t.Errorf("Expected SourceJobIDs %v, got %v", tt.sourceIDs, metadata.SourceJobIDs)
-			}
+			assert.Equal(t, tt.sourceIDs, metadata.SourceJobIDs, "SourceJobIDs")
 		})
 	}
 }

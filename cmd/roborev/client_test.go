@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // writeJSON encodes data as JSON to the response writer.
@@ -25,16 +26,8 @@ func writeJSON(w http.ResponseWriter, data any) {
 func newMockHandler(t *testing.T, method, path string, response any, status int) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != method {
-			t.Errorf("expected method %s, got %s", method, r.Method)
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if r.URL.Path != path {
-			t.Errorf("expected path %s, got %s", path, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		assert.Equal(t, r.Method, method, "unexpected condition")
+		assert.Equal(t, r.URL.Path, path, "unexpected condition")
 		if status != 0 {
 			w.WriteHeader(status)
 		}
@@ -66,35 +59,24 @@ func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 	t.Cleanup(func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if !t.Failed() && call != len(steps) {
-			t.Errorf("expected %d calls to sequence handler, got %d", len(steps), call)
-		}
+		assert.False(t, !t.Failed() && call != len(steps), "unexpected condition")
 	})
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		if r.URL.Path != "/api/jobs" || r.Method != "GET" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		assert.False(t, r.URL.Path != "/api/jobs" || r.Method != "GET", "unexpected condition")
 
-		if call >= len(steps) {
-			t.Errorf("unexpected extra call to %s (expected %d calls)", r.URL.Path, len(steps))
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+		assert.Less(t, call, len(steps), "unexpected condition")
 
 		step := steps[call]
 		call++
 
 		query := r.URL.Query()
 		for k, v := range step.ExpectedQuery {
-			if got := query.Get(k); got != v {
-				t.Errorf("call %d: expected query param %s=%s, got %s", call, k, v, got)
-			}
+			got := query.Get(k)
+			assert.Equal(t, v, got, "unexpected condition")
 		}
 
 		writeJSON(w, map[string]any{"jobs": step.Jobs})
@@ -113,21 +95,16 @@ func TestGetCommentsForJob(t *testing.T) {
 		// Wrap newMockHandler to verify query params
 		baseHandler := newMockHandler(t, "GET", "/api/comments", mockResp, http.StatusOK)
 		handler := func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("job_id") != "42" {
-				t.Errorf("expected job_id=42, got %s", r.URL.Query().Get("job_id"))
-			}
+			assert.Equal(t, "42", r.URL.Query().Get("job_id"), "unexpected condition")
 			baseHandler(w, r)
 		}
 
 		daemonFromHandler(t, http.HandlerFunc(handler))
 
 		responses, err := getCommentsForJob(42)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(responses) != 2 {
-			t.Errorf("expected 2 responses, got %d", len(responses))
-		}
+		require.NoError(t, err)
+
+		assert.Len(t, responses, 2, "unexpected condition")
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
@@ -135,9 +112,8 @@ func TestGetCommentsForJob(t *testing.T) {
 		daemonFromHandler(t, handler)
 
 		_, err := getCommentsForJob(42)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		require.Error(t, err)
+
 	})
 }
 
@@ -152,12 +128,9 @@ func TestWaitForReview(t *testing.T) {
 		daemonFromHandler(t, mux)
 
 		review, err := waitForReview(1)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if review.Output != "Review complete" {
-			t.Errorf("unexpected output: %s", review.Output)
-		}
+		require.NoError(t, err)
+
+		assert.Equal(t, "Review complete", review.Output, "unexpected condition")
 	})
 
 	t.Run("polls until job transitions from queued to done", func(t *testing.T) {
@@ -179,15 +152,10 @@ func TestWaitForReview(t *testing.T) {
 		daemonFromHandler(t, mux)
 
 		review, err := waitForReviewWithInterval(1, 1*time.Millisecond)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if review.Output != "Review after polling" {
-			t.Errorf("unexpected output: %s", review.Output)
-		}
-		if pollCount < 3 {
-			t.Errorf("expected at least 3 polls, got %d", pollCount)
-		}
+		require.NoError(t, err)
+
+		assert.Equal(t, "Review after polling", review.Output, "unexpected condition")
+		assert.GreaterOrEqual(t, pollCount, 3, "unexpected condition")
 	})
 
 	t.Run("returns error on job failure", func(t *testing.T) {
@@ -197,12 +165,9 @@ func TestWaitForReview(t *testing.T) {
 		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
 		_, err := waitForReview(1)
-		if err == nil {
-			t.Fatal("expected error for failed job")
-		}
-		if !strings.Contains(err.Error(), "agent crashed") {
-			t.Errorf("expected error to mention agent crashed: %v", err)
-		}
+		require.Error(t, err)
+
+		assert.Contains(t, err.Error(), "agent crashed", "unexpected condition")
 	})
 
 	t.Run("returns error on job canceled", func(t *testing.T) {
@@ -212,12 +177,9 @@ func TestWaitForReview(t *testing.T) {
 		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
 		_, err := waitForReview(1)
-		if err == nil {
-			t.Fatal("expected error for canceled job")
-		}
-		if !strings.Contains(err.Error(), "canceled") {
-			t.Errorf("expected error to mention canceled: %v", err)
-		}
+		require.Error(t, err)
+
+		assert.Contains(t, err.Error(), "canceled", "unexpected condition")
 	})
 }
 
@@ -304,7 +266,7 @@ func TestFindJobForCommit(t *testing.T) {
 				tmpDir := normalizeTestPath(t, t.TempDir())
 				repoPath := filepath.Join(tmpDir, "repo")
 				if err := os.MkdirAll(repoPath, 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 				return repoPath, []MockStep{
 					{
@@ -388,30 +350,19 @@ func TestFindJobForCommit(t *testing.T) {
 			job, err := findJobForCommit(repoDir, tt.commitSHA)
 
 			if tt.expectError != "" {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), tt.expectError) {
-					t.Errorf("expected error to contain %q, got: %v", tt.expectError, err)
-				}
+				require.Error(t, err)
+
+				require.Contains(t, err.Error(), tt.expectError, "expected error to contain %q, got: %v", tt.expectError, err)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			require.NoError(t, err)
 
 			if tt.expectFound {
-				if job == nil {
-					t.Fatal("expected to find job")
-				}
-				if job.ID != tt.expectedID {
-					t.Errorf("expected job ID %d, got %d", tt.expectedID, job.ID)
-				}
+				require.NotNil(t, job, "expected to find job")
+				assert.Equal(t, tt.expectedID, job.ID, "unexpected condition")
 			} else {
-				if job != nil {
-					t.Errorf("expected nil job, got ID %d", job.ID)
-				}
+				assert.Nil(t, job, "unexpected condition")
 			}
 		})
 	}

@@ -6,16 +6,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if len(cfg.Agents) != 1 || cfg.Agents[0] != "codex" {
-		t.Errorf(
-			"expected default agents [codex], got %v",
-			cfg.Agents)
-	}
+	require.Len(t, cfg.Agents, 1, "expected 1 agent, got %d", len(cfg.Agents))
+	require.Equal(t, "codex", cfg.Agents[0], "expected default agent to be codex")
 }
 
 func TestValidate(t *testing.T) {
@@ -72,17 +71,11 @@ func TestValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.cfg.Validate()
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				if !strings.Contains(
-					err.Error(), tt.wantErr) {
-					t.Errorf(
-						"error %q should contain %q",
-						err.Error(), tt.wantErr)
-				}
+				require.Error(t, err, "expected error")
+				require.ErrorContains(t, err, tt.wantErr, "unexpected error")
+
 			} else if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+				require.Failf(t, "unexpected error", "%v", err)
 			}
 		})
 	}
@@ -134,9 +127,7 @@ func TestGenerate(t *testing.T) {
 				"--ignore-missing",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["OPENAI_API_KEY"]; !ok {
-					t.Error("expected OPENAI_API_KEY env var")
-				}
+				assert.Contains(t, env, "OPENAI_API_KEY", "expected OPENAI_API_KEY env var")
 			},
 		},
 		{
@@ -181,9 +172,7 @@ func TestGenerate(t *testing.T) {
 				"GH_TOKEN:",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["GITHUB_TOKEN"]; ok {
-					t.Error("env block should not contain bare GITHUB_TOKEN: entry for copilot")
-				}
+				assert.NotContains(t, env, "GITHUB_TOKEN", "env block should not contain bare GITHUB_TOKEN: entry for copilot")
 			},
 		},
 		{
@@ -218,9 +207,7 @@ func TestGenerate(t *testing.T) {
 				"different model provider",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
-					t.Error("expected ANTHROPIC_API_KEY in env")
-				}
+				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")
 			},
 		},
 		{
@@ -235,9 +222,7 @@ func TestGenerate(t *testing.T) {
 				"default for kilo",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
-					t.Error("expected ANTHROPIC_API_KEY in env")
-				}
+				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")
 			},
 		},
 		{
@@ -264,9 +249,7 @@ func TestGenerate(t *testing.T) {
 				"opencode-ai/opencode@latest",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
-					t.Error("expected ANTHROPIC_API_KEY in env")
-				}
+				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")
 			},
 		},
 	}
@@ -274,18 +257,12 @@ func TestGenerate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out, err := Generate(tt.cfg)
-			if err != nil {
-				t.Fatalf("Generate failed: %v", err)
-			}
+			require.NoError(t, err, "Generate failed: %v", err)
 			for _, want := range tt.wantStrs {
-				if !strings.Contains(out, want) {
-					t.Errorf("output missing %q", want)
-				}
+				assert.Contains(t, out, want, "unexpected condition")
 			}
 			for _, notWant := range tt.notWantStrs {
-				if strings.Contains(out, notWant) {
-					t.Errorf("output should not contain %q", notWant)
-				}
+				assert.NotContains(t, out, notWant, "unexpected condition")
 			}
 
 			if tt.envChecks != nil || tt.name == "dedupes env vars" {
@@ -298,7 +275,7 @@ func TestGenerate(t *testing.T) {
 					} `yaml:"jobs"`
 				}
 				if err := yaml.Unmarshal([]byte(out), &wf); err != nil {
-					t.Fatalf("failed to parse yaml: %v", err)
+					require.NoError(t, err, "failed to parse yaml: %v", err)
 				}
 
 				var reviewEnv map[string]string
@@ -321,9 +298,7 @@ func TestGenerate(t *testing.T) {
 							envDefCount++
 						}
 					}
-					if envDefCount != 1 {
-						t.Errorf("expected 1 ANTHROPIC_API_KEY: definition, got %d", envDefCount)
-					}
+					assert.Equal(t, 1, envDefCount, "unexpected condition")
 				}
 			}
 		})
@@ -378,17 +353,9 @@ func TestAgentInstallCmd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			cmd := AgentInstallCmd(tt.agent)
-			if !strings.Contains(cmd, tt.wantPkg) {
-				t.Errorf(
-					"AgentInstallCmd(%q) = %q, want package %q",
-					tt.agent, cmd, tt.wantPkg)
-			}
+			assert.Contains(t, cmd, tt.wantPkg, "unexpected condition")
 			for _, bad := range tt.notWantPkgs {
-				if strings.Contains(cmd, bad) {
-					t.Errorf(
-						"AgentInstallCmd(%q) = %q, should NOT contain %q",
-						tt.agent, cmd, bad)
-				}
+				assert.NotContains(t, cmd, bad, "unexpected condition")
 			}
 		})
 	}
@@ -416,10 +383,7 @@ func TestGenerate_Injection_Rejected(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Generate(tt.cfg)
-			if err == nil {
-				t.Fatal(
-					"expected Generate to reject config")
-			}
+			require.Error(t, err, "expected Generate to reject config")
 		})
 	}
 }
@@ -430,19 +394,12 @@ func TestWriteWorkflow_CreatesFile(t *testing.T) {
 		dir, ".github", "workflows", "roborev.yml")
 
 	cfg := DefaultConfig()
-	if err := WriteWorkflow(
-		cfg, outPath, false); err != nil {
-		t.Fatalf("WriteWorkflow failed: %v", err)
-	}
+	err := WriteWorkflow(cfg, outPath, false)
+	require.NoError(t, err)
 
 	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if !strings.Contains(
-		string(content), "name: roborev") {
-		t.Error("written file should contain workflow name")
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "name: roborev", "written file should contain workflow name")
 }
 
 func TestWriteWorkflow_ExistingFile_NoForce(t *testing.T) {
@@ -451,30 +408,17 @@ func TestWriteWorkflow_ExistingFile_NoForce(t *testing.T) {
 
 	if err := os.WriteFile(
 		outPath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	cfg := DefaultConfig()
 	err := WriteWorkflow(cfg, outPath, false)
-	if err == nil {
-		t.Fatal(
-			"expected error for existing file without --force")
-	}
-	if !strings.Contains(
-		err.Error(), "already exists") {
-		t.Errorf(
-			"expected 'already exists' error, got: %v",
-			err)
-	}
+	require.Error(t, err, "expected error for existing file without --force")
+	assert.Contains(t, err.Error(), "already exists")
 
 	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "existing" {
-		t.Error(
-			"existing file content should be preserved")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "existing", string(content), "existing file content should be preserved")
 }
 
 func TestWriteWorkflow_ExistingFile_Force(t *testing.T) {
@@ -483,28 +427,17 @@ func TestWriteWorkflow_ExistingFile_Force(t *testing.T) {
 
 	if err := os.WriteFile(
 		outPath, []byte("existing"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	cfg := DefaultConfig()
-	if err := WriteWorkflow(
-		cfg, outPath, true); err != nil {
-		t.Fatalf("WriteWorkflow with force failed: %v", err)
-	}
+	err := WriteWorkflow(cfg, outPath, true)
+	require.NoError(t, err)
 
 	content, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) == "existing" {
-		t.Error(
-			"force should have overwritten existing content")
-	}
-	if !strings.Contains(
-		string(content), "name: roborev") {
-		t.Error(
-			"overwritten file should contain workflow name")
-	}
+	require.NoError(t, err)
+	assert.NotEqual(t, "existing", string(content), "force should have overwritten existing content")
+	assert.Contains(t, string(content), "name: roborev", "overwritten file should contain workflow name")
 }
 
 func TestAgentEnvVar(t *testing.T) {
@@ -524,11 +457,7 @@ func TestAgentEnvVar(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
 			got := AgentEnvVar(tt.agent)
-			if got != tt.want {
-				t.Errorf(
-					"AgentEnvVar(%q) = %q, want %q",
-					tt.agent, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -581,13 +510,9 @@ func TestAgentSecrets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			secrets := AgentSecrets(tt.agents)
-			if len(secrets) != tt.wantLen {
-				t.Fatalf("expected %d secrets, got %d", tt.wantLen, len(secrets))
-			}
+			assert.Len(t, secrets, tt.wantLen, "unexpected condition")
 			for i, wantVar := range tt.wantVars {
-				if secrets[i].EnvVar != wantVar {
-					t.Errorf("expected %q, got %q", wantVar, secrets[i].EnvVar)
-				}
+				assert.Equal(t, wantVar, secrets[i].EnvVar, "unexpected condition")
 			}
 		})
 	}

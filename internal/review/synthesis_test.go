@@ -4,14 +4,15 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func assertContainsAll(t *testing.T, got string, wants []string) {
 	t.Helper()
 	for _, want := range wants {
-		if !strings.Contains(got, want) {
-			t.Errorf("output missing expected substring %q\nDocument content:\n%s", want, got)
-		}
+		assert.Contains(t, got, want, "output missing expected substring")
 	}
 }
 
@@ -45,11 +46,8 @@ func TestIsQuotaFailure(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsQuotaFailure(tt.r); got != tt.want {
-				t.Errorf(
-					"IsQuotaFailure() = %v, want %v",
-					got, tt.want)
-			}
+			got := IsQuotaFailure(tt.r)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -67,10 +65,7 @@ func TestCountQuotaFailures(t *testing.T) {
 			Error:  QuotaErrorPrefix + "limit reached",
 		},
 	}
-	if got := CountQuotaFailures(reviews); got != 2 {
-		t.Errorf(
-			"CountQuotaFailures() = %d, want 2", got)
-	}
+	assert.Equal(t, 2, CountQuotaFailures(reviews))
 }
 
 func TestBuildSynthesisPrompt_Basic(t *testing.T) {
@@ -121,11 +116,11 @@ func TestBuildSynthesisPrompt_Severity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			prompt := BuildSynthesisPrompt(reviews, tt.severity)
-			if tt.wantContains != "" && !strings.Contains(prompt, tt.wantContains) {
-				t.Errorf("prompt missing %q", tt.wantContains)
+			if tt.wantContains != "" {
+				assert.Contains(t, prompt, tt.wantContains)
 			}
-			if tt.wantNotContains != "" && strings.Contains(prompt, tt.wantNotContains) {
-				t.Errorf("prompt unexpectedly contains %q", tt.wantNotContains)
+			if tt.wantNotContains != "" {
+				assert.NotContains(t, prompt, tt.wantNotContains)
 			}
 		})
 	}
@@ -176,11 +171,7 @@ func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, "")
 
 	assertContainsAll(t, prompt, []string{"...(truncated)"})
-	if len(prompt) > promptLimit {
-		t.Errorf(
-			"prompt should be truncated, got %d chars",
-			len(prompt))
-	}
+	assert.LessOrEqual(t, len(prompt), promptLimit, "prompt should be truncated")
 }
 
 func TestFormatSingleResult_Truncation(t *testing.T) {
@@ -192,14 +183,10 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 	}
 	comment := formatSingleResult(r, "abc123456789")
 
-	if len(comment) > MaxCommentLen+200 {
-		// The header and footer add some overhead, but the output
-		// portion must not exceed MaxCommentLen.
-		t.Fatalf("comment too long: %d", len(comment))
-	}
-	if !strings.Contains(comment, "truncated") {
-		t.Fatal("expected truncation suffix")
-	}
+	// The header and footer add some overhead, but the output
+	// portion must not exceed MaxCommentLen.
+	require.LessOrEqual(t, len(comment), MaxCommentLen+200, "comment too long")
+	assert.Contains(t, comment, "truncated", "expected truncation suffix")
 }
 
 func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
@@ -217,13 +204,8 @@ func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
 		Output:     strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100),
 	}
 	comment := formatSingleResult(r, "abc123456789")
-
-	if !utf8.ValidString(comment) {
-		t.Fatal("truncated comment is not valid UTF-8")
-	}
-	if !strings.Contains(comment, "truncated") {
-		t.Fatal("expected truncation suffix")
-	}
+	require.True(t, utf8.ValidString(comment), "truncated comment is not valid UTF-8")
+	assert.Contains(t, comment, "truncated", "expected truncation suffix")
 }
 
 func TestFormatSynthesizedComment(t *testing.T) {
@@ -274,9 +256,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 		"---",
 	})
 
-	if strings.Contains(comment, "<details>") {
-		t.Error("raw batch comment should not use <details> blocks")
-	}
+	assert.NotContains(t, comment, "<details>", "raw batch comment should not use <details> blocks")
 }
 
 func TestFormatAllFailedComment(t *testing.T) {
@@ -312,11 +292,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 			reviews, "bbb222333444")
 
 		assertContainsAll(t, comment, []string{"Review Skipped"})
-		if strings.Contains(
-			comment, "Check CI logs") {
-			t.Error(
-				"all-quota should not mention CI logs")
-		}
+		assert.NotContains(t, comment, "Check CI logs", "all-quota should not mention CI logs")
 	})
 }
 
@@ -325,9 +301,7 @@ func TestSkippedAgentNote(t *testing.T) {
 		reviews := []ReviewResult{
 			{Status: "done"},
 		}
-		if note := SkippedAgentNote(reviews); note != "" {
-			t.Errorf("expected empty, got %q", note)
-		}
+		assert.Empty(t, SkippedAgentNote(reviews))
 	})
 
 	t.Run("one skip", func(t *testing.T) {

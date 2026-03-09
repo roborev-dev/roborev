@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/binary"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 	"unicode/utf16"
 )
 
@@ -52,9 +54,7 @@ func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isRoborevDaemonCommandForUpdate(tt.cmdLine)
-			if got != tt.want {
-				t.Fatalf("isRoborevDaemonCommandForUpdate(%q)=%v, want %v", tt.cmdLine, got, tt.want)
-			}
+			require.Equal(t, tt.want, got, "isRoborevDaemonCommandForUpdate(%q)", tt.cmdLine)
 		})
 	}
 }
@@ -62,9 +62,7 @@ func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
 func TestNormalizeCommandLineForUpdate(t *testing.T) {
 	raw := "\xff\xferoborev\x00daemon\x00run\r\n"
 	got := normalizeCommandLineForUpdate(raw)
-	if got != "roborev daemon run" {
-		t.Fatalf("normalizeCommandLineForUpdate(%q)=%q, want %q", raw, got, "roborev daemon run")
-	}
+	require.Equal(t, "roborev daemon run", got, "normalizeCommandLineForUpdate(%q)", raw)
 }
 
 func TestParseWmicOutputForUpdateUTF16LE(t *testing.T) {
@@ -73,21 +71,15 @@ func TestParseWmicOutputForUpdateUTF16LE(t *testing.T) {
 	)
 	got := parseWmicOutputForUpdate(raw)
 	want := `C:\Tools\roborev.exe daemon run --port 7373`
-	if got != want {
-		t.Fatalf("parseWmicOutputForUpdate()=%q, want %q", got, want)
-	}
-	if !isRoborevDaemonCommandForUpdate(got) {
-		t.Fatalf("expected parsed WMIC output to classify as daemon command, got %q", got)
-	}
+	require.Equal(t, want, got, "parseWmicOutputForUpdate()")
+	require.True(t, isRoborevDaemonCommandForUpdate(got), "expected parsed WMIC output to classify as daemon command")
 }
 
 func TestNormalizeCommandLineBytesForUpdateUTF16LENoBOM(t *testing.T) {
 	raw := encodeUTF16LE("roborev.exe daemon run --port 7373\r\n", false)
 	got := normalizeCommandLineBytesForUpdate(raw)
 	want := "roborev.exe daemon run --port 7373"
-	if got != want {
-		t.Fatalf("normalizeCommandLineBytesForUpdate()=%q, want %q", got, want)
-	}
+	require.Equal(t, want, got, "normalizeCommandLineBytesForUpdate()")
 }
 
 func encodeUTF16LE(s string, withBOM bool) []byte {

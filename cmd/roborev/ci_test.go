@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCIReviewCmd_Help(t *testing.T) {
@@ -21,9 +23,7 @@ func TestCIReviewCmd_Help(t *testing.T) {
 	cmd.SetErr(&buf)
 
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	output := buf.String()
 	checks := []string{
@@ -38,9 +38,7 @@ func TestCIReviewCmd_Help(t *testing.T) {
 		"--synthesis-agent",
 	}
 	for _, check := range checks {
-		if !strings.Contains(output, check) {
-			t.Errorf("help output missing %q", check)
-		}
+		assert.Contains(t, output, check, "unexpected condition")
 	}
 }
 
@@ -71,11 +69,10 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 			cmd.SetArgs(tt.args)
 			err := cmd.Execute()
 
-			if err == nil {
-				t.Fatal("expected error")
-			}
+			require.Error(t, err)
+
 			if !strings.Contains(err.Error(), tt.wantError) {
-				t.Errorf("expected error containing %q, got: %v", tt.wantError, err)
+				assert.Errorf(t, err, "expected error containing %q, got: %v", tt.wantError, err)
 			}
 		})
 	}
@@ -86,7 +83,7 @@ func setupFakeGitHubEvent(t *testing.T, event map[string]any) {
 	eventFile := filepath.Join(t.TempDir(), "event.json")
 	data, _ := json.Marshal(event)
 	if err := os.WriteFile(eventFile, data, 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	t.Setenv("GITHUB_EVENT_PATH", eventFile)
 }
@@ -104,22 +101,17 @@ func TestDetectGitRef(t *testing.T) {
 	})
 
 	ref, err := detectGitRef()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ref != "aaa111..bbb222" {
-		t.Errorf("ref = %q, want %q",
-			ref, "aaa111..bbb222")
-	}
+	require.NoError(t, err)
+
+	assert.Equal(t, "aaa111..bbb222", ref, "unexpected condition")
 }
 
 func TestDetectGitRef_NoEnv(t *testing.T) {
 	t.Setenv("GITHUB_EVENT_PATH", "")
 
 	_, err := detectGitRef()
-	if err == nil {
-		t.Fatal("expected error when no env set")
-	}
+	require.Error(t, err)
+
 }
 
 func TestDetectPRNumber_EventJSON(t *testing.T) {
@@ -130,12 +122,9 @@ func TestDetectPRNumber_EventJSON(t *testing.T) {
 	})
 
 	pr, err := detectPRNumber()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pr != 42 {
-		t.Errorf("pr = %d, want 42", pr)
-	}
+	require.NoError(t, err)
+
+	assert.Equal(t, 42, pr, "unexpected condition")
 }
 
 func TestDetectPRNumber_GitHubRef(t *testing.T) {
@@ -143,12 +132,9 @@ func TestDetectPRNumber_GitHubRef(t *testing.T) {
 	t.Setenv("GITHUB_REF", "refs/pull/123/merge")
 
 	pr, err := detectPRNumber()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pr != 123 {
-		t.Errorf("pr = %d, want 123", pr)
-	}
+	require.NoError(t, err)
+
+	assert.Equal(t, 123, pr, "unexpected condition")
 }
 
 func TestDetectPRNumber_NoEnv(t *testing.T) {
@@ -156,9 +142,8 @@ func TestDetectPRNumber_NoEnv(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 
 	_, err := detectPRNumber()
-	if err == nil {
-		t.Fatal("expected error when no env set")
-	}
+	require.Error(t, err)
+
 }
 
 func TestExtractHeadSHA(t *testing.T) {
@@ -172,11 +157,7 @@ func TestExtractHeadSHA(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractHeadSHA(tt.ref)
-		if got != tt.want {
-			t.Errorf(
-				"extractHeadSHA(%q) = %q, want %q",
-				tt.ref, got, tt.want)
-		}
+		assert.Equal(t, tt.want, got, "unexpected condition")
 	}
 }
 
@@ -184,18 +165,14 @@ func TestResolveAgentList(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
 		agents := resolveAgentList(
 			"codex,gemini", nil, nil)
-		if len(agents) != 2 ||
+		assert.False(t, len(agents) != 2 ||
 			agents[0] != "codex" ||
-			agents[1] != "gemini" {
-			t.Errorf("got %v", agents)
-		}
+			agents[1] != "gemini", "unexpected condition")
 	})
 
 	t.Run("default", func(t *testing.T) {
 		agents := resolveAgentList("", nil, nil)
-		if len(agents) != 1 || agents[0] != "" {
-			t.Errorf("got %v, want [\"\"]", agents)
-		}
+		assert.False(t, len(agents) != 1 || agents[0] != "", "unexpected condition")
 	})
 }
 
@@ -203,38 +180,25 @@ func TestResolveReviewTypes(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
 		types := resolveReviewTypes(
 			"security,design", nil, nil)
-		if len(types) != 2 {
-			t.Errorf("got %v", types)
-		}
+		assert.Len(t, types, 2, "unexpected condition")
 	})
 
 	t.Run("default", func(t *testing.T) {
 		types := resolveReviewTypes("", nil, nil)
-		if len(types) != 1 || types[0] != "security" {
-			t.Errorf(
-				"got %v, want [security]", types)
-		}
+		assert.False(t, len(types) != 1 || types[0] != "security", "unexpected condition")
 	})
 }
 
 func TestResolveAgentList_EmptyFlag(t *testing.T) {
 	// Comma-only flag should resolve to empty list.
 	agents := resolveAgentList(",", nil, nil)
-	if len(agents) != 0 {
-		t.Errorf(
-			"resolveAgentList(\",\") = %v, want empty",
-			agents)
-	}
+	assert.Empty(t, agents, "unexpected condition")
 }
 
 func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
 	// Whitespace-comma flag should resolve to empty list.
 	types := resolveReviewTypes(" , ", nil, nil)
-	if len(types) != 0 {
-		t.Errorf(
-			"resolveReviewTypes(\" , \") = %v, want empty",
-			types)
-	}
+	assert.Empty(t, types, "unexpected condition")
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -290,9 +254,7 @@ func TestResolveCIUpsertComments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := resolveCIUpsertComments(tt.repo, tt.global)
-			if got != tt.want {
-				t.Errorf("resolveCIUpsertComments() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -309,19 +271,9 @@ func TestSplitTrimmed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := splitTrimmed(tt.in)
-		if len(got) != len(tt.want) {
-			t.Errorf(
-				"splitTrimmed(%q) = %v, want %v",
-				tt.in, got, tt.want)
-			continue
-		}
+		assert.Len(t, tt.want, len(got), "unexpected condition")
 		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf(
-					"splitTrimmed(%q)[%d] = %q, "+
-						"want %q",
-					tt.in, i, got[i], tt.want[i])
-			}
+			assert.Equal(t, got[i], tt.want[i], "unexpected condition")
 		}
 	}
 }

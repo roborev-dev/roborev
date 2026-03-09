@@ -1,13 +1,12 @@
-//go:build integration
-
 package main
 
 import (
 	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func requireGit(t *testing.T) {
@@ -20,8 +19,6 @@ func requireGit(t *testing.T) {
 func TestValidateRefineContext(t *testing.T) {
 	requireGit(t)
 
-	// Helper to create a standard test repo
-	// Returns repo, baseSHA
 	createStandardRepo := func(t *testing.T) (*testutil.TestRepo, string) {
 		repo := testutil.InitTestRepo(t)
 		baseSHA := repo.RevParse("HEAD")
@@ -37,7 +34,7 @@ func TestValidateRefineContext(t *testing.T) {
 	tests := []struct {
 		name      string
 		setup     func(t *testing.T) refineTestSetup
-		sinceArg  string // Overrides setup if not empty
+		sinceArg  string
 		branchArg string
 		wantErr   string
 		wantBr    string
@@ -136,27 +133,17 @@ func TestValidateRefineContext(t *testing.T) {
 			repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repo.Root, since, tt.branchArg)
 
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
-				}
+				require.Error(t, err, "expected error containing %q", tt.wantErr)
+				require.Contains(t, err.Error(), tt.wantErr, "expected error containing %q", tt.wantErr)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if repoPath == "" {
-				t.Error("expected non-empty repoPath")
-			}
-			if tt.wantBr != "" && currentBranch != tt.wantBr {
-				t.Errorf("expected branch %q, got %q", tt.wantBr, currentBranch)
-			}
-			if expectedBase != "" && mergeBase != expectedBase {
-				t.Errorf("expected merge base %q, got %q", expectedBase, mergeBase)
-			}
+			require.NoError(t, err, "unexpected error: %v", err)
+
+			assert.NotEmpty(t, repoPath, "expected non-empty repoPath")
+			assert.Equal(t, tt.wantBr, currentBranch, "expected branch %q", tt.wantBr)
+			assert.Equal(t, expectedBase, mergeBase, "expected merge base %q", expectedBase)
+
 		})
 	}
 }

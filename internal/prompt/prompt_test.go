@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildPromptWithoutContext(t *testing.T) {
@@ -15,9 +17,7 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 
 	// Build prompt without database (no previous reviews)
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Should contain system prompt
 	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
@@ -61,9 +61,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	// Build prompt with 5 previous commits context
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(repoPath, commits[5], repoID, 5, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Should contain previous reviews section
 	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
@@ -83,11 +81,9 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	// The oldest parent (commit 1) should appear before the newest parent (commit 5)
 	commit1Pos := strings.Index(prompt, commits[0][:7])
 	commit5Pos := strings.Index(prompt, commits[4][:7])
-	if commit1Pos == -1 || commit5Pos == -1 {
-		t.Error("Prompt should contain short SHAs of parent commits")
-	} else if commit1Pos > commit5Pos {
-		t.Error("Commits should be in chronological order (oldest first)")
-	}
+	assert.NotEqual(t, -1, commit1Pos, "Prompt should contain short SHAs of parent commits")
+	assert.NotEqual(t, -1, commit5Pos, "Prompt should contain short SHAs of parent commits")
+	assert.Less(t, commit1Pos, commit5Pos, "Commits should be in chronological order (oldest first)")
 }
 
 func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
@@ -107,9 +103,7 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	// Build prompt for commit 6 with context from previous 5 commits
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(repoPath, commits[5], repoID, 5, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Should contain previous reviews section
 	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
@@ -132,7 +126,7 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 	r := newTestRepo(t)
 
 	if err := os.WriteFile(filepath.Join(r.dir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	r.git("add", "file.txt")
 	r.git("commit", "-m", "initial commit")
@@ -143,9 +137,7 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 	// Build prompt - should work even with no parent commits
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(r.dir, sha, 0, 5, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Should contain system prompt and current commit
 	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
@@ -163,9 +155,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(repoPath, commits[5], repoID, 3, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Print the prompt for visual inspection
 	t.Logf("Generated prompt:\n%s", prompt)
@@ -198,14 +188,12 @@ All public APIs must have documentation comments.
 `
 	configPath := filepath.Join(repoPath, ".roborev.toml")
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
 	// Build prompt without database
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Should contain project guidelines section
 	assertContains(t, prompt, "## Project Guidelines", "Prompt should contain project guidelines section")
@@ -227,14 +215,12 @@ func TestBuildPromptWithoutProjectGuidelines(t *testing.T) {
 	configContent := `agent = "codex"`
 	configPath := filepath.Join(repoPath, ".roborev.toml")
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
 	// Build prompt
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Should NOT contain project guidelines section
 	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when none configured")
@@ -246,9 +232,7 @@ func TestBuildPromptNoConfig(t *testing.T) {
 
 	// Build prompt
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Should NOT contain project guidelines section
 	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when no config file")
@@ -266,31 +250,21 @@ func TestBuildPromptGuidelinesOrder(t *testing.T) {
 	configContent := `review_guidelines = "Test guideline"`
 	configPath := filepath.Join(repoPath, ".roborev.toml")
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
 	// Build prompt
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Guidelines should appear after system prompt but before current commit
 	systemPromptPos := strings.Index(prompt, "You are a code reviewer")
 	guidelinesPos := strings.Index(prompt, "## Project Guidelines")
 	currentCommitPos := strings.Index(prompt, "## Current Commit")
 
-	if guidelinesPos == -1 {
-		t.Fatal("Guidelines section not found")
-	}
-
-	if systemPromptPos > guidelinesPos {
-		t.Error("System prompt should come before guidelines")
-	}
-
-	if guidelinesPos > currentCommitPos {
-		t.Error("Guidelines should come before current commit section")
-	}
+	assert.NotEqual(t, -1, guidelinesPos, "system prompt should include project guidelines")
+	assert.Less(t, systemPromptPos, guidelinesPos, "system prompt should come before guidelines")
+	assert.Less(t, guidelinesPos, currentCommitPos, "guidelines should come before current commit")
 }
 
 func TestBuildPromptWithPreviousAttempts(t *testing.T) {
@@ -312,9 +286,7 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 	// Build prompt - should include previous attempts for the same commit
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(repoPath, targetSHA, repoID, 0, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Should contain previous review attempts section
 	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
@@ -345,9 +317,7 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	// Build prompt for a new review of the same commit
 	builder := NewBuilder(db)
 	prompt, err := builder.Build(repoPath, targetSHA, repoID, 0, "", "")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 
 	// Should contain the previous review
 	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
@@ -368,9 +338,7 @@ func TestBuildPromptWithGeminiAgent(t *testing.T) {
 
 	// Build prompt for Gemini agent
 	prompt, err := BuildSimple(repoPath, targetSHA, "gemini")
-	if err != nil {
-		t.Fatalf("BuildSimple failed: %v", err)
-	}
+	require.NoError(t, err, "BuildSimple failed: %v", err)
 
 	// Should contain Gemini-specific instructions
 	assertContains(t, prompt, "extremely concise and professional", "Prompt should contain Gemini-specific instruction")
@@ -387,9 +355,7 @@ func TestBuildPromptDesignReviewType(t *testing.T) {
 	// Single commit with reviewType="design" should use design-review prompt
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, targetSHA, 0, 0, "test", "design")
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
+	require.NoError(t, err, "Build failed: %v", err)
 	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for reviewType=design")
 	assertNotContains(t, prompt, "code reviewer", "Should not contain standard code review prompt")
 }
@@ -401,9 +367,7 @@ func TestBuildDirtyDesignReviewType(t *testing.T) {
 	// Use a temp dir as repo path (no .roborev.toml needed)
 	repoPath := t.TempDir()
 	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "test", "design")
-	if err != nil {
-		t.Fatalf("BuildDirty failed: %v", err)
-	}
+	require.NoError(t, err, "BuildDirty failed: %v", err)
 	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for dirty reviewType=design")
 	assertNotContains(t, prompt, "code reviewer", "Should not contain standard dirty review prompt")
 }
@@ -415,9 +379,7 @@ func TestBuildDirtyWithReviewAlias(t *testing.T) {
 
 	// "review" alias should produce the dirty prompt, NOT the single-commit prompt
 	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "test", "review")
-	if err != nil {
-		t.Fatalf("BuildDirty failed: %v", err)
-	}
+	require.NoError(t, err, "BuildDirty failed: %v", err)
 	assertContains(t, prompt, "uncommitted changes", "Expected dirty system prompt for reviewType=review alias, got wrong prompt type")
 }
 
@@ -428,9 +390,7 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "test", "review")
-	if err != nil {
-		t.Fatalf("Build (range) failed: %v", err)
-	}
+	require.NoError(t, err, "Build (range) failed: %v", err)
 	// Should use the range system prompt, not single-commit
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
@@ -467,7 +427,7 @@ func TestLoadGuidelines(t *testing.T) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0644); err != nil {
-					t.Fatalf("write .roborev.toml: %v", err)
+					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},
 			wantContains: "Filesystem rule.",
@@ -479,7 +439,7 @@ func TestLoadGuidelines(t *testing.T) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 					[]byte("review_guidelines = INVALID[[["), 0644); err != nil {
-					t.Fatalf("write .roborev.toml: %v", err)
+					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 				r.git("add", "-A")
 				r.git("commit", "-m", "bad toml")
@@ -491,7 +451,7 @@ func TestLoadGuidelines(t *testing.T) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644); err != nil {
-					t.Fatalf("write .roborev.toml: %v", err)
+					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},
 			wantNotContains: "Filesystem guideline",
@@ -503,7 +463,7 @@ func TestLoadGuidelines(t *testing.T) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 					[]byte("review_guidelines = \"From main\"\n"), 0644); err != nil {
-					t.Fatalf("write .roborev.toml: %v", err)
+					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 				r.git("add", "-A")
 				r.git("commit", "-m", "init")
@@ -518,17 +478,17 @@ func TestLoadGuidelines(t *testing.T) {
 				objPath := filepath.Join(r.dir, ".git", "objects",
 					blobSHA[:2], blobSHA[2:])
 				if err := os.Chmod(objPath, 0644); err != nil {
-					t.Fatalf("chmod: %v", err)
+					require.NoError(t, err, "chmod: %v", err)
 				}
 				if err := os.WriteFile(objPath, []byte("corrupt"), 0444); err != nil {
-					t.Fatalf("write corrupt blob: %v", err)
+					require.NoError(t, err, "write corrupt blob: %v", err)
 				}
 			},
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644); err != nil {
-					t.Fatalf("write .roborev.toml: %v", err)
+					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},
 			wantContains: "Filesystem fallback.",
@@ -572,9 +532,7 @@ func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(ctx.Dir, ctx.FeatureSHA, 0, 0, "test", "review")
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoError(t, err, "Build: %v", err)
 
 	section := extractGuidelinesSection(prompt)
 	assertContains(t, section, "Security: validate all inputs.", "expected default branch guidelines in prompt")
@@ -588,9 +546,7 @@ func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	rangeRef := ctx.BaseSHA + ".." + ctx.FeatureSHA
 	b := NewBuilder(nil)
 	prompt, err := b.Build(ctx.Dir, rangeRef, 0, 0, "test", "review")
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	require.NoError(t, err, "Build: %v", err)
 
 	section := extractGuidelinesSection(prompt)
 	assertContains(t, section, "Base guideline.", "expected default branch guidelines in range prompt")

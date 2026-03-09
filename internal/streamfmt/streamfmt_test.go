@@ -7,6 +7,9 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // streamFormatterFixture wraps the buffer and formatter setup
@@ -34,31 +37,23 @@ func (fix *streamFormatterFixture) assertContains(
 	t *testing.T, substr string,
 ) {
 	t.Helper()
-	if !strings.Contains(fix.output(), substr) {
-		t.Errorf(
-			"expected output to contain %q, got:\n%s",
-			substr, fix.output(),
-		)
-	}
+	assert.Contains(t, fix.output(), substr,
+		"expected output to contain %q, got:\n%s",
+		substr, fix.output())
 }
 
 func (fix *streamFormatterFixture) assertNotContains(
 	t *testing.T, substr string,
 ) {
 	t.Helper()
-	if strings.Contains(fix.output(), substr) {
-		t.Errorf(
-			"expected output NOT to contain %q, got:\n%s",
-			substr, fix.output(),
-		)
-	}
+	assert.NotContains(t, fix.output(), substr,
+		"expected output NOT to contain %q, got:\n%s",
+		substr, fix.output())
 }
 
 func (fix *streamFormatterFixture) assertEmpty(t *testing.T) {
 	t.Helper()
-	if fix.output() != "" {
-		t.Errorf("expected empty output, got:\n%s", fix.output())
-	}
+	assert.Empty(t, fix.output(), "expected empty output")
 }
 
 func (fix *streamFormatterFixture) assertCount(
@@ -66,12 +61,9 @@ func (fix *streamFormatterFixture) assertCount(
 ) {
 	t.Helper()
 	got := strings.Count(fix.output(), substr)
-	if got != want {
-		t.Errorf(
-			"expected output to contain %q %d time(s), got %d:\n%s",
-			substr, want, got, fix.output(),
-		)
-	}
+	assert.Equal(t, want, got,
+		"expected output to contain %q %d time(s), got %d:\n%s",
+		substr, want, got, fix.output())
 }
 
 func toJSON(v any) string {
@@ -255,12 +247,8 @@ func TestFormatter_NonTTY(t *testing.T) {
 	fix := newFixture(false)
 	raw := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`
 	fix.writeLine(raw)
-	if fix.output() != raw+"\n" {
-		t.Errorf(
-			"non-TTY should pass through raw, got:\n%s",
-			fix.output(),
-		)
-	}
+	require.Equal(t, raw+"\n", fix.output(),
+		"non-TTY should pass through raw")
 }
 
 type errWriter struct{}
@@ -274,12 +262,8 @@ func TestFormatter_WriteError(t *testing.T) {
 
 	line := eventAssistantText("hello") + "\n"
 	_, err := f.Write([]byte(line))
-	if err == nil {
-		t.Fatal("expected write error to propagate")
-	}
-	if err != io.ErrClosedPipe {
-		t.Fatalf("expected ErrClosedPipe, got %v", err)
-	}
+	require.Error(t, err, "expected write error to propagate")
+	require.ErrorIs(t, err, io.ErrClosedPipe, "expected ErrClosedPipe")
 }
 
 func TestFormatter_PartialWrites(t *testing.T) {
@@ -287,12 +271,8 @@ func TestFormatter_PartialWrites(t *testing.T) {
 
 	full := eventAssistantText("hello") + "\n"
 	_, _ = fix.f.Write([]byte(full[:20]))
-	if fix.buf.Len() != 0 {
-		t.Errorf(
-			"partial write should buffer, got:\n%s",
-			fix.output(),
-		)
-	}
+	require.Equal(t, 0, fix.buf.Len(),
+		"partial write should buffer")
 	_, _ = fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
 }
@@ -339,9 +319,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				got := fix.output()
 				if len(got) > 100 {
-					if !strings.Contains(got, "...") {
-						t.Errorf("long bash command should be truncated with ..., got:\n%s", got)
-					}
+					assert.Contains(t, got, "...", "long bash command should be truncated")
 				}
 			},
 		},
@@ -399,15 +377,13 @@ func TestFormatter_Anthropic(t *testing.T) {
 						emptyCount++
 					}
 				}
-				if emptyCount < 2 {
-					t.Errorf("expected at least 2 blank lines for transitions, got %d in:\n%s",
-						emptyCount, out)
-				}
+				require.GreaterOrEqual(t, emptyCount, 2,
+					"expected at least 2 blank lines for transitions, got %d in:\n%s",
+					emptyCount, out)
 				for _, l := range lines {
 					if strings.Contains(l, "Read") && strings.Contains(l, "main.go") {
-						if !strings.Contains(l, "|") && !strings.Contains(l, "│") {
-							t.Errorf("tool line should have gutter prefix, got: %q", l)
-						}
+						assert.True(t, strings.Contains(l, "|") || strings.Contains(l, "│"),
+							"tool line should have gutter prefix, got: %q", l)
 					}
 				}
 			},
@@ -421,15 +397,9 @@ func TestFormatter_Anthropic(t *testing.T) {
 			notContains: []string{"evil"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC title escape leaked: %q", raw)
-				}
-				if strings.Contains(raw, "\x07") {
-					t.Errorf("BEL char leaked: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR escape leaked: %q", raw)
-				}
+				assert.NotContains(t, raw, "\x1b]0;", "OSC title escape leaked")
+				assert.NotContains(t, raw, "\x07", "BEL char leaked")
+				assert.NotContains(t, raw, "\x1b[31m", "injected SGR escape leaked")
 			},
 		},
 		{
@@ -442,15 +412,9 @@ func TestFormatter_Anthropic(t *testing.T) {
 			contains: []string{"Read", ".go"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC escape leaked in tool arg: %q", raw)
-				}
-				if strings.Contains(raw, "\x07") {
-					t.Errorf("BEL char leaked in tool arg: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR escape leaked in tool arg: %q", raw)
-				}
+				assert.NotContains(t, raw, "\x1b]0;", "OSC escape leaked in tool arg")
+				assert.NotContains(t, raw, "\x07", "BEL char leaked in tool arg")
+				assert.NotContains(t, raw, "\x1b[31m", "injected SGR escape leaked in tool arg")
 			},
 		},
 		{
@@ -465,9 +429,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			contains: []string{"clean.go"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b[31m") {
-					t.Errorf("injected SGR in tool name leaked: %q", raw)
-				}
+				assert.NotContains(t, raw, "\x1b[31m", "injected SGR in tool name leaked")
 			},
 		},
 	}
@@ -523,12 +485,8 @@ func TestFormatter_Gemini(t *testing.T) {
 			notContains: []string{"title"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				raw := fix.buf.String()
-				if strings.Contains(raw, "\x1b]0;") {
-					t.Errorf("OSC escape leaked in Gemini text: %q", raw)
-				}
-				if strings.Contains(raw, "\x1b[1m") {
-					t.Errorf("injected bold escape leaked: %q", raw)
-				}
+				assert.NotContains(t, raw, "\x1b]0;", "OSC escape leaked in Gemini text")
+				assert.NotContains(t, raw, "\x1b[1m", "injected bold escape leaked")
 			},
 		},
 	}
@@ -738,9 +696,7 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 			},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				output := fix.output()
-				if !strings.Contains(output, "...") {
-					t.Errorf("long codex command should be truncated with ..., got:\n%s", output)
-				}
+				assert.Contains(t, output, "...", "long codex command should be truncated")
 			},
 		},
 		{
@@ -847,10 +803,9 @@ func TestSanitizeControl(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sanitizeControl(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeControl(%q) = %q, want %q",
-					tt.input, got, tt.want)
-			}
+			require.Equal(t, tt.want, got,
+				"sanitizeControl(%q) = %q, want %q",
+				tt.input, got, tt.want)
 		})
 	}
 }
@@ -871,12 +826,9 @@ func TestSanitizeControlKeepNewlines(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := SanitizeControlKeepNewlines(tt.input)
-			if got != tt.want {
-				t.Errorf(
-					"SanitizeControlKeepNewlines(%q) = %q, want %q",
-					tt.input, got, tt.want,
-				)
-			}
+			require.Equal(t, tt.want, got,
+				"SanitizeControlKeepNewlines(%q) = %q, want %q",
+				tt.input, got, tt.want)
 		})
 	}
 }
@@ -891,26 +843,19 @@ func TestRenderLogWithWrapsStderr(t *testing.T) {
 	var buf bytes.Buffer
 	fmtr := NewWithWidth(&buf, width, GlamourStyle())
 
-	if err := RenderLogWith(input, fmtr, &buf); err != nil {
-		t.Fatalf("RenderLogWith: %v", err)
-	}
+	require.NoError(t, RenderLogWith(input, fmtr, &buf), "RenderLogWith failed")
 
 	output := buf.String()
 	for line := range strings.SplitSeq(strings.TrimRight(output, "\n"), "\n") {
 		stripped := StripANSI(line)
-		if len(stripped) > width {
-			t.Errorf(
-				"stderr line exceeds width %d: len=%d %q",
-				width, len(stripped), stripped,
-			)
-		}
+		assert.LessOrEqual(t, len(stripped), width,
+			"stderr line exceeds width %d: len=%d %q",
+			width, len(stripped), stripped)
 	}
 }
 
 func TestFormatterWidth(t *testing.T) {
 	// Width() should return the configured terminal width.
 	fmtr := NewWithWidth(io.Discard, 42, GlamourStyle())
-	if got := fmtr.Width(); got != 42 {
-		t.Errorf("Width() = %d, want 42", got)
-	}
+	require.Equal(t, 42, fmtr.Width(), "Width() = %d, want 42", fmtr.Width())
 }

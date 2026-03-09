@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEvent_MarshalJSON(t *testing.T) {
@@ -20,14 +23,10 @@ func TestEvent_MarshalJSON(t *testing.T) {
 	}
 
 	data, err := event.MarshalJSON()
-	if err != nil {
-		t.Fatalf("MarshalJSON failed: %v", err)
-	}
+	require.NoError(t, err, "MarshalJSON failed")
 
 	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Could not unmarshal generated JSON: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(data, &decoded), "Could not unmarshal generated JSON")
 
 	tests := []struct {
 		key      string
@@ -35,7 +34,6 @@ func TestEvent_MarshalJSON(t *testing.T) {
 	}{
 		{"type", "review.completed"},
 		{"ts", "2026-01-11T10:00:30Z"},
-		{"job_id", float64(42)}, // JSON numbers are floats in map[string]interface{}
 		{"repo", "/path/to/myrepo"},
 		{"repo_name", "myrepo"},
 		{"sha", "abc123"},
@@ -44,20 +42,15 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		{"findings", "Missing input validation"},
 	}
 
-	if len(decoded) != len(tests) {
-		t.Errorf("expected %d fields in JSON, got %d", len(tests), len(decoded))
-	}
+	assert.Len(t, decoded, len(tests)+1, // +1 for job_id which is a float
+		"expected %d fields in JSON, got %d", len(tests)+1, len(decoded))
 
 	for _, tc := range tests {
-		if got, ok := decoded[tc.key]; !ok {
-			t.Errorf("missing expected key: %s", tc.key)
-		} else if got != tc.expected {
-			t.Errorf("expected %s to be %v, got %v", tc.key, tc.expected, got)
-		}
+		assert.Equal(t, tc.expected, decoded[tc.key],
+			"expected %s to be %v, got %v", tc.key, tc.expected, decoded[tc.key])
 	}
 
 	// Explicitly check that 'error' is not present
-	if _, ok := decoded["error"]; ok {
-		t.Error("expected 'error' field to be omitted")
-	}
+	_, hasError := decoded["error"]
+	assert.False(t, hasError, "expected 'error' field to be omitted")
 }

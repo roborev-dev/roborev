@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
@@ -33,7 +34,7 @@ func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 			cfg.DesignAgent = workflowAgent
 			cfg.DesignModel = workflowModel
 		default:
-			t.Fatalf("unsupported workflow %q", workflow)
+			require.Condition(t, func() bool { return false }, "unsupported workflow %q", workflow)
 		}
 		return cfg
 	}
@@ -163,9 +164,7 @@ func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 				tt.workflow,
 				"standard",
 			)
-			if got != tt.want {
-				t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
-			}
+			require.Equal(t, tt.want, got, "ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
 		})
 	}
 }
@@ -242,9 +241,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 				tt.workflow,
 				"standard",
 			)
-			if got != tt.want {
-				t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
-			}
+			require.Equal(t, tt.want, got, "ResolveWorkflowModelForAgent() = %q, want %q", got, tt.want)
 		})
 	}
 }
@@ -256,7 +253,7 @@ func TestResolveWorkflowModelForAgentRepoDefaultACPAgent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(`
 agent = "custom-acp"
 `), 0o644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	cfg := &config.Config{
@@ -273,7 +270,5 @@ agent = "custom-acp"
 		"review",
 		"standard",
 	)
-	if got != "gpt-5.4" {
-		t.Fatalf("ResolveWorkflowModelForAgent() = %q, want %q", got, "gpt-5.4")
-	}
+	require.Equal(t, "gpt-5.4", got, "ResolveWorkflowModelForAgent() = %q, want %q", got, "gpt-5.4")
 }

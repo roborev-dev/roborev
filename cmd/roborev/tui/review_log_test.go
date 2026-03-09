@@ -8,13 +8,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// collectMsgs recursively extracts all tea.Msg values from a Cmd,
-// expanding BatchMsg into individual messages. Note: this executes
-// each Cmd function, so only use with side-effect-free commands
-// (e.g., mouse toggles, clear screen) or in tests with
-// withExternalIODisabled().
 func collectMsgs(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
@@ -33,7 +30,6 @@ func collectMsgs(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-// hasMsgType returns true if any message in the slice has the given type name.
 func hasMsgType(msgs []tea.Msg, typeName string) bool {
 	for _, msg := range msgs {
 		if fmt.Sprintf("%T", msg) == typeName {
@@ -44,34 +40,26 @@ func hasMsgType(msgs []tea.Msg, typeName string) bool {
 }
 
 func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
-	// logVisibleLines() should account for the command-line header
-	// when the job has a known agent with a command line.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.height = 30
 	m.logJobID = 1
 
-	// Job without agent (no command line header).
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("")),
 	}
 	noHeader := m.logVisibleLines()
 
-	// Job with "test" agent (has a command line).
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("test")),
 	}
 	withHeader := m.logVisibleLines()
 
-	// With command header should have one fewer visible line.
-	if noHeader-withHeader != 1 {
-		t.Errorf("command header should reduce visible lines by 1: "+
-			"noHeader=%d withHeader=%d", noHeader, withHeader)
-	}
+	assert.Equal(t, 1, noHeader-withHeader, "unexpected condition")
 }
 
 func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
-	// pgdown/end/g in log view should use logVisibleLines() for
-	// scroll calculations, correctly accounting for headers.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -79,12 +67,10 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 	m.logScroll = 0
 	m.logFollow = false
 
-	// Use "test" agent to get command header.
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("test")),
 	}
 
-	// Create enough lines to need scrolling.
 	for i := range 50 {
 		m.logLines = append(m.logLines,
 			logLine{text: fmt.Sprintf("line %d", i)})
@@ -92,47 +78,27 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 
 	visLines := m.logVisibleLines()
 
-	// pgdown should advance by logVisibleLines().
 	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	if m2.logScroll != visLines {
-		t.Errorf("pgdown: expected scroll=%d, got %d",
-			visLines, m2.logScroll)
-	}
+	assert.Equal(t, m2.logScroll, visLines, "unexpected condition")
 
-	// end should set scroll to max using logVisibleLines().
 	m3, _ := pressSpecial(m, tea.KeyEnd)
 	expectedMax := max(50-visLines, 0)
-	if m3.logScroll != expectedMax {
-		t.Errorf("end: expected scroll=%d, got %d",
-			expectedMax, m3.logScroll)
-	}
+	assert.Equal(t, expectedMax, m3.logScroll, "unexpected condition")
 
-	// 'g' from top should jump to bottom using logVisibleLines().
 	m4, _ := pressKeys(m, []rune{'g'})
-	if m4.logScroll != expectedMax {
-		t.Errorf("g from top: expected scroll=%d, got %d",
-			expectedMax, m4.logScroll)
-	}
+	assert.Equal(t, expectedMax, m4.logScroll, "unexpected condition")
 
-	// pgup from mid-scroll should retreat by logVisibleLines().
 	mMid := m
-	mMid.logScroll = 2 * visLines // start 2 pages down
+	mMid.logScroll = 2 * visLines
 	m5, _ := pressSpecial(mMid, tea.KeyPgUp)
-	if m5.logScroll != visLines {
-		t.Errorf("pgup: expected scroll=%d, got %d",
-			visLines, m5.logScroll)
-	}
+	assert.Equal(t, m5.logScroll, visLines, "unexpected condition")
 
-	// pgup at top should clamp to 0.
 	m6, _ := pressSpecial(m, tea.KeyPgUp)
-	if m6.logScroll != 0 {
-		t.Errorf("pgup at top: expected scroll=0, got %d",
-			m6.logScroll)
-	}
+	assert.Equal(t, 0, m6.logScroll, "unexpected condition")
 }
 
 func TestTUILogPagingNoHeader(t *testing.T) {
-	// Same paging test but without command header (no agent).
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -140,7 +106,6 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 	m.logScroll = 0
 	m.logFollow = false
 
-	// No agent -> no command header.
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("")),
 	}
@@ -154,21 +119,14 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 	expectedMax := max(50-visLines, 0)
 
 	m2, _ := pressSpecial(m, tea.KeyPgDown)
-	if m2.logScroll != visLines {
-		t.Errorf("pgdown no-header: expected scroll=%d, got %d",
-			visLines, m2.logScroll)
-	}
+	assert.Equal(t, m2.logScroll, visLines, "unexpected condition")
 
 	m3, _ := pressSpecial(m, tea.KeyEnd)
-	if m3.logScroll != expectedMax {
-		t.Errorf("end no-header: expected scroll=%d, got %d",
-			expectedMax, m3.logScroll)
-	}
+	assert.Equal(t, expectedMax, m3.logScroll, "unexpected condition")
 }
 
 func TestTUILogLoadingGuard(t *testing.T) {
-	// When logLoading is true, logTickMsg should not start
-	// another fetch.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -178,20 +136,14 @@ func TestTUILogLoadingGuard(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, logTickMsg{})
 
-	// Should not issue a fetch command.
-	if cmd != nil {
-		t.Errorf("expected nil cmd when logLoading, got %T", cmd)
-	}
-	if !m2.logLoading {
-		t.Error("logLoading should remain true")
-	}
+	assert.Nil(t, cmd, "unexpected condition")
+	assert.True(t, m2.logLoading, "unexpected condition")
 }
 
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
-	// A late-arriving error from an in-flight log fetch should
-	// not set m.err when the user has navigated away.
+
 	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewQueue // user navigated back
+	m.currentView = viewQueue
 	m.logFetchSeq = 3
 	m.logLoading = true
 
@@ -202,17 +154,12 @@ func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	if m2.err != nil {
-		t.Errorf("error leaked into non-log view: %v", m2.err)
-	}
-	if m2.logLoading {
-		t.Error("logLoading should be cleared")
-	}
+	require.NoError(t, m2.err, "unexpected condition")
+	assert.False(t, m2.logLoading, "unexpected condition")
 }
 
 func TestTUILogViewLookupFixJob(t *testing.T) {
-	// renderLogView should find jobs in fixJobs when opened
-	// from the tasks view.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
@@ -232,16 +179,12 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 	m.logLines = []logLine{{text: "output"}}
 
 	view := m.View()
-	if !strings.Contains(view, "#42") {
-		t.Error("log view should show job ID from fixJobs")
-	}
-	if !strings.Contains(view, "codex") {
-		t.Error("log view should show agent from fixJobs")
-	}
+	assert.Contains(t, view, "#42", "unexpected condition")
+	assert.Contains(t, view, "codex", "unexpected condition")
 }
 
 func TestTUILogCancelFixJob(t *testing.T) {
-	// Pressing 'x' in log view should cancel fix jobs.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
@@ -259,67 +202,47 @@ func TestTUILogCancelFixJob(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'x')
 
-	if m2.logStreaming {
-		t.Error("streaming should stop after cancel")
-	}
-	if m2.fixJobs[0].Status != storage.JobStatusCanceled {
-		t.Errorf(
-			"fix job status should be canceled, got %s",
-			m2.fixJobs[0].Status,
-		)
-	}
-	if cmd == nil {
-		t.Error("expected cancel command")
-	}
+	assert.False(t, m2.logStreaming, "unexpected condition")
+	assert.Equal(t, storage.JobStatusCanceled, m2.fixJobs[0].Status, "fix job status should be canceled, got %s", m2.fixJobs[0].Status)
+
+	assert.NotNil(t, cmd, "expected command from cancel action")
 }
 
 func TestTUILogVisibleLinesFixJob(t *testing.T) {
-	// logVisibleLines must account for the command-line header
-	// when viewing a fix job (from m.fixJobs, not m.jobs).
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
 	m.logFromView = viewTasks
 	m.height = 30
 
-	// Fix job with agent "test" produces a non-empty command line.
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 42, Status: storage.JobStatusRunning, Agent: "test"},
 	}
-	// m.jobs is empty -- job only exists in fixJobs.
+
 	m.jobs = nil
 
 	visWithCmd := m.logVisibleLines()
 
-	// Rendered view should also show the Command: header.
 	m.logLines = []logLine{{text: "output"}}
 	m.width = 80
 	view := m.View()
 	hasCmd := strings.Contains(view, "Command:")
 
 	if !hasCmd {
-		t.Error("expected Command: header in rendered view")
+		assert.Contains(t, view, "Command:", "expected Command: header in rendered view")
 	}
 
-	// Remove the fix job so there's no command line.
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 42, Status: storage.JobStatusRunning},
 	}
 	visWithout := m.logVisibleLines()
+	assert.Equal(t, visWithout-1, visWithCmd, "logVisibleLines mismatch: with cmd=%d, without=%d (expected difference of 1)", visWithCmd, visWithout)
 
-	// With the command header, one fewer visible line.
-	if visWithCmd != visWithout-1 {
-		t.Errorf(
-			"logVisibleLines mismatch: with cmd=%d, without=%d "+
-				"(expected difference of 1)",
-			visWithCmd, visWithout,
-		)
-	}
 }
 
 func TestTUILogNavFromTasks(t *testing.T) {
-	// Left/right in log view opened from tasks should navigate
-	// through fixJobs, not m.jobs.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 20
@@ -334,43 +257,21 @@ func TestTUILogNavFromTasks(t *testing.T) {
 		{ID: 30, Status: storage.JobStatusFailed},
 	}
 
-	// Should NOT navigate into m.jobs
 	m.jobs = []storage.ReviewJob{
 		{ID: 100, Status: storage.JobStatusDone},
 		{ID: 200, Status: storage.JobStatusDone},
 	}
 	m.selectedIdx = 0
 
-	// Left arrow -> prev (older) fix job (ID 30, index 2)
 	m2, cmd := pressSpecial(m, tea.KeyLeft)
-	if cmd == nil {
-		t.Fatal("expected command from left arrow nav")
-	}
-	if m2.fixSelectedIdx != 2 {
-		t.Errorf(
-			"fixSelectedIdx should be 2, got %d",
-			m2.fixSelectedIdx,
-		)
-	}
-	// selectedIdx should not have changed
-	if m2.selectedIdx != 0 {
-		t.Errorf(
-			"selectedIdx should remain 0, got %d",
-			m2.selectedIdx,
-		)
-	}
+	require.NotNil(t, cmd, "expected command from left arrow nav")
+	assert.Equal(t, 2, m2.fixSelectedIdx, "fixSelectedIdx should be 2, got %d", m2.fixSelectedIdx)
+	assert.Equal(t, 0, m2.selectedIdx, "selectedIdx should remain 0, got %d", m2.selectedIdx)
 
-	// Right arrow from index 1 -> next (newer) fix job (ID 10, index 0)
 	m3, cmd := pressSpecial(m, tea.KeyRight)
-	if cmd == nil {
-		t.Fatal("expected command from right arrow nav")
-	}
-	if m3.fixSelectedIdx != 0 {
-		t.Errorf(
-			"fixSelectedIdx should be 0, got %d",
-			m3.fixSelectedIdx,
-		)
-	}
+	require.NotNil(t, cmd, "expected command from right arrow nav")
+	assert.Equal(t, 0, m3.fixSelectedIdx, "fixSelectedIdx should be 0, got %d", m3.fixSelectedIdx)
+
 }
 
 func TestTUILogOutputTable(t *testing.T) {
@@ -591,58 +492,36 @@ func TestTUILogOutputTable(t *testing.T) {
 
 			m2, _ := updateModel(t, m, tt.msg)
 
-			if m2.currentView != tt.wantView {
-				t.Errorf("Expected view %d, got %d", tt.wantView, m2.currentView)
-			}
+			assert.Equal(t, tt.wantView, m2.currentView, "unexpected condition")
 			if tt.wantLinesNil {
-				if m2.logLines != nil {
-					t.Errorf("Expected logLines to be nil, got %#v", m2.logLines)
-				}
+				assert.Nil(t, m2.logLines, "unexpected condition")
 			} else if tt.wantLinesEmpty {
-				if m2.logLines == nil || len(m2.logLines) != 0 {
-					t.Errorf("Expected logLines to be an empty slice, got %#v", m2.logLines)
-				}
+				assert.False(t, m2.logLines == nil || len(m2.logLines) != 0, "unexpected condition")
 			} else if m2.logLines == nil {
-				t.Errorf("Expected logLines to not be nil")
+				assert.NotNil(t, m2.logLines, "Expected logLines to not be nil")
 			}
-			if len(m2.logLines) != tt.wantLinesLen {
-				t.Errorf("Expected %d lines, got %d", tt.wantLinesLen, len(m2.logLines))
-			}
+			assert.Len(t, m2.logLines, tt.wantLinesLen, "unexpected condition")
 			for i, line := range tt.wantLines {
-				if i < len(m2.logLines) && m2.logLines[i].text != line {
-					t.Errorf("Line %d expected %q, got %q", i, line, m2.logLines[i].text)
-				}
+				assert.False(t, i < len(m2.logLines) && m2.logLines[i].text != line, "unexpected condition")
 			}
-			if m2.logStreaming != tt.wantStreaming {
-				t.Errorf("Expected streaming %v, got %v", tt.wantStreaming, m2.logStreaming)
-			}
-			if tt.wantFlashMsg != "" && !strings.Contains(m2.flashMessage, tt.wantFlashMsg) {
-				t.Errorf("Expected flash message to contain %q, got %q", tt.wantFlashMsg, m2.flashMessage)
-			}
-			if m2.logLoading != tt.wantLoading {
-				t.Errorf("Expected logLoading %v, got %v", tt.wantLoading, m2.logLoading)
-			}
-			if m2.logOffset != tt.wantOffset {
-				t.Errorf("Expected logOffset %d, got %d", tt.wantOffset, m2.logOffset)
-			}
-			if tt.wantFmtr != nil && m2.logFmtr != tt.wantFmtr {
-				t.Errorf("Expected logFmtr to match pointer %p, got %p", tt.wantFmtr, m2.logFmtr)
-			}
+			assert.Equal(t, tt.wantStreaming, m2.logStreaming, "unexpected condition")
+			assert.False(t, tt.wantFlashMsg != "" && !strings.Contains(m2.flashMessage, tt.wantFlashMsg), "unexpected condition")
+			assert.Equal(t, tt.wantLoading, m2.logLoading, "unexpected condition")
+			assert.Equal(t, tt.wantOffset, m2.logOffset, "unexpected condition")
+			assert.False(t, tt.wantFmtr != nil && m2.logFmtr != tt.wantFmtr, "unexpected condition")
 		})
 	}
 }
 
 func TestMouseDisabledInContentViews(t *testing.T) {
-	// Transitioning from an interactive view (queue) to a content view
-	// (log, review, patch, prompt, commitMsg) should emit DisableMouse.
-	// Transitioning back should emit EnableMouseCellMotion.
+
 	contentViews := []struct {
 		name     string
 		view     viewKind
-		exitTo   viewKind       // expected view after exit (0 = viewQueue)
-		enterKey rune           // key to enter the view from queue (0 = use special key)
-		exitKey  rune           // key to exit back (0 = use esc)
-		setup    func(m *model) // additional setup needed
+		exitTo   viewKind
+		enterKey rune
+		exitKey  rune
+		setup    func(m *model)
 	}{
 		{
 			name:     "log view",
@@ -658,13 +537,13 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 		{
 			name:     "review view via enter",
 			view:     viewReview,
-			enterKey: 0, // uses enter key
+			enterKey: 0,
 			setup: func(m *model) {
 				m.jobs = []storage.ReviewJob{
 					makeJob(1, withStatus(storage.JobStatusDone)),
 				}
 				m.selectedIdx = 0
-				// Pre-populate review to avoid HTTP fetch
+
 				m.currentReview = &storage.Review{
 					ID:     1,
 					JobID:  1,
@@ -694,9 +573,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 	}
 
 	for _, tc := range contentViews {
-		// Enter subtest: only run for views that can be entered
-		// synchronously via keypress. Review, patch, and commitMsg
-		// require async HTTP fetches that complete later.
+
 		if tc.enterKey != 0 {
 			t.Run(tc.name+" enter disables mouse", func(t *testing.T) {
 				m := newModel("http://localhost", withExternalIODisabled())
@@ -716,7 +593,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				}
 
 				if updated.currentView == viewQueue {
-					t.Fatalf("view did not change from queue (setup may be incomplete)")
+					require.Equal(t, viewQueue, updated.currentView, "view did not change from queue (setup may be incomplete)")
 				}
 
 				msgs := collectMsgs(cmd)
@@ -725,7 +602,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 					for i, msg := range msgs {
 						types[i] = fmt.Sprintf("%T", msg)
 					}
-					t.Errorf("expected disableMouseMsg in cmd, got types: %v", types)
+					assert.Contains(t, types, "tea.disableMouseMsg", "expected disableMouseMsg in cmd, got types: %v", types)
 				}
 			})
 		}
@@ -738,7 +615,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(&m)
 			}
-			// Set up state needed for specific views
+
 			if tc.view == viewLog {
 				m.logJobID = 1
 				m.logFromView = viewQueue
@@ -759,9 +636,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 			if expectedView == 0 {
 				expectedView = viewQueue
 			}
-			if updated.currentView != expectedView {
-				t.Fatalf("expected view %d after exit, got %d", expectedView, updated.currentView)
-			}
+			assert.Equal(t, expectedView, updated.currentView, "unexpected condition")
 
 			msgs := collectMsgs(cmd)
 			if !hasMsgType(msgs, "tea.enableMouseCellMotionMsg") {
@@ -769,16 +644,14 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				for i, msg := range msgs {
 					types[i] = fmt.Sprintf("%T", msg)
 				}
-				t.Errorf("expected enableMouseCellMotionMsg in cmd, got types: %v", types)
+				assert.NotEmpty(t, types, "expected enableMouseCellMotionMsg in cmd, got types: %v", types)
 			}
 		})
 	}
 }
 
 func TestMouseNotToggledWithinContentViews(t *testing.T) {
-	// Transitioning between content views (e.g., review -> prompt)
-	// should not emit mouse toggle commands since both views have
-	// mouse disabled.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewReview
 	m.height = 30
@@ -796,7 +669,6 @@ func TestMouseNotToggledWithinContentViews(t *testing.T) {
 	}
 	m.reviewFromView = viewQueue
 
-	// Press 'p' to go from review -> prompt
 	updated, cmd := pressKey(m, 'p')
 	if updated.currentView != viewKindPrompt {
 		t.Skipf("did not switch to prompt view, got %d", updated.currentView)
@@ -805,7 +677,5 @@ func TestMouseNotToggledWithinContentViews(t *testing.T) {
 	msgs := collectMsgs(cmd)
 	hasDisable := hasMsgType(msgs, "tea.disableMouseMsg")
 	hasEnable := hasMsgType(msgs, "tea.enableMouseCellMotionMsg")
-	if hasDisable || hasEnable {
-		t.Errorf("should not toggle mouse between content views, got disable=%v enable=%v", hasDisable, hasEnable)
-	}
+	assert.False(t, hasDisable || hasEnable, "unexpected condition")
 }

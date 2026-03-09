@@ -13,35 +13,31 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTUICloseReviewSuccess(t *testing.T) {
 	_, m := mockServerModel(t, expectJSONPost(t, "", closeRequest{JobID: 100, Closed: true}, map[string]bool{"success": true}))
-	cmd := m.closeReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
+	cmd := m.closeReview(42, 100, true, false, 1)
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
-	if !result.reviewView {
-		t.Error("Expected reviewView to be true")
-	}
-	if result.jobID != 100 {
-		t.Errorf("Expected jobID=100, got %d", result.jobID)
-	}
+	require.NoError(t, result.err, "Expected no error, got %v", result.err)
+	require.True(t, result.reviewView, "Expected reviewView to be true")
+	require.EqualValues(t, 100, result.jobID, "Expected jobID=100, got %d", result.jobID)
 }
 
 func TestTUICloseReviewNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.closeReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
+	cmd := m.closeReview(999, 100, true, false, 1)
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil || result.err.Error() != "review not found" {
-		t.Errorf("Expected 'review not found' error, got: %v", result.err)
+		assert.True(t, result.err != nil && result.err.Error() == "review not found", "Expected 'review not found' error, got: %v", result.err)
 	}
 }
 
@@ -52,9 +48,7 @@ func TestTUIToggleClosedForJobSuccess(t *testing.T) {
 	msg := cmd()
 
 	closed := assertMsgType[closedMsg](t, msg)
-	if !bool(closed) {
-		t.Error("Expected toggled state to be true (was false)")
-	}
+	require.True(t, bool(closed), "Expected closed to be true")
 }
 
 func TestTUIToggleClosedNoReview(t *testing.T) {
@@ -65,9 +59,8 @@ func TestTUIToggleClosedNoReview(t *testing.T) {
 	msg := cmd()
 
 	errMsg := assertMsgType[errMsg](t, msg)
-	if errMsg.Error() != "no review for this job" {
-		t.Errorf("Expected 'no review for this job', got: %v", errMsg)
-	}
+	assert.Equal(t, "no review for this job", errMsg.Error(), "Expected 'no review for this job', got: %v", errMsg)
+
 }
 
 func TestTUICloseFromReviewView_Navigation(t *testing.T) {
@@ -82,59 +75,58 @@ func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 	}{
 		{
 			name:         "NextVisible",
-			initialIdx:   1, // Viewing job 2
+			initialIdx:   1,
 			initialJobID: 2,
 			actions: func(m model) model {
-				// Press 'a' to mark as closed
+
 				m2, _ := pressKey(m, 'a')
-				// Selection stays at index 1 so left/right navigation works correctly from current position
+
 				assertSelection(t, m2, 1, 2)
 				assertView(t, m2, viewReview)
 
-				// Press escape to return to queue
 				m3, _ := pressSpecial(m2, tea.KeyEscape)
 				return m3
 			},
-			expectedIdx:  2, // Moves to job 3
+			expectedIdx:  2,
 			expectedJob:  3,
 			expectedView: viewQueue,
 		},
 		{
 			name:         "FallbackPrev",
-			initialIdx:   2, // Viewing job 3 (last)
+			initialIdx:   2,
 			initialJobID: 3,
 			actions: func(m model) model {
 				m2, _ := pressKey(m, 'a')
 				m3, _ := pressSpecial(m2, tea.KeyEscape)
 				return m3
 			},
-			expectedIdx:  1, // Moves back to job 2
+			expectedIdx:  1,
 			expectedJob:  2,
 			expectedView: viewQueue,
 		},
 		{
 			name:         "ExitWithQ",
-			initialIdx:   1, // Viewing job 2
+			initialIdx:   1,
 			initialJobID: 2,
 			actions: func(m model) model {
 				m2, _ := pressKey(m, 'a')
 				m3, _ := pressKey(m2, 'q')
 				return m3
 			},
-			expectedIdx:  2, // Moves to job 3
+			expectedIdx:  2,
 			expectedJob:  3,
 			expectedView: viewQueue,
 		},
 		{
 			name:         "ExitWithCtrlC",
-			initialIdx:   1, // Viewing job 2
+			initialIdx:   1,
 			initialJobID: 2,
 			actions: func(m model) model {
 				m2, _ := pressKey(m, 'a')
 				m3, _ := pressSpecial(m2, tea.KeyCtrlC)
 				return m3
 			},
-			expectedIdx:  2, // Moves to job 3
+			expectedIdx:  2,
 			expectedJob:  3,
 			expectedView: viewQueue,
 		},
@@ -164,7 +156,6 @@ func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 	}
 }
 
-// closeRequest is used to decode and validate POST body in tests
 type closeRequest struct {
 	JobID  int64 `json:"job_id"`
 	Closed bool  `json:"closed"`
@@ -172,28 +163,21 @@ type closeRequest struct {
 
 func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 42, Closed: true}, map[string]bool{"success": true}))
-	cmd := m.closeReviewInBackground(42, true, false, 1, false) // jobID=42, newState=true, oldState=false
+	cmd := m.closeReviewInBackground(42, true, false, 1, false)
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42, got %d", result.jobID)
-	}
-	if result.oldState != false {
-		t.Errorf("Expected oldState=false, got %v", result.oldState)
-	}
-	if result.reviewView {
-		t.Error("Expected reviewView=false for queue view command")
-	}
+	require.NoError(t, result.err, "Expected no error, got %v", result.err)
+	require.EqualValues(t, 42, result.jobID, "Expected jobID=42, got %d", result.jobID)
+	require.False(t, result.oldState, "Expected oldState=false")
+	require.False(t, result.reviewView, "Expected reviewView to be false")
 }
 
 func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
-			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			assert.Equal(t, "/api/review/close", r.URL.Path, "Unexpected request path, got: %s", r.URL.Path)
+			assert.Equal(t, http.MethodPost, r.Method, "Unexpected request method: %s", r.Method)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
@@ -204,20 +188,20 @@ func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 
 	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil || !strings.Contains(result.err.Error(), "no review") {
-		t.Errorf("Expected error containing 'no review', got: %v", result.err)
+		assert.False(t, result.err == nil || !strings.Contains(result.err.Error(), "no review"), "Expected error containing 'no review', got: %v", result.err)
 	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42 for rollback, got %d", result.jobID)
-	}
+	assert.EqualValues(t, 42, result.jobID, "Expected jobID=42 for rollback, got %d", result.jobID)
+
 	if result.oldState != false {
-		t.Errorf("Expected oldState=false for rollback, got %v", result.oldState)
+		assert.False(t, result.oldState, "Expected oldState=false for rollback, got %v", result.oldState)
 	}
 }
 
 func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
-			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			assert.Equal(t, "/api/review/close", r.URL.Path, "Unexpected request: %s %s", r.Method, r.URL.Path)
+			assert.Equal(t, http.MethodPost, r.Method, "Unexpected request: %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
@@ -227,14 +211,12 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 	msg := cmd()
 
 	result := assertMsgType[closedResultMsg](t, msg)
-	if result.err == nil {
-		t.Error("Expected error for close 500 response")
-	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42 for rollback, got %d", result.jobID)
-	}
+	require.Error(t, result.err,
+		"expected error from server failure")
+	assert.EqualValues(t, 42, result.jobID, "Expected jobID=42 for rollback, got %d", result.jobID)
+
 	if result.oldState != false {
-		t.Errorf("Expected oldState=false for rollback, got %v", result.oldState)
+		assert.False(t, result.oldState, "Expected oldState=false for rollback, got %v", result.oldState)
 	}
 }
 
@@ -247,32 +229,30 @@ func TestTUIClosedRollbackOnError(t *testing.T) {
 		m.jobStats = storage.JobStats{Done: 1, Closed: 1, Open: 0}
 	})
 
-	// First, simulate the optimistic update (what happens when 'a' is pressed)
 	*m.jobs[0].Closed = true
-	m.pendingClosed[42] = pendingState{newState: true, seq: 1} // Track pending state
+	m.pendingClosed[42] = pendingState{newState: true, seq: 1}
 
-	// Simulate error result from background update
-	// This would happen if server returned error after optimistic update
 	errMsg := closedResultMsg{
 		jobID:            42,
 		restoreSelection: false,
-		oldState:         false, // Was false before optimistic update
-		newState:         true,  // The requested state (matches pendingClosed)
-		seq:              1,     // Must match pending seq to be treated as current
+		oldState:         false,
+		newState:         true,
+		seq:              1,
 		err:              fmt.Errorf("server error"),
 	}
 
-	// Now handle the error result - should rollback
 	m, _ = updateModel(t, m, errMsg)
 
-	// Should have rolled back to false
 	if m.jobs[0].Closed == nil || *m.jobs[0].Closed != false {
-		t.Errorf("Expected closed=false after rollback, got %v", m.jobs[0].Closed)
+		if m.jobs[0].Closed == nil {
+			assert.NotNil(t, m.jobs[0].Closed, "Expected closed=false after rollback, got nil")
+		} else {
+			assert.False(t, *m.jobs[0].Closed, "Expected closed=false after rollback, got %v", m.jobs[0].Closed)
+		}
 	}
-	if m.err == nil {
-		t.Error("Expected error to be set")
-	}
-	// Stats should be rolled back too
+	require.Error(t, m.err,
+		"expected server error for rollback")
+
 	assertJobStats(t, m, 0, 1)
 }
 
@@ -287,12 +267,10 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Step 1: optimistic toggle → closed
 	result, _ := m.handleCloseKey()
 	m = result.(model)
 	assertJobStats(t, m, 1, 0)
 
-	// Step 2: poll arrives with server truth (still open)
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
@@ -301,10 +279,9 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 		stats: storage.JobStats{Done: 1, Closed: 0, Open: 1},
 	}
 	m, _ = updateModel(t, m, pollMsg)
-	// Pending delta should be re-applied on top of server stats
+
 	assertJobStats(t, m, 1, 0)
 
-	// Step 3: error arrives → rollback
 	errMsg := closedResultMsg{
 		jobID:            42,
 		restoreSelection: false,
@@ -328,12 +305,10 @@ func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Step 1: optimistic toggle → closed
 	result, _ := m.handleCloseKey()
 	m = result.(model)
 	assertJobStats(t, m, 1, 0)
 
-	// Step 2: poll arrives with server already reflecting the change
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
@@ -342,7 +317,7 @@ func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 		stats: storage.JobStats{Done: 1, Closed: 1, Open: 0},
 	}
 	m, _ = updateModel(t, m, pollMsg)
-	// Pending should be cleared (server confirmed), no double-counting
+
 	assertJobStats(t, m, 1, 0)
 }
 
@@ -351,27 +326,27 @@ func TestTUIClosedSuccessNoRollback(t *testing.T) {
 		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	})
 
-	// Simulate optimistic update
 	*m.jobs[0].Closed = true
 
-	// Success result (err is nil)
 	successMsg := closedResultMsg{
 		jobID:            42,
 		restoreSelection: false,
 		oldState:         false,
-		seq:              1, // Not strictly needed for success (no rollback) but included for consistency
+		seq:              1,
 		err:              nil,
 	}
 
 	m, _ = updateModel(t, m, successMsg)
 
-	// Should stay true (no rollback on success)
 	if m.jobs[0].Closed == nil || *m.jobs[0].Closed != true {
-		t.Errorf("Expected closed=true after success, got %v", m.jobs[0].Closed)
+		if m.jobs[0].Closed == nil {
+			assert.NotNil(t, m.jobs[0].Closed, "Expected closed=true after success, got nil")
+		} else {
+			assert.True(t, *m.jobs[0].Closed, "Expected closed=true after success, got %v", m.jobs[0].Closed)
+		}
 	}
-	if m.err != nil {
-		t.Errorf("Expected no error, got %v", m.err)
-	}
+	require.NoError(t, m.err, "Expected no error, got %v", m.err)
+
 }
 
 func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
@@ -386,21 +361,124 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 		m.selectedJobID = 2
 	})
 
-	// Simulate marking job 2 as closed
-
 	m.jobs[1].Closed = boolPtr(true)
+	assert.
+		False(t, m.isJobVisible(m.jobs[1]),
+			"closed job should be hidden")
 
-	// Verify job 2 is now hidden
-	if m.isJobVisible(m.jobs[1]) {
-		t.Error("Job 2 should be hidden after marking as closed")
-	}
-
-	// Simulate what happens in 'a' handler - selection should move
-	// Since job 2 is now hidden, find prev (older) visible job
 	prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-	if prevIdx != 2 {
-		t.Errorf("Expected prev visible job at index 2, got %d", prevIdx)
+	assert.Equal(t, 2, prevIdx, "Expected prev visible job at index 2, got %d", prevIdx)
+
+}
+
+func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	assertSelection(t, m, 1, 2)
+	if m.jobs[1].Closed == nil || *m.jobs[1].Closed {
+		require.False(t, m.jobs[1].Closed == nil || *m.jobs[1].Closed, "Expected job 2 to be rolled back to open, got %v", m.jobs[1].Closed)
 	}
+	require.Equal(t, "server error", m.flashMessage, "Expected warning flash for rollback, got %q", m.flashMessage)
+	require.Equal(t, viewQueue, m.flashView, "Expected queue flash view, got %v", m.flashView)
+
+	assert.True(t, m.flashWarning, "Expected rollback flash to use warning styling")
+}
+
+func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+		stats: storage.JobStats{Done: 3, Closed: 0, Open: 3},
+	})
+	assertSelection(t, m, 2, 3)
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	assertSelection(t, m, 1, 2)
+}
+
+func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+		m.jobStats = storage.JobStats{Done: 3, Closed: 0, Open: 3}
+		m.pendingClosed = make(map[int64]pendingState)
+	})
+
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+	assertSelection(t, m, 2, 3)
+
+	m.currentView = viewReview
+
+	m, _ = updateModel(t, m, closedResultMsg{
+		jobID:            2,
+		restoreSelection: true,
+		oldState:         false,
+		newState:         true,
+		seq:              1,
+		err:              fmt.Errorf("server error"),
+	})
+
+	require.Equal(t, viewReview, m.currentView, "Expected to remain in review view, got %v", m.currentView)
+	assertSelection(t, m, 1, 2)
 }
 
 func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
@@ -524,30 +602,25 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 func TestTUISetJobClosedHelper(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Test with nil Closed pointer - should allocate
 	m.jobs = []storage.ReviewJob{
 		makeJob(100),
 	}
 
 	m.setJobClosed(100, true)
 
-	if m.jobs[0].Closed == nil {
-		t.Fatal("Expected Closed to be allocated")
-	}
+	assert.NotNil(t, m.jobs[0].Closed, "Expected Closed to be allocated")
 	if *m.jobs[0].Closed != true {
-		t.Errorf("Expected Closed=true, got %v", *m.jobs[0].Closed)
+		assert.True(t, *m.jobs[0].Closed, "Expected Closed=true, got %v", *m.jobs[0].Closed)
 	}
 
-	// Test toggle back
 	m.setJobClosed(100, false)
 	if *m.jobs[0].Closed != false {
-		t.Errorf("Expected Closed=false, got %v", *m.jobs[0].Closed)
+		assert.False(t, *m.jobs[0].Closed, "Expected Closed=false, got %v", *m.jobs[0].Closed)
 	}
 
-	// Test with non-existent job ID - should be no-op
 	m.setJobClosed(999, true)
 	if *m.jobs[0].Closed != false {
-		t.Errorf("Non-existent job should not affect existing job")
+		assert.False(t, *m.jobs[0].Closed, "Non-existent job should not affect existing job")
 	}
 }
 
@@ -561,17 +634,12 @@ func TestTUICancelJobSuccess(t *testing.T) {
 	msg := cmd()
 
 	result := assertMsgType[cancelResultMsg](t, msg)
-	if result.err != nil {
-		t.Errorf("Expected no error, got %v", result.err)
-	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42, got %d", result.jobID)
-	}
-	if result.oldState != storage.JobStatusRunning {
-		t.Errorf("Expected oldState=running, got %s", result.oldState)
-	}
+	require.NoError(t, result.err, "Expected no error, got %v", result.err)
+	assert.EqualValues(t, 42, result.jobID, "Expected jobID=42, got %d", result.jobID)
+	assert.Equal(t, storage.JobStatusRunning, result.oldState, "Expected oldState=running, got %s", result.oldState)
+
 	if result.oldFinishedAt == nil || !result.oldFinishedAt.Equal(oldFinishedAt) {
-		t.Errorf("Expected oldFinishedAt to be preserved")
+		assert.True(t, result.oldFinishedAt != nil && result.oldFinishedAt.Equal(oldFinishedAt), "Expected oldFinishedAt to be preserved")
 	}
 }
 
@@ -584,19 +652,15 @@ func TestTUICancelJobNotFound(t *testing.T) {
 	msg := cmd()
 
 	result := assertMsgType[cancelResultMsg](t, msg)
-	if result.err == nil {
-		t.Error("Expected error for 404, got nil")
-	}
-	if result.oldState != storage.JobStatusQueued {
-		t.Errorf("Expected oldState=queued for rollback, got %s", result.oldState)
-	}
-	if result.oldFinishedAt != nil {
-		t.Errorf("Expected oldFinishedAt=nil for queued job, got %v", result.oldFinishedAt)
-	}
+	require.Error(t, result.err,
+		"expected not-found response to include error")
+	assert.Equal(t, storage.JobStatusQueued, result.oldState, "Expected oldState=queued for rollback, got %s", result.oldState)
+	assert.Nil(t, result.oldFinishedAt, "Expected oldFinishedAt=nil for queued job, got %v", result.oldFinishedAt)
+
 }
 
 func TestTUICancelRollbackOnError(t *testing.T) {
-	// Setup: running job with no FinishedAt (still running)
+
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -605,35 +669,28 @@ func TestTUICancelRollbackOnError(t *testing.T) {
 		m.selectedJobID = 42
 	})
 
-	// Simulate the optimistic update that would have happened
 	now := time.Now()
 	m.jobs[0].Status = storage.JobStatusCanceled
 	m.jobs[0].FinishedAt = &now
 
-	// Simulate cancel error result - should rollback both status and FinishedAt
 	errResult := cancelResultMsg{
 		jobID:         42,
 		oldState:      storage.JobStatusRunning,
-		oldFinishedAt: nil, // Was nil before optimistic update
+		oldFinishedAt: nil,
 		err:           fmt.Errorf("server error"),
 	}
 
 	m2, _ := updateModel(t, m, errResult)
+	assert.Equal(t, storage.JobStatusRunning, m2.jobs[0].Status, "Expected status to rollback to 'running', got '%s'", m2.jobs[0].Status)
+	assert.Nil(t, m2.jobs[0].FinishedAt, "Expected FinishedAt to rollback to nil, got %v", m2.jobs[0].FinishedAt)
 
-	if m2.jobs[0].Status != storage.JobStatusRunning {
-		t.Errorf("Expected status to rollback to 'running', got '%s'", m2.jobs[0].Status)
-	}
-	if m2.jobs[0].FinishedAt != nil {
-		t.Errorf("Expected FinishedAt to rollback to nil, got %v", m2.jobs[0].FinishedAt)
-	}
-	if m2.err == nil {
-		t.Error("Expected error to be set")
-	}
+	require.Error(t, m2.err,
+		"expected cancel error on rollback")
+
 }
 
 func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
-	// Test rollback when original FinishedAt is non-nil (edge case: corrupted state
-	// or queued job that somehow has a timestamp)
+
 	startTime := time.Now().Add(-5 * time.Minute)
 	originalFinished := time.Now().Add(-2 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
@@ -643,36 +700,29 @@ func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 		m.selectedJobID = 42
 	})
 
-	// Simulate the optimistic update that would have happened
 	now := time.Now()
 	m.jobs[0].Status = storage.JobStatusCanceled
 	m.jobs[0].FinishedAt = &now
 
-	// Simulate cancel error result - should rollback to original FinishedAt
 	errResult := cancelResultMsg{
 		jobID:         42,
 		oldState:      storage.JobStatusQueued,
-		oldFinishedAt: &originalFinished, // Was non-nil before optimistic update
+		oldFinishedAt: &originalFinished,
 		err:           fmt.Errorf("server error"),
 	}
 
 	m2, _ := updateModel(t, m, errResult)
+	assert.Equal(t, storage.JobStatusQueued, m2.jobs[0].Status, "Expected status to rollback to 'queued', got '%s'", m2.jobs[0].Status)
 
-	if m2.jobs[0].Status != storage.JobStatusQueued {
-		t.Errorf("Expected status to rollback to 'queued', got '%s'", m2.jobs[0].Status)
-	}
-	if m2.jobs[0].FinishedAt == nil {
-		t.Error("Expected FinishedAt to rollback to original non-nil value, got nil")
-	} else if !m2.jobs[0].FinishedAt.Equal(originalFinished) {
-		t.Errorf("Expected FinishedAt to rollback to %v, got %v", originalFinished, *m2.jobs[0].FinishedAt)
-	}
-	if m2.err == nil {
-		t.Error("Expected error to be set")
-	}
+	assert.NotNil(t, m2.jobs[0].FinishedAt,
+		"expected finishedAt to be restored")
+	require.Error(t, m2.err,
+		"expected rollback error on save failure")
+
 }
 
 func TestTUICancelOptimisticUpdate(t *testing.T) {
-	// Setup: running job with no FinishedAt
+
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -682,30 +732,17 @@ func TestTUICancelOptimisticUpdate(t *testing.T) {
 		m.currentView = viewQueue
 	})
 
-	// Simulate pressing 'x' key
-	beforeUpdate := time.Now()
 	m2, cmd := pressKey(m, 'x')
 
-	// Should have optimistically set status to canceled
-	if m2.jobs[0].Status != storage.JobStatusCanceled {
-		t.Errorf("Expected status 'canceled', got '%s'", m2.jobs[0].Status)
-	}
+	assert.Equal(t, storage.JobStatusCanceled, m2.jobs[0].Status, "Expected status 'canceled', got '%s'", m2.jobs[0].Status)
 
-	// Should have set FinishedAt to stop elapsed time from ticking
-	if m2.jobs[0].FinishedAt == nil {
-		t.Error("Expected FinishedAt to be set during optimistic cancel")
-	} else if m2.jobs[0].FinishedAt.Before(beforeUpdate) {
-		t.Error("Expected FinishedAt to be set to current time")
-	}
+	assert.NotNil(t, m2.jobs[0].FinishedAt, "expected optimistic cancel to set finishedAt")
+	assert.NotNil(t, cmd, "expected cancel command to be returned")
 
-	// Should return a command (the cancel HTTP request)
-	if cmd == nil {
-		t.Error("Expected a command to be returned for the cancel request")
-	}
 }
 
 func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
-	// Test that pressing 'x' on done/failed/canceled jobs is a no-op
+
 	testCases := []storage.JobStatus{
 		storage.JobStatusDone,
 		storage.JobStatusFailed,
@@ -722,28 +759,17 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 				m.currentView = viewQueue
 			})
 
-			// Simulate pressing 'x' key
 			m2, cmd := pressKey(m, 'x')
+			assert.Equal(t, status, m2.jobs[0].Status, "Expected status to remain '%s', got '%s'", status, m2.jobs[0].Status)
 
-			// Status should not change
-			if m2.jobs[0].Status != status {
-				t.Errorf("Expected status to remain '%s', got '%s'", status, m2.jobs[0].Status)
-			}
-
-			// FinishedAt should not change
 			if m2.jobs[0].FinishedAt == nil || !m2.jobs[0].FinishedAt.Equal(finishedAt) {
-				t.Errorf("Expected FinishedAt to remain unchanged")
+				assert.True(t, m2.jobs[0].FinishedAt != nil && m2.jobs[0].FinishedAt.Equal(finishedAt), "Expected FinishedAt to remain unchanged")
 			}
+			assert.Nil(t, cmd, "Expected no command for non-cancellable job, got %v", cmd)
 
-			// No command should be returned (no HTTP request triggered)
-			if cmd != nil {
-				t.Errorf("Expected no command for non-cancellable job, got %v", cmd)
-			}
 		})
 	}
 }
-
-// Tests for filter functionality
 
 func TestTUIRespondTextPreservation(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
@@ -756,53 +782,34 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 		m.height = 24
 	})
 
-	// 1. Open respond for Job 1
 	m, _ = pressKey(m, 'c')
 
-	if m.currentView != viewKindComment {
-		t.Fatalf("Expected viewKindComment, got %v", m.currentView)
-	}
-	if m.commentJobID != 1 {
-		t.Fatalf("Expected commentJobID=1, got %d", m.commentJobID)
-	}
+	require.Equal(t, viewKindComment, m.currentView, "Expected viewKindComment, got %v", m.currentView)
+	require.Equal(t, int64(1), m.commentJobID, "Expected commentJobID=1, got %d", m.commentJobID)
 
-	// 2. Type some text
 	m.commentText = "My draft response"
 
-	// 3. Simulate failed submission - press enter then receive error
-	m.currentView = m.commentFromView // Simulate what happens on enter
+	m.currentView = m.commentFromView
 	errMsg := commentResultMsg{jobID: 1, err: fmt.Errorf("network error")}
 	m, _ = updateModel(t, m, errMsg)
+	assert.Equal(t, "My draft response", m.commentText, "Expected text preserved after error, got %q", m.commentText)
+	assert.Equal(t, int64(1), m.commentJobID, "Expected commentJobID preserved after error, got %d", m.commentJobID)
 
-	// Text should be preserved after error
-	if m.commentText != "My draft response" {
-		t.Errorf("Expected text preserved after error, got %q", m.commentText)
-	}
-	if m.commentJobID != 1 {
-		t.Errorf("Expected commentJobID preserved after error, got %d", m.commentJobID)
-	}
-
-	// 4. Re-open respond for Job 1 (Retry) - text should still be there
 	m.currentView = viewQueue
 	m.selectedIdx = 0
 	m, _ = pressKey(m, 'c')
+	assert.Equal(t, "My draft response", m.commentText, "Expected text preserved on retry for same job, got %q", m.commentText)
 
-	if m.commentText != "My draft response" {
-		t.Errorf("Expected text preserved on retry for same job, got %q", m.commentText)
-	}
-
-	// 5. Go back to queue and switch to Job 2 - text should be cleared
 	m.currentView = viewQueue
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m, _ = pressKey(m, 'c')
 
 	if m.commentText != "" {
-		t.Errorf("Expected text cleared for different job, got %q", m.commentText)
+		assert.Empty(t, m.commentText, "Expected text cleared for different job, got %q", m.commentText)
 	}
-	if m.commentJobID != 2 {
-		t.Errorf("Expected commentJobID=2, got %d", m.commentJobID)
-	}
+	assert.Equal(t, int64(2), m.commentJobID, "Expected commentJobID=2, got %d", m.commentJobID)
+
 }
 
 func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
@@ -814,28 +821,19 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 		m.commentText = "New draft for job 2"
 	})
 
-	// Success message arrives for job 1 (the old submission)
 	successMsg := commentResultMsg{jobID: 1, err: nil}
 	m, _ = updateModel(t, m, successMsg)
+	assert.Equal(t, "New draft for job 2", m.commentText, "Expected draft preserved for different job, got %q", m.commentText)
+	assert.Equal(t, int64(2), m.commentJobID, "Expected commentJobID=2 preserved, got %d", m.commentJobID)
 
-	// Draft for job 2 should NOT be cleared
-	if m.commentText != "New draft for job 2" {
-		t.Errorf("Expected draft preserved for different job, got %q", m.commentText)
-	}
-	if m.commentJobID != 2 {
-		t.Errorf("Expected commentJobID=2 preserved, got %d", m.commentJobID)
-	}
-
-	// Now success for job 2 should clear
 	successMsg = commentResultMsg{jobID: 2, err: nil}
 	m, _ = updateModel(t, m, successMsg)
 
 	if m.commentText != "" {
-		t.Errorf("Expected text cleared for matching job, got %q", m.commentText)
+		assert.Empty(t, m.commentText, "Expected text cleared for matching job, got %q", m.commentText)
 	}
-	if m.commentJobID != 0 {
-		t.Errorf("Expected commentJobID=0 after success, got %d", m.commentJobID)
-	}
+	assert.Equal(t, int64(0), m.commentJobID, "Expected commentJobID=0 after success, got %d", m.commentJobID)
+
 }
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
@@ -843,24 +841,15 @@ func TestTUIRespondBackspaceMultiByte(t *testing.T) {
 	m.currentView = viewKindComment
 	m.commentJobID = 1
 
-	// Type text with multi-byte characters
 	m, _ = pressKeys(m, []rune("Hello 世界"))
+	assert.Equal(t, "Hello 世界", m.commentText, "Expected commentText='Hello 世界', got %q", m.commentText)
 
-	if m.commentText != "Hello 世界" {
-		t.Errorf("Expected commentText='Hello 世界', got %q", m.commentText)
-	}
-
-	// Backspace should remove '界' (one character), not corrupt it
 	m, _ = pressSpecial(m, tea.KeyBackspace)
-	if m.commentText != "Hello 世" {
-		t.Errorf("Expected commentText='Hello 世' after backspace, got %q", m.commentText)
-	}
+	assert.Equal(t, "Hello 世", m.commentText, "Expected commentText='Hello 世' after backspace, got %q", m.commentText)
 
-	// Backspace should remove '世'
 	m, _ = pressSpecial(m, tea.KeyBackspace)
-	if m.commentText != "Hello " {
-		t.Errorf("Expected commentText='Hello ' after second backspace, got %q", m.commentText)
-	}
+	assert.Equal(t, "Hello ", m.commentText, "Expected commentText='Hello ' after second backspace, got %q", m.commentText)
+
 }
 
 func isValidUTF8(s string) bool {
@@ -890,43 +879,31 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 	m.width = 30
 	m.height = 20
 
-	// Set text with multi-byte characters that would be truncated
-	// The box has boxWidth-2 available space for text
-	m.commentText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters (30 cells wide)
+	m.commentText = "あいうえおかきくけこさしすせそ"
 
-	// Render should not panic or corrupt characters
 	output := m.renderRespondView()
+	assert.
+		True(t, isValidUTF8(output),
+			"rendered output should remain valid UTF-8")
+	assert.
+		True(t, containsRune(output, 'あ'),
+			"rendered output should include original response text")
 
-	// The output should contain valid UTF-8 and not have corrupted characters
-	if !isValidUTF8(output) {
-		t.Error("Rendered output contains invalid UTF-8")
-	}
-
-	// Should contain at least the start of the text (may be truncated)
-	if !containsRune(output, 'あ') {
-		t.Error("Expected output to contain the first character")
-	}
-
-	// Verify visual width alignment: all content lines should end with "│"
-	// and have consistent visual width
 	lines := strings.Split(stripANSI(output), "\n")
 	var expectedWidth int
 	for _, line := range lines {
 		if strings.HasPrefix(line, "│") && strings.HasSuffix(line, "│") {
-			// This is a content line - verify right border alignment
-			// All content lines should have the same visual width
+
 			width := runewidth.StringWidth(line)
 			if expectedWidth == 0 {
-				expectedWidth = width // Set from first line
+				expectedWidth = width
 			}
-			if width != expectedWidth {
-				t.Errorf("Line visual width %d != expected %d: %q", width, expectedWidth, line)
-			}
+			assert.Equal(t, expectedWidth, width, "Line visual width %d != expected %d: %q", width, expectedWidth, line)
 		}
 	}
-	if expectedWidth == 0 {
-		t.Error("No content lines found in output")
-	}
+	assert.NotEqual(t, expectedWidth, 0,
+		"expected content area to produce visual width")
+
 }
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
@@ -936,22 +913,15 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 	m.width = 40
 	m.height = 20
 
-	// Set text with tabs
 	m.commentText = "a\tb\tc"
 
 	output := m.renderRespondView()
 	plainOutput := stripANSI(output)
+	assert.
+		NotContains(t, plainOutput, "\t",
+			"tabs should be expanded to spaces in rendered output")
 
-	// Tabs should be expanded to spaces
-	if strings.Contains(plainOutput, "\t") {
-		t.Error("Output should not contain literal tabs")
-	}
-
-	// Verify the text appears with expanded tabs (4 spaces each)
-	// "a    b    c" should be in the output
-	if !strings.Contains(plainOutput, "a    b    c") {
-		t.Errorf("Expected tabs expanded to 4 spaces, got: %q", plainOutput)
-	}
+	assert.Contains(t, plainOutput, "a    b    c", "Expected tabs expanded to 4 spaces, got: %q", plainOutput)
 }
 
 func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
@@ -969,17 +939,13 @@ func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 	result, _ := m.handleCancelKey()
 	m2 := result.(model)
 
-	// Job 2 should now be canceled
-	if m2.jobs[1].Status != storage.JobStatusCanceled {
-		t.Fatalf("expected canceled, got %s", m2.jobs[1].Status)
-	}
-	// Cursor should have moved away from the now-hidden job
-	if m2.selectedIdx == 1 {
-		t.Error("cursor should move off canceled job")
-	}
-	if !m2.isJobVisible(m2.jobs[m2.selectedIdx]) {
-		t.Error("cursor should land on a visible job")
-	}
+	require.Equal(t, storage.JobStatusCanceled, m2.jobs[1].Status, "expected canceled, got %s", m2.jobs[1].Status)
+	assert.
+		NotEqual(t, 1, m2.selectedIdx,
+			"selected index should move away from hidden canceled job")
+	assert.True(t, m2.isJobVisible(m2.jobs[m2.selectedIdx]),
+		"selected job should remain visible after selection move")
+
 }
 
 func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
@@ -998,7 +964,6 @@ func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
 		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Mark job 1 as closed
 	result, _ := m.handleCloseKey()
 	m2 := result.(model)
 
@@ -1043,19 +1008,15 @@ func setupTestModel(jobs []storage.ReviewJob, opts ...func(*model)) model {
 
 func assertSelection(t *testing.T, m model, idx int, jobID int64) {
 	t.Helper()
-	if m.selectedIdx != idx {
-		t.Errorf("Expected selectedIdx=%d, got %d", idx, m.selectedIdx)
-	}
-	if m.selectedJobID != jobID {
-		t.Errorf("Expected selectedJobID=%d, got %d", jobID, m.selectedJobID)
-	}
+	assert.Equal(t, idx, m.selectedIdx, "Expected selectedIdx=%d, got %d", idx, m.selectedIdx)
+	assert.Equal(t, jobID, m.selectedJobID, "Expected selectedJobID=%d, got %d", jobID, m.selectedJobID)
+
 }
 
 func assertView(t *testing.T, m model, view viewKind) {
 	t.Helper()
-	if m.currentView != view {
-		t.Errorf("Expected view=%d, got %d", view, m.currentView)
-	}
+	assert.Equal(t, view, m.currentView, "Expected view=%d, got %d", view, m.currentView)
+
 }
 
 func withStartedAt(t time.Time) func(*storage.ReviewJob) {
@@ -1066,24 +1027,22 @@ func withFinishedAt(t *time.Time) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.FinishedAt = t }
 }
 
-// expectJSONPost is a helper to mock expected POST requests and respond with JSON.
 func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, response Res) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("Expected POST, got %s", r.Method)
-		}
+		assert.Equal(t, http.MethodPost, r.Method, "Expected POST, got %s", r.Method)
+
 		if path != "" && r.URL.Path != path {
-			t.Errorf("Expected path %s, got %s", path, r.URL.Path)
+			assert.Equal(t, path, r.URL.Path, "Expected path %s, got %s", path, r.URL.Path)
 		}
 
 		var req Req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("Failed to decode request body: %v", err)
+			assert.Error(t, err, "Failed to decode request body: %v", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		if diff := cmp.Diff(expected, req); diff != "" {
-			t.Errorf("Request payload mismatch (-want +got):\n%s", diff)
+			assert.Empty(t, diff, "Request payload mismatch (-want +got):\n%s", diff)
 			http.Error(w, "payload mismatch", http.StatusBadRequest)
 			return
 		}
@@ -1091,23 +1050,18 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 	}
 }
 
-// assertMsgType is a helper to assert the type of a tea.Msg and return it.
 func assertMsgType[T any](t *testing.T, msg tea.Msg) T {
 	t.Helper()
 	result, ok := msg.(T)
 	if !ok {
-		t.Fatalf("Expected %T, got %T: %v", new(T), msg, msg)
+		require.False(t, ok, "Expected %T, got %T: %v", new(T), msg, msg)
 	}
 	return result
 }
 
-// assertJobStats is a helper to assert the jobStats of a model.
 func assertJobStats(t *testing.T, m model, closed, open int) {
 	t.Helper()
-	if m.jobStats.Closed != closed {
-		t.Fatalf("expected Closed=%d, got %d", closed, m.jobStats.Closed)
-	}
-	if m.jobStats.Open != open {
-		t.Fatalf("expected Open=%d, got %d", open, m.jobStats.Open)
-	}
+	require.Equal(t, m.jobStats.Closed, closed, "expected Closed=%d, got %d", closed, m.jobStats.Closed)
+	require.Equal(t, m.jobStats.Open, open, "expected Open=%d, got %d", open, m.jobStats.Open)
+
 }

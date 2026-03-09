@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTUIFilterSearch(t *testing.T) {
@@ -32,13 +33,9 @@ func TestTUIFilterSearch(t *testing.T) {
 			m := initFilterModel(testNodes)
 			m.filterSearch = tc.query
 			m.rebuildFilterFlatList()
-			if len(m.filterFlatList) != tc.expectedCount {
-				t.Errorf("Expected %d visible, got %d", tc.expectedCount, len(m.filterFlatList))
-			}
+			assert.Len(t, m.filterFlatList, tc.expectedCount, "unexpected condition")
 			if tc.query == "all" && len(m.filterFlatList) > 0 {
-				if m.filterFlatList[0].repoIdx != -1 {
-					t.Error("Expected the visible item to be the All entry")
-				}
+				assert.Equal(t, -1, m.filterFlatList[0].repoIdx, "unexpected condition")
 			}
 		})
 	}
@@ -51,35 +48,23 @@ func TestTUIFilterSearchSequential(t *testing.T) {
 		makeNode("other", 2),
 	})
 
-	if len(m.filterFlatList) != 4 {
-		t.Fatalf("Initial: expected 4 entries, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 4, "unexpected condition")
 
 	m.filterSearch = "repo"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 2 {
-		t.Errorf("Step 1: expected 2 entries (repo-*), got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 2, "unexpected condition")
 
 	m.filterSearch = "alpha"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Step 2: expected 1 entry (repo-alpha), got %d", len(m.filterFlatList))
-	}
-	if len(m.filterFlatList) > 0 {
-		entry := m.filterFlatList[0]
-		if entry.repoIdx == -1 {
-			t.Error("Step 2: expected repo-alpha, got All")
-		} else if m.filterTree[entry.repoIdx].name != "repo-alpha" {
-			t.Errorf("Step 2: expected repo-alpha, got %s", m.filterTree[entry.repoIdx].name)
-		}
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
+	assert.Len(t, m.filterFlatList, 1, "expected one match")
+	entry := m.filterFlatList[0]
+	assert.NotEqual(t, -1, entry.repoIdx, "expected valid repo index")
+	assert.Equal(t, "repo-alpha", m.filterTree[entry.repoIdx].name, "unexpected condition")
 
 	m.filterSearch = ""
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 4 {
-		t.Errorf("Step 3: expected 4 entries after clear, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 4, "unexpected condition")
 }
 
 func TestTUIFilterTypingSearch(t *testing.T) {
@@ -97,9 +82,7 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 			action: func(m model) (model, tea.Cmd) { return pressKey(m, 'a') },
 			assert: func(t *testing.T, m model) {
 				assertSearch(t, m, "a")
-				if m.filterSelectedIdx != 0 {
-					t.Errorf("Expected filterSelectedIdx reset to 0, got %d", m.filterSelectedIdx)
-				}
+				assert.Equal(t, 0, m.filterSelectedIdx, "unexpected condition")
 			},
 		},
 		{
@@ -130,14 +113,10 @@ func TestTUIFilterTypingHAndL(t *testing.T) {
 	m.filterSelectedIdx = 1
 
 	m2, _ := pressKey(m, 'h')
-	if m2.filterSearch != "h" {
-		t.Errorf("Expected filterSearch='h', got '%s'", m2.filterSearch)
-	}
+	assert.Equal(t, "h", m2.filterSearch, "unexpected condition")
 
 	m3, _ := pressKey(m2, 'l')
-	if m3.filterSearch != "hl" {
-		t.Errorf("Expected filterSearch='hl', got '%s'", m3.filterSearch)
-	}
+	assert.Equal(t, "hl", m3.filterSearch, "unexpected condition")
 }
 
 func TestTUIFilterSearchByRepoPath(t *testing.T) {
@@ -149,11 +128,9 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 	m.filterSearch = "backend-dev"
 	m.rebuildFilterFlatList()
 
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Expected 1 visible (backend), got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
 	if len(m.filterFlatList) > 0 && m.filterFlatList[0].repoIdx != 0 {
-		t.Errorf("Expected to find 'backend' group at repoIdx 0")
+		assert.Equal(t, 0, m.filterFlatList[0].repoIdx, "Expected to find 'backend' group at repoIdx 0")
 	}
 }
 
@@ -169,27 +146,19 @@ func TestTUIFilterSearchByDisplayName(t *testing.T) {
 
 	m.filterSearch = "my project"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Search 'my project': expected 1 visible, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
 
 	m.filterSearch = "my-project-repo"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Search 'my-project-repo': expected 1 visible, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
 
 	m.filterSearch = "backend"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Search 'backend': expected 1 visible, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
 
 	m.filterSearch = "api-server"
 	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 {
-		t.Errorf("Search 'api-server': expected 1 visible, got %d", len(m.filterFlatList))
-	}
+	assert.Len(t, m.filterFlatList, 1, "unexpected condition")
 }
 
 func TestTUIFilterBackspaceMultiByte(t *testing.T) {
@@ -239,9 +208,7 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyRight)
 
-	if !m2.filterTree[0].expanded {
-		t.Error("Expected expanded=true after right-arrow on loading repo")
-	}
+	assert.True(t, m2.filterTree[0].expanded, "unexpected condition")
 
 	m3, _ := updateModel(t, m2, repoBranchesMsg{
 		repoIdx:      0,
@@ -250,14 +217,9 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 		expandOnLoad: false,
 	})
 
-	if !m3.filterTree[0].expanded {
-		t.Error("User right-arrow intent lost: expanded should be true")
-	}
+	assert.True(t, m3.filterTree[0].expanded, "unexpected condition")
 
-	if len(m3.filterFlatList) != 3 {
-		t.Errorf("Expected 3 flat entries (user expanded), got %d",
-			len(m3.filterFlatList))
-	}
+	assert.Len(t, m3.filterFlatList, 3, "unexpected condition")
 }
 
 func TestTUISearchFetchProgressiveLoading(t *testing.T) {
@@ -275,20 +237,13 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 	m.filterSearch = "test"
 
 	m.fetchUnloadedBranches()
-	if countLoading(&m) != maxSearchBranchFetches {
-		t.Fatalf("Expected %d loading, got %d",
-			maxSearchBranchFetches, countLoading(&m))
-	}
+	assert.Equal(t, maxSearchBranchFetches, countLoading(&m), "unexpected condition")
 
 	for i := range 5 {
-		if !m.filterTree[i].loading {
-			t.Errorf("Expected repo-%d loading=true", i)
-		}
+		assert.True(t, m.filterTree[i].loading, "unexpected condition")
 	}
 	for i := 5; i < 8; i++ {
-		if m.filterTree[i].loading {
-			t.Errorf("Expected repo-%d loading=false", i)
-		}
+		assert.False(t, m.filterTree[i].loading, "unexpected condition")
 	}
 
 	m2, cmd := updateModel(t, m, repoBranchesMsg{
@@ -296,16 +251,9 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 		rootPaths: []string{"/path/repo-0"},
 		branches:  []branchFilterItem{{name: "main", count: 1}},
 	})
-	if cmd == nil {
-		t.Error("Expected top-up fetch command after completion")
-	}
-	if countLoading(&m2) != maxSearchBranchFetches {
-		t.Errorf("Expected %d loading after top-up, got %d",
-			maxSearchBranchFetches, countLoading(&m2))
-	}
-	if !m2.filterTree[5].loading {
-		t.Error("Expected repo-5 to start loading via top-up")
-	}
+	assert.NotNil(t, cmd, "unexpected condition")
+	assert.Equal(t, maxSearchBranchFetches, countLoading(&m2), "unexpected condition")
+	assert.True(t, m2.filterTree[5].loading, "unexpected condition")
 
 	for i := 1; i < 8; i++ {
 		if m2.filterTree[i].loading {
@@ -316,13 +264,8 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 			})
 		}
 	}
-	if countLoaded(&m2) != 8 {
-		t.Errorf("Expected all 8 repos loaded, got %d", countLoaded(&m2))
-	}
-	if countLoading(&m2) != 0 {
-		t.Errorf("Expected 0 loading after all complete, got %d",
-			countLoading(&m2))
-	}
+	assert.Equal(t, 8, countLoaded(&m2), "unexpected condition")
+	assert.Equal(t, 0, countLoading(&m2), "unexpected condition")
 }
 
 func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
@@ -340,9 +283,7 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 	m.filterSearch = "test"
 
 	m.fetchUnloadedBranches()
-	if countLoading(&m) != 3 {
-		t.Fatalf("Expected 3 loading, got %d", countLoading(&m))
-	}
+	assert.Equal(t, 3, countLoading(&m), "unexpected condition")
 
 	m2, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
@@ -350,33 +291,19 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 		err:       errors.New("server error"),
 	})
 
-	if m2.filterTree[0].loading {
-		t.Error("Expected loading=false after error")
-	}
-	if !m2.filterTree[0].fetchFailed {
-		t.Error("Expected fetchFailed=true after error")
-	}
+	assert.False(t, m2.filterTree[0].loading, "unexpected condition")
+	assert.True(t, m2.filterTree[0].fetchFailed, "unexpected condition")
 
-	if cmd != nil {
-		t.Error("Expected nil top-up cmd (no eligible repos to fetch)")
-	}
+	assert.Nil(t, cmd, "unexpected condition")
 
 	cmd2 := m2.fetchUnloadedBranches()
-	if cmd2 != nil {
-		t.Error("Expected nil cmd — failed repo should not be retried")
-	}
+	assert.Nil(t, cmd2, "unexpected condition")
 
 	m2.filterSelectedIdx = 1
 	m3, cmd3 := pressSpecial(m2, tea.KeyRight)
-	if !m3.filterTree[0].loading {
-		t.Error("Expected loading=true after manual retry")
-	}
-	if m3.filterTree[0].fetchFailed {
-		t.Error("Expected fetchFailed=false after manual retry")
-	}
-	if cmd3 == nil {
-		t.Error("Expected fetch command from manual retry")
-	}
+	assert.True(t, m3.filterTree[0].loading, "unexpected condition")
+	assert.False(t, m3.filterTree[0].fetchFailed, "unexpected condition")
+	assert.NotNil(t, cmd3, "unexpected condition")
 }
 
 func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
@@ -392,21 +319,15 @@ func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
 
 	m.filterSearch = "test"
 	cmd := m.fetchUnloadedBranches()
-	if cmd != nil {
-		t.Error("Expected nil cmd — fetchFailed should block")
-	}
+	assert.Nil(t, cmd, "unexpected condition")
 
 	m.filterSearch = ""
 	m.rebuildFilterFlatList()
-	if m.filterTree[0].fetchFailed {
-		t.Error("Expected fetchFailed=false after search cleared")
-	}
+	assert.False(t, m.filterTree[0].fetchFailed, "unexpected condition")
 
 	m.filterSearch = "test"
 	cmd2 := m.fetchUnloadedBranches()
-	if cmd2 == nil {
-		t.Error("Expected fetch cmd in new search session")
-	}
+	assert.NotNil(t, cmd2, "unexpected condition")
 }
 
 func TestTUILateErrorAfterSearchClear(t *testing.T) {
@@ -428,15 +349,11 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 		err:       errors.New("timeout"),
 	})
 
-	if m2.filterTree[0].fetchFailed {
-		t.Error("Late error after search clear should not set fetchFailed")
-	}
+	assert.False(t, m2.filterTree[0].fetchFailed, "unexpected condition")
 
 	m2.filterSearch = "test"
 	cmd := m2.fetchUnloadedBranches()
-	if cmd == nil {
-		t.Error("Expected fetch cmd — repo should be eligible")
-	}
+	assert.NotNil(t, cmd, "unexpected condition")
 }
 
 // TestTUIStaleSearchErrorIgnored verifies that an error from a
@@ -453,18 +370,14 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 
 	m, _ = pressKey(m, 'f')
 	staleSeq := m.filterSearchSeq
-	if staleSeq != 1 {
-		t.Fatalf("Expected filterSearchSeq=1 after typing, got %d", staleSeq)
-	}
+	assert.Equal(t, 1, staleSeq, "unexpected condition")
 
 	m.filterTree[0].loading = true
 
 	m, _ = pressSpecial(m, tea.KeyBackspace)
 	m, _ = pressKey(m, 'm')
 	newSeq := m.filterSearchSeq
-	if newSeq != 3 {
-		t.Fatalf("Expected filterSearchSeq=3, got %d", newSeq)
-	}
+	assert.Equal(t, 3, newSeq, "unexpected condition")
 
 	m, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
@@ -473,15 +386,9 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 		searchSeq: staleSeq,
 	})
 
-	if m.filterTree[0].fetchFailed {
-		t.Error(
-			"fetchFailed should not be set by a stale search error",
-		)
-	}
+	assert.False(t, m.filterTree[0].fetchFailed, "fetchFailed should not be set by a stale search error")
 
-	if cmd == nil {
-		t.Error("Expected top-up fetch cmd for repo in new session")
-	}
+	assert.NotNil(t, cmd, "unexpected condition")
 }
 
 // TestTUISearchBeforeReposLoad verifies that when the user types
@@ -492,9 +399,7 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 	m.currentView = viewFilter
 
 	m, _ = pressKey(m, 'f')
-	if m.filterSearch != "f" {
-		t.Fatalf("Expected filterSearch='f', got %q", m.filterSearch)
-	}
+	assert.Equal(t, "f", m.filterSearch, "unexpected condition")
 
 	m2, cmd := updateModel(t, m, reposMsg{
 		repos: []repoFilterItem{
@@ -503,13 +408,9 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 		},
 	})
 
-	if len(m2.filterTree) != 2 {
-		t.Fatalf("Expected 2 repos, got %d", len(m2.filterTree))
-	}
+	assert.Len(t, m2.filterTree, 2, "unexpected condition")
 
-	if cmd == nil {
-		t.Fatal("Expected fetchUnloadedBranches cmd after repos load with active search")
-	}
+	assert.NotNil(t, cmd, "Expected fetchUnloadedBranches cmd after repos load with active search")
 
 	anyLoading := false
 	for _, node := range m2.filterTree {
@@ -518,9 +419,7 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 			break
 		}
 	}
-	if !anyLoading {
-		t.Error("Expected at least one repo to be loading after repos load with active search")
-	}
+	assert.True(t, anyLoading, "unexpected condition")
 }
 
 // TestTUISearchEditClearsFetchFailed verifies that changing search
@@ -543,17 +442,11 @@ func TestTUISearchEditClearsFetchFailed(t *testing.T) {
 		err:       fmt.Errorf("timeout"),
 		searchSeq: seqA,
 	})
-	if !m.filterTree[0].fetchFailed {
-		t.Fatal("Expected fetchFailed=true after error in current session")
-	}
+	assert.True(t, m.filterTree[0].fetchFailed, "Expected fetchFailed=true after error in current session")
 
 	m, cmd := pressKey(m, 'b')
 
-	if m.filterTree[0].fetchFailed {
-		t.Error("fetchFailed should be cleared when search text changes")
-	}
+	assert.False(t, m.filterTree[0].fetchFailed, "unexpected condition")
 
-	if cmd == nil {
-		t.Error("Expected fetch cmd for previously-failed repo after search edit")
-	}
+	assert.NotNil(t, cmd, "unexpected condition")
 }

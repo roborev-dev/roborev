@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 // --- testModelOption functions for review tests ---
@@ -58,25 +59,15 @@ func assertFixPanelState(
 	t *testing.T, m model, open, focused bool,
 ) {
 	t.Helper()
-	if m.reviewFixPanelOpen != open {
-		t.Errorf("reviewFixPanelOpen: got %v, want %v",
-			m.reviewFixPanelOpen, open)
-	}
-	if m.reviewFixPanelFocused != focused {
-		t.Errorf("reviewFixPanelFocused: got %v, want %v",
-			m.reviewFixPanelFocused, focused)
-	}
+	assert.Equal(t, open, m.reviewFixPanelOpen, "reviewFixPanelOpen")
+	assert.Equal(t, focused, m.reviewFixPanelFocused, "reviewFixPanelFocused")
 }
 
 func assertFixPanelClosed(t *testing.T, m model) {
 	t.Helper()
 	assertFixPanelState(t, m, false, false)
-	if m.fixPromptText != "" {
-		t.Errorf("fixPromptText not cleared: %q", m.fixPromptText)
-	}
-	if m.fixPromptJobID != 0 {
-		t.Errorf("fixPromptJobID not cleared: %d", m.fixPromptJobID)
-	}
+	assert.Empty(t, m.fixPromptText, "fixPromptText")
+	assert.Zero(t, m.fixPromptJobID, "fixPromptJobID")
 }
 
 func assertFixPanelOpen(
@@ -84,10 +75,7 @@ func assertFixPanelOpen(
 ) {
 	t.Helper()
 	assertFixPanelState(t, m, true, true)
-	if m.fixPromptJobID != jobID {
-		t.Errorf("fixPromptJobID: got %d, want %d",
-			m.fixPromptJobID, jobID)
-	}
+	assert.Equal(t, jobID, m.fixPromptJobID, "fixPromptJobID")
 }
 
 // --- Mock review server handler ---

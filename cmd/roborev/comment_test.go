@@ -1,14 +1,13 @@
 package main
 
-// Tests for the comment command
-
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func mockCommentHandler(t *testing.T, receivedJobID *int64) http.HandlerFunc {
@@ -17,15 +16,15 @@ func mockCommentHandler(t *testing.T, receivedJobID *int64) http.HandlerFunc {
 			var req struct {
 				JobID int64 `json:"job_id"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("failed to decode request body: %v", err)
-				http.Error(w, "bad request", http.StatusBadRequest)
+			decoder := json.NewDecoder(r.Body)
+			if err := decoder.Decode(&req); err != nil {
+				assert.NoError(t, err, "failed to decode request body: %v", err)
 				return
 			}
 			*receivedJobID = req.JobID
 			w.WriteHeader(http.StatusCreated)
 			if err := json.NewEncoder(w).Encode(storage.Response{ID: 1, JobID: receivedJobID}); err != nil {
-				t.Logf("failed to encode response: %v", err)
+				assert.NoError(t, err, "failed to encode response: %v", err)
 			}
 			return
 		}
@@ -60,11 +59,14 @@ func TestCommentJobFlag(t *testing.T) {
 
 			if !tt.wantErr {
 				daemonFromHandler(t, mockCommentHandler(t, &receivedJobID))
+			} else {
+
+				_ = mockCommentHandler(t, nil)
 			}
 
 			cmd := commentCmd()
 			cmd.SetArgs(tt.args)
-			// Silence usage output for expected errors to keep test output clean
+
 			if tt.wantErr {
 				cmd.SilenceUsage = true
 				cmd.SilenceErrors = true
@@ -72,19 +74,12 @@ func TestCommentJobFlag(t *testing.T) {
 			err := cmd.Execute()
 
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), tt.wantErrSubstr) {
-					t.Errorf("expected error containing %q, got %q", tt.wantErrSubstr, err.Error())
-				}
+				require.Error(t, err, "expected error, got nil")
+				require.ErrorContains(t, err, tt.wantErrSubstr, "expected error containing %q", tt.wantErrSubstr)
 			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if receivedJobID != tt.wantJobID {
-					t.Errorf("expected job_id %d, got %d", tt.wantJobID, receivedJobID)
-				}
+				require.NoError(t, err)
+				require.Equal(t, tt.wantJobID, receivedJobID, "expected job_id %d, got %d", tt.wantJobID, receivedJobID)
+
 			}
 		})
 	}

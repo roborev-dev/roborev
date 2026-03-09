@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/stretchr/testify/require"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -36,7 +37,7 @@ func TestCloseOnContextDoneClosesOnCancel(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("expected closer to be closed after context cancellation")
+	require.Equal(t, int32(1), closer.closed.Load(), "expected closer to be closed after context cancellation")
 }
 
 func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
@@ -50,7 +51,7 @@ func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	if got := closer.closed.Load(); got != 0 {
-		t.Fatalf("closer should not be closed after stop(), got %d", got)
+		require.Equal(t, int32(0), got, "closer should not be closed after stop(), got %d", got)
 	}
 }
 
@@ -60,7 +61,7 @@ func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 	stop()
 
 	if got := closer.closed.Load(); got != 0 {
-		t.Fatalf("background context should not close the closer, got %d", got)
+		require.Equal(t, int32(0), got, "background context should not close the closer, got %d", got)
 	}
 }
 
@@ -71,16 +72,16 @@ func TestContextProcessError(t *testing.T) {
 	tracker.canceledByContext.Store(true)
 
 	if got := contextProcessError(ctx, tracker, errors.New("agent failed"), nil); got != nil {
-		t.Fatalf("real subprocess error should be preserved, got context error %v", got)
+		require.NoError(t, got, "real subprocess error should be preserved, got context error %v", got)
 	}
 	if got := contextProcessError(ctx, tracker, exec.ErrWaitDelay, nil); !errors.Is(got, context.Canceled) {
-		t.Fatalf("expected context cancellation for wait delay, got %v", got)
+		require.ErrorIs(t, got, context.Canceled, "expected context cancellation for wait delay, got %v", got)
 	}
 	if got := contextProcessError(ctx, tracker, nil, fs.ErrClosed); !errors.Is(got, context.Canceled) {
-		t.Fatalf("expected context cancellation for closed pipe parse error, got %v", got)
+		require.ErrorIs(t, got, context.Canceled, "expected context cancellation for closed pipe parse error, got %v", got)
 	}
 	if got := contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed); got != nil {
-		t.Fatalf("real subprocess error should not be masked by closed pipe parse error, got %v", got)
+		require.NoError(t, got, "real subprocess error should not be masked by closed pipe parse error, got %v", got)
 	}
 }
 
@@ -95,11 +96,10 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	tracker := configureSubprocess(cmd)
 
 	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected command cancellation")
-	}
+	require.Error(t, err, "expected command cancellation")
+
 	if got := contextProcessError(ctx, tracker, err, nil); !errors.Is(got, context.DeadlineExceeded) {
-		t.Fatalf("expected deadline exceeded, got %v (run err: %v)", got, err)
+		require.EqualError(t, got, context.DeadlineExceeded.Error(), "expected deadline exceeded, got %v (run err: %v)", got, err)
 	}
 }
 
@@ -111,13 +111,12 @@ func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) 
 	tracker := configureSubprocess(cmd)
 
 	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected signal exit")
-	}
+	require.Error(t, err, "expected signal exit")
+
 	cancel()
 
 	if got := contextProcessError(ctx, tracker, err, nil); got != nil {
-		t.Fatalf("signal exit should not be rewritten as context error, got %v (run err: %v)", got, err)
+		require.Same(t, err, got, "signal exit should not be rewritten as context error, got %v (run err: %v)", got, err)
 	}
 }
 
@@ -131,15 +130,13 @@ func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testi
 	tracker := configureSubprocess(cmd)
 
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("Run: %v", err)
+		require.NoError(t, err, "Run: %v")
 	}
-	if cmd.Cancel == nil {
-		t.Fatal("expected wrapped cancel")
-	}
+	require.NotNil(t, cmd.Cancel, "expected wrapped cancel")
+
 	if err := cmd.Cancel(); !errors.Is(err, os.ErrProcessDone) {
-		t.Fatalf("expected os.ErrProcessDone, got %v", err)
+		require.ErrorIs(t, err, os.ErrProcessDone, "expected os.ErrProcessDone, got %v", err)
 	}
-	if tracker.canceledByContext.Load() {
-		t.Fatal("tracker should stay false when cancel runs after process exit")
-	}
+	require.False(t, tracker.canceledByContext.Load(), "tracker should stay false when cancel runs after process exit")
+
 }

@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSanitizeTarPath(t *testing.T) {
@@ -34,6 +37,9 @@ func TestSanitizeTarPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			if tt.targetOS == "windows" && runtime.GOOS != "windows" {
 				t.Skip("Windows-only test")
 			}
@@ -41,8 +47,11 @@ func TestSanitizeTarPath(t *testing.T) {
 				t.Skip("Unix-only test")
 			}
 			_, err := sanitizeTarPath(destDir, tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			assert.Equal(tt.wantErr, err != nil, "sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			if tt.wantErr {
+				require.Error(err)
+			} else {
+				require.NoError(err)
 			}
 		})
 	}
@@ -57,11 +66,11 @@ type archiveEntry struct {
 }
 
 func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
+	require := require.New(t)
+
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	defer f.Close()
 
 	gzw := gzip.NewWriter(f)
@@ -82,17 +91,18 @@ func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
 			Linkname: e.LinkName,
 		}
 		if err := tw.WriteHeader(h); err != nil {
-			t.Fatal(err)
+			require.NoError(err)
 		}
 		if len(e.Content) > 0 {
 			if _, err := tw.Write([]byte(e.Content)); err != nil {
-				t.Fatal(err)
+				require.NoError(err)
 			}
 		}
 	}
 }
 
 func TestExtractTarGzPathTraversal(t *testing.T) {
+
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "malicious.tar.gz")
 	extractDir := filepath.Join(tmpDir, "extract")
@@ -104,17 +114,17 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 
 	// Extract should fail
 	err := extractTarGz(archivePath, extractDir)
-	if err == nil {
-		t.Error("extractTarGz should fail with path traversal attempt")
-	}
+	require.Error(t, err, "extractTarGz should fail with path traversal attempt")
 
 	// Verify the file wasn't created outside
 	if _, err := os.Stat(outsideFile); !os.IsNotExist(err) {
-		t.Error("Malicious file was created outside extract dir")
+		require.NoError(t, err, "Malicious file was created outside extract dir")
 	}
 }
 
 func TestExtractTarGzSymlinkSkipped(t *testing.T) {
+	require := require.New(t)
+
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "symlink.tar.gz")
 	extractDir := filepath.Join(tmpDir, "extract")
@@ -125,18 +135,16 @@ func TestExtractTarGzSymlinkSkipped(t *testing.T) {
 	})
 
 	// Extract should succeed (symlinks are skipped)
-	if err := extractTarGz(archivePath, extractDir); err != nil {
-		t.Fatalf("extractTarGz failed: %v", err)
-	}
+	require.NoError(extractTarGz(archivePath, extractDir), "extractTarGz failed")
 
 	// Normal file should exist
 	if _, err := os.Stat(filepath.Join(extractDir, "normal.txt")); err != nil {
-		t.Error("Normal file should have been extracted")
+		require.NoError(err, "Normal file should have been extracted")
 	}
 
 	// Symlink should not exist
 	if _, err := os.Lstat(filepath.Join(extractDir, "evil-link")); !os.IsNotExist(err) {
-		t.Error("Symlink should have been skipped")
+		require.NoError(err, "Symlink should have been skipped")
 	}
 }
 
@@ -199,10 +207,9 @@ abc123cef456789012345678901234567890123456789012345678901234abcc  roborev_darwin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			got := extractChecksum(tt.body, tt.assetName)
-			if got != tt.want {
-				t.Errorf("extractChecksum() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(tt.want, got, "extractChecksum() = %q, want %q", got, tt.want)
 		})
 	}
 }
@@ -247,10 +254,9 @@ func TestExtractBaseSemver(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
+			assert := assert.New(t)
 			got := extractBaseSemver(tt.version)
-			if got != tt.want {
-				t.Errorf("extractBaseSemver(%q) = %q, want %q", tt.version, got, tt.want)
-			}
+			assert.Equal(tt.want, got, "extractBaseSemver(%q) = %q, want %q", tt.version, got, tt.want)
 		})
 	}
 }
@@ -290,10 +296,9 @@ func TestIsDevBuildVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
+			assert := assert.New(t)
 			got := isDevBuildVersion(tt.version)
-			if got != tt.want {
-				t.Errorf("isDevBuildVersion(%q) = %v, want %v", tt.version, got, tt.want)
-			}
+			assert.Equal(tt.want, got, "isDevBuildVersion(%q) = %v, want %v", tt.version, got, tt.want)
 		})
 	}
 }
@@ -356,10 +361,9 @@ func TestIsNewer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			got := isNewer(tt.v1, tt.v2)
-			if got != tt.want {
-				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.v1, tt.v2, got, tt.want)
-			}
+			assert.Equal(tt.want, got, "isNewer(%q, %q) = %v, want %v", tt.v1, tt.v2, got, tt.want)
 		})
 	}
 }
@@ -434,18 +438,10 @@ func TestFindAssets(t *testing.T) {
 func checkAsset(t *testing.T, got *Asset, want *Asset) {
 	t.Helper()
 	if want == nil {
-		if got != nil {
-			t.Errorf("expected nil asset, got %v", got)
-		}
+		require.Nil(t, got, "expected nil asset, got %v", got)
 		return
 	}
-	if got == nil {
-		t.Fatal("expected non-nil asset")
-	}
-	if got.BrowserDownloadURL != want.BrowserDownloadURL {
-		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, want.BrowserDownloadURL)
-	}
-	if got.Size != want.Size {
-		t.Errorf("got Size %d, want %d", got.Size, want.Size)
-	}
+	require.NotNil(t, got, "expected non-nil asset")
+	require.Equal(t, want.BrowserDownloadURL, got.BrowserDownloadURL, "got URL %q, want %q", got.BrowserDownloadURL, want.BrowserDownloadURL)
+	require.Equal(t, want.Size, got.Size, "got Size %d, want %d", got.Size, want.Size)
 }

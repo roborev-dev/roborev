@@ -10,6 +10,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnsureDaemonRestartsWhenLegacyProbeHasNoVersion(t *testing.T) {
@@ -57,11 +59,9 @@ func TestEnsureDaemonRestartsWhenLegacyProbeHasNoVersion(t *testing.T) {
 			})
 
 			if err := ensureDaemon(); err != nil {
-				t.Fatalf("ensureDaemon returned error: %v", err)
+				require.NoError(t, err, "ensureDaemon returned error: %v")
 			}
-			if restartCalls != 1 {
-				t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
-			}
+			assert.Equal(t, 1, restartCalls, "unexpected condition")
 		})
 	}
 }
@@ -108,11 +108,9 @@ func TestEnsureDaemonRestartsWhenManualLegacyProbeHasNoVersion(t *testing.T) {
 			})
 
 			if err := ensureDaemon(); err != nil {
-				t.Fatalf("ensureDaemon returned error: %v", err)
+				require.NoError(t, err, "ensureDaemon returned error: %v")
 			}
-			if restartCalls != 1 {
-				t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
-			}
+			assert.Equal(t, 1, restartCalls, "unexpected condition")
 		})
 	}
 }
@@ -153,11 +151,9 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 	})
 
 	if err := ensureDaemon(); err != nil {
-		t.Fatalf("ensureDaemon returned error: %v", err)
+		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
-	if restartCalls != 1 {
-		t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
-	}
+	assert.Equal(t, 1, restartCalls, "unexpected condition")
 }
 
 func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.T) {
@@ -183,9 +179,7 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	})
 
 	if err := ensureDaemon(); err != nil {
-		t.Fatalf("ensureDaemon returned error: %v", err)
+		require.NoError(t, err, "ensureDaemon returned error: %v")
 	}
-	if restartCalls != 1 {
-		t.Fatalf("expected restartDaemonForEnsure to be called once, got %d", restartCalls)
-	}
+	assert.Equal(t, 1, restartCalls, "unexpected condition")
 }

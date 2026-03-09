@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // reviewHarness encapsulates a test git repo, cobra command, and output buffer.
@@ -121,7 +122,7 @@ func TestLocalReviewFlag(t *testing.T) {
 	// Passing --help to cobra usually returns nil error but prints usage.
 
 	if err := h.runCmd("--local", "--help"); err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
+		require.NoError(t, err, "Expected no error, got: %v")
 	}
 
 	h.assertOutputContains("--local")
@@ -132,9 +133,8 @@ func TestLocalReviewRequiresAgent(t *testing.T) {
 	h := newReviewHarness(t)
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error with test agent, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error with test agent, got: %v")
+	
 
 	h.assertOutputContains("Running test review")
 }
@@ -145,13 +145,12 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 	// Create a new file to make the repo dirty
 	newFile := filepath.Join(h.Dir, "newfile.go")
 	if err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0644); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	err := h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 	// We don't check output for diff content because agent output is mocked.
 	h.assertOutputContains("Commit: dirty")
 }
@@ -161,9 +160,8 @@ func TestLocalReviewAgentResolution(t *testing.T) {
 	h.writeConfig(`agent = "test"`)
 
 	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputContains("Running test review")
 }
@@ -176,9 +174,8 @@ model = "test-model"
 `)
 
 	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputContains("model: test-model")
 }
@@ -221,7 +218,7 @@ func TestLocalReviewValidation(t *testing.T) {
 			if tc.wantErr != "" {
 				h.assertErrorContains(err, tc.wantErr)
 			} else if err != nil {
-				t.Fatalf("Expected no error, got: %v", err)
+				require.NoError(t, err, "Expected no error, got: %v")
 			}
 			if tc.wantOutput != "" {
 				h.assertOutputContains(tc.wantOutput)
@@ -238,9 +235,8 @@ review_agent_fast = "test"
 `)
 
 	err := h.run(runOpts{Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputContains("Running test review")
 }
@@ -254,9 +250,8 @@ review_model_thorough = "thorough-model"
 `)
 
 	err := h.run(runOpts{})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputContains("model: thorough-model")
 }
@@ -269,9 +264,8 @@ review_reasoning = "fast"
 `)
 
 	err := h.run(runOpts{})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputContains("reasoning: fast")
 }
@@ -280,9 +274,8 @@ func TestLocalReviewQuietMode(t *testing.T) {
 	h := newReviewHarness(t)
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast", Quiet: true})
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
+	require.NoError(t, err, "Expected no error, got: %v")
+	
 
 	h.assertOutputNotContains("Running")
 }
@@ -293,7 +286,6 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
-	if err != nil {
-		t.Fatalf("Expected --local to work without daemon, got: %v", err)
-	}
+	require.NoError(t, err, "Expected --local to work without daemon, got: %v")
+	
 }

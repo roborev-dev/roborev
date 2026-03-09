@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // toolsArgValue returns the value of the --allowedTools argument.
@@ -16,12 +19,14 @@ func toolsArgValue(t *testing.T, args []string) string {
 	if idx != -1 && idx+1 < len(args) {
 		return args[idx+1]
 	}
-	t.Fatal("--allowedTools not found in args")
+	require.NotContains(t, args, "--allowedTools", "--allowedTools not found in args")
 	return ""
 }
 
 func assertTools(t *testing.T, args []string, want []string, dontWant []string) {
 	t.Helper()
+	assert := assert.New(t)
+
 	val := toolsArgValue(t, args)
 	gotTools := strings.Split(val, ",")
 	for i := range gotTools {
@@ -30,15 +35,11 @@ func assertTools(t *testing.T, args []string, want []string, dontWant []string) 
 
 	// Check required
 	for _, w := range want {
-		if !slices.Contains(gotTools, w) {
-			t.Errorf("missing tool %q in %v", w, gotTools)
-		}
+		assert.Contains(gotTools, w, "missing tool %q", w)
 	}
 	// Check forbidden
 	for _, d := range dontWant {
-		if slices.Contains(gotTools, d) {
-			t.Errorf("forbidden tool %q found in %v", d, gotTools)
-		}
+		assert.NotContains(gotTools, d, "forbidden tool %q", d)
 	}
 }
 
@@ -83,27 +84,26 @@ func TestClaudeBuildArgs(t *testing.T) {
 }
 
 func TestClaudeDangerousFlagSupport(t *testing.T) {
+	assert := assert.New(t)
+
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+claudeDangerousFlag+"\"; exit 1\n")
 
-	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if !supported {
-		t.Fatalf("expected dangerous flag support, got false")
-	}
+		supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
+		require.NoError(t, err)
+	assert.True(supported, "expected dangerous flag support")
 }
 
 func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
+	assert := assert.New(t)
+
 	withUnsafeAgents(t, true)
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
 
 	a := NewClaudeAgent(cmdPath)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil || !strings.Contains(err.Error(), "does not support") {
-		t.Fatalf("expected unsupported flag error, got %v", err)
-	}
+		_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+		require.Error(t, err)
+	assert.Contains(err.Error(), "does not support")
 }
 
 func TestClaudeReviewWithSessionResumePassesResumeArgs(t *testing.T) {
@@ -277,6 +277,9 @@ still not json
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+
 			var out bytes.Buffer
 			var w io.Writer
 			if tt.expectOutput {
@@ -286,21 +289,16 @@ still not json
 			res, err := parseStreamJSON(strings.NewReader(tt.input), w)
 
 			if tt.expectedErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.expectedErr) {
-					t.Errorf("expected error containing %q, got %v", tt.expectedErr, err)
-				}
+				require.Error(err)
+				assert.Contains(err.Error(), tt.expectedErr)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if res != tt.expectedResult {
-				t.Errorf("expected result %q, got %q", tt.expectedResult, res)
-			}
+			require.NoError(err)
+			assert.Equal(tt.expectedResult, res)
 
-			if tt.expectOutput && out.Len() == 0 {
-				t.Error("expected output to be written")
+			if tt.expectOutput {
+				assert.NotZero(out.Len(), "expected output to be written")
 			}
 		})
 	}
@@ -356,15 +354,17 @@ func TestExtractContentText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			got := extractContentText([]byte(tt.raw))
-			if got != tt.want {
-				t.Errorf("extractContentText(%q) = %q, want %q", tt.raw, got, tt.want)
-			}
+			assert.Equal(tt.want, got)
 		})
 	}
 }
 
 func TestClaudeReviewEmptyOutput(t *testing.T) {
+	assert := assert.New(t)
+
 	// When Claude produces valid events but no review content,
 	// Review() should return "No review output generated" (not empty).
 	script := `#!/bin/sh
@@ -378,15 +378,13 @@ exit 0
 	result, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "No review output generated" {
-		t.Errorf("expected %q, got %q", "No review output generated", result)
-	}
+	require.NoError(t, err)
+	assert.Equal("No review output generated", result)
 }
 
 func TestClaudeReviewErrorResult(t *testing.T) {
+	assert := assert.New(t)
+
 	// When Claude exits with code 0 but emits is_error result,
 	// the error should propagate as a failure.
 	script := `#!/bin/sh
@@ -401,15 +399,13 @@ exit 0
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "Invalid API key") {
-		t.Errorf("expected error containing %q, got %q", "Invalid API key", err.Error())
-	}
+	require.Error(t, err)
+	assert.Contains(err.Error(), "Invalid API key")
 }
 
 func TestClaudeReviewErrorResultNonZeroExit(t *testing.T) {
+	assert := assert.New(t)
+
 	// When Claude emits is_error result AND exits non-zero,
 	// the error should include both stream error and exit status.
 	script := `#!/bin/sh
@@ -424,39 +420,29 @@ exit 1
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
 	errStr := err.Error()
-	if !strings.Contains(errStr, "quota exceeded") {
-		t.Errorf("expected error containing %q, got %q", "quota exceeded", errStr)
-	}
-	if !strings.Contains(errStr, "failed") {
-		t.Errorf("expected error containing %q, got %q", "failed", errStr)
-	}
+	assert.Contains(errStr, "quota exceeded")
+	assert.Contains(errStr, "failed")
 }
 
 func TestAnthropicAPIKey(t *testing.T) {
+	assert := assert.New(t)
+
 	// Clear any existing key
 	SetAnthropicAPIKey("")
 	t.Cleanup(func() { SetAnthropicAPIKey("") })
 
 	// Initially should be empty
-	if key := AnthropicAPIKey(); key != "" {
-		t.Fatalf("expected empty API key, got %q", key)
-	}
+	assert.Empty(AnthropicAPIKey())
 
 	// Set a key
 	SetAnthropicAPIKey("test-api-key")
-	if key := AnthropicAPIKey(); key != "test-api-key" {
-		t.Fatalf("expected 'test-api-key', got %q", key)
-	}
+	assert.Equal("test-api-key", AnthropicAPIKey())
 
 	// Clear the key
 	SetAnthropicAPIKey("")
-	if key := AnthropicAPIKey(); key != "" {
-		t.Fatalf("expected empty API key after clear, got %q", key)
-	}
+	assert.Empty(AnthropicAPIKey())
 }
 
 func TestFilterEnv(t *testing.T) {
@@ -488,10 +474,10 @@ func TestFilterEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+
 			got := filterEnv(tt.env, tt.keys...)
-			if !slices.Equal(got, tt.expected) {
-				t.Errorf("expected %q, got %q", tt.expected, got)
-			}
+			assert.Equal(tt.expected, got)
 		})
 	}
 }

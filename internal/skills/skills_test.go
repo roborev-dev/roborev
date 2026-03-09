@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var expectedSkills = []string{
@@ -16,8 +19,6 @@ var expectedSkills = []string{
 	"roborev-review-branch",
 }
 
-// setupTestEnv sets all home directory environment variables for cross-platform
-// compatibility and returns the temp home directory path. Cleanup is automatic.
 func setupTestEnv(t *testing.T) string {
 	t.Helper()
 	tmpHome := t.TempDir()
@@ -30,19 +31,13 @@ func setupTestEnv(t *testing.T) string {
 	return tmpHome
 }
 
-// createMockSkill creates an installed skill file at ~/.<agent>/skills/<skill>/SKILL.md.
 func createMockSkill(t *testing.T, homeDir string, agent Agent, skill string) {
 	t.Helper()
 	dir := filepath.Join(homeDir, "."+string(agent), "skills", skill)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old"), 0644))
 }
 
-// getResultForAgent finds the InstallResult for the given agent, or fails the test.
 func getResultForAgent(t *testing.T, results []InstallResult, agent Agent) *InstallResult {
 	t.Helper()
 	for i := range results {
@@ -50,7 +45,7 @@ func getResultForAgent(t *testing.T, results []InstallResult, agent Agent) *Inst
 			return &results[i]
 		}
 	}
-	t.Fatalf("no result found for agent %s", agent)
+	require.Condition(t, func() bool { return false }, "missing install result: no result found for agent %s", agent)
 	return nil
 }
 
@@ -59,9 +54,8 @@ func assertSkillsInstalled(t *testing.T, agentDir string) {
 	skillsDir := filepath.Join(agentDir, "skills")
 	for _, skill := range expectedSkills {
 		path := filepath.Join(skillsDir, skill, "SKILL.md")
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("expected %s to exist", path)
-		}
+		_, err := os.Stat(path)
+		require.NoError(t, err, "expected %s to exist", path)
 	}
 }
 
@@ -69,17 +63,11 @@ func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
 	setupTestEnv(t)
 
 	results, err := Install()
-	if err != nil {
-		t.Fatalf("Install failed: %v", err)
-	}
+	require.NoError(t, err, "Install failed")
 
 	claudeResult := getResultForAgent(t, results, AgentClaude)
-	if !claudeResult.Skipped {
-		t.Error("expected Claude to be skipped when ~/.claude doesn't exist")
-	}
-	if len(claudeResult.Installed) > 0 {
-		t.Errorf("expected no installed skills, got %v", claudeResult.Installed)
-	}
+	assert.True(t, claudeResult.Skipped, "expected Claude to be skipped when ~/.claude doesn't exist")
+	assert.Empty(t, claudeResult.Installed, "expected no installed skills")
 }
 
 func TestInstallWhenDirExists(t *testing.T) {
@@ -95,22 +83,14 @@ func TestInstallWhenDirExists(t *testing.T) {
 		t.Run(string(tt.agent), func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
 			agentDir := filepath.Join(tmpHome, tt.dirName)
-			if err := os.MkdirAll(agentDir, 0755); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.MkdirAll(agentDir, 0755))
 
 			results, err := Install()
-			if err != nil {
-				t.Fatalf("Install failed: %v", err)
-			}
+			require.NoError(t, err, "Install failed")
 
 			res := getResultForAgent(t, results, tt.agent)
-			if res.Skipped {
-				t.Error("expected not to be skipped")
-			}
-			if len(res.Installed) != len(expectedSkills) {
-				t.Errorf("expected %d installed skills, got %d", len(expectedSkills), len(res.Installed))
-			}
+			assert.False(t, res.Skipped, "expected not to be skipped")
+			assert.Len(t, res.Installed, len(expectedSkills))
 			assertSkillsInstalled(t, agentDir)
 		})
 	}
@@ -119,38 +99,23 @@ func TestInstallWhenDirExists(t *testing.T) {
 func TestInstallIdempotent(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 
-	// Create .claude directory
 	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 
-	// First install
 	results1, err := Install()
-	if err != nil {
-		t.Fatalf("First install failed: %v", err)
-	}
+	require.NoError(t, err, "First install failed: %v", err)
 
 	claude1 := getResultForAgent(t, results1, AgentClaude)
-	if len(claude1.Installed) != len(expectedSkills) {
-		t.Errorf("first install: expected %d installed, got %d", len(expectedSkills), len(claude1.Installed))
-	}
-	if len(claude1.Updated) != 0 {
-		t.Errorf("first install: expected 0 updated, got %d", len(claude1.Updated))
-	}
+	require.Len(t, claude1.Installed, len(expectedSkills), "first install: expected %d installed, got %d", len(expectedSkills), len(claude1.Installed))
+	require.Empty(t, claude1.Updated, "first install: expected 0 updated, got %d", len(claude1.Updated))
 
-	// Second install should show "updated" not "installed"
 	results2, err := Install()
-	if err != nil {
-		t.Fatalf("Second install failed: %v", err)
-	}
+	require.NoError(t, err, "Second install failed: %v", err)
 
 	claude2 := getResultForAgent(t, results2, AgentClaude)
-	if len(claude2.Installed) != 0 {
-		t.Errorf("second install: expected 0 installed, got %d", len(claude2.Installed))
-	}
-	if len(claude2.Updated) != len(expectedSkills) {
-		t.Errorf("second install: expected %d updated, got %d", len(expectedSkills), len(claude2.Updated))
-	}
+	require.Empty(t, claude2.Installed, "second install: expected 0 installed, got %d", len(claude2.Installed))
+	require.Len(t, claude2.Updated, len(expectedSkills), "second install: expected %d updated, got %d", len(expectedSkills), len(claude2.Updated))
 }
 
 func TestIsInstalled(t *testing.T) {
@@ -173,7 +138,7 @@ func TestIsInstalled(t *testing.T) {
 			agent: AgentClaude,
 			setup: func(t *testing.T, h string) {
 				if err := os.MkdirAll(filepath.Join(h, ".claude"), 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 			},
 			shouldExist: false,
@@ -189,7 +154,7 @@ func TestIsInstalled(t *testing.T) {
 			agent: AgentCodex,
 			setup: func(t *testing.T, h string) {
 				if err := os.MkdirAll(filepath.Join(h, ".codex"), 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 			},
 			shouldExist: false,
@@ -197,7 +162,7 @@ func TestIsInstalled(t *testing.T) {
 	}
 
 	for _, skill := range expectedSkills {
-		// Capture variable for closure
+
 		s := skill
 		tests = append(tests, testCase{
 			name:        "Claude with skill " + s,
@@ -213,13 +178,11 @@ func TestIsInstalled(t *testing.T) {
 		})
 	}
 
-	// Unsupported agent should always return false.
 	tests = append(tests, testCase{
 		name:  "unsupported agent",
 		agent: Agent("unknown"),
 		setup: func(t *testing.T, h string) {
-			// Install skills for both known agents to ensure
-			// the unknown agent still returns false.
+
 			createMockSkill(t, h, AgentClaude, "roborev-address")
 			createMockSkill(t, h, AgentCodex, "roborev-address")
 		},
@@ -231,9 +194,7 @@ func TestIsInstalled(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(t, tmpHome)
 			}
-			if got := IsInstalled(tt.agent); got != tt.shouldExist {
-				t.Errorf("IsInstalled(%s) = %v, want %v", tt.agent, got, tt.shouldExist)
-			}
+			require.Equal(t, tt.shouldExist, IsInstalled(tt.agent), "IsInstalled(%s) = %v, want %v", tt.agent, IsInstalled(tt.agent), tt.shouldExist)
 		})
 	}
 }
@@ -243,7 +204,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		name          string
 		setup         func(t *testing.T, homeDir string)
 		wantResults   int
-		wantAgents    []Agent // Used when expecting multiple results
+		wantAgents    []Agent
 		wantUpdated   int
 		wantInstalled int
 	}{
@@ -251,9 +212,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			name: "updates Claude with fix skill only",
 			setup: func(t *testing.T, homeDir string) {
 				createMockSkill(t, homeDir, AgentClaude, "roborev-fix")
-				// Create .codex but NO skills installed
+
 				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 			},
 			wantResults:   1,
@@ -306,10 +267,10 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			name: "skips both when neither has skills",
 			setup: func(t *testing.T, homeDir string) {
 				if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 			},
 			wantResults:   0,
@@ -325,33 +286,22 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			tt.setup(t, tmpHome)
 
 			results, err := Update()
-			if err != nil {
-				t.Fatalf("Update failed: %v", err)
-			}
-
-			if len(results) != tt.wantResults {
-				t.Fatalf("expected %d results, got %d", tt.wantResults, len(results))
-			}
+			require.NoError(t, err, "Update failed: %v", err)
+			require.NoError(t, err, "expected %d results, got %d", tt.wantResults, len(results))
 
 			if tt.wantResults > 0 {
-				// Verify all expected agents are present
+
 				agentFound := make(map[Agent]bool)
 				for _, want := range tt.wantAgents {
 					agentFound[want] = false
 				}
 				for _, r := range results {
 					agentFound[r.Agent] = true
-					if len(r.Updated) != tt.wantUpdated {
-						t.Errorf("expected %d updated for %s, got %d", tt.wantUpdated, r.Agent, len(r.Updated))
-					}
-					if len(r.Installed) != tt.wantInstalled {
-						t.Errorf("expected %d installed for %s, got %d", tt.wantInstalled, r.Agent, len(r.Installed))
-					}
+					require.Len(t, r.Updated, tt.wantUpdated, "expected %d updated for %s, got %d", tt.wantUpdated, r.Agent, len(r.Updated))
+					require.Len(t, r.Installed, tt.wantInstalled, "expected %d installed for %s, got %d", tt.wantInstalled, r.Agent, len(r.Installed))
 				}
 				for want, found := range agentFound {
-					if !found {
-						t.Errorf("expected %s in results", want)
-					}
+					require.True(t, found, "expected %s in results", want)
 				}
 			}
 		})

@@ -13,53 +13,33 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestACPAgent(t *testing.T) {
-	// Test agent creation and configuration
+
 	acpAgent := NewACPAgent("test-acp-agent")
 
-	if acpAgent.Name() != "acp" {
-		t.Errorf("Expected Name() to return 'acp', got '%s'", acpAgent.Name())
-	}
+	assert.Equal(t, "acp", acpAgent.Name(), "unexpected condition")
 
-	if acpAgent.CommandName() != "test-acp-agent" {
-		t.Errorf("Expected CommandName() to be 'test-acp-agent', got '%s'", acpAgent.CommandName())
-	}
+	assert.Equal(t, "test-acp-agent", acpAgent.CommandName(), "unexpected condition")
 
-	// Test WithReasoning
 	thoroughAgent := acpAgent.WithReasoning(ReasoningThorough)
-	if thoroughAgent.(*ACPAgent).Reasoning != ReasoningThorough {
-		t.Errorf("Expected Reasoning to be 'thorough', got '%s'", thoroughAgent.(*ACPAgent).Reasoning)
-	}
+	assert.Equal(t, ReasoningThorough, thoroughAgent.(*ACPAgent).Reasoning, "unexpected condition")
 
-	// Test WithAgentic
 	agenticAgent := acpAgent.WithAgentic(true)
-	if !agenticAgent.(*ACPAgent).Agentic {
-		t.Error("Expected Agentic to be true")
-	}
+	assert.True(t, agenticAgent.(*ACPAgent).Agentic, "unexpected condition")
 
-	// Test WithModel
 	modelAgent := acpAgent.WithModel("gpt-4")
-	if modelAgent.(*ACPAgent).Model != "gpt-4" {
-		t.Errorf("Expected Model to be 'gpt-4', got '%s'", modelAgent.(*ACPAgent).Model)
-	}
+	assert.Equal(t, "gpt-4", modelAgent.(*ACPAgent).Model, "unexpected condition")
 
-	// Agentic state should survive model overrides.
-	if !acpAgent.WithAgentic(true).WithModel("gpt-4").(*ACPAgent).Agentic {
-		t.Errorf("Expected Agentic to be preserved through WithModel")
-	}
+	assert.True(t, acpAgent.WithAgentic(true).WithModel("gpt-4").(*ACPAgent).Agentic, "unexpected condition")
 
 	defaultAgent := NewACPAgent("")
-	if defaultAgent.Command != "acp-agent" {
-		t.Errorf("Expected default command to be 'acp-agent', got '%s'", defaultAgent.Command)
-	}
-	if defaultAgent.Mode != "plan" {
-		t.Errorf("Expected default mode to be 'plan', got '%s'", defaultAgent.Mode)
-	}
-	if defaultAgent.Timeout != 10*time.Minute {
-		t.Errorf("Expected default timeout to be 10m, got %s", defaultAgent.Timeout)
-	}
+	assert.Equal(t, "acp-agent", defaultAgent.Command, "unexpected condition")
+	assert.Equal(t, "plan", defaultAgent.Mode, "unexpected condition")
+	assert.Equal(t, 10*time.Minute, defaultAgent.Timeout, "unexpected condition")
 
 	configuredAgent := NewACPAgentFromConfig(&config.ACPAgentConfig{
 		Name:            "custom-acp",
@@ -68,31 +48,20 @@ func TestACPAgent(t *testing.T) {
 		AutoApproveMode: "auto-approve",
 		Mode:            "plan",
 	})
-	if configuredAgent.Name() != "custom-acp" {
-		t.Errorf("Expected Name() to return custom config name, got '%s'", configuredAgent.Name())
-	}
+	assert.Equal(t, "custom-acp", configuredAgent.Name(), "unexpected condition")
 }
 
 func TestACPAgentCommandLine(t *testing.T) {
 	agent := NewACPAgent("acp-agent")
 
-	// Test default command line
 	cmdLine := agent.CommandLine()
-	if !strings.Contains(cmdLine, "acp-agent") {
-		t.Errorf("Expected command line to contain 'acp-agent', got '%s'", cmdLine)
-	}
+	assert.Contains(t, cmdLine, "acp-agent", "unexpected condition")
 
-	// Test with model
 	withModel := agent.WithModel("claude-3-opus")
-	if withModel.CommandLine() != agent.CommandLine() {
-		t.Errorf("Expected command line to be unchanged. expected: \"%s\", got: \"%s\"", agent.CommandLine(), withModel.CommandLine())
-	}
+	assert.Equal(t, withModel.CommandLine(), agent.CommandLine(), "unexpected condition")
 
-	// Test with agentic mode
 	agentic := agent.WithAgentic(true)
-	if agent.CommandLine() != agentic.CommandLine() {
-		t.Errorf("Expected command line to be unchanged. expected: \"%s\", got: \"%s\"", agent.CommandLine(), withModel.CommandLine())
-	}
+	assert.Equal(t, agent.CommandLine(), agentic.CommandLine(), "unexpected condition")
 }
 
 func TestApplyACPAgentConfigOverrideModeResolution(t *testing.T) {
@@ -156,15 +125,9 @@ func TestApplyACPAgentConfigOverrideModeResolution(t *testing.T) {
 			cfg := defaultACPAgentConfig()
 			applyACPAgentConfigOverride(cfg, tc.override)
 
-			if cfg.ReadOnlyMode != tc.wantReadOnly {
-				t.Fatalf("ReadOnlyMode = %q, want %q", cfg.ReadOnlyMode, tc.wantReadOnly)
-			}
-			if cfg.Mode != tc.wantMode {
-				t.Fatalf("Mode = %q, want %q", cfg.Mode, tc.wantMode)
-			}
-			if cfg.DisableModeNegotiation != tc.wantDisableModeNeg {
-				t.Fatalf("DisableModeNegotiation = %v, want %v", cfg.DisableModeNegotiation, tc.wantDisableModeNeg)
-			}
+			require.Equal(t, tc.wantReadOnly, cfg.ReadOnlyMode, "ReadOnlyMode = %q, want %q", cfg.ReadOnlyMode, tc.wantReadOnly)
+			require.Equal(t, tc.wantMode, cfg.Mode, "Mode = %q, want %q", cfg.Mode, tc.wantMode)
+			require.Equal(t, tc.wantDisableModeNeg, cfg.DisableModeNegotiation, "DisableModeNegotiation = %v, want %v", cfg.DisableModeNegotiation, tc.wantDisableModeNeg)
 		})
 	}
 }
@@ -179,25 +142,15 @@ func TestNewACPAgentFromConfigDisableModeNegotiation(t *testing.T) {
 		AutoApproveMode:        "auto-approve",
 		DisableModeNegotiation: true,
 	})
-	if agent.Mode != "" {
-		t.Fatalf("expected mode negotiation disabled (empty mode), got %q", agent.Mode)
-	}
+	require.Empty(t, agent.Mode, "expected mode negotiation disabled (empty mode), got %q", agent.Mode)
 
 	agentic := agent.WithAgentic(true).(*ACPAgent)
-	if agentic.Mode != "" {
-		t.Fatalf("expected WithAgentic(true) to preserve disabled mode negotiation, got %q", agentic.Mode)
-	}
-	if !agentic.mutatingOperationsAllowed() {
-		t.Fatalf("expected mutating operations allowed in agentic mode when negotiation is disabled")
-	}
+	require.Empty(t, agentic.Mode, "expected WithAgentic(true) to preserve disabled mode negotiation, got %q", agentic.Mode)
+	require.True(t, agentic.mutatingOperationsAllowed(), "expected mutating operations allowed in agentic mode when negotiation is disabled")
 
 	nonAgentic := agent.WithAgentic(false).(*ACPAgent)
-	if nonAgentic.Mode != "" {
-		t.Fatalf("expected WithAgentic(false) to preserve disabled mode negotiation, got %q", nonAgentic.Mode)
-	}
-	if nonAgentic.mutatingOperationsAllowed() {
-		t.Fatalf("expected mutating operations denied in non-agentic mode when negotiation is disabled")
-	}
+	require.Empty(t, nonAgentic.Mode, "expected WithAgentic(false) to preserve disabled mode negotiation, got %q", nonAgentic.Mode)
+	require.False(t, nonAgentic.mutatingOperationsAllowed(), "expected mutating operations denied in non-agentic mode when negotiation is disabled")
 }
 
 func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
@@ -211,20 +164,12 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
-	if !ok {
-		t.Fatalf("Expected ACP agent, got %T", resolved)
-	}
-	if acpAgent.Name() != "acp" {
-		t.Fatalf("Expected canonical ACP name 'acp', got %q", acpAgent.Name())
-	}
-	if acpAgent.Command != "go" {
-		t.Fatalf("Expected ACP command from config, got %q", acpAgent.Command)
-	}
+	require.True(t, ok, "Expected ACP agent, got %T", resolved)
+	require.Equal(t, "acp", acpAgent.Name(), "Expected canonical ACP name 'acp', got %q", acpAgent.Name())
+	require.Equal(t, "go", acpAgent.Command, "Expected ACP command from config, got %q", acpAgent.Command)
 }
 
 func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
@@ -235,7 +180,7 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 	}
 	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
+		require.NoError(t, err, "failed to create fake acp-agent binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -247,20 +192,12 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig("claude", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
-	if !ok {
-		t.Fatalf("Expected ACP agent, got %T", resolved)
-	}
-	if acpAgent.Name() != "acp" {
-		t.Fatalf("Expected canonical ACP name 'acp', got %q", acpAgent.Name())
-	}
-	if acpAgent.Command != defaultACPCommand {
-		t.Fatalf("Expected ACP command %q, got %q", defaultACPCommand, acpAgent.Command)
-	}
+	require.True(t, ok, "Expected ACP agent, got %T", resolved)
+	require.Equal(t, "acp", acpAgent.Name(), "Expected canonical ACP name 'acp', got %q", acpAgent.Name())
+	require.Equal(t, defaultACPCommand, acpAgent.Command, "Expected ACP command %q, got %q", defaultACPCommand, acpAgent.Command)
 }
 
 func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissing(t *testing.T) {
@@ -271,7 +208,7 @@ func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissi
 	}
 	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
+		require.NoError(t, err, "failed to create fake acp-agent binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -283,17 +220,11 @@ func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissi
 	}
 
 	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
-	if !ok {
-		t.Fatalf("Expected resolved agent to implement CommandAgent, got %T", resolved)
-	}
-	if commandAgent.CommandName() != defaultACPCommand {
-		t.Fatalf("Expected fallback to canonical command %q, got %q", defaultACPCommand, commandAgent.CommandName())
-	}
+	require.True(t, ok, "Expected resolved agent to implement CommandAgent, got %T", resolved)
+	require.Equal(t, defaultACPCommand, commandAgent.CommandName(), "Expected fallback to canonical command %q, got %q", defaultACPCommand, commandAgent.CommandName())
 }
 
 func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMissing(t *testing.T) {
@@ -310,7 +241,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	}
 	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake acp-agent binary: %v", err)
+		require.NoError(t, err, "failed to create fake acp-agent binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -322,22 +253,13 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	}
 
 	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
-	if !ok {
-		t.Fatalf("Expected resolved agent to implement CommandAgent, got %T", resolved)
-	}
-	if commandAgent.CommandName() != defaultACPCommand {
-		t.Fatalf("Expected fallback to canonical command %q, got %q", defaultACPCommand, commandAgent.CommandName())
-	}
+	require.True(t, ok, "Expected resolved agent to implement CommandAgent, got %T", resolved)
+	require.Equal(t, defaultACPCommand, commandAgent.CommandName(), "Expected fallback to canonical command %q, got %q", defaultACPCommand, commandAgent.CommandName())
 }
 
-// Helper function for string containment checks
-
-// Helper function for testing
 func intPtr(i int) *int {
 	return &i
 }
@@ -354,13 +276,12 @@ func terminalExists(client *acpClient, terminalID string) bool {
 }
 
 func TestACPAgentTerminalFunctionality(t *testing.T) {
-	// Create agent and client for testing
-	// Set agent to auto-approve mode to allow terminal creation
+
 	agent := &ACPAgent{
 		SessionId:       "test-session",
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
-		Mode:            "auto-approve", // Set to auto-approve mode for testing
+		Mode:            "auto-approve",
 	}
 	client := &acpClient{
 		agent:          agent,
@@ -375,26 +296,17 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
-		if resp.TerminalId != "term-1" {
-			t.Errorf("Expected terminal ID 'term-1', got '%s'", resp.TerminalId)
-		}
+		assert.Equal(t, "term-1", resp.TerminalId, "unexpected condition")
 
-		if terminalCount(client) != 1 {
-			t.Errorf("Expected 1 terminal, got %d", terminalCount(client))
-		}
+		assert.Equal(t, 1, terminalCount(client), "unexpected condition")
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("Output truncation", func(t *testing.T) {
@@ -403,11 +315,9 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:       "test-session",
 			Command:         cmd,
 			Args:            args,
-			OutputByteLimit: intPtr(5), // Very small limit
+			OutputByteLimit: intPtr(5),
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
 		waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -415,33 +325,22 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		}); err != nil {
-			t.Fatalf("WaitForTerminalExit failed: %v", err)
+			require.NoError(t, err, "WaitForTerminalExit failed: %v")
 		}
 
-		// Get output and check truncation
 		outputResp, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to get terminal output: %v", err)
-		} else {
-			if len(outputResp.Output) > 5 {
-				t.Errorf("Expected output to be limited to 5 bytes, got %d bytes", len(outputResp.Output))
-			}
-			if !outputResp.Truncated {
-				t.Errorf("Expected output to be marked truncated when output exceeds byte limit")
-			}
-		}
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(outputResp.Output), 5, "unexpected condition")
+		assert.True(t, outputResp.Truncated, "Expected output to be marked truncated when output exceeds byte limit")
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("Terminal release with context cancellation", func(t *testing.T) {
@@ -451,23 +350,15 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
-		// Release should cancel the context
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 
-		// Terminal should be removed immediately on explicit release.
-		if terminalCount(client) != 0 {
-			t.Errorf("Expected 0 terminals after release, got %d", terminalCount(client))
-		}
+		assert.Equal(t, 0, terminalCount(client), "unexpected condition")
 	})
 
 	t.Run("Session ID validation", func(t *testing.T) {
@@ -477,29 +368,20 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
-		// Try to access with wrong session ID
 		_, err = client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
 			SessionId:  "wrong-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err == nil {
-			t.Error("Expected error for wrong session ID")
-		} else if !strings.Contains(err.Error(), "session ID mismatch") {
-			t.Errorf("Expected session ID mismatch error, got: %v", err)
-		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session ID mismatch", "unexpected error")
 
-		// Clean up
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("Terminal lifecycle - persists after command completion", func(t *testing.T) {
@@ -509,54 +391,35 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
-		// Terminal should exist.
-		if terminalCount(client) != 1 {
-			t.Errorf("Expected 1 terminal, got %d", terminalCount(client))
-		}
+		assert.Equal(t, 1, terminalCount(client), "unexpected condition")
 
-		// Wait for process completion and verify the terminal remains accessible.
 		waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		waitResp, err := client.WaitForTerminalExit(waitCtx, acp.WaitForTerminalExitRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Fatalf("WaitForTerminalExit failed: %v", err)
-		}
-		if waitResp.ExitCode == nil || *waitResp.ExitCode != 0 {
-			t.Fatalf("Expected exit code 0, got %+v", waitResp)
-		}
+		require.NoError(t, err, "WaitForTerminalExit failed: %v")
 
-		// Terminal should still exist after command completion (no auto-cleanup).
-		// This verifies the ACP spec requirement that terminals remain valid until explicit release
-		if !terminalExists(client, resp.TerminalId) {
-			t.Fatalf("Expected terminal %s to persist after completion", resp.TerminalId)
-		}
+		require.Equal(t, intPtr(0), waitResp.ExitCode, "Expected exit code 0, got %+v", waitResp)
+
+		require.True(t, terminalExists(client, resp.TerminalId), "Expected terminal %s to persist after completion", resp.TerminalId)
 
 		outputResp, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Fatalf("TerminalOutput failed: %v", err)
-		}
-		if outputResp.ExitStatus == nil || outputResp.ExitStatus.ExitCode == nil || *outputResp.ExitStatus.ExitCode != 0 {
-			t.Fatalf("Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
-		}
+		require.NoError(t, err, "TerminalOutput failed: %v")
 
-		// Clean up
+		require.Equal(t, intPtr(0), outputResp.ExitStatus.ExitCode, "Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
+
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("CreateTerminal defaults cwd to repo root when omitted", func(t *testing.T) {
@@ -570,36 +433,27 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
 		term, exists := client.getTerminal(resp.TerminalId)
-		if !exists {
-			t.Fatalf("terminal %s not found", resp.TerminalId)
-		}
+		require.True(t, exists, "terminal %s not found", resp.TerminalId)
 		resolvedTempDir, err := filepath.EvalSymlinks(tempDir)
-		if err != nil {
-			t.Fatalf("Failed to resolve temp dir: %v", err)
-		}
-		if !pathWithinRoot(term.cmd.Dir, resolvedTempDir) {
-			t.Fatalf("Expected terminal cwd %q to be within %q", term.cmd.Dir, resolvedTempDir)
-		}
+		require.NoError(t, err, "Failed to resolve temp dir: %v")
+
+		require.True(t, pathWithinRoot(term.cmd.Dir, resolvedTempDir), "Expected terminal cwd %q to be within %q", term.cmd.Dir, resolvedTempDir)
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("CreateTerminal resolves relative cwd against repo root", func(t *testing.T) {
 		tempDir := t.TempDir()
 		subdir := filepath.Join(tempDir, "sub")
 		if err := os.MkdirAll(subdir, 0o755); err != nil {
-			t.Fatalf("Failed to create subdir: %v", err)
+			require.NoError(t, err, "Failed to create subdir: %v")
 		}
 		client.agent.repoRoot = tempDir
 		client.repoRoot = tempDir
@@ -612,29 +466,20 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Args:      args,
 			Cwd:       &relative,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
 		term, exists := client.getTerminal(resp.TerminalId)
-		if !exists {
-			t.Fatalf("terminal %s not found", resp.TerminalId)
-		}
+		require.True(t, exists, "terminal %s not found", resp.TerminalId)
 		resolvedSubdir, err := filepath.EvalSymlinks(subdir)
-		if err != nil {
-			t.Fatalf("Failed to resolve subdir: %v", err)
-		}
-		if term.cmd.Dir != resolvedSubdir {
-			t.Fatalf("Expected terminal cwd %q, got %q", resolvedSubdir, term.cmd.Dir)
-		}
+		require.NoError(t, err, "Failed to resolve subdir: %v")
+
+		require.Equal(t, resolvedSubdir, term.cmd.Dir, "Expected terminal cwd %q, got %q", resolvedSubdir, term.cmd.Dir)
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("CreateTerminal rejects cwd traversal outside repo root", func(t *testing.T) {
@@ -644,7 +489,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		outsideDir := filepath.Join(filepath.Dir(tempDir), "outside")
 		if err := os.MkdirAll(outsideDir, 0o755); err != nil {
-			t.Fatalf("Failed to create outside dir: %v", err)
+			require.NoError(t, err, "Failed to create outside dir: %v")
 		}
 
 		relative := "../outside"
@@ -655,11 +500,10 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Args:      args,
 			Cwd:       &relative,
 		})
-		if err == nil {
-			t.Fatal("Expected error for cwd traversal outside repo root")
-		}
+		require.Error(t, err, "Expected error for cwd traversal outside repo root")
+
 		if !strings.Contains(err.Error(), "outside repository root") {
-			t.Fatalf("Expected outside repository root error, got: %v", err)
+			require.NoError(t, err, "Expected outside repository root error, got: %v")
 		}
 	})
 
@@ -677,30 +521,24 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			Command:   cmd,
 			Args:      args,
 		})
-		if err != nil {
-			t.Fatalf("Failed to create terminal: %v", err)
-		}
+		require.NoError(t, err, "Failed to create terminal: %v")
 
 		reqCancel()
 
 		term, exists := client.getTerminal(resp.TerminalId)
-		if !exists {
-			t.Fatalf("terminal %s not found", resp.TerminalId)
-		}
+		require.True(t, exists, "terminal %s not found", resp.TerminalId)
 		select {
 		case <-term.context.Done():
-			t.Fatalf("terminal context canceled by request context cancellation")
+			require.Condition(t, func() bool { return false }, "terminal context canceled by request context cancellation")
 		case <-time.After(50 * time.Millisecond):
-			// expected
+
 		}
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
-		if err != nil {
-			t.Errorf("Failed to release terminal: %v", err)
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("WaitForTerminalExit does not block other terminal operations", func(t *testing.T) {
@@ -728,7 +566,6 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			close(waitDone)
 		}()
 
-		// If WaitForTerminalExit still held the global map mutex, this add would block.
 		addDone := make(chan struct{})
 		go func() {
 			client.addTerminal(&acpTerminal{
@@ -740,9 +577,9 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		select {
 		case <-addDone:
-			// expected
+
 		case <-time.After(200 * time.Millisecond):
-			t.Fatal("addTerminal blocked while WaitForTerminalExit was waiting")
+			require.Condition(t, func() bool { return false }, "addTerminal blocked while WaitForTerminalExit was waiting")
 		}
 
 		blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: intPtr(0)})
@@ -751,22 +588,20 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		select {
 		case <-waitDone:
 		case <-time.After(2 * time.Second):
-			t.Fatal("WaitForTerminalExit did not return after done channel close")
+			require.Condition(t, func() bool { return false }, "WaitForTerminalExit did not return after done channel close")
 		}
 
 		select {
 		case err := <-waitErr:
-			t.Fatalf("WaitForTerminalExit returned error: %v", err)
+			require.NoError(t, err, "WaitForTerminalExit returned error: %v")
 		default:
 		}
 
 		select {
 		case resp := <-waitResp:
-			if resp.ExitCode == nil || *resp.ExitCode != 0 {
-				t.Fatalf("Expected exit code 0, got %+v", resp)
-			}
+			require.Equal(t, intPtr(0), resp.ExitCode, "Expected exit code 0, got %+v", resp)
 		default:
-			t.Fatal("missing WaitForTerminalExit response")
+			require.Condition(t, func() bool { return false }, "missing WaitForTerminalExit response")
 		}
 
 		client.removeTerminal("blocked")
@@ -774,14 +609,13 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 	})
 }
 
-// TestACPNoDoubleMutexUnlockPanics tests that the double mutex unlock panic issue is fixed
 func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
-	// Create agent and client for testing
+
 	agent := &ACPAgent{
 		SessionId:       "test-session",
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
-		Mode:            "auto-approve", // Set to auto-approve mode for testing
+		Mode:            "auto-approve",
 	}
 	client := &acpClient{
 		agent:          agent,
@@ -789,18 +623,15 @@ func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 		nextTerminalID: 1,
 	}
 
-	// Test WaitForTerminalExit with non-existent terminal
-	// This should not panic with double mutex unlock
 	_, err := client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
 		TerminalId: "non-existent-terminal",
 	})
 	if err != nil {
 		t.Logf("Expected error for non-existent terminal: %v", err)
 	}
-	// If we get here without panic, the test passes
+
 }
 
-// TestBoundedWriter tests the boundedWriter functionality
 func TestBoundedWriter(t *testing.T) {
 	t.Run("Write within limit", func(t *testing.T) {
 		buf := &bytes.Buffer{}
@@ -815,18 +646,11 @@ func TestBoundedWriter(t *testing.T) {
 		}
 
 		n, err := writer.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("Expected to write 5 bytes, got %d", n)
-		}
-		if buf.String() != "hello" {
-			t.Errorf("Expected buffer to contain 'hello', got '%s'", buf.String())
-		}
-		if writer.truncated {
-			t.Error("Writer should not be marked as truncated")
-		}
+		require.NoError(t, err, "Write failed: %v")
+
+		assert.Equal(t, 5, n, "unexpected condition")
+		assert.Equal(t, "hello", buf.String(), "unexpected condition")
+		assert.False(t, writer.truncated, "unexpected condition")
 	})
 
 	t.Run("Write exactly at limit", func(t *testing.T) {
@@ -842,18 +666,11 @@ func TestBoundedWriter(t *testing.T) {
 		}
 
 		n, err := writer.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("Expected to write 5 bytes, got %d", n)
-		}
-		if buf.String() != "hello" {
-			t.Errorf("Expected buffer to contain 'hello', got '%s'", buf.String())
-		}
-		if writer.truncated {
-			t.Error("Writer should not be marked as truncated when exactly at limit")
-		}
+		require.NoError(t, err, "Write failed: %v")
+
+		assert.Equal(t, 5, n, "unexpected condition")
+		assert.Equal(t, "hello", buf.String(), "unexpected condition")
+		assert.False(t, writer.truncated, "unexpected condition")
 	})
 
 	t.Run("Write exceeding limit with ASCII", func(t *testing.T) {
@@ -869,30 +686,17 @@ func TestBoundedWriter(t *testing.T) {
 		}
 
 		n, err := writer.Write([]byte("hello world"))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != len("hello world") {
-			t.Errorf("Expected consumed byte count %d, got %d", len("hello world"), n)
-		}
-		if buf.String() != "world" {
-			t.Errorf("Expected buffer to contain latest suffix 'world', got '%s'", buf.String())
-		}
-		if !writer.truncated {
-			t.Error("Writer should be marked as truncated")
-		}
+		require.NoError(t, err, "Write failed: %v")
 
-		// Subsequent writes should keep the latest suffix within limit.
+		assert.Len(t, "hello world", n, "unexpected condition")
+		assert.Equal(t, "world", buf.String(), "unexpected condition")
+		assert.True(t, writer.truncated, "unexpected condition")
+
 		n2, err := writer.Write([]byte(" more"))
-		if err != nil {
-			t.Fatalf("Second write failed: %v", err)
-		}
-		if n2 != 5 {
-			t.Errorf("Expected second write to return 5 (length of input), got %d", n2)
-		}
-		if buf.String() != " more" {
-			t.Errorf("Expected buffer to contain latest suffix ' more', got '%s'", buf.String())
-		}
+		require.NoError(t, err, "Second write failed: %v")
+
+		assert.Equal(t, 5, n2, "unexpected condition")
+		assert.Equal(t, " more", buf.String(), "unexpected condition")
 	})
 
 	t.Run("Write exceeding limit with UTF-8 characters", func(t *testing.T) {
@@ -907,21 +711,12 @@ func TestBoundedWriter(t *testing.T) {
 			truncated: false,
 		}
 
-		// Write UTF-8 text that would be cut mid-character
-		n, err := writer.Write([]byte("héllo world")) // héllo is 6 bytes (h, é is 2 bytes, l, l, o)
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		// Buffer stores the bounded prefix, but Write should report full consumption.
-		if n != len("héllo world") {
-			t.Errorf("Expected consumed byte count %d, got %d", len("héllo world"), n)
-		}
-		if buf.String() != "world" {
-			t.Errorf("Expected buffer to contain latest suffix 'world', got '%s' (len: %d)", buf.String(), len(buf.String()))
-		}
-		if !writer.truncated {
-			t.Error("Writer should be marked as truncated")
-		}
+		n, err := writer.Write([]byte("héllo world"))
+		require.NoError(t, err, "Write failed: %v")
+
+		assert.Len(t, "héllo world", n, "unexpected condition")
+		assert.Equal(t, "world", buf.String(), "unexpected condition")
+		assert.True(t, writer.truncated, "unexpected condition")
 	})
 
 	t.Run("Write exceeding limit inside first UTF-8 rune keeps valid boundary", func(t *testing.T) {
@@ -937,18 +732,11 @@ func TestBoundedWriter(t *testing.T) {
 		}
 
 		n, err := writer.Write([]byte("é"))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != len("é") {
-			t.Errorf("Expected consumed byte count %d, got %d", len("é"), n)
-		}
-		if buf.Len() != 0 {
-			t.Errorf("Expected no bytes written because retained suffix would split the rune, got %q", buf.String())
-		}
-		if !writer.truncated {
-			t.Error("Writer should be marked as truncated")
-		}
+		require.NoError(t, err, "Write failed: %v")
+
+		assert.Len(t, "é", n, "unexpected condition")
+		assert.Equal(t, 0, buf.Len(), "unexpected condition")
+		assert.True(t, writer.truncated, "unexpected condition")
 	})
 
 	t.Run("Write with zero limit", func(t *testing.T) {
@@ -964,18 +752,11 @@ func TestBoundedWriter(t *testing.T) {
 		}
 
 		n, err := writer.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("Expected to return 5 (length of input), got %d", n)
-		}
-		if buf.String() != "" {
-			t.Errorf("Expected buffer to be empty, got '%s'", buf.String())
-		}
-		if !writer.truncated {
-			t.Error("Writer should be marked as truncated with zero limit")
-		}
+		require.NoError(t, err, "Write failed: %v")
+
+		assert.Equal(t, 5, n, "unexpected condition")
+		assert.Empty(t, buf.String(), "unexpected condition")
+		assert.True(t, writer.truncated, "unexpected condition")
 	})
 
 	t.Run("Multiple writes within limit", func(t *testing.T) {
@@ -986,40 +767,27 @@ func TestBoundedWriter(t *testing.T) {
 				buf:   buf,
 				mutex: mutex,
 			},
-			maxSize:   11, // "hello world" is 11 bytes
+			maxSize:   11,
 			truncated: false,
 		}
 
 		n1, err := writer.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("First write failed: %v", err)
-		}
-		if n1 != 5 {
-			t.Errorf("Expected first write to write 5 bytes, got %d", n1)
-		}
+		require.NoError(t, err, "First write failed: %v")
+
+		assert.Equal(t, 5, n1, "unexpected condition")
 
 		n2, err := writer.Write([]byte(" "))
-		if err != nil {
-			t.Fatalf("Second write failed: %v", err)
-		}
-		if n2 != 1 {
-			t.Errorf("Expected second write to write 1 byte, got %d", n2)
-		}
+		require.NoError(t, err, "Second write failed: %v")
+
+		assert.Equal(t, 1, n2, "unexpected condition")
 
 		n3, err := writer.Write([]byte("world"))
-		if err != nil {
-			t.Fatalf("Third write failed: %v", err)
-		}
-		if n3 != 5 {
-			t.Errorf("Expected third write to write 5 bytes, got %d", n3)
-		}
+		require.NoError(t, err, "Third write failed: %v")
 
-		if buf.String() != "hello world" {
-			t.Errorf("Expected buffer to contain 'hello world', got '%s'", buf.String())
-		}
-		if writer.truncated {
-			t.Error("Writer should not be marked as truncated")
-		}
+		assert.Equal(t, 5, n3, "unexpected condition")
+
+		assert.Equal(t, "hello world", buf.String(), "unexpected condition")
+		assert.False(t, writer.truncated, "unexpected condition")
 	})
 }
 
@@ -1030,15 +798,9 @@ func TestTruncateOutputUTF8Boundary(t *testing.T) {
 	buf.WriteString("abécd")
 
 	out, truncated := truncateOutput(buf, 3, mutex)
-	if !truncated {
-		t.Fatal("Expected truncation to be reported")
-	}
-	if out != "cd" {
-		t.Fatalf("Expected UTF-8 safe suffix 'cd', got %q", out)
-	}
-	if buf.String() != "cd" {
-		t.Fatalf("Expected buffer to be rewritten with UTF-8 safe suffix, got %q", buf.String())
-	}
+	require.True(t, truncated, "Expected truncation to be reported")
+	require.Equal(t, "cd", out, "Expected UTF-8 safe suffix 'cd', got %q", out)
+	require.Equal(t, "cd", buf.String(), "Expected buffer to be rewritten with UTF-8 safe suffix, got %q", buf.String())
 }
 
 func TestReadTextFileWindow(t *testing.T) {
@@ -1047,7 +809,7 @@ func TestReadTextFileWindow(t *testing.T) {
 	testPath := filepath.Join(t.TempDir(), "window.txt")
 	content := "line1\nline2\nline3\n"
 	if err := os.WriteFile(testPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+		require.NoError(t, err, "failed to write test file: %v")
 	}
 
 	tests := []struct {
@@ -1086,12 +848,9 @@ func TestReadTextFileWindow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := readTextFileWindow(testPath, tc.startLine, tc.limit, maxACPTextFileBytes)
-			if err != nil {
-				t.Fatalf("readTextFileWindow failed: %v", err)
-			}
-			if got != tc.expected {
-				t.Fatalf("expected %q, got %q", tc.expected, got)
-			}
+			require.NoError(t, err, "readTextFileWindow failed: %v")
+			require.Equal(t, tc.expected, got, "expected %q, got %q", tc.expected, got)
+
 		})
 	}
 
@@ -1101,23 +860,18 @@ func TestReadTextFileWindow(t *testing.T) {
 		tooLargePath := filepath.Join(t.TempDir(), "too-large.txt")
 		tooLarge := strings.Repeat("x", maxACPTextFileBytes+1)
 		if err := os.WriteFile(tooLargePath, []byte(tooLarge), 0o644); err != nil {
-			t.Fatalf("failed to write large test file: %v", err)
+			require.NoError(t, err, "failed to write large test file: %v")
 		}
 
 		_, err := readTextFileWindow(tooLargePath, 0, nil, maxACPTextFileBytes)
-		if err == nil {
-			t.Fatal("expected byte-limit error, got nil")
-		}
-		if !strings.Contains(err.Error(), "file content too large") {
-			t.Fatalf("expected byte-limit error, got: %v", err)
-		}
+		require.Error(t, err, "expected byte-limit error, got nil")
+
+		require.ErrorContains(t, err, "file content too large")
 	})
 }
 
 func TestACPAliasCollisionFixed(t *testing.T) {
-	// When acp.name = "agent", requesting "cursor" should resolve to the
-	// real cursor agent, not to ACP via the "agent" → "cursor" alias.
-	// The cursor agent's binary is called "agent" (not "cursor").
+
 	fakeBin := t.TempDir()
 	agentBin := "agent"
 	if runtime.GOOS == "windows" {
@@ -1125,7 +879,7 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 	}
 	agentPath := filepath.Join(fakeBin, agentBin)
 	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake agent binary: %v", err)
+		require.NoError(t, err, "failed to create fake agent binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -1137,30 +891,21 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig("cursor", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
-	if resolved.Name() != "cursor" {
-		t.Fatalf("Expected cursor agent, got %q", resolved.Name())
-	}
+	require.Equal(t, "cursor", resolved.Name(), "resolved agent name")
 }
 
 func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
 	cfg := &config.Config{}
 
 	_, err := GetAvailableWithConfig("typo-agent", cfg)
-	if err == nil {
-		t.Fatal("Expected error for unknown agent name")
-	}
-	if !strings.Contains(err.Error(), "unknown agent") {
-		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
-	}
+	require.Error(t, err, "Expected error for unknown agent name")
+	require.ErrorContains(t, err, "unknown agent")
 }
 
 func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
-	// acp.name = "claude" should match request "claude" but NOT "claude-code".
-	// Requesting the canonical name should go to the real agent, not ACP.
+
 	fakeBin := t.TempDir()
 	binName := "claude"
 	if runtime.GOOS == "windows" {
@@ -1168,7 +913,7 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 	}
 	claudePath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake claude binary: %v", err)
+		require.NoError(t, err, "failed to create fake claude binary: %v")
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -1180,16 +925,37 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig("claude-code", cfg)
-	if err != nil {
-		t.Fatalf("GetAvailableWithConfig failed: %v", err)
-	}
+	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
-	if resolved.Name() == "acp" {
-		t.Fatalf("Request for 'claude-code' should not route to ACP when acp.name='claude'")
+	assert.NotEqual(t, "acp", resolved.Name(), "Request for 'claude-code' should not route to ACP when acp.name='claude'")
+	assert.Equal(t, "claude-code", resolved.Name(), "Expected claude-code agent, got %q", resolved.Name())
+}
+
+func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {
+
+	fakeBin := t.TempDir()
+	binName := "gemini"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
 	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("Expected claude-code agent, got %q", resolved.Name())
+	geminiBin := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(geminiBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		require.NoError(t, err, "create fake gemini binary: %v")
 	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":  NewCodexAgent("definitely-not-on-path"),
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{}
+	resolved, err := GetAvailableWithConfig("codex", cfg, "gemini")
+	require.NoError(t, err)
+
+	assert.Equal(t, "gemini", resolved.Name(), "expected backup agent 'gemini', got %q", resolved.Name())
 }
 
 func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {

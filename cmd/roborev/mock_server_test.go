@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,9 +30,7 @@ func TestMockServerHandler_HandleEnqueue_MethodRouting(t *testing.T) {
 
 			h.handleEnqueue(w, req)
 
-			if w.Code != tt.wantStatus {
-				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
-			}
+			assert.Equal(t, tt.wantStatus, w.Code, "unexpected condition")
 		})
 	}
 }

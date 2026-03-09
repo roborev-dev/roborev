@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
@@ -529,26 +530,22 @@ func TestJobLogSafeEnd(t *testing.T) {
 	t.Run("ends with newline", func(t *testing.T) {
 		data := []byte("line1\nline2\n")
 		f := writeTempFile(t, data)
-		if got := jobLogSafeEnd(f, int64(len(data))); got != int64(len(data)) {
-			t.Errorf("expected %d, got %d", len(data), got)
-		}
+		got := jobLogSafeEnd(f, int64(len(data)))
+		assert.Equal(t, int64(len(data)), got, "full data length should be returned when data ends with newline")
 	})
 
 	t.Run("partial line at end", func(t *testing.T) {
 		data := []byte("line1\npartial")
 		f := writeTempFile(t, data)
 		got := jobLogSafeEnd(f, int64(len(data)))
-		if got != 6 { // "line1\n" is 6 bytes
-			t.Errorf("expected 6, got %d", got)
-		}
+		assert.Equal(t, int64(6), got, "\"line1\\n\" should return index 6")
 	})
 
 	t.Run("no newlines at all", func(t *testing.T) {
 		data := []byte("no-newlines-here")
 		f := writeTempFile(t, data)
-		if got := jobLogSafeEnd(f, int64(len(data))); got != 0 {
-			t.Errorf("expected 0, got %d", got)
-		}
+		got := jobLogSafeEnd(f, int64(len(data)))
+		assert.Equal(t, int64(0), got, "files without newlines should return 0")
 	})
 
 	t.Run("large partial beyond 64KB", func(t *testing.T) {
@@ -560,9 +557,7 @@ func TestJobLogSafeEnd(t *testing.T) {
 		f := writeTempFile(t, data)
 		got := jobLogSafeEnd(f, int64(len(data)))
 		want := int64(len(completeLine))
-		if got != want {
-			t.Errorf("expected %d, got %d", want, got)
-		}
+		assert.Equal(t, want, got, "partial chunk should align at the end of complete line")
 	})
 }
 

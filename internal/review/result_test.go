@@ -1,11 +1,14 @@
 package review
 
 import (
+	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 )
 
 func TestTrimPartialRune(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		in   string
@@ -57,16 +60,14 @@ func TestTrimPartialRune(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := TrimPartialRune(tt.in)
-			if got != tt.want {
-				t.Errorf(
-					"TrimPartialRune(%q) = %q, want %q",
-					tt.in, got, tt.want)
-			}
+			assert.Equalf(tt.want, got, "TrimPartialRune(%q) = %q, want %q", tt.in, got, tt.want)
 		})
 	}
 }
 
 func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
+	assert := assert.New(t)
+
 	// Verify that a string with interior invalid UTF-8 is NOT
 	// stripped down to empty — only the trailing boundary matters.
 	// This is the bug that utf8.ValidString would cause.
@@ -74,8 +75,5 @@ func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
 		string([]byte{0xFF}) +
 		strings.Repeat("y", 1000)
 	got := TrimPartialRune(interior)
-	if got != interior {
-		t.Errorf("interior invalid bytes should be preserved, "+
-			"got len %d want len %d", len(got), len(interior))
-	}
+	assert.Equalf(interior, got, "interior invalid bytes should be preserved, got len %d want len %d", len(got), len(interior))
 }

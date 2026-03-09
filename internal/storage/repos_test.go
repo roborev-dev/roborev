@@ -2,7 +2,8 @@ package storage
 
 import (
 	"database/sql"
-	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func completeTestJob(t *testing.T, db *DB, jobID int64, output string) {
 	t.Helper()
 	claimJob(t, db, "worker-1")
 	if err := db.CompleteJob(jobID, "codex", "prompt", output); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.NoError(t, err, "CompleteJob failed: %v")
 	}
 }
 
@@ -44,31 +45,18 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt:    "Explain the architecture of this codebase",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
-				if j.Agent != "claude-code" {
-					t.Errorf("got agent %q, want 'claude-code'", j.Agent)
-				}
-				if j.Reasoning != "thorough" {
-					t.Errorf("got reasoning %q, want 'thorough'", j.Reasoning)
-				}
-				if j.Prompt != "Explain the architecture of this codebase" {
-					t.Errorf("got prompt %q, want 'Explain the architecture of this codebase'", j.Prompt)
-				}
-				if j.Status != JobStatusQueued {
-					t.Errorf("got status %q, want 'queued'", j.Status)
-				}
+				assert.Equal(t, "prompt", j.GitRef, "unexpected condition")
+				assert.Equal(t, "claude-code", j.Agent, "unexpected condition")
+				assert.Equal(t, "thorough", j.Reasoning, "unexpected condition")
+				assert.Equal(t, "Explain the architecture of this codebase", j.Prompt, "unexpected condition")
+				assert.Equal(t, JobStatusQueued, j.Status, "unexpected condition")
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
 				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
-				if err != nil {
-					t.Fatalf("Failed to query git_ref: %v", err)
-				}
-				if gitRef != "prompt" {
-					t.Errorf("DB git_ref = %q, want 'prompt'", gitRef)
-				}
+				require.NoError(t, err, "Failed to query git_ref: %v")
+
+				assert.Equal(t, "prompt", gitRef, "unexpected condition")
 			},
 		},
 		{
@@ -78,9 +66,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt: "test prompt",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.Reasoning != "thorough" {
-					t.Errorf("got default reasoning %q, want 'thorough'", j.Reasoning)
-				}
+				assert.Equal(t, "thorough", j.Reasoning, "unexpected condition")
 			},
 		},
 		{
@@ -92,12 +78,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
-				if j.Prompt != "Find security issues in the codebase" {
-					t.Errorf("got prompt %q, want 'Find security issues in the codebase'", j.Prompt)
-				}
+				assert.Equal(t, "prompt", j.GitRef, "unexpected condition")
+				assert.Equal(t, "Find security issues in the codebase", j.Prompt, "unexpected condition")
 			},
 		},
 		{
@@ -108,25 +90,18 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Agentic: true,
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if !j.Agentic {
-					t.Error("Expected Agentic to be true on returned job")
-				}
+				assert.True(t, j.Agentic, "unexpected condition")
 			},
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if !j.Agentic {
-					t.Error("Expected Agentic to be true on claimed job")
-				}
+				assert.True(t, j.Agentic, "unexpected condition")
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
 				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
-				if err != nil {
-					t.Fatalf("Failed to query agentic: %v", err)
-				}
-				if !agentic {
-					t.Error("DB agentic = false, want true")
-				}
+				require.NoError(t, err, "Failed to query agentic: %v")
+
+				assert.True(t, agentic, "DB agentic = false, want true")
 			},
 		},
 		{
@@ -137,25 +112,18 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt:    "Non-agentic prompt",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.Agentic {
-					t.Error("Expected Agentic to be false")
-				}
+				assert.False(t, j.Agentic, "unexpected condition")
 			},
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.Agentic {
-					t.Error("Expected Agentic to be false on claimed job")
-				}
+				assert.False(t, j.Agentic, "unexpected condition")
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
 				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
-				if err != nil {
-					t.Fatalf("Failed to query agentic: %v", err)
-				}
-				if agentic {
-					t.Error("DB agentic = true, want false")
-				}
+				require.NoError(t, err, "Failed to query agentic: %v")
+
+				assert.False(t, agentic, "DB agentic = true, want false")
 			},
 		},
 		{
@@ -168,9 +136,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
 				want := "## Compact Analysis\n\n---\n\n"
-				if j.OutputPrefix != want {
-					t.Errorf("got OutputPrefix %q, want %q", j.OutputPrefix, want)
-				}
+				assert.Equal(t, want, j.OutputPrefix, "unexpected condition")
 			},
 		},
 		{
@@ -181,9 +147,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.OutputPrefix != "" {
-					t.Errorf("got OutputPrefix %q, want empty", j.OutputPrefix)
-				}
+				assert.Empty(t, j.OutputPrefix, "unexpected condition")
 			},
 		},
 		{
@@ -194,25 +158,18 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Label:  "test-fixtures",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "test-fixtures" {
-					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
-				}
+				assert.Equal(t, "test-fixtures", j.GitRef, "unexpected condition")
 			},
 			checkClaim: true,
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "test-fixtures" {
-					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
-				}
+				assert.Equal(t, "test-fixtures", j.GitRef, "unexpected condition")
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
 				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
-				if err != nil {
-					t.Fatalf("Failed to query git_ref: %v", err)
-				}
-				if gitRef != "test-fixtures" {
-					t.Errorf("DB git_ref = %q, want 'test-fixtures'", gitRef)
-				}
+				require.NoError(t, err, "Failed to query git_ref: %v")
+
+				assert.Equal(t, "test-fixtures", gitRef, "unexpected condition")
 			},
 		},
 		{
@@ -222,9 +179,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Prompt: "Test prompt",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "prompt" {
-					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
-				}
+				assert.Equal(t, "prompt", j.GitRef, "unexpected condition")
 			},
 		},
 		{
@@ -235,9 +190,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 				Label:  "run",
 			},
 			wantJob: func(t *testing.T, j *ReviewJob) {
-				if j.GitRef != "run" {
-					t.Errorf("got git_ref %q, want 'run'", j.GitRef)
-				}
+				assert.Equal(t, "run", j.GitRef, "unexpected condition")
 			},
 		},
 	}
@@ -286,14 +239,10 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 
 		// Fetch the review and verify prefix was prepended
 		review, err := db.GetReviewByJobID(job.ID)
-		if err != nil {
-			t.Fatalf("GetReviewByJobID failed: %v", err)
-		}
+		require.NoError(t, err, "GetReviewByJobID failed: %v")
 
 		expectedOutput := outputPrefix + agentOutput
-		if review.Output != expectedOutput {
-			t.Errorf("got output:\n%s\nwant:\n%s", review.Output, expectedOutput)
-		}
+		assert.Equal(t, expectedOutput, review.Output, "unexpected condition")
 	})
 
 	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
@@ -311,13 +260,9 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 
 		// Fetch the review and verify output is unchanged
 		review, err := db.GetReviewByJobID(job.ID)
-		if err != nil {
-			t.Fatalf("GetReviewByJobID failed: %v", err)
-		}
+		require.NoError(t, err, "GetReviewByJobID failed: %v")
 
-		if review.Output != agentOutput {
-			t.Errorf("got output:\n%s\nwant:\n%s", review.Output, agentOutput)
-		}
+		assert.Equal(t, review.Output, agentOutput, "unexpected condition")
 	})
 }
 
@@ -327,49 +272,34 @@ func TestRenameRepo(t *testing.T) {
 
 	t.Run("rename by path", func(t *testing.T) {
 		affected, err := db.RenameRepo(initialPath, "new-name")
-		if err != nil {
-			t.Fatalf("RenameRepo failed: %v", err)
-		}
-		if affected != 1 {
-			t.Errorf("Expected 1 affected row, got %d", affected)
-		}
+		require.NoError(t, err, "RenameRepo failed: %v")
+
+		assert.EqualValues(t, 1, affected, "unexpected condition")
 
 		// Verify the rename
 		updated, err := db.GetRepoByID(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoByID failed: %v", err)
-		}
-		if updated.Name != "new-name" {
-			t.Errorf("Expected name 'new-name', got '%s'", updated.Name)
-		}
+		require.NoError(t, err, "GetRepoByID failed: %v")
+
+		assert.Equal(t, "new-name", updated.Name, "unexpected condition")
 	})
 
 	t.Run("rename by name", func(t *testing.T) {
 		affected, err := db.RenameRepo("new-name", "another-name")
-		if err != nil {
-			t.Fatalf("RenameRepo failed: %v", err)
-		}
-		if affected != 1 {
-			t.Errorf("Expected 1 affected row, got %d", affected)
-		}
+		require.NoError(t, err, "RenameRepo failed: %v")
+
+		assert.EqualValues(t, 1, affected, "unexpected condition")
 
 		updated, err := db.GetRepoByID(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoByID failed: %v", err)
-		}
-		if updated.Name != "another-name" {
-			t.Errorf("Expected name 'another-name', got '%s'", updated.Name)
-		}
+		require.NoError(t, err, "GetRepoByID failed: %v")
+
+		assert.Equal(t, "another-name", updated.Name, "unexpected condition")
 	})
 
 	t.Run("rename nonexistent repo returns 0", func(t *testing.T) {
 		affected, err := db.RenameRepo("nonexistent", "something")
-		if err != nil {
-			t.Fatalf("RenameRepo failed: %v", err)
-		}
-		if affected != 0 {
-			t.Errorf("Expected 0 affected rows for nonexistent repo, got %d", affected)
-		}
+		require.NoError(t, err, "RenameRepo failed: %v")
+
+		assert.EqualValues(t, 0, affected, "unexpected condition")
 	})
 }
 
@@ -379,12 +309,9 @@ func TestListRepos(t *testing.T) {
 
 	t.Run("empty database", func(t *testing.T) {
 		repos, err := db.ListRepos()
-		if err != nil {
-			t.Fatalf("ListRepos failed: %v", err)
-		}
-		if len(repos) != 0 {
-			t.Errorf("Expected 0 repos, got %d", len(repos))
-		}
+		require.NoError(t, err, "ListRepos failed: %v")
+
+		assert.Empty(t, repos, "unexpected condition")
 	})
 
 	// Create repos
@@ -393,16 +320,11 @@ func TestListRepos(t *testing.T) {
 
 	t.Run("lists repos in order", func(t *testing.T) {
 		repos, err := db.ListRepos()
-		if err != nil {
-			t.Fatalf("ListRepos failed: %v", err)
-		}
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos, got %d", len(repos))
-		}
+		require.NoError(t, err, "ListRepos failed: %v")
+
+		assert.Len(t, repos, 2, "unexpected condition")
 		// Should be ordered by name
-		if len(repos) >= 2 && repos[0].Name > repos[1].Name {
-			t.Errorf("Repos not ordered by name: %s > %s", repos[0].Name, repos[1].Name)
-		}
+		assert.False(t, len(repos) >= 2 && repos[0].Name > repos[1].Name, "unexpected condition")
 	})
 }
 
@@ -411,25 +333,16 @@ func TestGetRepoByID(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByID(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoByID failed: %v", err)
-		}
-		if found.ID != repo.ID {
-			t.Errorf("Expected ID %d, got %d", repo.ID, found.ID)
-		}
-		if found.RootPath != repo.RootPath {
-			t.Errorf("Expected path '%s', got '%s'", repo.RootPath, found.RootPath)
-		}
+		require.NoError(t, err, "GetRepoByID failed: %v")
+
+		assert.Equal(t, found.ID, repo.ID, "unexpected condition")
+		assert.Equal(t, found.RootPath, repo.RootPath, "unexpected condition")
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, err := db.GetRepoByID(99999)
-		if err == nil {
-			t.Error("Expected error for nonexistent ID")
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			t.Errorf("Expected sql.ErrNoRows, got: %v", err)
-		}
+		require.Error(t, err, "unexpected condition")
+		require.ErrorIs(t, err, sql.ErrNoRows, "unexpected condition")
 	})
 }
 
@@ -438,19 +351,14 @@ func TestGetRepoByName(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByName("getbyname-test")
-		if err != nil {
-			t.Fatalf("GetRepoByName failed: %v", err)
-		}
-		if found.ID != repo.ID {
-			t.Errorf("Expected ID %d, got %d", repo.ID, found.ID)
-		}
+		require.NoError(t, err, "GetRepoByName failed: %v")
+
+		assert.Equal(t, found.ID, repo.ID, "unexpected condition")
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, err := db.GetRepoByName("nonexistent")
-		if err == nil {
-			t.Error("Expected error for nonexistent name")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 }
 
@@ -460,43 +368,30 @@ func TestFindRepo(t *testing.T) {
 
 	t.Run("find by path", func(t *testing.T) {
 		found, err := db.FindRepo(initialPath)
-		if err != nil {
-			t.Fatalf("FindRepo by path failed: %v", err)
-		}
-		if found.ID != repo.ID {
-			t.Errorf("Expected ID %d, got %d", repo.ID, found.ID)
-		}
+		require.NoError(t, err, "FindRepo by path failed: %v")
+
+		assert.Equal(t, found.ID, repo.ID, "unexpected condition")
 	})
 
 	t.Run("find by name", func(t *testing.T) {
 		found, err := db.FindRepo("findrepo-test")
-		if err != nil {
-			t.Fatalf("FindRepo by name failed: %v", err)
-		}
-		if found.ID != repo.ID {
-			t.Errorf("Expected ID %d, got %d", repo.ID, found.ID)
-		}
+		require.NoError(t, err, "FindRepo by name failed: %v")
+
+		assert.Equal(t, found.ID, repo.ID, "unexpected condition")
 	})
 
 	t.Run("created_at is populated", func(t *testing.T) {
 		found, err := db.FindRepo(initialPath)
-		if err != nil {
-			t.Fatalf("FindRepo failed: %v", err)
-		}
-		if found.CreatedAt.IsZero() {
-			t.Error("CreatedAt should not be zero (SQLite CURRENT_TIMESTAMP must be parsed)")
-		}
+		require.NoError(t, err, "FindRepo failed: %v")
+
+		assert.False(t, found.CreatedAt.IsZero(), "CreatedAt should not be zero (SQLite CURRENT_TIMESTAMP must be parsed)")
 		// Should be recent (within the last minute)
-		if time.Since(found.CreatedAt) > time.Minute {
-			t.Errorf("CreatedAt too old: %v", found.CreatedAt)
-		}
+		assert.LessOrEqual(t, time.Since(found.CreatedAt), time.Minute, "unexpected condition")
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, err := db.FindRepo("nonexistent")
-		if err == nil {
-			t.Error("Expected error for nonexistent repo")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 }
 
@@ -505,15 +400,10 @@ func TestGetRepoStats(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-test")
 
 		stats, err := db.GetRepoStats(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoStats failed: %v", err)
-		}
-		if stats.TotalJobs != 0 {
-			t.Errorf("Expected 0 total jobs, got %d", stats.TotalJobs)
-		}
-		if stats.Repo.ID != repo.ID {
-			t.Errorf("Expected repo ID %d, got %d", repo.ID, stats.Repo.ID)
-		}
+		require.NoError(t, err, "GetRepoStats failed: %v")
+
+		assert.Equal(t, 0, stats.TotalJobs, "unexpected condition")
+		assert.Equal(t, stats.Repo.ID, repo.ID, "unexpected condition")
 	})
 
 	t.Run("stats with jobs", func(t *testing.T) {
@@ -538,35 +428,20 @@ func TestGetRepoStats(t *testing.T) {
 		// Fail job3
 		claimJob(t, db, "worker-1")
 		if _, err := db.FailJob(job3.ID, "", "agent error"); err != nil {
-			t.Fatalf("FailJob failed: %v", err)
+			require.NoError(t, err, "FailJob failed: %v")
 		}
 
 		stats, err := db.GetRepoStats(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoStats failed: %v", err)
-		}
-		if stats.TotalJobs != 3 {
-			t.Errorf("Expected 3 total jobs, got %d", stats.TotalJobs)
-		}
-		if stats.CompletedJobs != 2 {
-			t.Errorf("Expected 2 completed jobs, got %d", stats.CompletedJobs)
-		}
-		if stats.FailedJobs != 1 {
-			t.Errorf("Expected 1 failed job, got %d", stats.FailedJobs)
-		}
-		if stats.PassedReviews != 1 {
-			t.Errorf("Expected 1 passed review, got %d", stats.PassedReviews)
-		}
-		if stats.FailedReviews != 1 {
-			t.Errorf("Expected 1 failed review, got %d", stats.FailedReviews)
-		}
+		require.NoError(t, err, "GetRepoStats failed: %v")
+
+		assert.Equal(t, 3, stats.TotalJobs, "unexpected condition")
+		assert.Equal(t, 2, stats.CompletedJobs, "unexpected condition")
+		assert.Equal(t, 1, stats.FailedJobs, "unexpected condition")
+		assert.Equal(t, 1, stats.PassedReviews, "unexpected condition")
+		assert.Equal(t, 1, stats.FailedReviews, "unexpected condition")
 		// Both reviews should be open by default
-		if stats.ClosedReviews != 0 {
-			t.Errorf("Expected 0 closed reviews, got %d", stats.ClosedReviews)
-		}
-		if stats.OpenReviews != 2 {
-			t.Errorf("Expected 2 open reviews, got %d", stats.OpenReviews)
-		}
+		assert.Equal(t, 0, stats.ClosedReviews, "unexpected condition")
+		assert.Equal(t, 2, stats.OpenReviews, "unexpected condition")
 	})
 
 	t.Run("closed reviews counted", func(t *testing.T) {
@@ -579,11 +454,10 @@ func TestGetRepoStats(t *testing.T) {
 
 		// Mark job1's review as closed
 		review, err := db.GetReviewByJobID(job1.ID)
-		if err != nil {
-			t.Fatalf("GetReviewByJobID failed: %v", err)
-		}
+		require.NoError(t, err, "GetReviewByJobID failed: %v")
+
 		if err := db.MarkReviewClosed(review.ID, true); err != nil {
-			t.Fatalf("MarkReviewClosed failed: %v", err)
+			require.NoError(t, err, "MarkReviewClosed failed: %v")
 		}
 
 		// Create a second job that will be open
@@ -594,24 +468,17 @@ func TestGetRepoStats(t *testing.T) {
 		completeTestJob(t, db, job2.ID, "**Verdict: PASS**\nAlso looks good!")
 
 		stats, err := db.GetRepoStats(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoStats failed: %v", err)
-		}
-		if stats.ClosedReviews != 1 {
-			t.Errorf("Expected 1 closed review, got %d", stats.ClosedReviews)
-		}
-		if stats.OpenReviews != 1 {
-			t.Errorf("Expected 1 open review, got %d", stats.OpenReviews)
-		}
+		require.NoError(t, err, "GetRepoStats failed: %v")
+
+		assert.Equal(t, 1, stats.ClosedReviews, "unexpected condition")
+		assert.Equal(t, 1, stats.OpenReviews, "unexpected condition")
 	})
 
 	t.Run("nonexistent repo", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 		_, err := db.GetRepoStats(99999)
-		if err == nil {
-			t.Error("Expected error for nonexistent repo ID")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 
 	t.Run("prompt jobs excluded from verdict counts", func(t *testing.T) {
@@ -629,25 +496,15 @@ func TestGetRepoStats(t *testing.T) {
 
 		// Get stats - prompt job should be excluded from verdict counts
 		stats, err := db.GetRepoStats(repo.ID)
-		if err != nil {
-			t.Fatalf("GetRepoStats failed: %v", err)
-		}
+		require.NoError(t, err, "GetRepoStats failed: %v")
 
 		// Total jobs should include both
-		if stats.TotalJobs != 2 {
-			t.Errorf("Expected 2 total jobs, got %d", stats.TotalJobs)
-		}
-		if stats.CompletedJobs != 2 {
-			t.Errorf("Expected 2 completed jobs, got %d", stats.CompletedJobs)
-		}
+		assert.Equal(t, 2, stats.TotalJobs, "unexpected condition")
+		assert.Equal(t, 2, stats.CompletedJobs, "unexpected condition")
 
 		// Verdict counts should only reflect the regular job
-		if stats.PassedReviews != 1 {
-			t.Errorf("Expected 1 passed review (prompt job excluded), got %d", stats.PassedReviews)
-		}
-		if stats.FailedReviews != 0 {
-			t.Errorf("Expected 0 failed reviews (prompt job excluded), got %d", stats.FailedReviews)
-		}
+		assert.Equal(t, 1, stats.PassedReviews, "unexpected condition")
+		assert.Equal(t, 0, stats.FailedReviews, "unexpected condition")
 	})
 }
 
@@ -656,15 +513,11 @@ func TestDeleteRepo(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "delete-empty")
 
 		err := db.DeleteRepo(repo.ID, false)
-		if err != nil {
-			t.Fatalf("DeleteRepo failed: %v", err)
-		}
+		require.NoError(t, err, "DeleteRepo failed: %v")
 
 		// Verify deleted
 		_, err = db.GetRepoByID(repo.ID)
-		if err == nil {
-			t.Error("Repo should be deleted")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
@@ -674,18 +527,12 @@ func TestDeleteRepo(t *testing.T) {
 
 		// Without cascade, delete should return ErrRepoHasJobs
 		err := db.DeleteRepo(repo.ID, false)
-		if err == nil {
-			t.Error("Expected error when deleting repo with jobs without cascade")
-		}
-		if !errors.Is(err, ErrRepoHasJobs) {
-			t.Errorf("Expected ErrRepoHasJobs, got: %v", err)
-		}
+		require.Error(t, err, "unexpected condition")
+		require.ErrorIs(t, err, ErrRepoHasJobs, "unexpected condition")
 
 		// Verify repo still exists
 		_, err = db.GetRepoByID(repo.ID)
-		if err != nil {
-			t.Error("Repo should still exist after failed delete")
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("delete repo with cascade", func(t *testing.T) {
@@ -698,22 +545,16 @@ func TestDeleteRepo(t *testing.T) {
 		db.AddCommentToJob(job.ID, "user", "comment")
 
 		err := db.DeleteRepo(repo.ID, true)
-		if err != nil {
-			t.Fatalf("DeleteRepo with cascade failed: %v", err)
-		}
+		require.NoError(t, err, "DeleteRepo with cascade failed: %v")
 
 		// Verify repo deleted
 		_, err = db.GetRepoByID(repo.ID)
-		if err == nil {
-			t.Error("Repo should be deleted")
-		}
+		require.Error(t, err, "unexpected condition")
 
 		// Verify jobs deleted
 		jobs, _ := db.ListJobs("", "", 100, 0)
 		for _, j := range jobs {
-			if j.RepoID == repo.ID {
-				t.Error("Jobs should be deleted")
-			}
+			assert.NotEqual(t, j.RepoID, repo.ID, "unexpected condition")
 		}
 	})
 
@@ -722,12 +563,8 @@ func TestDeleteRepo(t *testing.T) {
 		defer db.Close()
 
 		err := db.DeleteRepo(99999, false)
-		if err == nil {
-			t.Error("Expected error for nonexistent repo")
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			t.Errorf("Expected sql.ErrNoRows, got: %v", err)
-		}
+		require.Error(t, err, "unexpected condition")
+		require.ErrorIs(t, err, sql.ErrNoRows, "unexpected condition")
 	})
 }
 
@@ -750,42 +587,30 @@ func TestMergeRepos(t *testing.T) {
 		enqueueJob(t, db, target.ID, commit3.ID, "merge-sha3")
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
-		if err != nil {
-			t.Fatalf("MergeRepos failed: %v", err)
-		}
-		if moved != 2 {
-			t.Errorf("Expected 2 jobs moved, got %d", moved)
-		}
+		require.NoError(t, err, "MergeRepos failed: %v")
+
+		assert.EqualValues(t, 2, moved, "unexpected condition")
 
 		// Verify source is deleted
 		_, err = db.GetRepoByID(source.ID)
-		if err == nil {
-			t.Error("Source repo should be deleted")
-		}
+		require.Error(t, err, "unexpected condition")
 
 		// Verify all jobs now belong to target
 		jobs, _ := db.ListJobs("", target.RootPath, 100, 0)
-		if len(jobs) != 3 {
-			t.Errorf("Expected 3 jobs in target, got %d", len(jobs))
-		}
+		assert.Len(t, jobs, 3, "unexpected condition")
 	})
 
 	t.Run("merge same repo returns 0", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "merge-same")
 
 		moved, err := db.MergeRepos(repo.ID, repo.ID)
-		if err != nil {
-			t.Fatalf("MergeRepos failed: %v", err)
-		}
-		if moved != 0 {
-			t.Errorf("Expected 0 jobs moved when merging to self, got %d", moved)
-		}
+		require.NoError(t, err, "MergeRepos failed: %v")
+
+		assert.EqualValues(t, 0, moved, "unexpected condition")
 
 		// Verify repo still exists
 		_, err = db.GetRepoByID(repo.ID)
-		if err != nil {
-			t.Error("Repo should still exist after self-merge")
-		}
+		require.NoError(t, err, "unexpected condition")
 	})
 
 	t.Run("merge empty source", func(t *testing.T) {
@@ -796,18 +621,13 @@ func TestMergeRepos(t *testing.T) {
 		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-empty-target"))
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
-		if err != nil {
-			t.Fatalf("MergeRepos failed: %v", err)
-		}
-		if moved != 0 {
-			t.Errorf("Expected 0 jobs moved, got %d", moved)
-		}
+		require.NoError(t, err, "MergeRepos failed: %v")
+
+		assert.EqualValues(t, 0, moved, "unexpected condition")
 
 		// Source should be deleted even if empty
 		_, err = db.GetRepoByID(source.ID)
-		if err == nil {
-			t.Error("Source repo should be deleted even when empty")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 
 	t.Run("merge moves commits to target", func(t *testing.T) {
@@ -826,28 +646,20 @@ func TestMergeRepos(t *testing.T) {
 		// Verify commits belong to source before merge
 		var sourceCommitCount int
 		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
-		if sourceCommitCount != 2 {
-			t.Fatalf("Expected 2 commits in source, got %d", sourceCommitCount)
-		}
+		assert.Equal(t, 2, sourceCommitCount, "unexpected condition")
 
 		_, err := db.MergeRepos(source.ID, target.ID)
-		if err != nil {
-			t.Fatalf("MergeRepos failed: %v", err)
-		}
+		require.NoError(t, err, "MergeRepos failed: %v")
 
 		// Verify commits now belong to target
 		var targetCommitCount int
 		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
-		if targetCommitCount != 2 {
-			t.Errorf("Expected 2 commits in target after merge, got %d", targetCommitCount)
-		}
+		assert.Equal(t, 2, targetCommitCount, "unexpected condition")
 
 		// Verify no commits remain with source ID (source is deleted)
 		var orphanedCount int
 		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
-		if orphanedCount != 0 {
-			t.Errorf("Expected 0 orphaned commits, got %d", orphanedCount)
-		}
+		assert.Equal(t, 0, orphanedCount, "unexpected condition")
 	})
 }
 
@@ -861,21 +673,15 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	// Verify commits exist before delete
 	var beforeCount int
 	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
-	if beforeCount != 2 {
-		t.Fatalf("Expected 2 commits before delete, got %d", beforeCount)
-	}
+	assert.Equal(t, 2, beforeCount, "unexpected condition")
 
 	err := db.DeleteRepo(repo.ID, true)
-	if err != nil {
-		t.Fatalf("DeleteRepo with cascade failed: %v", err)
-	}
+	require.NoError(t, err, "DeleteRepo with cascade failed: %v")
 
 	// Verify commits are deleted
 	var afterCount int
 	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
-	if afterCount != 0 {
-		t.Errorf("Expected 0 commits after cascade delete, got %d", afterCount)
-	}
+	assert.Equal(t, 0, afterCount, "unexpected condition")
 }
 
 func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
@@ -884,28 +690,20 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 
 	// Add legacy commit-based comment (not job-based)
 	_, err := db.AddComment(commit.ID, "reviewer", "Legacy comment on commit")
-	if err != nil {
-		t.Fatalf("AddComment failed: %v", err)
-	}
+	require.NoError(t, err, "AddComment failed: %v")
 
 	// Verify comment exists
 	var beforeCount int
 	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
-	if beforeCount != 1 {
-		t.Fatalf("Expected 1 legacy response before delete, got %d", beforeCount)
-	}
+	assert.Equal(t, 1, beforeCount, "unexpected condition")
 
 	err = db.DeleteRepo(repo.ID, true)
-	if err != nil {
-		t.Fatalf("DeleteRepo with cascade failed: %v", err)
-	}
+	require.NoError(t, err, "DeleteRepo with cascade failed: %v")
 
 	// Verify legacy responses are deleted (by checking all responses - commit is gone)
 	var afterCount int
 	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
-	if afterCount != 0 {
-		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", afterCount)
-	}
+	assert.Equal(t, 0, afterCount, "unexpected condition")
 }
 
 func TestVerdictSuppressionForPromptJobs(t *testing.T) {
@@ -927,13 +725,9 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 			}
 		}
 
-		if found == nil {
-			t.Fatal("Prompt job not found in ListJobs")
-		}
+		assert.NotNil(t, found, "unexpected condition")
 
-		if found.Verdict != nil {
-			t.Errorf("Prompt job should have nil verdict, got %v", *found.Verdict)
-		}
+		assert.Nil(t, found.Verdict, "unexpected condition")
 	})
 
 	t.Run("regular jobs still get verdict computed", func(t *testing.T) {
@@ -956,14 +750,10 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 			}
 		}
 
-		if found == nil {
-			t.Fatal("Regular job not found in ListJobs")
-		}
-
-		if found.Verdict == nil {
-			t.Error("Regular job should have verdict computed")
-		} else if *found.Verdict != "P" {
-			t.Errorf("Expected verdict 'P', got '%s'", *found.Verdict)
+		assert.NotNil(t, found)
+		if found != nil {
+			assert.NotNil(t, found.Verdict)
+			assert.Equal(t, "P", *found.Verdict)
 		}
 	})
 
@@ -991,15 +781,12 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 			}
 		}
 
-		if found == nil {
-			t.Fatal("Branch 'prompt' job not found in ListJobs")
-		}
+		assert.NotNil(t, found)
 
 		// This job has commit_id set, so it's NOT a prompt job - verdict should be computed
-		if found.Verdict == nil {
-			t.Error("Job for branch named 'prompt' should have verdict computed")
-		} else if *found.Verdict != "F" {
-			t.Errorf("Expected verdict 'F', got '%s'", *found.Verdict)
+		if found != nil {
+			assert.NotNil(t, found.Verdict)
+			assert.Equal(t, "F", *found.Verdict)
 		}
 	})
 }
@@ -1094,33 +881,24 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			db, repo := setupDBAndRepo(t, "retry-"+strings.ReplaceAll(tt.name, " ", "-"))
 
 			job := tt.setupJob(t, db, repo.ID)
-			if job.JobType != tt.expectedJobType {
-				t.Fatalf("Expected job_type=%q, got %q", tt.expectedJobType, job.JobType)
-			}
+			assert.Equal(t, tt.expectedJobType, job.JobType, "unexpected condition")
 
 			claimed := claimJob(t, db, "worker-1")
 
 			if tt.manuallySavePrompt {
 				if err := db.SaveJobPrompt(claimed.ID, "Saved prompt..."); err != nil {
-					t.Fatalf("SaveJobPrompt failed: %v", err)
+					require.NoError(t, err, "SaveJobPrompt failed: %v")
 				}
 			}
 
 			retried, err := db.RetryJob(claimed.ID, "", 3)
-			if err != nil {
-				t.Fatalf("RetryJob failed: %v", err)
-			}
-			if !retried {
-				t.Fatal("RetryJob returned false")
-			}
+			require.NoError(t, err, "RetryJob failed: %v")
+
+			assert.True(t, retried, "unexpected condition")
 
 			reclaimed := claimJob(t, db, "worker-2")
-			if reclaimed.UsesStoredPrompt() != tt.expectStoredPrompt {
-				t.Errorf("UsesStoredPrompt() = %v, want %v", reclaimed.UsesStoredPrompt(), tt.expectStoredPrompt)
-			}
-			if reclaimed.Prompt != tt.expectedPrompt {
-				t.Errorf("Prompt = %q, want %q", reclaimed.Prompt, tt.expectedPrompt)
-			}
+			assert.Equal(t, reclaimed.UsesStoredPrompt(), tt.expectStoredPrompt, "unexpected condition")
+			assert.Equal(t, tt.expectedPrompt, reclaimed.Prompt, "unexpected condition")
 		})
 	}
 }

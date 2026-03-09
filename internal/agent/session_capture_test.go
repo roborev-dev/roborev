@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestExtractSessionID(t *testing.T) {
 	tests := []struct {
@@ -47,9 +51,7 @@ func TestExtractSessionID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ExtractSessionID(tc.line); got != tc.want {
-				t.Fatalf("ExtractSessionID(%q) = %q, want %q", tc.line, got, tc.want)
-			}
+			assert.Equal(t, tc.want, ExtractSessionID(tc.line))
 		})
 	}
 }

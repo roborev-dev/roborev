@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
@@ -26,9 +27,7 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	if m2.currentBranch != "main" {
-		t.Errorf("Expected currentBranch to be 'main', got '%s'", m2.currentBranch)
-	}
+	assert.Equal(t, "main", m2.currentBranch, "unexpected condition")
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
@@ -49,9 +48,7 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	if m2.currentBranch != "" {
-		t.Errorf("Expected currentBranch to be empty for range, got '%s'", m2.currentBranch)
-	}
+	assert.Empty(t, m2.currentBranch, "unexpected condition")
 }
 
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
@@ -75,17 +72,11 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	m2, _ := pressKey(m, 'j')
 
 	// Branch should be cleared
-	if m2.currentBranch != "" {
-		t.Errorf("Expected currentBranch to be cleared when navigating to failed job, got '%s'", m2.currentBranch)
-	}
+	assert.Empty(t, m2.currentBranch, "unexpected condition")
 
 	// Should still be in review view showing the failed job
-	if m2.currentView != viewReview {
-		t.Errorf("Expected to stay in review view, got %d", m2.currentView)
-	}
-	if m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed") {
-		t.Error("Expected currentReview to show failed job error")
-	}
+	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
+	assert.False(t, m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed"), "unexpected condition")
 }
 
 func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
@@ -106,14 +97,10 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Branch should be cleared
-	if m2.currentBranch != "" {
-		t.Errorf("Expected currentBranch to be cleared for failed job, got '%s'", m2.currentBranch)
-	}
+	assert.Empty(t, m2.currentBranch, "unexpected condition")
 
 	// Should show review view with error
-	if m2.currentView != viewReview {
-		t.Errorf("Expected review view, got %d", m2.currentView)
-	}
+	assert.Equal(t, viewReview, m2.currentView, "unexpected condition")
 }
 
 func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
@@ -134,11 +121,7 @@ func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 	output := m.View()
 
 	// Should show branch filter indicator
-	if !strings.Contains(output, "[b: feature]") {
-		t.Error("Expected branch filter indicator in output")
-	}
+	assert.Contains(t, output, "[b: feature]", "unexpected condition")
 	// Should NOT show repo filter indicator (since no repo filter)
-	if strings.Contains(output, "[f:") {
-		t.Error("Should not show repo filter indicator when activeRepoFilter is empty")
-	}
+	assert.NotContains(t, output, "[f:", "unexpected condition")
 }

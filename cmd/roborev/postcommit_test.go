@@ -3,8 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 )
@@ -40,14 +41,10 @@ func TestPostCommitSubmitsHEAD(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
-	if req.GitRef != "HEAD" {
-		t.Errorf("expected HEAD, got %q", req.GitRef)
-	}
+	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 }
 
 func TestPostCommitBranchReview(t *testing.T) {
@@ -62,15 +59,11 @@ func TestPostCommitBranchReview(t *testing.T) {
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
 	want := mainSHA + "..HEAD"
-	if req.GitRef != want {
-		t.Errorf("expected git_ref %q, got %q", want, req.GitRef)
-	}
+	assert.Equal(t, want, req.GitRef, "unexpected condition")
 }
 
 func TestPostCommitFallsBackOnBaseBranch(t *testing.T) {
@@ -82,28 +75,18 @@ func TestPostCommitFallsBackOnBaseBranch(t *testing.T) {
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
-	if req.GitRef != "HEAD" {
-		t.Errorf("expected HEAD fallback on base branch, got %q", req.GitRef)
-	}
+	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 }
 
 func TestPostCommitSilentExitNotARepo(t *testing.T) {
 	dir := t.TempDir()
 	stdout, stderr, err := executePostCommitCmd("--repo", dir)
-	if err != nil {
-		t.Errorf("expected silent exit, got error: %v", err)
-	}
-	if stdout != "" {
-		t.Errorf("expected no stdout, got: %q", stdout)
-	}
-	if stderr != "" {
-		t.Errorf("expected no stderr, got: %q", stderr)
-	}
+	require.NoError(t, err, "unexpected condition")
+	assert.Empty(t, stdout, "unexpected condition")
+	assert.Empty(t, stderr, "unexpected condition")
 }
 
 func TestPostCommitAcceptsQuietFlag(t *testing.T) {
@@ -115,9 +98,7 @@ func TestPostCommitAcceptsQuietFlag(t *testing.T) {
 	_, _, err := executePostCommitCmd(
 		"--repo", repo.Dir, "--quiet",
 	)
-	if err != nil {
-		t.Errorf("--quiet should be accepted: %v", err)
-	}
+	require.NoError(t, err, "unexpected condition")
 }
 
 func TestEnqueueAliasWorksIdentically(t *testing.T) {
@@ -127,31 +108,23 @@ func TestEnqueueAliasWorksIdentically(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial")
 
 	_, _, err := executeEnqueueAliasCmd("--repo", repo.Dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := <-reqCh
-	if req.GitRef != "HEAD" {
-		t.Errorf("expected HEAD, got %q", req.GitRef)
-	}
+	assert.Equal(t, "HEAD", req.GitRef, "unexpected condition")
 }
 
 func TestPostCommitRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executePostCommitCmd("abc123")
-	if err == nil {
-		t.Fatal("expected error for positional args")
-	}
-	if !strings.Contains(err.Error(), "unknown command") {
-		t.Errorf("expected 'unknown command' error, got: %v", err)
-	}
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "unknown command", "unexpected condition")
 }
 
 func TestEnqueueRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executeEnqueueAliasCmd("abc123")
-	if err == nil {
-		t.Fatal("expected error for positional args")
-	}
+	require.Error(t, err)
+
 }
 
 // stallingRoundTripper blocks until the request context is
@@ -181,10 +154,11 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	// Register a handler so ensureDaemon succeeds, but the
 	// actual POST will go through the stalling RoundTripper.
+	realHandlerCalled := false
 	mux.HandleFunc("/api/enqueue", func(
 		w http.ResponseWriter, r *http.Request,
 	) {
-		t.Error("real handler should not be reached")
+		realHandlerCalled = true
 	})
 
 	repo.CommitFile("file.txt", "content", "initial")
@@ -201,31 +175,24 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
 	elapsed := time.Since(start)
 
-	if err != nil {
-		t.Errorf("expected nil (fail open), got: %v", err)
-	}
+	require.NoError(t, err, "unexpected condition")
 
 	select {
 	case <-rt.hit:
 		// RoundTrip was called — timeout path was exercised
 	default:
-		t.Fatal("RoundTrip was never called; timeout not exercised")
+		require.NoError(t, err, "RoundTrip was never called; timeout not exercised")
 	}
+	assert.False(t, realHandlerCalled, "real handler should not be reached")
+	assert.LessOrEqual(t, elapsed, time.Second,
 
-	if elapsed > 3*time.Second {
-		t.Errorf(
-			"command took %v; should return promptly via timeout",
-			elapsed,
-		)
-	}
+		"command took %v; should return promptly via timeout",
+		elapsed)
+
 }
 
 func TestEnqueueAliasIsHidden(t *testing.T) {
 	cmd := enqueueCmd()
-	if !cmd.Hidden {
-		t.Error("enqueue alias should be hidden")
-	}
-	if !strings.Contains(cmd.Use, "enqueue") {
-		t.Errorf("expected Use to contain 'enqueue', got %q", cmd.Use)
-	}
+	assert.True(t, cmd.Hidden, "unexpected condition")
+	assert.Contains(t, cmd.Use, "enqueue", "unexpected condition")
 }

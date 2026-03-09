@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"strings"
@@ -15,7 +17,7 @@ func TestOpenCodeModelFlag(t *testing.T) {
 	tests := []struct {
 		name         string
 		model        string
-		wantModel    bool // true = --model should appear
+		wantModel    bool
 		wantContains string
 	}{
 		{
@@ -94,12 +96,8 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 	prompt := "Review this commit carefully"
 	_, args, stdin := runMockOpenCodeReview(t, "", prompt, nil)
 
-	// Prompt must be in stdin
-	if strings.TrimSpace(stdin) != prompt {
-		t.Errorf("stdin content = %q, want %q", stdin, prompt)
-	}
+	assert.Equal(t, strings.TrimSpace(stdin), prompt, "unexpected condition")
 
-	// Prompt must not be in argv
 	assertNotContains(t, args, prompt)
 }
 
@@ -132,7 +130,7 @@ func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
 	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
 
 	assertEqual(t, result, " Done.")
-	// Tool events should not appear in the result text
+
 	assertNotContains(t, result, "Read")
 	assertNotContains(t, result, "file_path")
 }
@@ -172,13 +170,10 @@ func TestOpenCodeReviewStreamsToOutput(t *testing.T) {
 		Prompt: "prompt",
 		Writer: &outputBuf,
 	})
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
 	assertEqual(t, result, "Hello world")
 
-	// Raw JSONL should have been written to the output writer
 	outStr := outputBuf.String()
 	assertContains(t, outStr, `"type":"text"`)
 }
@@ -199,10 +194,8 @@ func TestOpenCodeReviewPartialOnError(t *testing.T) {
 		},
 		Prompt: "prompt",
 	})
-	if err == nil {
-		t.Fatal("expected error for non-zero exit")
-	}
-	// Error should contain partial output
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "Partial review text")
 }
 
@@ -210,7 +203,6 @@ func TestOpenCodeReviewNoOutput(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Events with no text parts should produce fallback message
 	stdoutLines := []string{
 		makeOpenCodeEvent("step_start", map[string]any{
 			"type": "step-start",
@@ -241,17 +233,13 @@ func TestParseOpenCodeJSON(t *testing.T) {
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), newSyncWriter(&outputBuf),
 	)
-	if err != nil {
-		t.Fatalf("parseOpenCodeJSON: %v", err)
-	}
+	require.NoError(t, err, "parseOpenCodeJSON: %v")
 
 	assertEqual(t, result, " Part two.")
 
-	// All raw lines should be written to output
 	out := outputBuf.String()
-	if strings.Count(out, "\n") != 3 {
-		t.Errorf("expected 3 lines written to output, got:\n%s", out)
-	}
+	assert.Equal(t, 3, strings.Count(out, "\n"), "expected 3 lines written to output, got:\n%s", out)
+
 }
 
 func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
@@ -262,9 +250,8 @@ func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
 	)
-	if err != nil {
-		t.Fatalf("parseOpenCodeJSON: %v", err)
-	}
+	require.NoError(t, err, "parseOpenCodeJSON: %v")
+
 	assertEqual(t, result, "ok")
 }
 
@@ -286,13 +273,10 @@ func TestOpenCodeReviewStderrStreamedToOutput(t *testing.T) {
 		Prompt: "prompt",
 		Writer: &outputBuf,
 	})
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
 	assertEqual(t, result, "Review done")
 
-	// Both stdout JSONL and stderr should appear in output
 	outStr := outputBuf.String()
 	assertContains(t, outStr, `"type":"text"`)
 	assertContains(t, outStr, "warning: something")
@@ -313,9 +297,7 @@ func TestOpenCodeReviewNilOutput(t *testing.T) {
 		},
 		Prompt: "prompt",
 	})
-	if err != nil {
-		t.Fatalf("Review with nil output: %v", err)
-	}
+	require.NoError(t, err, "Review with nil output: %v")
 
 	assertEqual(t, result, "Review content")
 }
@@ -329,14 +311,11 @@ func TestParseOpenCodeJSON_ReadError(t *testing.T) {
 		},
 		nil,
 	)
-	if err == nil {
-		t.Fatal("expected error from broken reader")
-	}
-	// Should contain partial text
+	require.Error(t, err)
+
 	assertContains(t, result, "partial")
 }
 
-// failAfterReader returns data on first read, then an error.
 type failAfterReader struct {
 	data string
 	done bool
@@ -351,7 +330,6 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// reviewTestOpts configures executeReviewTest.
 type reviewTestOpts struct {
 	MockOpts  MockCLIOpts
 	Model     string
@@ -360,12 +338,11 @@ type reviewTestOpts struct {
 	SessionID string
 }
 
-// executeReviewTest handles mockAgentCLI setup, instantiation, and Review execution.
 func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, string, error) {
 	t.Helper()
 
 	if opts.Prompt == "" {
-		t.Fatal("executeReviewTest requires an explicit Prompt")
+		require.NotEmpty(t, opts.Prompt, "executeReviewTest requires an explicit Prompt")
 	}
 
 	mock := mockAgentCLI(t, opts.MockOpts)
@@ -415,9 +392,7 @@ func runMockOpenCodeReview(
 		Model:  model,
 		Prompt: prompt,
 	})
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
 	return out, argsStr, stdinStr
 }
@@ -450,9 +425,8 @@ func readFileOrFatal(t *testing.T, path string) []byte {
 	t.Helper()
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read file %s: %v", path, err)
-	}
+	require.NoError(t, err, "failed to read file %s: %v", path)
+
 	return data
 }
 
@@ -489,22 +463,15 @@ func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
 	)
-	if err != nil {
-		t.Fatalf("parseOpenCodeJSON: %v", err)
-	}
+	require.NoError(t, err, "parseOpenCodeJSON: %v")
 
-	if strings.Contains(result, "\x1b") {
-		t.Errorf("result contains ESC: %q", result)
-	}
-	if strings.Contains(result, "\x07") {
-		t.Errorf("result contains BEL: %q", result)
-	}
+	assert.NotContains(t, result, "\x1b", "unexpected condition")
+	assert.NotContains(t, result, "\x07", "unexpected condition")
 	assertContains(t, result, "red")
 	assertContains(t, result, "safe")
 	assertNotContains(t, result, "evil")
 }
 
-// makeOpenCodeEvent builds an opencode JSONL event line.
 func makeOpenCodeEvent(eventType string, part map[string]any) string {
 	ev := map[string]any{
 		"type": eventType,
@@ -517,7 +484,6 @@ func makeOpenCodeEvent(eventType string, part map[string]any) string {
 	return string(b)
 }
 
-// makeTextEvent is a convenience helper for making 'text' events.
 func makeTextEvent(text string) string {
 	return makeOpenCodeEvent("text", map[string]any{
 		"type": "text",

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 // setupRenderModel creates a standardized model for rendering tests
@@ -24,16 +25,12 @@ func setupRenderModel(
 
 func assertOutputContains(t *testing.T, got, want string) {
 	t.Helper()
-	if !strings.Contains(got, want) {
-		t.Errorf("Expected output to contain %q, got:\n%s", want, got)
-	}
+	assert.Contains(t, got, want)
 }
 
 func assertAbsent(t *testing.T, got, want string) {
 	t.Helper()
-	if strings.Contains(got, want) {
-		t.Errorf("Expected output NOT to contain %q, got:\n%s", want, got)
-	}
+	assert.NotContains(t, got, want)
 }
 
 func TestTUIRenderViews(t *testing.T) {
@@ -251,9 +248,7 @@ func TestTUIRenderViews(t *testing.T) {
 						break
 					}
 				}
-				if !foundContent {
-					t.Errorf("Content should contain 'Line 1' after header, output:\n%s", output)
-				}
+				assert.True(t, foundContent, "Content should contain 'Line 1' after header, output:\n%s", output)
 			}
 			if tt.checkContentStartsOnLine4 {
 				lines := strings.Split(output, "\n")
@@ -264,15 +259,16 @@ func TestTUIRenderViews(t *testing.T) {
 						break
 					}
 				}
-				if !foundContent {
-					t.Errorf("Content should contain 'Line 1' after closed/verdict line, output:\n%s", output)
-				}
+				assert.True(t, foundContent, "Content should contain 'Line 1' after closed/verdict line, output:\n%s", output)
 			}
 			if tt.checkNoVerdictOnLine3 {
 				lines := strings.Split(output, "\n")
-				if len(lines) > 2 && strings.Contains(lines[2], "Verdict") {
-					t.Errorf("Line 2 should not contain 'Verdict' when no verdict is set, got: %s", lines[2])
+				line3 := ""
+				if len(lines) > 2 {
+					line3 = lines[2]
 				}
+				assert.False(t, len(lines) > 2 && strings.Contains(line3, "Verdict"),
+					"Line 2 should not contain 'Verdict' when no verdict is set, got: %s", line3)
 			}
 		})
 	}
@@ -374,9 +370,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			output := m.View()
 
 			expectedIndicator := fmt.Sprintf("[1-%d of %d lines]", tt.wantVisibleLines, 21)
-			if !strings.Contains(output, expectedIndicator) {
-				t.Errorf("Expected scroll indicator '%s', output: %s", expectedIndicator, output)
-			}
+			assert.Contains(t, output, expectedIndicator)
 
 			if tt.checkVisibleContentCount {
 				contentCount := 0
@@ -386,15 +380,11 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 						contentCount++
 					}
 				}
-				if contentCount == 0 {
-					t.Error("Expected at least some content lines visible")
-				}
+				assert.NotZero(t, contentCount, "Expected at least some content lines visible")
 			}
 
 			for _, want := range tt.wantContains {
-				if !strings.Contains(output, want) {
-					t.Errorf("Expected output to contain %q", want)
-				}
+				assert.Contains(t, output, want)
 			}
 		})
 	}

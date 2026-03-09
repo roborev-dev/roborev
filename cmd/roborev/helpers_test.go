@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,9 +31,8 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 	}
 	dir := t.TempDir()
 	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatalf("Failed to resolve symlinks: %v", err)
-	}
+	require.NoError(t, err, "Failed to resolve symlinks: %v")
+	
 	r := &TestGitRepo{Dir: resolved, t: t}
 	r.Run("init")
 	r.Run("config", "user.email", "test@test.com")
@@ -44,11 +44,10 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to getwd: %v", err)
-	}
+	require.NoError(t, err, "Failed to getwd: %v")
+	
 	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Failed to chdir: %v", err)
+		require.NoError(t, err, "Failed to chdir: %v")
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
 }
@@ -147,10 +146,10 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 	for path, content := range files {
 		fullPath := filepath.Join(dir, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
+			require.NoError(t, err, "mkdir: %v")
 		}
 		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
+			require.Errorf(t, err, "write %s: %v", path, err)
 		}
 	}
 }
@@ -185,7 +184,7 @@ func runShowCmd(t *testing.T, args ...string) string {
 	cmd.SetArgs(args)
 	return captureStdout(t, func() {
 		if err := cmd.Execute(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.NoError(t, err)
 		}
 	})
 }

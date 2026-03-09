@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -11,25 +13,16 @@ func TestRepoOperations(t *testing.T) {
 
 	// Create repo
 	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	if repo.ID == 0 {
-		t.Error("Repo ID should not be 0")
-	}
-	if repo.Name != "test-repo" {
-		t.Errorf("Expected name 'test-repo', got '%s'", repo.Name)
-	}
+	assert.NotEqual(t, 0, repo.ID, "unexpected condition")
+	assert.Equal(t, "test-repo", repo.Name, "unexpected condition")
 
 	// Get same repo again (should return existing)
 	repo2, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo (second call) failed: %v", err)
-	}
-	if repo2.ID != repo.ID {
-		t.Error("Should return same repo on second call")
-	}
+	require.NoError(t, err, "GetOrCreateRepo (second call) failed: %v")
+
+	assert.Equal(t, repo2.ID, repo.ID, "unexpected condition")
 }
 
 func TestCommitOperations(t *testing.T) {
@@ -40,25 +33,16 @@ func TestCommitOperations(t *testing.T) {
 
 	// Create commit
 	commit, err := db.GetOrCreateCommit(repo.ID, "abc123def456", "Test Author", "Test commit", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
+	require.NoError(t, err, "GetOrCreateCommit failed: %v")
 
-	if commit.ID == 0 {
-		t.Error("Commit ID should not be 0")
-	}
-	if commit.SHA != "abc123def456" {
-		t.Errorf("Expected SHA 'abc123def456', got '%s'", commit.SHA)
-	}
+	assert.NotEqual(t, 0, commit.ID, "unexpected condition")
+	assert.Equal(t, "abc123def456", commit.SHA, "unexpected condition")
 
 	// Get by SHA
 	found, err := db.GetCommitBySHA("abc123def456")
-	if err != nil {
-		t.Fatalf("GetCommitBySHA failed: %v", err)
-	}
-	if found.ID != commit.ID {
-		t.Error("GetCommitBySHA returned wrong commit")
-	}
+	require.NoError(t, err, "GetCommitBySHA failed: %v")
+
+	assert.Equal(t, found.ID, commit.ID, "unexpected condition")
 }
 
 func TestBranchPersistence(t *testing.T) {
@@ -70,50 +54,37 @@ func TestBranchPersistence(t *testing.T) {
 
 	t.Run("EnqueueJob stores branch", func(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch123", Branch: "feature/test-branch", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		if job.Branch != "feature/test-branch" {
-			t.Errorf("Expected branch 'feature/test-branch', got '%s'", job.Branch)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
+		assert.Equal(t, "feature/test-branch", job.Branch, "unexpected condition")
 	})
 
 	t.Run("GetJobByID returns branch", func(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch456", Branch: "main", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
 		fetched, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if fetched.Branch != "main" {
-			t.Errorf("GetJobByID: expected branch 'main', got '%s'", fetched.Branch)
-		}
+		require.NoError(t, err, "GetJobByID failed: %v")
+
+		assert.Equal(t, "main", fetched.Branch, "unexpected condition")
 	})
 
 	t.Run("ListJobs returns branch", func(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch789", Branch: "develop", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
 		jobs, err := db.ListJobs("", "", 100, 0)
-		if err != nil {
-			t.Fatalf("ListJobs failed: %v", err)
-		}
+		require.NoError(t, err, "ListJobs failed: %v")
+
 		var found bool
 		for _, j := range jobs {
 			if j.ID == job.ID {
 				found = true
-				if j.Branch != "develop" {
-					t.Errorf("ListJobs: expected branch 'develop', got '%s'", j.Branch)
-				}
+				assert.Equal(t, "develop", j.Branch, "unexpected condition")
 				break
 			}
 		}
-		if !found {
-			t.Error("ListJobs did not return the job")
-		}
+		assert.True(t, found, "unexpected condition")
 	})
 
 	t.Run("ClaimJob returns branch", func(t *testing.T) {
@@ -127,84 +98,58 @@ func TestBranchPersistence(t *testing.T) {
 		}
 
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branchclaim", Branch: "release/v1", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
 		claimed, err := db.ClaimJob("test-worker")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		if claimed == nil || claimed.ID != job.ID {
-			t.Fatal("ClaimJob did not return the expected job")
-		}
-		if claimed.Branch != "release/v1" {
-			t.Errorf("ClaimJob: expected branch 'release/v1', got '%s'", claimed.Branch)
-		}
+		require.NoError(t, err, "ClaimJob failed: %v")
+
+		assert.False(t, claimed == nil || claimed.ID != job.ID, "unexpected condition")
+		assert.Equal(t, "release/v1", claimed.Branch, "unexpected condition")
 	})
 
 	t.Run("empty branch is allowed", func(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "nobranch", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob with empty branch failed: %v", err)
-		}
-		if job.Branch != "" {
-			t.Errorf("Expected empty branch, got '%s'", job.Branch)
-		}
+		require.NoError(t, err, "EnqueueJob with empty branch failed: %v")
+
+		assert.Empty(t, job.Branch, "unexpected condition")
 	})
 
 	t.Run("UpdateJobBranch backfills empty branch", func(t *testing.T) {
 		// Create job with empty branch
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "updatebranch", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		if job.Branch != "" {
-			t.Fatalf("Expected empty branch initially, got '%s'", job.Branch)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
+
+		assert.Empty(t, job.Branch, "unexpected condition")
 
 		// Update the branch
 		rowsAffected, err := db.UpdateJobBranch(job.ID, "feature/backfilled")
-		if err != nil {
-			t.Fatalf("UpdateJobBranch failed: %v", err)
-		}
-		if rowsAffected != 1 {
-			t.Errorf("Expected 1 row affected, got %d", rowsAffected)
-		}
+		require.NoError(t, err, "UpdateJobBranch failed: %v")
+
+		assert.EqualValues(t, 1, rowsAffected, "unexpected condition")
 
 		// Verify the branch was updated
 		fetched, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if fetched.Branch != "feature/backfilled" {
-			t.Errorf("Expected branch 'feature/backfilled', got '%s'", fetched.Branch)
-		}
+		require.NoError(t, err, "GetJobByID failed: %v")
+
+		assert.Equal(t, "feature/backfilled", fetched.Branch, "unexpected condition")
 	})
 
 	t.Run("UpdateJobBranch does not overwrite existing branch", func(t *testing.T) {
 		// Create job with existing branch
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "nooverwrite", Branch: "original-branch", Agent: "codex"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		require.NoError(t, err, "EnqueueJob failed: %v")
 
 		// Try to update - should not change existing branch
 		rowsAffected, err := db.UpdateJobBranch(job.ID, "new-branch")
-		if err != nil {
-			t.Fatalf("UpdateJobBranch failed: %v", err)
-		}
-		if rowsAffected != 0 {
-			t.Errorf("Expected 0 rows affected (branch already set), got %d", rowsAffected)
-		}
+		require.NoError(t, err, "UpdateJobBranch failed: %v")
+
+		assert.EqualValues(t, 0, rowsAffected, "unexpected condition")
 
 		// Verify the branch was NOT changed
 		fetched, err := db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if fetched.Branch != "original-branch" {
-			t.Errorf("Expected branch 'original-branch' (unchanged), got '%s'", fetched.Branch)
-		}
+		require.NoError(t, err, "GetJobByID failed: %v")
+
+		assert.Equal(t, "original-branch", fetched.Branch, "unexpected condition")
 	})
 }
 
@@ -214,22 +159,15 @@ func TestRepoIdentity(t *testing.T) {
 		defer db.Close()
 
 		repo, err := db.GetOrCreateRepo("/tmp/identity-test", "git@github.com:foo/bar.git")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-		if repo.Identity != "git@github.com:foo/bar.git" {
-			t.Errorf("Expected identity 'git@github.com:foo/bar.git', got %q", repo.Identity)
-		}
+		assert.Equal(t, "git@github.com:foo/bar.git", repo.Identity, "unexpected condition")
 
 		// Verify it persists
 		repo2, err := db.GetOrCreateRepo("/tmp/identity-test")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo (second call) failed: %v", err)
-		}
-		if repo2.Identity != "git@github.com:foo/bar.git" {
-			t.Errorf("Expected identity to persist, got %q", repo2.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo (second call) failed: %v")
+
+		assert.Equal(t, "git@github.com:foo/bar.git", repo2.Identity, "unexpected condition")
 	})
 
 	t.Run("backfills identity when not set", func(t *testing.T) {
@@ -238,21 +176,15 @@ func TestRepoIdentity(t *testing.T) {
 
 		// Create repo without identity
 		repo1, err := db.GetOrCreateRepo("/tmp/backfill-test")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
-		if repo1.Identity != "" {
-			t.Errorf("Expected no identity initially, got %q", repo1.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo failed: %v")
+
+		assert.Empty(t, repo1.Identity, "unexpected condition")
 
 		// Call again with identity - should backfill
 		repo2, err := db.GetOrCreateRepo("/tmp/backfill-test", "git@github.com:test/backfill.git")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo with identity failed: %v", err)
-		}
-		if repo2.Identity != "git@github.com:test/backfill.git" {
-			t.Errorf("Expected identity to be backfilled, got %q", repo2.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo with identity failed: %v")
+
+		assert.Equal(t, "git@github.com:test/backfill.git", repo2.Identity, "unexpected condition")
 	})
 
 	t.Run("does not overwrite existing identity", func(t *testing.T) {
@@ -261,18 +193,13 @@ func TestRepoIdentity(t *testing.T) {
 
 		// Create repo with identity
 		_, err := db.GetOrCreateRepo("/tmp/no-overwrite-test", "original-identity")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
 		// Call again with different identity - should NOT overwrite
 		repo2, err := db.GetOrCreateRepo("/tmp/no-overwrite-test", "new-identity")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo with new identity failed: %v", err)
-		}
-		if repo2.Identity != "original-identity" {
-			t.Errorf("Expected identity to remain 'original-identity', got %q", repo2.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo with new identity failed: %v")
+
+		assert.Equal(t, "original-identity", repo2.Identity, "unexpected condition")
 	})
 
 	t.Run("multiple clones with same identity allowed", func(t *testing.T) {
@@ -286,35 +213,23 @@ func TestRepoIdentity(t *testing.T) {
 
 		// Create first clone
 		repo1, err := db.GetOrCreateRepo("/tmp/clone-1", sharedIdentity)
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo for clone-1 failed: %v", err)
-		}
-		if repo1.Identity != sharedIdentity {
-			t.Errorf("Expected identity %q for clone-1, got %q", sharedIdentity, repo1.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo for clone-1 failed: %v")
+
+		assert.Equal(t, repo1.Identity, sharedIdentity, "unexpected condition")
 
 		// Create second clone with same identity - should succeed (was failing before fix)
 		repo2, err := db.GetOrCreateRepo("/tmp/clone-2", sharedIdentity)
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo for clone-2 failed: %v (multiple clones with same identity should be allowed)", err)
-		}
-		if repo2.Identity != sharedIdentity {
-			t.Errorf("Expected identity %q for clone-2, got %q", sharedIdentity, repo2.Identity)
-		}
+		require.NoError(t, err, "GetOrCreateRepo for clone-2 failed: %v (multiple clones with same identity should be allowed)")
+
+		assert.Equal(t, repo2.Identity, sharedIdentity, "unexpected condition")
 
 		// Verify they are different repos
-		if repo1.ID == repo2.ID {
-			t.Errorf("Expected different repo IDs, but both are %d", repo1.ID)
-		}
-		if repo1.RootPath == repo2.RootPath {
-			t.Errorf("Expected different root paths")
-		}
+		assert.NotEqual(t, repo1.ID, repo2.ID, "unexpected condition")
+		assert.NotEqual(t, repo1.RootPath, repo2.RootPath, "Expected different root paths")
 
 		// Verify both repos exist and can be retrieved
 		repos, err := db.ListRepos()
-		if err != nil {
-			t.Fatalf("ListRepos failed: %v", err)
-		}
+		require.NoError(t, err, "ListRepos failed: %v")
 
 		foundClone1, foundClone2 := false, false
 		for _, r := range repos {
@@ -325,9 +240,7 @@ func TestRepoIdentity(t *testing.T) {
 				foundClone2 = true
 			}
 		}
-		if !foundClone1 || !foundClone2 {
-			t.Errorf("Expected both clones to exist in ListRepos, found clone1=%v clone2=%v", foundClone1, foundClone2)
-		}
+		assert.False(t, !foundClone1 || !foundClone2, "unexpected condition")
 	})
 }
 
@@ -342,25 +255,15 @@ func TestDuplicateSHAHandling(t *testing.T) {
 
 		// Create commits with same SHA in different repos
 		commit1, err := db.GetOrCreateCommit(repo1.ID, "abc123", "Author1", "Subject1", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit for repo1 failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateCommit for repo1 failed: %v")
 
 		commit2, err := db.GetOrCreateCommit(repo2.ID, "abc123", "Author2", "Subject2", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit for repo2 failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrCreateCommit for repo2 failed: %v")
 
 		// Should be different commits
-		if commit1.ID == commit2.ID {
-			t.Error("Same SHA in different repos should create different commits")
-		}
-		if commit1.RepoID != repo1.ID {
-			t.Error("commit1 should belong to repo1")
-		}
-		if commit2.RepoID != repo2.ID {
-			t.Error("commit2 should belong to repo2")
-		}
+		assert.NotEqual(t, commit1.ID, commit2.ID, "unexpected condition")
+		assert.Equal(t, commit1.RepoID, repo1.ID, "unexpected condition")
+		assert.Equal(t, commit2.RepoID, repo2.ID, "unexpected condition")
 	})
 
 	t.Run("GetCommitBySHA returns error when ambiguous", func(t *testing.T) {
@@ -376,9 +279,7 @@ func TestDuplicateSHAHandling(t *testing.T) {
 
 		// GetCommitBySHA should fail when ambiguous
 		_, err := db.GetCommitBySHA("ambiguous-sha")
-		if err == nil {
-			t.Error("Expected error when SHA is ambiguous across repos")
-		}
+		require.Error(t, err, "unexpected condition")
 	})
 
 	t.Run("GetCommitByRepoAndSHA returns correct commit", func(t *testing.T) {
@@ -394,19 +295,13 @@ func TestDuplicateSHAHandling(t *testing.T) {
 
 		// GetCommitByRepoAndSHA should return correct commit for each repo
 		found1, err := db.GetCommitByRepoAndSHA(repo1.ID, "same-sha")
-		if err != nil {
-			t.Fatalf("GetCommitByRepoAndSHA for repo1 failed: %v", err)
-		}
-		if found1.ID != commit1.ID {
-			t.Error("GetCommitByRepoAndSHA returned wrong commit for repo1")
-		}
+		require.NoError(t, err, "GetCommitByRepoAndSHA for repo1 failed: %v")
+
+		assert.Equal(t, found1.ID, commit1.ID, "unexpected condition")
 
 		found2, err := db.GetCommitByRepoAndSHA(repo2.ID, "same-sha")
-		if err != nil {
-			t.Fatalf("GetCommitByRepoAndSHA for repo2 failed: %v", err)
-		}
-		if found2.ID != commit2.ID {
-			t.Error("GetCommitByRepoAndSHA returned wrong commit for repo2")
-		}
+		require.NoError(t, err, "GetCommitByRepoAndSHA for repo2 failed: %v")
+
+		assert.Equal(t, found2.ID, commit2.ID, "unexpected condition")
 	})
 }

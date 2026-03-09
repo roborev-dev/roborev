@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResolveRepoIdentifier(t *testing.T) {
@@ -37,16 +40,12 @@ func TestResolveRepoIdentifier(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		orgDir := filepath.Join(tmpDir, "org")
-		if err := os.Mkdir(orgDir, 0755); err != nil {
-			t.Fatalf("Failed to create org dir: %v", err)
-		}
+		require.NoError(t, os.Mkdir(orgDir, 0755), "Failed to create org dir")
 
 		// Ensure we are in a safe directory (tmpDir) before modifying permissions of orgDir
 		chdir(t, tmpDir)
 
-		if err := os.Chmod(orgDir, 0000); err != nil {
-			t.Fatalf("Failed to chmod: %v", err)
-		}
+		require.NoError(t, os.Chmod(orgDir, 0000), "Failed to chmod")
 		defer func() { _ = os.Chmod(orgDir, 0755) }()
 
 		// The test expects "org/project" because it can't stat "org" to see if it's a repo,
@@ -59,16 +58,12 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		root := newTestGitRepo(t).Dir
 		// Create common structure: root/sub/dir
 		subDir := filepath.Join(root, "sub", "dir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(subDir, 0755))
 
 		// Also create a non-git temp dir for that one case
 		nonGitDir := t.TempDir()
 		resolvedNonGit, err := filepath.EvalSymlinks(nonGitDir)
-		if err != nil {
-			t.Fatalf("Failed to resolve symlinks: %v", err)
-		}
+		require.NoError(t, err, "Failed to resolve symlinks")
 
 		tests := []struct {
 			name  string
@@ -120,7 +115,5 @@ func TestResolveRepoIdentifier(t *testing.T) {
 
 func assertPath(t *testing.T, got, want string) {
 	t.Helper()
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }

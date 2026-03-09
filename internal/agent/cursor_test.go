@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -47,9 +49,8 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 			if tt.model != "" {
 				var ok bool
 				a, ok = a.WithModel(tt.model).(*CursorAgent)
-				if !ok {
-					t.Fatalf("expected *CursorAgent")
-				}
+				require.True(t, ok, "expected *CursorAgent")
+
 			}
 
 			args := a.buildArgs(tt.agentic)
@@ -79,14 +80,10 @@ func TestCursorReviewPassesModelFlag(t *testing.T) {
 
 	b := a.WithModel("test-model")
 	cursor, ok := b.(*CursorAgent)
-	if !ok {
-		t.Fatalf("expected *CursorAgent, got %T", b)
-	}
+	require.True(t, ok, "expected *CursorAgent, got %T", b)
 
 	_, err := cursor.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
 	args := readMockArgs(t, mock.ArgsFile)
 	assertContainsArg(t, args, "--model")
@@ -94,8 +91,7 @@ func TestCursorReviewPassesModelFlag(t *testing.T) {
 }
 
 func TestCursorParseStreamJSON(t *testing.T) {
-	// Cursor uses the same stream-json format as Claude Code.
-	// Verify that output parsing works via a mock script.
+
 	tests := []struct {
 		name           string
 		input          string
@@ -123,12 +119,9 @@ func TestCursorParseStreamJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cursor := NewCursorAgent("dummy")
 			res, err := cursor.parseStreamJSON(strings.NewReader(tt.input), nil)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if res != tt.expectedResult {
-				t.Errorf("expected %q, got %q", tt.expectedResult, res)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedResult, res, "expected %q, got %q", tt.expectedResult, res)
+
 		})
 	}
 }
@@ -136,25 +129,15 @@ func TestCursorParseStreamJSON(t *testing.T) {
 func TestCursorWithChaining(t *testing.T) {
 	a := NewCursorAgent("agent")
 
-	// Chain WithModel, WithReasoning, WithAgentic
 	b := a.WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true)
 	cursor, ok := b.(*CursorAgent)
-	if !ok {
-		t.Fatalf("expected *CursorAgent, got %T", b)
-	}
+	require.True(t, ok, "expected *CursorAgent, got %T", b)
+	assert.Equal(t, "m1", cursor.Model, "expected model m1, got %q", cursor.Model)
+	assert.Equal(t, ReasoningThorough, cursor.Reasoning, "expected thorough reasoning, got %q", cursor.Reasoning)
 
-	if cursor.Model != "m1" {
-		t.Errorf("expected model m1, got %q", cursor.Model)
-	}
-	if cursor.Reasoning != ReasoningThorough {
-		t.Errorf("expected thorough reasoning, got %q", cursor.Reasoning)
-	}
-	if !cursor.Agentic {
-		t.Error("expected agentic true")
-	}
-	if cursor.Command != "agent" {
-		t.Errorf("expected command 'agent', got %q", cursor.Command)
-	}
+	assert.True(t, cursor.Agentic, "expected agentic true")
+	assert.Equal(t, "agent", cursor.Command, "expected command 'agent', got %q", cursor.Command)
+
 }
 
 func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
@@ -170,14 +153,10 @@ func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", prompt, nil,
 	)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
-	// Prompt must be in stdin
 	assertFileContent(t, mock.StdinFile, prompt)
 
-	// Prompt must not be in argv
 	assertFileNotContains(t, mock.ArgsFile, prompt)
 }
 
@@ -189,12 +168,9 @@ func TestCursorReviewEmptyOutput(t *testing.T) {
 	result, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "No review output generated" {
-		t.Errorf("expected %q, got %q", "No review output generated", result)
-	}
+	require.NoError(t, err)
+
+	assert.Equal(t, "No review output generated", result, "unexpected condition")
 }
 
 func TestCursorReviewErrorResult(t *testing.T) {
@@ -208,13 +184,9 @@ func TestCursorReviewErrorResult(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "Invalid API key") {
-		t.Errorf("expected error containing %q, got %q",
-			"Invalid API key", err.Error())
-	}
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "Invalid API key", "unexpected condition")
 }
 
 func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
@@ -229,26 +201,15 @@ func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "abc123", "review this", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err)
+
 	errStr := err.Error()
-	if !strings.Contains(errStr, "quota exceeded") {
-		t.Errorf("expected error containing %q, got %q",
-			"quota exceeded", errStr)
-	}
-	if !strings.Contains(errStr, "failed") {
-		t.Errorf("expected error containing %q, got %q",
-			"failed", errStr)
-	}
+	assert.Contains(t, errStr, "quota exceeded", "unexpected condition")
+	assert.Contains(t, errStr, "failed", "unexpected condition")
 }
 
 func TestCursorName(t *testing.T) {
 	a := NewCursorAgent("")
-	if a.Name() != "cursor" {
-		t.Errorf("expected 'cursor', got %q", a.Name())
-	}
-	if a.CommandName() != "agent" {
-		t.Errorf("expected 'agent', got %q", a.CommandName())
-	}
+	assert.Equal(t, "cursor", a.Name(), "unexpected condition")
+	assert.Equal(t, "agent", a.CommandName(), "unexpected condition")
 }

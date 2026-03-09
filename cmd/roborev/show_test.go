@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShowCommandArgParsing(t *testing.T) {
@@ -32,9 +33,7 @@ func TestShowCommandArgParsing(t *testing.T) {
 			wantQueryNot: []string{"job_id="},
 			validate: func(t *testing.T, repo *TestGitRepo, query string) {
 				tagSHA := repo.Run("rev-parse", "12345")
-				if !strings.Contains(query, tagSHA[:7]) {
-					t.Errorf("expected query to contain resolved SHA %s (from ref 12345), got: %s", tagSHA[:7], query)
-				}
+				assert.Contains(t, query, tagSHA[:7], "unexpected condition")
 			},
 		},
 		{
@@ -77,14 +76,10 @@ func TestShowCommandArgParsing(t *testing.T) {
 
 			q := getQuery()
 			for _, s := range tt.wantQueryHas {
-				if !strings.Contains(q, s) {
-					t.Errorf("expected query to contain %q, got: %s", s, q)
-				}
+				assert.Contains(t, q, s, "unexpected condition")
 			}
 			for _, s := range tt.wantQueryNot {
-				if strings.Contains(q, s) {
-					t.Errorf("expected query NOT to contain %q, got: %s", s, q)
-				}
+				assert.NotContains(t, q, s, "unexpected condition")
 			}
 
 			if tt.validate != nil {
@@ -131,13 +126,9 @@ func TestShowOutputFormat(t *testing.T) {
 
 			expected := tt.wantOutputFunc(shortSHA)
 
-			if !strings.Contains(output, expected) {
-				t.Errorf("expected %q in output, got: %s", expected, output)
-			}
+			assert.Contains(t, output, expected, "unexpected condition")
 			if tt.notOutput != "" {
-				if strings.Contains(output, tt.notOutput) {
-					t.Errorf("did not expect %q in output, got: %s", tt.notOutput, output)
-				}
+				assert.NotContains(t, output, tt.notOutput, "unexpected condition")
 			}
 		})
 	}
@@ -167,12 +158,8 @@ func TestShowOutsideGitRepo(t *testing.T) {
 
 		output := runShowCmd(t, "--job", "42")
 		q := getQuery()
-		if !strings.Contains(q, "job_id=42") {
-			t.Errorf("expected job_id=42 in query, got: %s", q)
-		}
-		if !strings.Contains(output, "LGTM") {
-			t.Errorf("expected review output in result, got: %s", output)
-		}
+		assert.Contains(t, q, "job_id=42", "unexpected condition")
+		assert.Contains(t, output, "LGTM", "unexpected condition")
 	})
 }
 
@@ -190,27 +177,16 @@ func TestShowJSONOutput(t *testing.T) {
 
 	t.Run("outputs valid JSON", func(t *testing.T) {
 		var parsed storage.Review
-		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
-			t.Fatalf("--json output not valid JSON: %v\noutput: %s", err, output)
-		}
-		if parsed.JobID != 42 {
-			t.Errorf("expected job_id=42, got %d", parsed.JobID)
-		}
-		if parsed.Output != "LGTM" {
-			t.Errorf("expected output=LGTM, got %q", parsed.Output)
-		}
-		if parsed.Agent != "test" {
-			t.Errorf("expected agent=test, got %q", parsed.Agent)
-		}
+		err := json.Unmarshal([]byte(output), &parsed)
+		require.NoError(t, err, "invalid JSON output")
+		assert.EqualValues(t, 42, parsed.JobID, "unexpected condition")
+		assert.Equal(t, "LGTM", parsed.Output, "unexpected condition")
+		assert.Equal(t, "test", parsed.Agent, "unexpected condition")
 	})
 
 	t.Run("skips formatted header", func(t *testing.T) {
-		if strings.Contains(output, "Review for") {
-			t.Errorf("--json should not contain formatted header, got: %s", output)
-		}
-		if strings.Contains(output, "---") {
-			t.Errorf("--json should not contain separator, got: %s", output)
-		}
+		assert.NotContains(t, output, "Review for", "unexpected condition")
+		assert.NotContains(t, output, "---", "unexpected condition")
 	})
 }
 
@@ -244,18 +220,10 @@ func TestShowIncludesComments(t *testing.T) {
 	chdir(t, repo.Dir)
 	output := runShowCmd(t, "--job", "42")
 
-	if !strings.Contains(output, "Found issues") {
-		t.Errorf("expected review output, got: %s", output)
-	}
-	if !strings.Contains(output, "--- Comments ---") {
-		t.Errorf("expected comments separator, got: %s", output)
-	}
-	if !strings.Contains(output, "alice") {
-		t.Errorf("expected commenter name, got: %s", output)
-	}
-	if !strings.Contains(output, "This is expected") {
-		t.Errorf("expected comment text, got: %s", output)
-	}
+	assert.Contains(t, output, "Found issues", "unexpected condition")
+	assert.Contains(t, output, "--- Comments ---", "unexpected condition")
+	assert.Contains(t, output, "alice", "unexpected condition")
+	assert.Contains(t, output, "This is expected", "unexpected condition")
 }
 
 func TestShowNoComments(t *testing.T) {
@@ -269,10 +237,6 @@ func TestShowNoComments(t *testing.T) {
 	chdir(t, repo.Dir)
 	output := runShowCmd(t, "--job", "42")
 
-	if !strings.Contains(output, "LGTM") {
-		t.Errorf("expected review output, got: %s", output)
-	}
-	if strings.Contains(output, "Comments") {
-		t.Errorf("should not contain comments section when none exist, got: %s", output)
-	}
+	assert.Contains(t, output, "LGTM", "unexpected condition")
+	assert.NotContains(t, output, "Comments", "unexpected condition")
 }

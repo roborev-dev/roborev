@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func mouseLeftClick(x, y int) tea.MouseMsg {
@@ -59,7 +61,7 @@ func TestTUIQueueNavigation(t *testing.T) {
 		jobs         []storage.ReviewJob
 		activeFilter []string
 		startIdx     int
-		key          any // rune or tea.KeyType
+		key          any
 		wantIdx      int
 		wantJobID    int64
 	}{
@@ -129,7 +131,7 @@ func TestTUIQueueNavigation(t *testing.T) {
 			activeFilter: []string{"/repo/beta"},
 			startIdx:     2,
 			key:          'g',
-			wantIdx:      1, // First visible job
+			wantIdx:      1,
 			wantJobID:    2,
 		},
 		{
@@ -157,12 +159,8 @@ func TestTUIQueueNavigation(t *testing.T) {
 				m2, _ = pressSpecial(m, k)
 			}
 
-			if m2.selectedIdx != tt.wantIdx {
-				t.Errorf("expected selectedIdx %d, got %d", tt.wantIdx, m2.selectedIdx)
-			}
-			if m2.selectedJobID != tt.wantJobID {
-				t.Errorf("expected selectedJobID %d, got %d", tt.wantJobID, m2.selectedJobID)
-			}
+			assert.Equal(t, tt.wantIdx, m2.selectedIdx, "unexpected condition")
+			assert.Equal(t, tt.wantJobID, m2.selectedJobID, "unexpected condition")
 		})
 	}
 }
@@ -182,15 +180,10 @@ func TestTUIQueueMouseClickSelectsVisibleRow(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// rowStartY=5, so y=6 targets the second visible row (job ID 2)
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
 
-	if m2.selectedJobID != 2 {
-		t.Fatalf("expected selected job ID 2, got %d", m2.selectedJobID)
-	}
-	if m2.selectedIdx != 1 {
-		t.Fatalf("expected selectedIdx 1, got %d", m2.selectedIdx)
-	}
+	assert.EqualValues(t, 2, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, 1, m2.selectedIdx, "unexpected condition")
 }
 
 func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
@@ -206,14 +199,11 @@ func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
 	m.selectedIdx = 1
 	m.selectedJobID = 1
 
-	// Header y is 3; clicking header should be a no-op.
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 3))
 	if got := []int64{m2.jobs[0].ID, m2.jobs[1].ID, m2.jobs[2].ID}; !slices.Equal(got, []int64{3, 1, 2}) {
-		t.Fatalf("expected header click not to reorder rows, got %v", got)
+		assert.True(t, slices.Equal(got, []int64{3, 1, 2}), "expected header click not to reorder rows, got %v, got")
 	}
-	if m2.selectedJobID != 1 || m2.selectedIdx != 1 {
-		t.Fatalf("expected selection unchanged after header click, got id=%d idx=%d", m2.selectedJobID, m2.selectedIdx)
-	}
+	assert.False(t, m2.selectedJobID != 1 || m2.selectedIdx != 1, "unexpected condition")
 }
 
 func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
@@ -227,12 +217,23 @@ func TestTUIQueueMouseIgnoredOutsideQueueView(t *testing.T) {
 	m.selectedJobID = 2
 
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 3))
-	if m2.selectedIdx != 0 || m2.selectedJobID != 2 {
-		t.Fatalf("expected selection unchanged outside queue view, got id=%d idx=%d", m2.selectedJobID, m2.selectedIdx)
+	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 2, "unexpected condition")
+	assert.True(t, slices.Equal([]int64{m2.jobs[0].ID, m2.jobs[1].ID}, []int64{2, 1}), "expected job order unchanged outside queue view")
+}
+
+func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone)),
 	}
-	if !slices.Equal([]int64{m2.jobs[0].ID, m2.jobs[1].ID}, []int64{2, 1}) {
-		t.Fatalf("expected job order unchanged outside queue view")
-	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+
+	assert.Equal(t, tuiViewQueue, m2.reviewFromView, "unexpected condition")
+	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
 }
 
 func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
@@ -266,23 +267,18 @@ func TestTUIQueueMouseWheelScrollsSelection(t *testing.T) {
 	m.selectedJobID = 1
 
 	m2, _ := updateModel(t, m, mouseWheelDown())
-	if m2.selectedIdx != 1 || m2.selectedJobID != 2 {
-		t.Fatalf("expected wheel down to select job 2, got idx=%d id=%d", m2.selectedIdx, m2.selectedJobID)
-	}
+	assert.False(t, m2.selectedIdx != 1 || m2.selectedJobID != 2, "unexpected condition")
 
 	m3, _ := updateModel(t, m2, mouseWheelUp())
-	if m3.selectedIdx != 0 || m3.selectedJobID != 1 {
-		t.Fatalf("expected wheel up to select job 1, got idx=%d id=%d", m3.selectedIdx, m3.selectedJobID)
-	}
+	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1, "unexpected condition")
 }
 
 func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
-	m.height = 16 // small but not compact (compact hides headers, changing click offsets)
+	m.height = 16
 
-	// Create more jobs than fit on screen.
 	for i := range 20 {
 		m.jobs = append(m.jobs, makeJob(int64(i+1)))
 	}
@@ -295,12 +291,9 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 		)
 	}
 
-	// Select a job near the bottom to shift the visible window.
 	m.selectedIdx = 15
 	m.selectedJobID = 16
 
-	// Compute the expected first visible job using the same
-	// scroll math as handleQueueMouseClick.
 	start := max(15-visibleRows/2, 0)
 	end := start + visibleRows
 	if end > 20 {
@@ -308,31 +301,19 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 		start = max(end-visibleRows, 0)
 	}
 	wantJobID := m.jobs[start].ID
-	wantIdx := start // no filters, so visible idx == jobs idx
+	wantIdx := start
 
-	// Click the first data row (y=5). In a scrolled window the
-	// first visible row maps to jobs[start], not jobs[0].
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 5))
 
-	if m2.selectedJobID != wantJobID {
-		t.Fatalf(
-			"expected selectedJobID %d, got %d",
-			wantJobID, m2.selectedJobID,
-		)
-	}
-	if m2.selectedIdx != wantIdx {
-		t.Fatalf(
-			"expected selectedIdx %d, got %d",
-			wantIdx, m2.selectedIdx,
-		)
-	}
+	assert.Equal(t, wantJobID, m2.selectedJobID)
+	assert.Equal(t, wantIdx, m2.selectedIdx)
 }
 
 func TestTUIQueueCompactMode(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 80
-	m.height = 10 // compact mode (< 15)
+	m.height = 10
 
 	for i := range 5 {
 		m.jobs = append(m.jobs, makeJob(int64(i+1)))
@@ -342,37 +323,25 @@ func TestTUIQueueCompactMode(t *testing.T) {
 
 	output := m.View()
 
-	// Should have the title line
-	if !strings.Contains(output, "roborev queue") {
-		t.Error("compact mode should show title")
-	}
-	// Should NOT have the table header
-	if strings.Contains(output, "JobID") {
-		t.Error("compact mode should hide table header")
-	}
-	// Should NOT have help footer keys
-	if strings.Contains(output, "nav") {
-		t.Error("compact mode should hide help footer")
-	}
-	// Should NOT have daemon status line
-	if strings.Contains(output, "Daemon:") {
-		t.Error("compact mode should hide status line")
-	}
+	assert.Contains(t, output, "roborev queue", "unexpected condition")
 
-	// Mouse click at y=1 (first data row in compact mode) should select first job
+	assert.NotContains(t, output, "JobID", "unexpected condition")
+
+	assert.NotContains(t, output, "nav", "unexpected condition")
+
+	assert.NotContains(t, output, "Daemon:", "unexpected condition")
+
 	m.selectedIdx = 2
 	m.selectedJobID = 3
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 1))
-	if m2.selectedJobID != 1 {
-		t.Errorf("compact mouse click at y=1: expected job 1, got %d", m2.selectedJobID)
-	}
+	assert.EqualValues(t, 1, m2.selectedJobID, "unexpected condition")
 }
 
 func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
-	m.height = 30 // tall enough for normal mode
+	m.height = 30
 
 	for i := range 5 {
 		m.jobs = append(m.jobs, makeJob(int64(i+1)))
@@ -380,40 +349,21 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// Normal mode: should show chrome
 	output := m.View()
-	if !strings.Contains(output, "JobID") {
-		t.Error("normal mode should show table header")
-	}
-	if !strings.Contains(output, "nav") {
-		t.Error("normal mode should show help footer")
-	}
+	assert.Contains(t, output, "JobID", "unexpected condition")
+	assert.Contains(t, output, "nav", "unexpected condition")
 
-	// Toggle distraction-free with 'D'
 	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	if !m2.distractionFree {
-		t.Fatal("D should toggle distraction-free on")
-	}
+	assert.True(t, m2.distractionFree, "D should toggle distraction-free on")
 	output = m2.View()
-	if strings.Contains(output, "JobID") {
-		t.Error("distraction-free should hide table header")
-	}
-	if strings.Contains(output, "nav") {
-		t.Error("distraction-free should hide help footer")
-	}
-	if strings.Contains(output, "Daemon:") {
-		t.Error("distraction-free should hide status line")
-	}
+	assert.NotContains(t, output, "JobID", "unexpected condition")
+	assert.NotContains(t, output, "nav", "unexpected condition")
+	assert.NotContains(t, output, "Daemon:", "unexpected condition")
 
-	// Toggle back off
 	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-	if m3.distractionFree {
-		t.Fatal("D should toggle distraction-free off")
-	}
+	assert.False(t, m3.distractionFree, "D should toggle distraction-free off")
 	output = m3.View()
-	if !strings.Contains(output, "JobID") {
-		t.Error("should show table header after toggling off")
-	}
+	assert.Contains(t, output, "JobID", "unexpected condition")
 }
 
 func TestTUITasksMouseClickSelectsRow(t *testing.T) {
@@ -428,11 +378,8 @@ func TestTUITasksMouseClickSelectsRow(t *testing.T) {
 	}
 	m.fixSelectedIdx = 0
 
-	// Tasks rows start at y=3, so y=4 targets the second row.
 	m2, _ := updateModel(t, m, mouseLeftClick(2, 4))
-	if m2.fixSelectedIdx != 1 {
-		t.Fatalf("expected tasks click to select idx=1, got %d", m2.fixSelectedIdx)
-	}
+	assert.Equal(t, 1, m2.fixSelectedIdx, "unexpected condition")
 }
 
 func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
@@ -446,14 +393,10 @@ func TestTUITasksMouseWheelScrollsSelection(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	m2, _ := updateModel(t, m, mouseWheelDown())
-	if m2.fixSelectedIdx != 1 {
-		t.Fatalf("expected tasks wheel down to select idx=1, got %d", m2.fixSelectedIdx)
-	}
+	assert.Equal(t, 1, m2.fixSelectedIdx, "unexpected condition")
 
 	m3, _ := updateModel(t, m2, mouseWheelUp())
-	if m3.fixSelectedIdx != 0 {
-		t.Fatalf("expected tasks wheel up to select idx=0, got %d", m3.fixSelectedIdx)
-	}
+	assert.Equal(t, 0, m3.fixSelectedIdx, "unexpected condition")
 }
 
 func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
@@ -466,15 +409,9 @@ func TestTUITasksParentShortcutOpensParentReview(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	m2, cmd := pressKey(m, 'P')
-	if cmd == nil {
-		t.Fatal("expected fetchReview command for parent shortcut")
-	}
-	if m2.selectedJobID != parentID {
-		t.Fatalf("expected selectedJobID=%d, got %d", parentID, m2.selectedJobID)
-	}
-	if m2.reviewFromView != tuiViewTasks {
-		t.Fatalf("expected reviewFromView=tuiViewTasks, got %v", m2.reviewFromView)
-	}
+	assert.NotNil(t, cmd, "expected fetchReview command for parent shortcut")
+	assert.Equal(t, m2.selectedJobID, parentID, "unexpected condition")
+	assert.Equal(t, tuiViewTasks, m2.reviewFromView, "unexpected condition")
 }
 
 func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
@@ -486,15 +423,24 @@ func TestTUITasksParentShortcutWithoutParentShowsFlash(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	m2, cmd := pressKey(m, 'P')
-	if cmd != nil {
-		t.Fatal("expected no command when task has no parent")
+	assert.Nil(t, cmd, "expected no command when task has no parent")
+	assert.Equal(t, "No parent review for this task", m2.flashMessage, "unexpected condition")
+	assert.Equal(t, tuiViewTasks, m2.flashView, "unexpected condition")
+}
+
+func TestTUITasksCtrlJFetchesReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone},
 	}
-	if m2.flashMessage != "No parent review for this task" {
-		t.Fatalf("expected parent-missing flash message, got %q", m2.flashMessage)
-	}
-	if m2.flashView != tuiViewTasks {
-		t.Fatalf("expected flashView=tuiViewTasks, got %v", m2.flashView)
-	}
+	m.fixSelectedIdx = 0
+
+	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+
+	assert.EqualValues(t, 101, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, tuiViewTasks, m2.reviewFromView, "unexpected condition")
+	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
 }
 
 func TestTUITasksCtrlJFetchesReview(t *testing.T) {
@@ -543,66 +489,41 @@ func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
 	}
 
 	out := stripANSI(m.renderTasksView())
-	if !strings.Contains(out, "Queued") {
-		t.Fatalf("expected tasks header to contain Queued column, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Elapsed") {
-		t.Fatalf("expected tasks header to contain Elapsed column, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Branch") || !strings.Contains(out, "Repo") {
-		t.Fatalf("expected tasks header to contain Branch/Repo columns, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Ref/Subject") {
-		t.Fatalf("expected tasks header to contain Ref/Subject column, got:\n%s", out)
-	}
-	if !strings.Contains(out, enqueued.Format("Jan 02 15:04")) {
-		t.Fatalf("expected tasks row to include queued timestamp, got:\n%s", out)
-	}
-	if !strings.Contains(out, "1m0s") {
-		t.Fatalf("expected tasks row to include elapsed duration, got:\n%s", out)
-	}
-	if !strings.Contains(out, "feature/task") || !strings.Contains(out, "repo-alpha") {
-		t.Fatalf("expected tasks row to include branch/repo values, got:\n%s", out)
-	}
-	if !strings.Contains(out, "abc1234 Fix flaky task tests") {
-		t.Fatalf("expected tasks row to include combined ref/subject value, got:\n%s", out)
-	}
+	assert.Contains(t, out, "Queued", "unexpected condition")
+	assert.Contains(t, out, "Elapsed", "unexpected condition")
+	assert.False(t, !strings.Contains(out, "Branch") || !strings.Contains(out, "Repo"), "unexpected condition")
+	assert.Contains(t, out, "Ref/Subject", "unexpected condition")
+	assert.Contains(t, out, enqueued.Format("Jan 02 15:04"), "unexpected condition")
+	assert.Contains(t, out, "1m0s", "unexpected condition")
+	assert.False(t, !strings.Contains(out, "feature/task") || !strings.Contains(out, "repo-alpha"), "unexpected condition")
+	assert.Contains(t, out, "abc1234 Fix flaky task tests", "unexpected condition")
 }
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
-	// Test flash messages when navigating at queue boundaries
+
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1), makeJob(2), makeJob(3)),
 		withQueueTestSelection(0),
 		withQueueTestFlags(false, false, false),
 	)
 
-	// Press 'up' at top of queue - should show flash message
 	m2, _ := pressSpecial(m, tea.KeyUp)
 
-	if m2.selectedIdx != 0 {
-		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
-	}
+	assert.Equal(t, 0, m2.selectedIdx, "unexpected condition")
 	assertFlashMessage(t, m2, viewQueue, "No newer review")
 
-	// Now at bottom of queue
 	m.selectedIdx = 2
 	m.selectedJobID = 3
-	m.flashMessage = "" // Clear
+	m.flashMessage = ""
 
-	// Press 'down' at bottom of queue - should show flash message
 	m3, _ := pressSpecial(m, tea.KeyDown)
 
-	if m3.selectedIdx != 2 {
-		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
-	}
+	assert.Equal(t, 2, m3.selectedIdx, "unexpected condition")
 	assertFlashMessage(t, m3, viewQueue, "No older review")
 }
 
 func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
-	// Test flash messages at bottom when multi-repo filter is active (prevents auto-load).
-	// Single-repo filters use server-side filtering and support pagination,
-	// but multi-repo filters are client-side only so they disable pagination.
+
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/repo1")), makeJob(2, withRepoPath("/repo2"))),
 		withQueueTestSelection(1),
@@ -610,34 +531,27 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	)
 	m.activeRepoFilter = []string{"/repo1", "/repo2"}
 
-	// Press 'down' - already at last job, should hit boundary
 	m2, _ := pressSpecial(m, tea.KeyDown)
 
-	// Should show flash since multi-repo filter prevents loading more
 	assertFlashMessage(t, m2, viewQueue, "No older review")
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
-	// Set up at last job with more available
+
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1)),
 		withQueueTestSelection(0),
 		withQueueTestFlags(true, false, false),
 	)
 
-	// Press down at bottom - should trigger load more
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	if !m2.loadingMore {
-		t.Error("loadingMore should be set when navigating past last job")
-	}
-	if cmd == nil {
-		t.Error("Should return fetchMoreJobs command")
-	}
+	assert.True(t, m2.loadingMore, "unexpected condition")
+	assert.NotNil(t, cmd, "unexpected condition")
 }
 
 func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
-	// Set up at last job with filter active
+
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
 		withQueueTestSelection(0),
@@ -645,15 +559,10 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	)
 	m.activeRepoFilter = []string{"/path/to/repo", "/path/to/repo2"}
 
-	// Press down at bottom - should NOT trigger load more (filtered view loads all)
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	if m2.loadingMore {
-		t.Error("loadingMore should not be set when filter is active")
-	}
-	if cmd != nil {
-		t.Error("Should not return command when filter is active")
-	}
+	assert.False(t, m2.loadingMore, "unexpected condition")
+	assert.Nil(t, cmd, "unexpected condition")
 }
 
 func TestTUIJobCellsContent(t *testing.T) {
@@ -668,30 +577,17 @@ func TestTUIJobCellsContent(t *testing.T) {
 		)
 		cells := m.jobCells(job)
 
-		// cells order: ref, branch, repo, agent, queued, elapsed, status, pf, closed
-		if !strings.Contains(cells[0], "abc1234") {
-			t.Errorf("Expected ref to contain abc1234, got %q", cells[0])
-		}
-		if cells[2] != "myrepo" {
-			t.Errorf("Expected repo 'myrepo', got %q", cells[2])
-		}
-		if cells[3] != "test" {
-			t.Errorf("Expected agent 'test', got %q", cells[3])
-		}
-		if cells[6] != "Done" {
-			t.Errorf("Expected status 'Done', got %q", cells[6])
-		}
-		if cells[7] != "-" {
-			t.Errorf("Expected verdict '-', got %q", cells[7])
-		}
+		assert.Contains(t, cells[0], "abc1234", "unexpected condition")
+		assert.Equal(t, "myrepo", cells[2], "unexpected condition")
+		assert.Equal(t, "test", cells[3], "unexpected condition")
+		assert.Equal(t, "Done", cells[6], "unexpected condition")
+		assert.Equal(t, "-", cells[7], "unexpected condition")
 	})
 
 	t.Run("claude-code normalizes to claude", func(t *testing.T) {
 		job := makeJob(1, withAgent("claude-code"))
 		cells := m.jobCells(job)
-		if cells[3] != "claude" {
-			t.Errorf("Expected agent 'claude', got %q", cells[3])
-		}
+		assert.Equal(t, "claude", cells[3], "unexpected condition")
 	})
 
 	t.Run("verdict and handled values", func(t *testing.T) {
@@ -702,15 +598,9 @@ func TestTUIJobCellsContent(t *testing.T) {
 		job.Closed = &handled
 
 		cells := m.jobCells(job)
-		if cells[6] != "Done" {
-			t.Errorf("Expected status 'Done', got %q", cells[6])
-		}
-		if cells[7] != "P" {
-			t.Errorf("Expected verdict 'P', got %q", cells[7])
-		}
-		if cells[8] != "yes" {
-			t.Errorf("Expected closed 'yes', got %q", cells[8])
-		}
+		assert.Equal(t, "Done", cells[6], "unexpected condition")
+		assert.Equal(t, "P", cells[7], "unexpected condition")
+		assert.Equal(t, "yes", cells[8], "unexpected condition")
 	})
 }
 
@@ -733,22 +623,16 @@ func TestTUIJobCellsReviewTypeTag(t *testing.T) {
 		t.Run(tc.reviewType, func(t *testing.T) {
 			job := makeJob(1, withRef("abc1234"), withReviewType(tc.reviewType))
 			cells := m.jobCells(job)
-			ref := cells[0] // ref is the first cell
+			ref := cells[0]
 			hasTag := strings.Contains(ref, "["+tc.reviewType+"]")
-			if tc.wantTag && !hasTag {
-				t.Errorf("expected [%s] tag in ref cell: %s", tc.reviewType, ref)
-			}
-			if !tc.wantTag && tc.reviewType != "" && hasTag {
-				t.Errorf("unexpected [%s] tag in ref cell: %s", tc.reviewType, ref)
-			}
+			assert.False(t, tc.wantTag && !hasTag, "unexpected condition")
+			assert.False(t, !tc.wantTag && tc.reviewType != "" && hasTag, "unexpected condition")
 		})
 	}
 }
 
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
-	// Verify that the rendered queue table fits within the terminal width.
-	// Only check the table lines (header + data rows), not the help bar
-	// which has its own width tests in TestRenderHelpTableLinesWithinWidth.
+
 	widths := []int{80, 100, 120, 200}
 	for _, w := range widths {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
@@ -764,15 +648,14 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 
 			output := m.renderQueueView()
 			lines := strings.Split(output, "\n")
-			// Check table area: title(1) + status(1) + update(1) + header(1) + separator(1) + data rows
-			// Skip non-table lines (scroll indicator, flash, help bar)
-			tableEnd := min(len(lines), 4+1+1+len(m.jobs)) // title + status + update + header + sep + rows
+
+			tableEnd := min(len(lines), 4+1+1+len(m.jobs))
 			for i := 0; i < tableEnd && i < len(lines); i++ {
 				line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 				line = strings.ReplaceAll(line, "\x1b[J", "")
 				visW := lipgloss.Width(line)
-				if visW > w+5 { // small tolerance
-					t.Errorf("line %d exceeds width %d: visW=%d %q", i, w, visW, stripTestANSI(line))
+				if visW > w+5 {
+					assert.LessOrEqual(t, visW, w+5, "line %d exceeds width %d: visW=%d %q", i, w, visW, stripTestANSI(line))
 				}
 			}
 		})
@@ -780,21 +663,18 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 }
 
 func TestStatusColumnAutoWidth(t *testing.T) {
-	// The Status column should auto-size to the widest status label
-	// present in the visible jobs, with a floor of 6 (the "Status"
-	// header width). This saves horizontal space when no wide status
-	// labels (e.g. "Canceled") are present.
+
 	tests := []struct {
 		name      string
 		statuses  []storage.JobStatus
-		wantWidth int // expected content width (header included)
+		wantWidth int
 	}{
-		{"done only", []storage.JobStatus{storage.JobStatusDone}, 6},                                          // "Done"=4, header=6
-		{"queued only", []storage.JobStatus{storage.JobStatusQueued}, 6},                                      // "Queued"=6, header=6
-		{"running", []storage.JobStatus{storage.JobStatusRunning}, 7},                                         // "Running"=7
-		{"canceled", []storage.JobStatus{storage.JobStatusCanceled}, 8},                                       // "Canceled"=8
-		{"mixed done and error", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusFailed}, 6},      // max("Done"=4,"Error"=5,header=6)=6
-		{"mixed done and canceled", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusCanceled}, 8}, // max("Done"=4,"Canceled"=8)=8
+		{"done only", []storage.JobStatus{storage.JobStatusDone}, 6},
+		{"queued only", []storage.JobStatus{storage.JobStatusQueued}, 6},
+		{"running", []storage.JobStatus{storage.JobStatusRunning}, 7},
+		{"canceled", []storage.JobStatus{storage.JobStatusCanceled}, 8},
+		{"mixed done and error", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusFailed}, 6},
+		{"mixed done and canceled", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusCanceled}, 8},
 	}
 
 	for _, tt := range tests {
@@ -814,7 +694,6 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 			output := m.renderQueueView()
 			lines := strings.Split(output, "\n")
 
-			// Find the header line (contains "Status" and "P/F")
 			var headerLine string
 			for _, line := range lines {
 				stripped := stripTestANSI(line)
@@ -823,23 +702,15 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 					break
 				}
 			}
-			if headerLine == "" {
-				t.Fatal("could not find header line with Status and P/F")
-			}
+			assert.NotEmpty(t, headerLine, "could not find header line with Status and P/F")
 
 			statusIdx := strings.Index(headerLine, "Status")
 			pfIdx := strings.Index(headerLine, "P/F")
-			if statusIdx < 0 || pfIdx < 0 || pfIdx <= statusIdx {
-				t.Fatalf("unexpected header layout: %q", headerLine)
-			}
+			assert.False(t, statusIdx < 0 || pfIdx < 0 || pfIdx <= statusIdx, "unexpected condition")
 
-			// The gap between "Status" start and "P/F" start is
-			// the column width + inter-column spacing (1 char padding).
 			gap := pfIdx - statusIdx
-			gotWidth := gap - 1 // subtract 1 for inter-column spacing
-			if gotWidth != tt.wantWidth {
-				t.Errorf("Status column width = %d, want %d (header: %q)", gotWidth, tt.wantWidth, headerLine)
-			}
+			gotWidth := gap - 1
+			assert.Equal(t, tt.wantWidth, gotWidth, "unexpected condition")
 		})
 	}
 }
@@ -847,7 +718,6 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 func TestTUIPaginationAppendMode(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Start with 50 jobs
 	initialJobs := make([]storage.ReviewJob, 50)
 	for i := range 50 {
 		initialJobs[i] = makeJob(int64(50 - i))
@@ -857,40 +727,26 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 	m.selectedJobID = 50
 	m.hasMore = true
 
-	// Append 25 more jobs
 	moreJobs := make([]storage.ReviewJob, 25)
 	for i := range 25 {
-		moreJobs[i] = makeJob(int64(i + 1)) // IDs 1-25 (older)
+		moreJobs[i] = makeJob(int64(i + 1))
 	}
 	appendMsg := jobsMsg{jobs: moreJobs, hasMore: false, append: true}
 
 	m2, _ := updateModel(t, m, appendMsg)
 
-	// Should now have 75 jobs
-	if len(m2.jobs) != 75 {
-		t.Errorf("Expected 75 jobs after append, got %d", len(m2.jobs))
-	}
+	assert.Len(t, m2.jobs, 75, "unexpected condition")
 
-	// hasMore should be updated
-	if m2.hasMore {
-		t.Error("hasMore should be false after append with hasMore=false")
-	}
+	assert.False(t, m2.hasMore, "hasMore should be false after append with hasMore=false")
 
-	// loadingMore should be cleared
-	if m2.loadingMore {
-		t.Error("loadingMore should be cleared after append")
-	}
+	assert.False(t, m2.loadingMore, "unexpected condition")
 
-	// Selection should be maintained
-	if m2.selectedJobID != 50 {
-		t.Errorf("Expected selectedJobID=50 maintained, got %d", m2.selectedJobID)
-	}
+	assert.EqualValues(t, 50, m2.selectedJobID, "unexpected condition")
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Simulate user has paginated to 100 jobs
 	jobs := make([]storage.ReviewJob, 100)
 	for i := range 100 {
 		jobs[i] = makeJob(int64(100 - i))
@@ -899,65 +755,42 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	m.selectedIdx = 50
 	m.selectedJobID = 50
 
-	// Refresh arrives (replace mode, not append)
 	refreshedJobs := make([]storage.ReviewJob, 100)
 	for i := range 100 {
-		refreshedJobs[i] = makeJob(int64(101 - i)) // New job at top
+		refreshedJobs[i] = makeJob(int64(101 - i))
 	}
 	refreshMsg := jobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
 
 	m2, _ := updateModel(t, m, refreshMsg)
 
-	// Should still have 100 jobs
-	if len(m2.jobs) != 100 {
-		t.Errorf("Expected 100 jobs after refresh, got %d", len(m2.jobs))
-	}
+	assert.Len(t, m2.jobs, 100, "unexpected condition")
 
-	// Selection should find job ID=50 at new index
-	if m2.selectedJobID != 50 {
-		t.Errorf("Expected selectedJobID=50 maintained, got %d", m2.selectedJobID)
-	}
-	if m2.selectedIdx != 51 {
-		t.Errorf("Expected selectedIdx=51 (shifted by new job), got %d", m2.selectedIdx)
-	}
+	assert.EqualValues(t, 50, m2.selectedJobID, "unexpected condition")
+	assert.Equal(t, 51, m2.selectedIdx, "unexpected condition")
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.loadingMore = true
 
-	// Pagination error arrives (only pagination errors clear loadingMore)
 	errMsg := paginationErrMsg{err: fmt.Errorf("network error")}
 	m2, _ := updateModel(t, m, errMsg)
 
-	// loadingMore should be cleared so user can retry
-	if m2.loadingMore {
-		t.Error("loadingMore should be cleared on pagination error")
-	}
+	assert.False(t, m2.loadingMore, "unexpected condition")
 
-	// Error should be set
-	if m2.err == nil {
-		t.Error("err should be set")
-	}
+	require.Error(t, m2.err, "unexpected condition")
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.loadingMore = true
 
-	// Generic error arrives (should NOT clear loadingMore)
 	errMsg := errMsg(fmt.Errorf("some other error"))
 	m2, _ := updateModel(t, m, errMsg)
 
-	// loadingMore should remain true - only pagination errors clear it
-	if !m2.loadingMore {
-		t.Error("loadingMore should NOT be cleared on generic error")
-	}
+	assert.True(t, m2.loadingMore, "unexpected condition")
 
-	// Error should still be set
-	if m2.err == nil {
-		t.Error("err should be set")
-	}
+	require.Error(t, m2.err, "unexpected condition")
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
@@ -967,21 +800,14 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 	m.hasMore = true
 	m.loadingMore = false
 
-	// Set up at last job
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// Try to navigate down (would normally trigger pagination)
 	m2, cmd := pressKey(m, 'j')
 
-	// Pagination should NOT be triggered because loadingJobs is true
-	if m2.loadingMore {
-		t.Error("loadingMore should not be set while loadingJobs is true")
-	}
-	if cmd != nil {
-		t.Error("No command should be returned when pagination is blocked")
-	}
+	assert.False(t, m2.loadingMore, "unexpected condition")
+	assert.Nil(t, cmd, "unexpected condition")
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
@@ -991,21 +817,14 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 	m.hasMore = true
 	m.loadingMore = false
 
-	// Set up at last job
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// Navigate down - should trigger pagination
 	m2, cmd := pressKey(m, 'j')
 
-	// Pagination SHOULD be triggered
-	if !m2.loadingMore {
-		t.Error("loadingMore should be set when pagination is allowed")
-	}
-	if cmd == nil {
-		t.Error("Command should be returned to fetch more jobs")
-	}
+	assert.True(t, m2.loadingMore, "unexpected condition")
+	assert.NotNil(t, cmd, "unexpected condition")
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
@@ -1016,21 +835,54 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	m.loadingMore = false
 	m.height = 30
 
-	// Set up with one job
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// Try pgdown (would normally trigger pagination at end)
 	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
-	// Pagination should NOT be triggered
-	if m2.loadingMore {
-		t.Error("loadingMore should not be set on pgdown while loadingJobs is true")
+	assert.False(t, m2.loadingMore, "unexpected condition")
+	assert.Nil(t, cmd, "unexpected condition")
+}
+
+func TestTUIPageUpDownMovesSelection(t *testing.T) {
+
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
+	m.hideClosed = true
+	m.height = 15
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
+		makeJob(4),
+		makeJob(5),
+		makeJob(6, withStatus(storage.JobStatusCanceled)),
+		makeJob(7),
+		makeJob(8),
+		makeJob(9),
+		makeJob(10),
+		makeJob(11),
 	}
-	if cmd != nil {
-		t.Error("No command should be returned when pagination is blocked")
-	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, _ := pressSpecial(m, tea.KeyPgDown)
+	assert.Equal(t, 6, m2.selectedIdx,
+
+		"pgdown: expected selectedIdx=6 (skipped hidden idx 5), got %d",
+		m2.selectedIdx)
+
+	assert.EqualValues(t, 7, m2.selectedJobID, "unexpected condition")
+
+	m3, _ := pressSpecial(m2, tea.KeyPgUp)
+	assert.Equal(t, 0, m3.selectedIdx,
+
+		"pgup: expected selectedIdx=0 (back to newest), got %d",
+		m3.selectedIdx)
+
+	assert.EqualValues(t, 1, m3.selectedJobID, "unexpected condition")
 }
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
@@ -1104,7 +956,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 			initialHeight: 20,
 			jobsCount:     3,
 			loadingJobs:   false,
-			loadingMore:   true, // pagination in flight
+			loadingMore:   true,
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
 			wantLoading:   false,
@@ -1122,7 +974,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 		{
 			name:          "No Refetch When Enough Jobs",
 			initialHeight: 20,
-			jobsCount:     100, // lots of jobs
+			jobsCount:     100,
 			loadingJobs:   false,
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 40},
@@ -1132,11 +984,11 @@ func TestTUIResizeBehavior(t *testing.T) {
 		{
 			name:                      "Refetch On Later Resize",
 			initialHeight:             20,
-			jobsCount:                 25, // enough for height 20 (visible=12+10=22), but not height 40 (visible=32+10=42)
+			jobsCount:                 25,
 			loadingJobs:               false,
 			loadingMore:               false,
-			msg:                       tea.WindowSizeMsg{Height: 20}, // same height first
-			wantCmd:                   false,                         // intermediate state wantCmd=false
+			msg:                       tea.WindowSizeMsg{Height: 20},
+			wantCmd:                   false,
 			wantLoading:               false,
 			checkRefetchOnLaterResize: true,
 		},
@@ -1144,11 +996,11 @@ func TestTUIResizeBehavior(t *testing.T) {
 			name:          "No Refetch While Loading Jobs",
 			initialHeight: 20,
 			jobsCount:     3,
-			loadingJobs:   true, // fetch in progress
+			loadingJobs:   true,
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
-			wantLoading:   true, // remains true
+			wantLoading:   true,
 		},
 		{
 			name:          "No Refetch Multi-Repo Filter Active",
@@ -1176,55 +1028,31 @@ func TestTUIResizeBehavior(t *testing.T) {
 			)
 			m.activeRepoFilter = tt.activeFilters
 			m.height = tt.initialHeight
-			m.heightDetected = false // ensure we can verify the msg updates this
+			m.heightDetected = false
 
 			var cmd tea.Cmd
 
 			if tt.checkRefetchOnLaterResize {
 				m, cmd = updateModel(t, m, tt.msg)
 
-				if cmd != nil {
-					t.Error("Expected no fetch command on first resize, got one")
-				}
-				if m.height != tt.msg.Height {
-					t.Errorf("Expected height to be %d, got %d", tt.msg.Height, m.height)
-				}
-				if !m.heightDetected {
-					t.Error("Expected heightDetected to be true")
-				}
+				assert.Nil(t, cmd, "Expected no fetch command on first resize, got one")
+				assert.Equal(t, m.height, tt.msg.Height, "unexpected condition")
+				assert.True(t, m.heightDetected, "unexpected condition")
 
-				// Second resize that should trigger the refetch
 				m, cmd = updateModel(t, m, tea.WindowSizeMsg{Height: 40})
 
-				if cmd == nil {
-					t.Error("Expected fetch command on second resize, got nil")
-				}
-				if m.height != 40 {
-					t.Errorf("Expected height to be 40, got %d", m.height)
-				}
-				if !m.loadingJobs {
-					t.Error("Expected loadingJobs to be true after second resize triggered fetch")
-				}
+				assert.NotNil(t, cmd, "Expected fetch command on second resize, got nil")
+				assert.Equal(t, 40, m.height, "unexpected condition")
+				assert.True(t, m.loadingJobs, "unexpected condition")
 				return
 			} else {
 				m, cmd = updateModel(t, m, tt.msg)
 			}
 
-			if tt.wantCmd && cmd == nil {
-				t.Error("Expected fetch command, got nil")
-			}
-			if !tt.wantCmd && cmd != nil {
-				t.Error("Expected no fetch command, got one")
-			}
-			if m.height != tt.msg.Height {
-				t.Errorf("Expected height to be %d, got %d", tt.msg.Height, m.height)
-			}
-			if !m.heightDetected {
-				t.Error("Expected heightDetected to be true")
-			}
-			if m.loadingJobs != tt.wantLoading {
-				t.Errorf("Expected loadingJobs %v, got %v", tt.wantLoading, m.loadingJobs)
-			}
+			assert.Equal(t, tt.wantCmd, cmd != nil, "fetch command mismatch")
+			assert.Equal(t, m.height, tt.msg.Height, "unexpected condition")
+			assert.True(t, m.heightDetected, "unexpected condition")
+			assert.Equal(t, tt.wantLoading, m.loadingJobs, "unexpected condition")
 		})
 	}
 }
@@ -1233,10 +1061,9 @@ func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
-	m.height = 29 // queueVisibleRows = 20
+	m.height = 29
 	m.loadingJobs = true
 
-	// 13 visible (done + open), 12 hidden (failed) in this page.
 	jobs := make([]storage.ReviewJob, 0, 25)
 	var id int64 = 200
 	for range 13 {
@@ -1254,25 +1081,18 @@ func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 		append:  false,
 	})
 
-	if got := len(m2.getVisibleJobs()); got != 13 {
-		t.Fatalf("Expected 13 visible jobs in first page, got %d", got)
-	}
-	if !m2.loadingMore {
-		t.Error("loadingMore should be true when hide-closed page underfills viewport")
-	}
-	if cmd == nil {
-		t.Error("Expected auto-pagination command when hide-closed page underfills viewport")
-	}
+	assert.Len(t, m2.getVisibleJobs(), 13)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
-	m.height = 29 // queueVisibleRows = 21
+	m.height = 29
 	m.loadingJobs = true
 
-	// 21 visible rows already available (plus hidden jobs).
 	jobs := make([]storage.ReviewJob, 0, 26)
 	var id int64 = 300
 	for range 21 {
@@ -1290,109 +1110,80 @@ func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 		append:  false,
 	})
 
-	if got := len(m2.getVisibleJobs()); got < 21 {
-		t.Fatalf("Expected at least 21 visible jobs, got %d", got)
-	}
-	if m2.loadingMore {
-		t.Error("loadingMore should remain false when viewport is already filled")
-	}
-	if cmd != nil {
-		t.Error("Did not expect auto-pagination command when viewport is already filled")
-	}
+	assert.GreaterOrEqual(t, len(m2.getVisibleJobs()), 21)
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
 }
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
-	// Test that empty queue view pads output to fill terminal height
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
-	m.jobs = []storage.ReviewJob{} // Empty queue
-	m.loadingJobs = false          // Not loading, so should show "No jobs in queue"
+	m.jobs = []storage.ReviewJob{}
+	m.loadingJobs = false
 
 	output := m.View()
 
-	// Count total lines (including empty ones from padding)
 	lines := strings.Split(output, "\n")
 
-	// Strip ANSI codes and count non-empty content
-	// The output should fill most of the terminal height
-	// Accounting for: title(1) + status(2) + content/padding + scroll(1) + update(1) + help(2)
-	// Minimum expected lines is close to m.height
-	if len(lines) < m.height-3 {
-		t.Errorf("Empty queue should pad to near terminal height, got %d lines for height %d", len(lines), m.height)
-	}
+	assert.GreaterOrEqual(t, len(lines), m.height-3, "unexpected condition")
 
-	// Should contain the "No jobs in queue" message
-	if !strings.Contains(output, "No jobs in queue") {
-		t.Error("Expected 'No jobs in queue' message in output")
-	}
+	assert.Contains(t, output, "No jobs in queue", "Expected 'No jobs in queue' message in output")
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
-	// Test that empty queue with filter pads output correctly
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
-	m.activeRepoFilter = []string{"/some/repo"} // Filter active but no matching jobs
-	m.loadingJobs = false                       // Not loading, so should show "No jobs matching filters"
+	m.activeRepoFilter = []string{"/some/repo"}
+	m.loadingJobs = false
 
 	output := m.View()
 
 	lines := strings.Split(output, "\n")
-	if len(lines) < m.height-3 {
-		t.Errorf("Empty filtered queue should pad to near terminal height, got %d lines for height %d", len(lines), m.height)
-	}
+	assert.GreaterOrEqual(t, len(lines), m.height-3, "unexpected condition")
 
-	// Should contain the filter message
-	if !strings.Contains(output, "No jobs matching filters") {
-		t.Error("Expected 'No jobs matching filters' message in output")
-	}
+	assert.Contains(t, output, "No jobs matching filters", "Expected 'No jobs matching filters' message in output")
 }
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
-	// Test that loading state shows "Loading..." instead of "No jobs" messages
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
-	m.loadingJobs = true // Loading in progress
+	m.loadingJobs = true
 
 	output := m.View()
 
-	if !strings.Contains(output, "Loading...") {
-		t.Error("Expected 'Loading...' message when loadingJobs is true")
-	}
-	if strings.Contains(output, "No jobs in queue") {
-		t.Error("Should not show 'No jobs in queue' while loading")
-	}
-	if strings.Contains(output, "No jobs matching filters") {
-		t.Error("Should not show 'No jobs matching filters' while loading")
-	}
+	assert.Contains(t, output, "Loading...")
+	assert.NotContains(t, output, "No jobs in queue")
+	assert.NotContains(t, output, "No jobs matching filters")
 }
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
-	// Test that "Loading..." shows when loadingMore is set on empty queue
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
-	m.jobs = []storage.ReviewJob{} // Empty after filter clear
+	m.jobs = []storage.ReviewJob{}
 	m.loadingJobs = false
-	m.loadingMore = true // Pagination in flight
+	m.loadingMore = true
 
 	output := m.View()
 
-	if !strings.Contains(output, "Loading...") {
-		t.Error("Expected 'Loading...' message when loadingMore is true")
-	}
+	assert.Contains(t, output, "Loading...", "Expected 'Loading...' message when loadingMore is true")
 }
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
-	// Test that queue view with few jobs (no scroll indicator) still maintains height
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 30
-	// Add just 2 jobs - should not need scroll indicator
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123"), withAgent("test")),
 		makeJob(2, withRef("def456"), withAgent("test")),
@@ -1401,10 +1192,8 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	output := m.View()
 
 	lines := strings.Split(output, "\n")
-	// Even with few jobs, output should be close to terminal height
-	if len(lines) < m.height-5 {
-		t.Errorf("Queue with few jobs should maintain height, got %d lines for height %d", len(lines), m.height)
-	}
+
+	assert.GreaterOrEqual(t, len(lines), m.height-5, "unexpected condition")
 }
 
 func setupQueue(jobs []storage.ReviewJob, selectedIdx int) model {
@@ -1419,12 +1208,12 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 	tests := []struct {
 		name             string
 		initialJobs      []storage.ReviewJob
-		initialPending   map[int64]pendingState // map[ID]state
+		initialPending   map[int64]pendingState
 		msg              tea.Msg
-		wantPending      bool  // Is pending state expected to remain?
-		wantPendingState *bool // If remaining, expected newState? (nil to skip value check)
-		wantClosed       *bool // Expected job.Closed state (nil to skip)
-		wantError        bool  // Expected error in model
+		wantPending      bool
+		wantPendingState *bool
+		wantClosed       *bool
+		wantError        bool
 	}{
 		{
 			name:           "Late error ignored (same state, diff seq)",
@@ -1436,7 +1225,7 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 			},
 			wantPending:      true,
 			wantPendingState: boolPtr(true),
-			wantClosed:       boolPtr(true), // Optimistically true
+			wantClosed:       boolPtr(true),
 			wantError:        false,
 		},
 		{
@@ -1456,14 +1245,14 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 			name:           "Cleared when server nil matches pending false",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Closed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}},
 			wantPending:    false,
 		},
 		{
 			name:           "Not cleared when server nil mismatches pending true",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Closed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}},
 			wantPending:    true,
 			wantClosed:     boolPtr(true),
 		},
@@ -1511,7 +1300,7 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 				err: fmt.Errorf("server error"),
 			},
 			wantPending: false,
-			wantClosed:  boolPtr(true), // Rolled back to oldState (true)
+			wantClosed:  boolPtr(true),
 			wantError:   true,
 		},
 	}
@@ -1536,38 +1325,23 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 
 			for id, p := range tt.initialPending {
 				val, exists := m2.pendingClosed[id]
-				if tt.wantPending && !exists {
-					t.Errorf("expected pending state for job %d to remain", id)
-				}
-				if !tt.wantPending && exists {
-					t.Errorf("expected pending state for job %d to be cleared", id)
-				}
+				assert.False(t, tt.wantPending && !exists, "unexpected condition")
+				assert.False(t, !tt.wantPending && exists, "unexpected condition")
 				if exists && tt.wantPendingState != nil {
-					if val.newState != *tt.wantPendingState {
-						t.Errorf("expected pending newState %v, got %v", *tt.wantPendingState, val.newState)
-					}
+					assert.Equal(t, *tt.wantPendingState, val.newState, "unexpected condition")
 				}
-				if exists && val.seq != p.seq {
-					t.Errorf("expected pending seq %d, got %d", p.seq, val.seq)
-				}
+				assert.False(t, exists && val.seq != p.seq, "unexpected condition")
 			}
 
 			if tt.wantClosed != nil && len(m2.jobs) > 0 {
-				got := m2.jobs[0].Closed
-				if got == nil {
-					if *tt.wantClosed {
-						t.Error("expected closed to be true, got nil")
-					}
-				} else if *got != *tt.wantClosed {
-					t.Errorf("expected closed %v, got %v", *tt.wantClosed, *got)
-				}
+				assert.NotNil(t, m2.jobs[0].Closed, "expected closed state to be set")
+				assert.Equal(t, *tt.wantClosed, *m2.jobs[0].Closed)
 			}
 
-			if tt.wantError && m2.err == nil {
-				t.Error("expected error, got nil")
-			}
-			if !tt.wantError && m2.err != nil {
-				t.Errorf("unexpected error: %v", m2.err)
+			if tt.wantError {
+				require.Error(t, m2.err, "expected error, got nil")
+			} else {
+				require.NoError(t, m2.err, "unexpected error")
 			}
 		})
 	}
@@ -1576,9 +1350,9 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 func TestTUIReviewClosedTransitions(t *testing.T) {
 	tests := []struct {
 		name                 string
-		initialReviewPending map[int64]pendingState // map[ReviewID]state for review-only cases
+		initialReviewPending map[int64]pendingState
 		msg                  tea.Msg
-		wantPending          bool // Is pending state expected to remain?
+		wantPending          bool
 	}{
 		{
 			name:                 "Pending review-only cleared on success",
@@ -1586,7 +1360,7 @@ func TestTUIReviewClosedTransitions(t *testing.T) {
 			msg: closedResultMsg{
 				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
 			},
-			wantPending: false, // Should be cleared from pendingReviewClosed
+			wantPending: false,
 		},
 	}
 
@@ -1602,12 +1376,8 @@ func TestTUIReviewClosedTransitions(t *testing.T) {
 
 			for id := range tt.initialReviewPending {
 				_, exists := m2.pendingReviewClosed[id]
-				if tt.wantPending && !exists {
-					t.Errorf("expected pending state for review %d to remain", id)
-				}
-				if !tt.wantPending && exists {
-					t.Errorf("expected pending state for review %d to be cleared", id)
-				}
+				assert.False(t, tt.wantPending && !exists, "unexpected condition")
+				assert.False(t, !tt.wantPending && exists, "unexpected condition")
 			}
 		})
 	}
@@ -1626,11 +1396,11 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 		{
 			name:           "HideClosed stats not double counted",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Pre-optimistic
+			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
-				jobs:  []storage.ReviewJob{},                          // Filtered out
-				stats: storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Server matches optimistic
+				jobs:  []storage.ReviewJob{},
+				stats: storage.JobStats{Done: 10, Closed: 6, Open: 4},
 			},
 			wantPending: false,
 			wantStats:   &storage.JobStats{Closed: 6, Open: 4},
@@ -1638,14 +1408,14 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 		{
 			name:           "HideClosed pending not cleared when server lags",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Pre-optimistic
+			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
-				jobs:  []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))}, // Server still old
+				jobs:  []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 				stats: storage.JobStats{Done: 10, Closed: 5, Open: 5},
 			},
 			wantPending: true,
-			wantStats:   &storage.JobStats{Closed: 6, Open: 4}, // Re-applied delta
+			wantStats:   &storage.JobStats{Closed: 6, Open: 4},
 		},
 	}
 
@@ -1671,28 +1441,20 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 
 			for id := range tt.initialPending {
 				_, exists := m2.pendingClosed[id]
-				if tt.wantPending && !exists {
-					t.Errorf("expected pending state for job %d to remain", id)
-				}
-				if !tt.wantPending && exists {
-					t.Errorf("expected pending state for job %d to be cleared", id)
-				}
+				assert.False(t, tt.wantPending && !exists, "unexpected condition")
+				assert.False(t, !tt.wantPending && exists, "unexpected condition")
 			}
 
 			if tt.wantStats != nil {
-				if m2.jobStats.Closed != tt.wantStats.Closed {
-					t.Errorf("stats.Closed = %d, want %d", m2.jobStats.Closed, tt.wantStats.Closed)
-				}
-				if m2.jobStats.Open != tt.wantStats.Open {
-					t.Errorf("stats.Open = %d, want %d", m2.jobStats.Open, tt.wantStats.Open)
-				}
+				assert.Equal(t, m2.jobStats.Closed, tt.wantStats.Closed, "unexpected condition")
+				assert.Equal(t, m2.jobStats.Open, tt.wantStats.Open, "unexpected condition")
 			}
 		})
 	}
 }
 
 func TestTUIQueueNavigationSequences(t *testing.T) {
-	// Test sequence of keypresses to ensure state is maintained
+
 	threeJobs := []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
@@ -1701,45 +1463,26 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 
 	m := setupQueue(threeJobs, 0)
 
-	// Sequence: j (down), j (down), k (up)
-	// Start: idx=0
 	m, _ = pressKey(m, 'j')
-	if m.selectedIdx != 1 {
-		t.Errorf("after 'j', expected selectedIdx 1, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
 
 	m, _ = pressKey(m, 'j')
-	if m.selectedIdx != 2 {
-		t.Errorf("after second 'j', expected selectedIdx 2, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 2, m.selectedIdx, "unexpected condition")
 
 	m, _ = pressKey(m, 'k')
-	if m.selectedIdx != 1 {
-		t.Errorf("after 'k', expected selectedIdx 1, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
 
-	// Sequence: j (down to bottom), g (top)
 	m, _ = pressKey(m, 'j')
-	if m.selectedIdx != 2 {
-		t.Errorf("after 'j', expected selectedIdx 2, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 2, m.selectedIdx, "unexpected condition")
 
 	m, _ = pressKey(m, 'g')
-	if m.selectedIdx != 0 {
-		t.Errorf("after 'g', expected selectedIdx 0, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 0, m.selectedIdx, "unexpected condition")
 
-	// Sequence: Left (down/prev), Right (up/next)
-	// We are at index 0
 	m, _ = pressSpecial(m, tea.KeyLeft)
-	if m.selectedIdx != 1 {
-		t.Errorf("after KeyLeft, expected selectedIdx 1, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 1, m.selectedIdx, "unexpected condition")
 
 	m, _ = pressSpecial(m, tea.KeyRight)
-	if m.selectedIdx != 0 {
-		t.Errorf("after KeyRight, expected selectedIdx 0, got %d", m.selectedIdx)
-	}
+	assert.Equal(t, 0, m.selectedIdx, "unexpected condition")
 }
 
 type queueTestModelOption func(*model)
@@ -1778,21 +1521,13 @@ func newQueueTestModel(opts ...queueTestModelOption) model {
 
 func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 	t.Helper()
-	if m.flashMessage != msg {
-		t.Errorf("Expected flash message %q, got %q", msg, m.flashMessage)
-	}
-	if m.flashView != view {
-		t.Errorf("Expected flashView to be %d, got %d", view, m.flashView)
-	}
-	if m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m.flashExpiresAt)
-	}
+	assert.Equal(t, m.flashMessage, msg, "unexpected condition")
+	assert.Equal(t, m.flashView, view, "unexpected condition")
+	assert.False(t, m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()), "unexpected condition")
 }
 
 func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
-	// Verify that very narrow terminal widths don't panic and the
-	// table rows fit within the given width. Non-table chrome (title,
-	// status line) may exceed width — only table lines are checked.
+
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newModel("http://localhost", withExternalIODisabled())
@@ -1804,15 +1539,13 @@ func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
 			m.selectedIdx = 0
 			m.selectedJobID = 1
 
-			// Should not panic
 			_ = m.renderQueueView()
 		})
 	}
 }
 
 func TestTUIQueueLongCellContent(t *testing.T) {
-	// Long ref, repo, and branch values should not cause the table to
-	// overflow the terminal width.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 80
 	m.height = 20
@@ -1834,14 +1567,12 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		if visW > m.width+1 {
-			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
-		}
+		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
 	}
 }
 
 func TestTUIQueueLongAgentName(t *testing.T) {
-	// Long custom agent names should be capped and not overflow the table.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1862,15 +1593,12 @@ func TestTUIQueueLongAgentName(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		if visW > m.width+1 {
-			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
-		}
+		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
 	}
 }
 
 func TestTUIQueueWideCharacterWidth(t *testing.T) {
-	// CJK characters are double-width; lipgloss.Width() should measure
-	// them correctly and the table should not overflow.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1892,15 +1620,12 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		if visW > m.width+1 {
-			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
-		}
+		assert.LessOrEqual(t, visW, m.width+1, "unexpected condition")
 	}
 }
 
 func TestTUIQueueAgentColumnCapped(t *testing.T) {
-	// The Agent column should be capped at 12 characters even when
-	// the agent name is longer.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 120
 	m.height = 20
@@ -1912,14 +1637,12 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 	m.selectedJobID = 1
 
 	output := stripANSI(m.renderQueueView())
-	if !strings.Contains(output, "Agent") {
-		t.Fatal("expected Agent header in output")
-	}
-	// Full 30-char agent name should be truncated.
+	assert.Contains(t, output, "Agent", "expected Agent header in output")
+
 	if strings.Contains(output, longAgent) {
-		t.Error("expected agent name to be truncated, but full name found in output")
+		assert.NotContains(t, output, longAgent, "expected agent name to be truncated, but full name found in output")
 	}
-	// Longest run of 'x' in the output should be at most 12 (the cap).
+
 	maxRun := 0
 	run := 0
 	for _, r := range output {
@@ -1932,15 +1655,11 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 			run = 0
 		}
 	}
-	if maxRun > 12 {
-		t.Errorf("agent column exceeded cap: longest x-run = %d, want <= 12", maxRun)
-	}
+	assert.LessOrEqual(t, maxRun, 12, "unexpected condition")
 }
 
 func TestTUITasksFlexOvershootHandled(t *testing.T) {
-	// With highly skewed content (one flex column has content, others
-	// have none), max(...,1) can cause distributed > remaining. The
-	// overshoot correction should prevent layout overflow.
+
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 50
@@ -1957,26 +1676,17 @@ func TestTUITasksFlexOvershootHandled(t *testing.T) {
 	m.fixSelectedIdx = 0
 
 	output := m.renderTasksView()
-	if !strings.Contains(output, "roborev tasks") {
-		t.Error("expected tasks view title in output")
-	}
-	// All lines must fit within width (tasks view has no
-	// wide chrome lines unlike queue's status bar).
+	assert.Contains(t, output, "roborev tasks", "unexpected condition")
+
 	for line := range strings.SplitSeq(output, "\n") {
 		clean := strings.ReplaceAll(line, "\x1b[K", "")
 		clean = strings.ReplaceAll(clean, "\x1b[J", "")
-		if lipgloss.Width(clean) > m.width+1 {
-			t.Errorf("line exceeds width %d: visW=%d",
-				m.width, lipgloss.Width(clean))
-		}
+		assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1, "unexpected condition")
 	}
 }
 
 func TestTUIQueueFlexOvershootHandled(t *testing.T) {
-	// Overshoot test: skewed content and narrow terminals should not
-	// cause the table to overflow, including the edge case where
-	// remaining space is positive but smaller than the number of
-	// visible flex columns (max(...,1) inflation).
+
 	tests := []struct {
 		name   string
 		width  int
@@ -2007,23 +1717,18 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 
 			output := m.renderQueueView()
 			lines := strings.Split(output, "\n")
-			// Skip chrome lines (title, status, update); check table.
+
 			for i := 3; i < len(lines); i++ {
 				clean := strings.ReplaceAll(lines[i], "\x1b[K", "")
 				clean = strings.ReplaceAll(clean, "\x1b[J", "")
-				if lipgloss.Width(clean) > m.width+1 {
-					t.Errorf("line %d exceeds width %d: visW=%d",
-						i, m.width, lipgloss.Width(clean))
-				}
+				assert.LessOrEqual(t, lipgloss.Width(clean), m.width+1, "unexpected condition")
 			}
 		})
 	}
 }
 
 func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
-	// Each flex column should get at least its content width when
-	// total content fits within remaining space, even if one column
-	// has much more content than the others.
+
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 120
 	m.height = 20
@@ -2040,7 +1745,6 @@ func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	// Find the data row and verify repo name is not truncated.
 	found := false
 	for line := range strings.SplitSeq(output, "\n") {
 		stripped := stripTestANSI(line)
@@ -2049,14 +1753,11 @@ func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Error("Repo name 'my-project-repo' was truncated in output")
-	}
+	assert.True(t, found, "Repo name 'my-project-repo' was truncated in output")
 }
 
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
-	// When fixSelectedIdx exceeds len(fixJobs) (stale after jobs shrink),
-	// rendering should not panic.
+
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 120
@@ -2064,18 +1765,15 @@ func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone},
 	}
-	// Stale index: points beyond the single job
+
 	m.fixSelectedIdx = 5
 
-	// Should not panic
 	output := m.renderTasksView()
-	if !strings.Contains(output, "roborev tasks") {
-		t.Error("expected tasks view title in output")
-	}
+	assert.Contains(t, output, "roborev tasks", "unexpected condition")
 }
 
 func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
-	// Same narrow-width test for the tasks view — verify no panic.
+
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newTuiModel("http://localhost")
@@ -2087,7 +1785,6 @@ func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
 			}
 			m.fixSelectedIdx = 0
 
-			// Should not panic
 			_ = m.renderTasksView()
 		})
 	}
@@ -2099,36 +1796,20 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 	m.currentView = viewQueue
 	m.hiddenColumns = map[int]bool{}
 
-	// Press 'o' to open
 	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
-	if m2.currentView != viewColumnOptions {
-		t.Fatalf("expected viewColumnOptions, got %d", m2.currentView)
-	}
-	if len(m2.colOptionsList) == 0 {
-		t.Fatal("expected non-empty colOptionsList")
-	}
-	// Trailing items should include the settings toggles.
-	if len(m2.colOptionsList) < 3 {
-		t.Fatalf("expected settings toggles at end of colOptionsList, got %d items", len(m2.colOptionsList))
-	}
-	borders := m2.colOptionsList[len(m2.colOptionsList)-3]
-	if borders.id != colOptionBorders || borders.name != "Column borders" {
-		t.Errorf("expected third-from-last item to be borders toggle, got id=%d name=%q", borders.id, borders.name)
-	}
-	mouse := m2.colOptionsList[len(m2.colOptionsList)-2]
-	if mouse.id != colOptionMouse || mouse.name != "Mouse interactions" {
-		t.Errorf("expected second-from-last item to be mouse toggle, got id=%d name=%q", mouse.id, mouse.name)
-	}
-	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
-	if tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow" {
-		t.Errorf("expected last item to be tasks workflow toggle, got id=%d name=%q", tasks.id, tasks.name)
-	}
+	assert.Equal(t, viewColumnOptions, m2.currentView, "unexpected condition")
+	assert.NotEmpty(t, m2.colOptionsList, "expected non-empty colOptionsList")
 
-	// Press esc to close
+	assert.GreaterOrEqual(t, len(m2.colOptionsList), 3, "unexpected condition")
+	borders := m2.colOptionsList[len(m2.colOptionsList)-3]
+	assert.False(t, borders.id != colOptionBorders || borders.name != "Column borders", "unexpected condition")
+	mouse := m2.colOptionsList[len(m2.colOptionsList)-2]
+	assert.False(t, mouse.id != colOptionMouse || mouse.name != "Mouse interactions", "unexpected condition")
+	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
+	assert.False(t, tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow", "unexpected condition")
+
 	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyEscape})
-	if m3.currentView != viewQueue {
-		t.Fatalf("expected viewQueue after esc, got %d", m3.currentView)
-	}
+	assert.Equal(t, viewQueue, m3.currentView, "unexpected condition")
 }
 
 func TestColumnOptionsToggle(t *testing.T) {
@@ -2137,34 +1818,39 @@ func TestColumnOptionsToggle(t *testing.T) {
 	m.currentView = viewQueue
 	m.hiddenColumns = map[int]bool{}
 
-	// Open modal
 	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 
-	// First item should be Ref, enabled by default
-	if m.colOptionsList[0].id != colRef {
-		t.Fatalf("expected first item to be colRef, got %d", m.colOptionsList[0].id)
-	}
-	if !m.colOptionsList[0].enabled {
-		t.Fatal("expected Ref to be enabled initially")
-	}
+	assert.Equal(t, colRef, m.colOptionsList[0].id, "unexpected condition")
+	assert.True(t, m.colOptionsList[0].enabled, "expected Ref to be enabled initially")
 
-	// Toggle it off with space
 	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	if m.colOptionsList[0].enabled {
-		t.Fatal("expected Ref to be disabled after toggle")
-	}
-	if !m.hiddenColumns[colRef] {
-		t.Fatal("expected colRef in hiddenColumns")
-	}
+	assert.False(t, m.colOptionsList[0].enabled, "expected Ref to be disabled after toggle")
+	assert.True(t, m.hiddenColumns[colRef], "expected colRef in hiddenColumns")
 
-	// Toggle it back on
 	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	if !m.colOptionsList[0].enabled {
-		t.Fatal("expected Ref to be enabled after second toggle")
+	assert.True(t, m.colOptionsList[0].enabled, "expected Ref to be enabled after second toggle")
+	assert.False(t, m.hiddenColumns[colRef], "expected colRef removed from hiddenColumns")
+}
+
+func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.mouseEnabled = false
+	m.width = 120
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
-	if m.hiddenColumns[colRef] {
-		t.Fatal("expected colRef removed from hiddenColumns")
-	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, _ := updateModel(t, m, mouseLeftClick(4, 6))
+	assert.False(t, m2.selectedIdx != 0 || m2.selectedJobID != 1, "unexpected condition")
+
+	m3, _ := updateModel(t, m2, mouseWheelDown())
+	assert.False(t, m3.selectedIdx != 0 || m3.selectedJobID != 1, "unexpected condition")
 }
 
 func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
@@ -2203,14 +1889,10 @@ func TestHiddenColumnNotRendered(t *testing.T) {
 	m.height = 30
 
 	output := m.renderQueueView()
-	// The header should not contain "Agent"
-	if strings.Contains(output, "Agent") {
-		t.Error("expected Agent column to be hidden from output")
-	}
-	// But should contain other headers
-	if !strings.Contains(output, "Branch") {
-		t.Error("expected Branch column to be visible")
-	}
+
+	assert.NotContains(t, output, "Agent", "unexpected condition")
+
+	assert.Contains(t, output, "Branch", "unexpected condition")
 }
 
 func TestColumnBordersRendered(t *testing.T) {
@@ -2225,23 +1907,18 @@ func TestColumnBordersRendered(t *testing.T) {
 	m.height = 30
 
 	output := m.renderQueueView()
-	// Count ▕ occurrences — with borders on, the data table + help bar both have them,
-	// so count should be higher than just the help bar alone
+
 	bordersOnCount := strings.Count(output, "▕")
 
-	// Disable borders — help bar still has ▕ but the data table should not
 	m.colBordersOn = false
 	output2 := m.renderQueueView()
 	bordersOffCount := strings.Count(output2, "▕")
 
-	if bordersOnCount <= bordersOffCount {
-		t.Errorf("expected more ▕ with borders on (%d) than off (%d)", bordersOnCount, bordersOffCount)
-	}
+	assert.Greater(t, bordersOnCount, bordersOffCount, "unexpected condition")
 }
 
 func TestQueueColWidthCacheColdStart(t *testing.T) {
-	// First render with pre-populated jobs must compute widths,
-	// not hit a stale cache with nil contentWidths.
+
 	m := newTuiModel("http://localhost")
 	m.width = 120
 	m.height = 24
@@ -2252,13 +1929,9 @@ func TestQueueColWidthCacheColdStart(t *testing.T) {
 	m.selectedJobID = 1
 
 	output := stripANSI(m.renderQueueView())
-	if !strings.Contains(output, "abc1234") {
-		t.Fatalf("first render should show job ref, got:\n%s", output)
-	}
-	// Cache should now be populated
-	if m.queueColCache.contentWidths == nil {
-		t.Fatal("cache contentWidths should be populated after first render")
-	}
+	assert.Contains(t, output, "abc1234", "unexpected condition")
+
+	assert.NotNil(t, m.queueColCache.contentWidths, "cache contentWidths should be populated after first render")
 }
 
 func TestQueueColWidthCacheInvalidation(t *testing.T) {
@@ -2271,23 +1944,18 @@ func TestQueueColWidthCacheInvalidation(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// First render populates cache
 	m.renderQueueView()
 	origGen := m.queueColCache.gen
 	origWidths := maps.Clone(m.queueColCache.contentWidths)
 
-	// Simulate new jobs arriving (bumps queueColGen)
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("a-much-longer-reference"), withRepoName("longer-repo-name"), withAgent("claude-code")),
 	}
 	m.queueColGen++
 
-	// Second render should recompute
 	m.renderQueueView()
-	if m.queueColCache.gen == origGen {
-		t.Fatal("cache gen should have advanced after invalidation")
-	}
-	// Widths should differ (longer content)
+	assert.NotEqual(t, origGen, m.queueColCache.gen, "cache gen should have advanced after invalidation")
+
 	changed := false
 	for k, v := range m.queueColCache.contentWidths {
 		if ov, ok := origWidths[k]; ok && ov != v {
@@ -2295,9 +1963,7 @@ func TestQueueColWidthCacheInvalidation(t *testing.T) {
 			break
 		}
 	}
-	if !changed {
-		t.Fatal("content widths should differ after job data change")
-	}
+	assert.True(t, changed, "content widths should differ after job data change")
 }
 
 func TestQueueColWidthCacheReuse(t *testing.T) {
@@ -2310,19 +1976,13 @@ func TestQueueColWidthCacheReuse(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// First render populates cache
 	m.renderQueueView()
 	cachedWidthsPtr := fmt.Sprintf("%p", m.queueColCache.contentWidths)
 	cachedGen := m.queueColCache.gen
 
-	// Second render without gen bump should reuse cached map (no reallocation)
 	m.renderQueueView()
-	if m.queueColCache.gen != cachedGen {
-		t.Fatal("cache gen should not change on re-render without invalidation")
-	}
-	if got := fmt.Sprintf("%p", m.queueColCache.contentWidths); got != cachedWidthsPtr {
-		t.Fatalf("cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
-	}
+	assert.Equal(t, cachedGen, m.queueColCache.gen, "cache gen should not change on re-render without invalidation")
+	assert.Equal(t, cachedWidthsPtr, fmt.Sprintf("%p", m.queueColCache.contentWidths))
 }
 
 func TestTaskColWidthCacheColdStart(t *testing.T) {
@@ -2342,12 +2002,8 @@ func TestTaskColWidthCacheColdStart(t *testing.T) {
 	}
 
 	output := stripANSI(m.renderTasksView())
-	if !strings.Contains(output, "def5678") {
-		t.Fatalf("first render should show job ref, got:\n%s", output)
-	}
-	if m.taskColCache.contentWidths == nil {
-		t.Fatal("task cache contentWidths should be populated after first render")
-	}
+	assert.Contains(t, output, "def5678", "unexpected condition")
+	assert.NotNil(t, m.taskColCache.contentWidths, "task cache contentWidths should be populated after first render")
 }
 
 func TestTaskColWidthCacheInvalidation(t *testing.T) {
@@ -2362,16 +2018,13 @@ func TestTaskColWidthCacheInvalidation(t *testing.T) {
 	m.renderTasksView()
 	origGen := m.taskColCache.gen
 
-	// Simulate fix jobs update
 	m.fixJobs = []storage.ReviewJob{
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "a-longer-repo-name"},
 	}
 	m.taskColGen++
 
 	m.renderTasksView()
-	if m.taskColCache.gen == origGen {
-		t.Fatal("task cache gen should have advanced after invalidation")
-	}
+	assert.NotEqual(t, origGen, m.taskColCache.gen, "task cache gen should have advanced after invalidation")
 }
 
 func TestTaskColWidthCacheReuse(t *testing.T) {
@@ -2383,19 +2036,13 @@ func TestTaskColWidthCacheReuse(t *testing.T) {
 		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "myrepo", Branch: "main", GitRef: "def5678"},
 	}
 
-	// First render populates cache
 	m.renderTasksView()
 	cachedWidthsPtr := fmt.Sprintf("%p", m.taskColCache.contentWidths)
 	cachedGen := m.taskColCache.gen
 
-	// Second render without gen bump should reuse cached map
 	m.renderTasksView()
-	if m.taskColCache.gen != cachedGen {
-		t.Fatal("task cache gen should not change on re-render without invalidation")
-	}
-	if got := fmt.Sprintf("%p", m.taskColCache.contentWidths); got != cachedWidthsPtr {
-		t.Fatalf("task cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
-	}
+	assert.Equal(t, cachedGen, m.taskColCache.gen, "task cache gen should not change on re-render without invalidation")
+	assert.Equal(t, cachedWidthsPtr, fmt.Sprintf("%p", m.taskColCache.contentWidths), "task cache content widths should remain stable on re-render")
 }
 
 func TestStatusLabel(t *testing.T) {
@@ -2416,9 +2063,7 @@ func TestStatusLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := statusLabel(tt.job)
-			if got != tt.want {
-				t.Errorf("statusLabel() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -2442,16 +2087,11 @@ func TestStatusColor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := statusColor(tt.status)
-			if got != tt.want {
-				t.Errorf("statusColor(%q) = %v, want %v", tt.status, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 
-	// Error (failedStyle/orange) and Fail (failStyle/red) must be distinct
-	if failedStyle.GetForeground() == failStyle.GetForeground() {
-		t.Error("Error and Fail should have distinct colors")
-	}
+	assert.NotEqual(t, failedStyle.GetForeground(), failStyle.GetForeground(), "unexpected condition")
 }
 
 func TestVerdictColor(t *testing.T) {
@@ -2471,9 +2111,7 @@ func TestVerdictColor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := verdictColor(tt.verdict)
-			if got != tt.want {
-				t.Errorf("verdictColor() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "unexpected condition")
 		})
 	}
 }
@@ -2492,29 +2130,20 @@ func TestClosedKeyShortcut(t *testing.T) {
 		})
 	}
 
-	// 'a' should trigger close toggle with optimistic state update
 	m := newTestModel()
 	m2, cmd := pressKey(m, 'a')
-	if cmd == nil {
-		t.Fatal("Expected command from 'a' key press")
-	}
+	assert.NotNil(t, cmd, "Expected command from 'a' key press")
 	pending, ok := m2.pendingClosed[1]
-	if !ok {
-		t.Fatal("Expected pending closed state for job 1 after 'a'")
-	}
-	if !pending.newState {
-		t.Error("Expected pending newState=true (toggled from false)")
+	assert.True(t, ok, "Expected pending closed state for job 1 after 'a'")
+
+	if ok {
+		assert.True(t, pending.newState, "Expected pending newState=true (toggled from false)")
 	}
 
-	// 'd' should NOT trigger close toggle (removed shortcut)
 	m3 := newTestModel()
 	m4, cmd2 := pressKey(m3, 'd')
-	if cmd2 != nil {
-		t.Error("'d' key should not trigger any command (shortcut removed)")
-	}
-	if len(m4.pendingClosed) != 0 {
-		t.Error("'d' should not modify pendingClosed state")
-	}
+	assert.Nil(t, cmd2, "'d' key should not trigger any command (shortcut removed)")
+	assert.Empty(t, m4.pendingClosed, "'d' should not modify pendingClosed state")
 }
 
 func TestMigrateColumnConfig(t *testing.T) {
@@ -2577,59 +2206,40 @@ func TestMigrateColumnConfig(t *testing.T) {
 				HiddenColumns: slices.Clone(tt.hiddenCols),
 			}
 			dirty := migrateColumnConfig(cfg)
-			if dirty != tt.wantDirty {
-				t.Errorf("dirty = %v, want %v", dirty, tt.wantDirty)
-			}
-			if !slices.Equal(cfg.ColumnOrder, tt.wantColOrder) {
-				t.Errorf("ColumnOrder = %v, want %v", cfg.ColumnOrder, tt.wantColOrder)
-			}
-			if !slices.Equal(cfg.HiddenColumns, tt.wantHidden) {
-				t.Errorf("HiddenColumns = %v, want %v", cfg.HiddenColumns, tt.wantHidden)
-			}
+			assert.Equal(t, tt.wantDirty, dirty, "unexpected condition")
+			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder), "unexpected condition")
+			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden), "unexpected condition")
 		})
 	}
 }
 
 func TestParseColumnOrderAppendsMissing(t *testing.T) {
-	// A custom order saved before the pf column existed should get
-	// pf appended automatically by resolveColumnOrder.
+
 	oldCustom := []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"}
 	got := parseColumnOrder(oldCustom)
 
-	// Verify existing columns are in the user's order
 	wantPrefix := []int{colRepo, colRef, colAgent, colStatus, colQueued, colElapsed, colBranch, colHandled}
-	if !slices.Equal(got[:len(wantPrefix)], wantPrefix) {
-		t.Errorf("prefix = %v, want %v", got[:len(wantPrefix)], wantPrefix)
-	}
+	assert.True(t, slices.Equal(got[:len(wantPrefix)], wantPrefix), "unexpected condition")
 
-	// pf must be appended exactly once
 	pfCount := 0
 	for _, c := range got {
 		if c == colPF {
 			pfCount++
 		}
 	}
-	if pfCount != 1 {
-		t.Errorf("expected pf to appear once, got %d in %v", pfCount, got)
-	}
+	assert.Equal(t, 1, pfCount, "unexpected condition")
 }
 
 func TestDefaultColumnOrderDetection(t *testing.T) {
-	// Verify the slices.Equal check that saveColumnOptions uses
-	// to decide whether to persist column order: default order
-	// should match toggleableColumns, swapped order should not.
+
 	defaultOrder := make([]int, len(toggleableColumns))
 	copy(defaultOrder, toggleableColumns)
 
-	if !slices.Equal(defaultOrder, toggleableColumns) {
-		t.Fatal("copy of toggleableColumns should equal toggleableColumns")
-	}
+	assert.True(t, slices.Equal(defaultOrder, toggleableColumns), "copy of toggleableColumns should equal toggleableColumns")
 
 	customOrder := make([]int, len(toggleableColumns))
 	copy(customOrder, toggleableColumns)
 	customOrder[0], customOrder[1] = customOrder[1], customOrder[0]
 
-	if slices.Equal(customOrder, toggleableColumns) {
-		t.Error("swapped order should not equal defaults")
-	}
+	assert.False(t, slices.Equal(customOrder, toggleableColumns), "unexpected condition")
 }

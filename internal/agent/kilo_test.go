@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
@@ -87,10 +89,8 @@ func TestKiloReviewPipesPromptViaStdin(t *testing.T) {
 
 	prompt := "Review this commit carefully"
 	_, args, stdin := runKiloMockReview(t, "", prompt, nil)
+	assert.Equal(t, prompt, strings.TrimSpace(stdin), "stdin content = %q, want %q", stdin, prompt)
 
-	if strings.TrimSpace(stdin) != prompt {
-		t.Errorf("stdin content = %q, want %q", stdin, prompt)
-	}
 	assertNotContains(t, args, prompt)
 }
 
@@ -196,8 +196,6 @@ func TestKiloReviewStderrOnExitZero(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Kilo exits 0 but writes error to stderr and produces no stdout.
-	// The error must be surfaced, not hidden behind "No review output".
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"},
 		ExitCode:    0,
@@ -207,9 +205,8 @@ func TestKiloReviewStderrOnExitZero(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error when kilo writes to stderr with no stdout")
-	}
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "Model not found")
 }
 
@@ -226,9 +223,8 @@ func TestKiloReviewNonZeroExitSurfacesStderr(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "Model not found")
 }
 
@@ -236,7 +232,6 @@ func TestKiloReviewStderrStripsANSI(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Kilo outputs ANSI-colored errors; verify they get stripped.
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StderrLines: []string{
 			"\x1b[0m\x1b[91m\x1b[0m\x1b[1mError: \x1b[0m\x1b[0mModel not found",
@@ -248,9 +243,8 @@ func TestKiloReviewStderrStripsANSI(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "Error: Model not found")
 	assertNotContains(t, err.Error(), "\x1b[")
 }
@@ -259,9 +253,6 @@ func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Some CLIs print errors to stdout instead of stderr.
-	// When stderr is empty, the raw stdout should be included
-	// in the error diagnostics.
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StdoutLines: []string{"fatal: something went wrong"},
 		ExitCode:    1,
@@ -271,9 +262,8 @@ func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err == nil {
-		t.Fatal("expected error on non-zero exit")
-	}
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "something went wrong")
 }
 
@@ -281,9 +271,6 @@ func TestKiloReviewExitZeroNonJSONStdout(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Kilo exits 0 but writes only non-JSON text to stdout.
-	// parseOpenCodeJSON extracts nothing; the raw stdout
-	// should be surfaced as an error.
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StdoutLines: []string{
 			"Error: invalid configuration",
@@ -295,11 +282,8 @@ func TestKiloReviewExitZeroNonJSONStdout(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err == nil {
-		t.Fatal(
-			"expected error when stdout is non-JSON",
-		)
-	}
+	require.Error(t, err)
+
 	assertContains(t, err.Error(), "invalid configuration")
 }
 
@@ -307,10 +291,6 @@ func TestKiloReviewExitZeroJSONOnlyNoText(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	// Kilo exits 0 with valid JSONL but no text events (e.g.,
-	// only step/tool events). This is a valid run that produced
-	// no review text — should return the generic message, not
-	// an error.
 	stepEvent := `{"type":"step","part":{"type":"tool","name":"read"}}`
 	mock := mockAgentCLI(t, MockCLIOpts{
 		StdoutLines: []string{stepEvent},
@@ -321,14 +301,11 @@ func TestKiloReviewExitZeroJSONOnlyNoText(t *testing.T) {
 	result, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
+
 	assertEqual(t, result, "No review output generated")
 }
 
-// kiloTextEvent returns a JSONL line representing a text event
-// in the opencode/kilo --format json envelope.
 func kiloTextEvent(text string) string {
 	part := map[string]string{"type": "text", "text": text}
 	partJSON, err := json.Marshal(part)
@@ -369,18 +346,13 @@ func runKiloMockReview(
 	out, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", prompt, nil,
 	)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
 	argsBytes, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("failed to read args file: %v", err)
-	}
+	require.NoError(t, err, "failed to read args file: %v")
+
 	stdinBytes, err := os.ReadFile(mock.StdinFile)
-	if err != nil {
-		t.Fatalf("failed to read stdin file: %v", err)
-	}
+	require.NoError(t, err, "failed to read stdin file: %v")
 
 	return out, string(argsBytes), string(stdinBytes)
 }

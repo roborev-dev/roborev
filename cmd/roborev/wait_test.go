@@ -7,10 +7,11 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockConfig struct {
@@ -59,16 +60,10 @@ func newWaitMockHandler(cfg mockConfig) http.HandlerFunc {
 // requireExitCode asserts err is an *exitError with the expected code.
 func requireExitCode(t *testing.T, err error, code int) {
 	t.Helper()
-	if err == nil {
-		t.Fatalf("expected exit code %d, got nil error", code)
-	}
+	require.Error(t, err, "unexpected condition")
 	exitErr, ok := err.(*exitError)
-	if !ok {
-		t.Fatalf("expected *exitError with code %d, got %T: %v", code, err, err)
-	}
-	if exitErr.code != code {
-		t.Errorf("expected exit code %d, got: %d", code, exitErr.code)
-	}
+	assert.True(t, ok, "unexpected condition")
+	assert.Equal(t, exitErr.code, code, "unexpected condition")
 }
 
 // waitEnv holds common test fixtures for wait command tests.
@@ -235,13 +230,13 @@ func TestWait_Scenarios(t *testing.T) {
 			if tc.expectErr {
 				requireExitCode(t, err, tc.expectErrCode)
 			} else if err != nil {
-				t.Fatalf("expected no error, got: %v", err)
+				require.NoError(t, err)
 			}
 
-			if tc.expectOut == "" && stdout != "" {
-				t.Errorf("expected no stdout, got: %q", stdout)
-			} else if tc.expectOut != "" && !strings.Contains(stdout, tc.expectOut) {
-				t.Errorf("expected stdout to contain %q, got: %q", tc.expectOut, stdout)
+			if tc.expectOut == "" {
+				assert.Empty(t, stdout, "unexpected condition")
+			} else {
+				assert.Contains(t, stdout, tc.expectOut, "unexpected condition")
 			}
 		})
 	}
@@ -280,13 +275,9 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 	chdir(t, repo.Dir)
 
 	_, err := runWait(t, "42", "--quiet")
-	if err != nil {
-		t.Errorf("expected exit 0 for numeric arg as job ID, got: %v", err)
-	}
+	require.NoError(t, err, "unexpected condition")
 	// The final poll should query by id=42, not git_ref=42
-	if !strings.Contains(lastJobsQuery, "id=42") {
-		t.Errorf("expected query by id=42, got: %s", lastJobsQuery)
-	}
+	assert.Contains(t, lastJobsQuery, "id=42", "unexpected condition")
 }
 
 func TestWaitMultipleJobIDs(t *testing.T) {
@@ -303,9 +294,8 @@ func TestWaitMultipleJobIDs(t *testing.T) {
 	newWaitEnv(t, newWaitMockHandler(mock))
 
 	_, err := runWait(t, "--job", "10", "20")
-	if err != nil {
-		t.Fatalf("expected no error when all jobs pass, got: %v", err)
-	}
+	require.NoError(t, err)
+
 }
 
 func TestWaitMultipleJobIDsOneFails(t *testing.T) {
@@ -347,13 +337,9 @@ func TestWaitMultipleJobIDsOneFailsReportsOutput(t *testing.T) {
 
 	stdout, err := runWait(t, "--job", "10", "20")
 	requireExitCode(t, err, 1)
-	if !strings.Contains(stdout, "Job 20: review has issues") {
-		t.Errorf("expected failure message for job 20, got: %q", stdout)
-	}
+	assert.Contains(t, stdout, "Job 20: review has issues", "unexpected condition")
 	// Passing job should not appear in output.
-	if strings.Contains(stdout, "Job 10") {
-		t.Errorf("expected no message for passing job 10, got: %q", stdout)
-	}
+	assert.NotContains(t, stdout, "Job 10", "unexpected condition")
 }
 
 func TestWaitMultipleJobIDsNotFoundReportsOutput(t *testing.T) {
@@ -372,9 +358,7 @@ func TestWaitMultipleJobIDsNotFoundReportsOutput(t *testing.T) {
 
 	stdout, err := runWait(t, "--job", "10", "99")
 	requireExitCode(t, err, 1)
-	if !strings.Contains(stdout, "Job 99: no job found") {
-		t.Errorf("expected 'no job found' for job 99, got: %q", stdout)
-	}
+	assert.Contains(t, stdout, "Job 99: no job found", "unexpected condition")
 }
 
 func TestWaitMultipleGenericErrors(t *testing.T) {
@@ -438,9 +422,7 @@ func TestWaitMultipleGenericErrors(t *testing.T) {
 
 			stdout, err := runWait(t, tc.args...)
 			requireExitCode(t, err, 1)
-			if !strings.Contains(stdout, tc.wantMsg) {
-				t.Errorf("expected stdout to contain %q, got: %q", tc.wantMsg, stdout)
-			}
+			assert.Contains(t, stdout, tc.wantMsg, "unexpected condition")
 		})
 	}
 }
@@ -526,13 +508,10 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	newWaitEnv(t, newWaitMockHandler(mock))
 
 	_, err := runWait(t, "--sha", "HEAD", "--quiet")
-	if err == nil {
-		t.Fatal("expected error when review not found")
-	}
+	require.Error(t, err, "unexpected condition")
 	// Should be a plain error, not an *exitError
-	if _, ok := err.(*exitError); ok {
-		t.Error("review fetch failure should be a plain error, not exitError")
-	}
+	_, ok := err.(*exitError)
+	assert.False(t, ok, "review fetch failure should be a plain error, not exitError")
 }
 
 func TestWaitLookupNon200Response(t *testing.T) {
@@ -562,9 +541,7 @@ func setupRepoWithWorktree(t *testing.T) (repoDir, wtDir, mainSHA, wtSHA string)
 	wtRepo := &TestGitRepo{Dir: wtDir, t: t}
 	wtSHA = wtRepo.CommitFile("wt-file.txt", "worktree content", "commit in worktree")
 
-	if mainSHA == wtSHA {
-		t.Fatal("expected different SHAs for main and worktree commits")
-	}
+	assert.NotEqual(t, mainSHA, wtSHA, "unexpected condition")
 	return repo.Dir, wtDir, mainSHA, wtSHA
 }
 
@@ -592,27 +569,15 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	chdir(t, worktreeDir)
 
 	_, err := runWait(t, "--sha", "HEAD", "--quiet")
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
+	require.NoError(t, err)
 
-	if lookupQuery == "" {
-		t.Fatal("expected a lookup query with git_ref, but none was captured")
-	}
+	assert.NotEmpty(t, lookupQuery, "unexpected condition")
 
 	// git_ref should be the worktree's HEAD (wtSHA), not the main repo's HEAD
-	if !strings.Contains(lookupQuery, "git_ref="+url.QueryEscape(wtSHA)) {
-		t.Errorf("expected git_ref=%s (worktree HEAD) in query, got: %s", wtSHA, lookupQuery)
-	}
-	if strings.Contains(lookupQuery, "git_ref="+url.QueryEscape(mainSHA)) {
-		t.Errorf("git_ref should NOT be main repo HEAD %s, got: %s", mainSHA, lookupQuery)
-	}
+	assert.Contains(t, lookupQuery, "git_ref="+url.QueryEscape(wtSHA), "unexpected condition")
+	assert.NotContains(t, lookupQuery, "git_ref="+url.QueryEscape(mainSHA), "unexpected condition")
 
 	// repo should be the main repo path, not the worktree path
-	if strings.Contains(lookupQuery, url.QueryEscape(worktreeDir)) {
-		t.Errorf("repo param should be main repo path, not worktree path; got: %s", lookupQuery)
-	}
-	if !strings.Contains(lookupQuery, url.QueryEscape(repoDir)) {
-		t.Errorf("expected repo=%s (main repo) in query, got: %s", repoDir, lookupQuery)
-	}
+	assert.NotContains(t, lookupQuery, url.QueryEscape(worktreeDir), "unexpected condition")
+	assert.Contains(t, lookupQuery, url.QueryEscape(repoDir), "unexpected condition")
 }

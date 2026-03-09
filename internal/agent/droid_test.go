@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,27 +66,19 @@ func TestDroidBuildArgs(t *testing.T) {
 
 func TestDroidName(t *testing.T) {
 	a := NewDroidAgent("")
-	if a.Name() != "droid" {
-		t.Fatalf("expected name 'droid', got %s", a.Name())
-	}
-	if a.CommandName() != "droid" {
-		t.Fatalf("expected command name 'droid', got %s", a.CommandName())
-	}
+	require.Equal(t, "droid", a.Name(), "expected name 'droid', got %s", a.Name())
+	require.Equal(t, "droid", a.CommandName(), "expected command name 'droid', got %s", a.CommandName())
+
 }
 
 func TestDroidWithAgentic(t *testing.T) {
 	a := NewDroidAgent("droid")
-	if a.Agentic {
-		t.Fatal("expected non-agentic by default")
-	}
+	require.False(t, a.Agentic, "expected non-agentic by default")
 
 	a2 := a.WithAgentic(true).(*DroidAgent)
-	if !a2.Agentic {
-		t.Fatal("expected agentic after WithAgentic(true)")
-	}
-	if a.Agentic {
-		t.Fatal("original should be unchanged")
-	}
+	require.True(t, a2.Agentic, "expected agentic after WithAgentic(true)")
+	require.False(t, a.Agentic, "original should be unchanged")
+
 }
 
 func TestDroidReviewOutcomes(t *testing.T) {
@@ -125,23 +118,20 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			result, err := a.Review(context.Background(), t.TempDir(), "HEAD", "review this commit", nil)
 
 			if tt.wantError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
+				require.Error(t, err)
+
 				if !strings.Contains(err.Error(), tt.errContains) {
-					t.Fatalf("expected error to contain %q, got %v", tt.errContains, err)
+					require.ErrorContains(t, err, tt.errContains, "expected error to contain %q, got %v", tt.errContains, err)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
+			require.NoError(t, err)
+
 			if tt.exactMatch {
-				if result != tt.wantResult {
-					t.Fatalf("expected exact result %q, got %q", tt.wantResult, result)
-				}
+				require.Equal(t, tt.wantResult, result, "expected exact result %q, got %q", tt.wantResult, result)
+
 			} else if !strings.Contains(result, tt.wantResult) {
-				t.Fatalf("expected result to contain %q, got %q", tt.wantResult, result)
+				require.Contains(t, result, tt.wantResult, "expected result to contain %q, got %q", tt.wantResult, result)
 			}
 		})
 	}
@@ -159,19 +149,16 @@ func TestDroidReviewWithProgress(t *testing.T) {
 	a := NewDroidAgent(mock.CmdPath)
 
 	f, err := os.Create(progressFile)
-	if err != nil {
-		t.Fatalf("create progress file: %v", err)
-	}
+	require.NoError(t, err, "create progress file: %v")
+
 	defer f.Close()
 
 	_, err = a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", f)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	require.NoError(t, err)
 
 	progress, _ := os.ReadFile(progressFile)
 	if !strings.Contains(string(progress), "Processing") {
-		t.Fatalf("expected progress output, got %q", string(progress))
+		require.Contains(t, string(progress), "Processing", "expected progress output, got %q", string(progress))
 	}
 }
 
@@ -189,14 +176,10 @@ func TestDroidReviewPipesPromptViaStdin(t *testing.T) {
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", prompt, nil,
 	)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	require.NoError(t, err, "Review failed: %v")
 
-	// Prompt must be in stdin
 	assertFileContent(t, mock.StdinFile, prompt)
 
-	// Prompt must not be in argv
 	assertFileNotContains(t, mock.ArgsFile, prompt)
 }
 
@@ -210,14 +193,13 @@ func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 
 	a := NewDroidAgent(mock.CmdPath)
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		require.NoError(t, err)
 	}
 
 	args, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("read args: %v", err)
-	}
+	require.NoError(t, err, "read args: %v")
+
 	if !strings.Contains(string(args), "medium") {
-		t.Fatalf("expected '--auto medium' in args when global unsafe enabled, got %s", strings.TrimSpace(string(args)))
+		require.Contains(t, strings.TrimSpace(string(args)), "--auto", "expected '--auto medium' in args when global unsafe enabled, got %s", strings.TrimSpace(string(args)))
 	}
 }
