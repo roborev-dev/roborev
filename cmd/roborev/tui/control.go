@@ -62,14 +62,7 @@ func removeStaleSocket(socketPath string) error {
 // isConnRefused returns true when the error chain contains
 // ECONNREFUSED, which means a socket exists but nothing is listening.
 func isConnRefused(err error) bool {
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		var sysErr *os.SyscallError
-		if errors.As(opErr.Err, &sysErr) {
-			return errors.Is(sysErr.Err, syscall.ECONNREFUSED)
-		}
-	}
-	return false
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // startControlListener creates a Unix domain socket and starts
