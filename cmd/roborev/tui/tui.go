@@ -751,6 +751,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			5*time.Second, m.currentView,
 		)
 		result = m
+	case controlQueryMsg:
+		result, cmd = m.handleControlQuery(msg)
+	case controlMutationMsg:
+		result, cmd = m.handleControlMutation(msg)
 	default:
 		// Unknown message types cannot change the view, so no mouse
 		// toggle is needed. If a new message type is added that can
@@ -820,9 +824,10 @@ func (m model) View() string {
 
 // Config holds resolved parameters for running the TUI.
 type Config struct {
-	ServerAddr   string
-	RepoFilter   string
-	BranchFilter string
+	ServerAddr    string
+	RepoFilter    string
+	BranchFilter  string
+	ControlSocket string // Unix socket path for external control (default: auto)
 }
 
 func programOptionsForModel(m model) []tea.ProgramOption {
@@ -837,6 +842,9 @@ func programOptionsForModel(m model) []tea.ProgramOption {
 
 // Run starts the interactive TUI.
 func Run(cfg Config) error {
+	// Clean up sockets from dead TUI processes before starting
+	CleanupStaleTUIRuntimes()
+
 	var opts []option
 	if cfg.RepoFilter != "" {
 		opts = append(opts, withRepoFilter(cfg.RepoFilter))
@@ -849,7 +857,35 @@ func Run(cfg Config) error {
 		m,
 		programOptionsForModel(m)...,
 	)
-	_, err := p.Run()
+
+	// Start control socket listener
+	socketPath := cfg.ControlSocket
+	if socketPath == "" {
+		socketPath = defaultControlSocketPath()
+	}
+	cleanup, err := startControlListener(socketPath, p)
+	if err != nil {
+		log.Printf("warning: control socket disabled: %v", err)
+	} else {
+		defer cleanup()
+	}
+
+	// Write TUI runtime metadata for discoverability
+	rtInfo := TUIRuntimeInfo{
+		PID:        os.Getpid(),
+		SocketPath: socketPath,
+		ServerAddr: cfg.ServerAddr,
+	}
+	if cfg.RepoFilter != "" {
+		rtInfo.RepoFilter = []string{cfg.RepoFilter}
+	}
+	rtInfo.BranchFilter = cfg.BranchFilter
+	if err := WriteTUIRuntime(rtInfo); err != nil {
+		log.Printf("warning: failed to write TUI runtime info: %v", err)
+	}
+	defer RemoveTUIRuntime(socketPath)
+
+	_, err = p.Run()
 	return err
 }
 
