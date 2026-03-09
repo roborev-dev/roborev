@@ -2046,6 +2046,38 @@ func TestAdvancedTasksEnabledPersistence(t *testing.T) {
 	}
 }
 
+func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := DefaultConfig()
+	cfg.DefaultAgent = "claude-code"
+	cfg.HideClosedByDefault = true
+	cfg.MouseEnabled = false
+	cfg.Advanced.TasksEnabled = true
+
+	if err := SaveGlobal(cfg); err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	data, err := os.ReadFile(GlobalConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	got := string(data)
+
+	for _, want := range []string{
+		"default_agent = 'claude-code'",
+		"# Hide closed reviews by default in the TUI queue.\nhide_closed_by_default = true",
+		"# Enable mouse support in the TUI.\nmouse_enabled = false",
+		"[advanced]\n# Enable the advanced Tasks workflow in the TUI.\ntasks_enabled = true",
+		"max_workers = 4",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("saved config missing documented setting %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	testenv.SetDataDir(t)
 

@@ -425,6 +425,30 @@ func TestSetConfigKeyRepoConfig(t *testing.T) {
 	assertConfigValue(t, path, "agent", "claude-code")
 }
 
+func TestSetConfigKeyRepoConfigWritesComments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".roborev.toml")
+
+	if err := setConfigKey(path, "agent", "claude-code", false); err != nil {
+		t.Fatalf("setConfigKey repo: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	got := string(data)
+
+	for _, want := range []string{
+		"# Default agent for this repo when no workflow-specific agent is set.\n",
+		"agent = 'claude-code'",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("repo config missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSetConfigKeyRepoConfigRejectsGlobalACPSettings(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".roborev.toml")
@@ -435,6 +459,30 @@ func TestSetConfigKeyRepoConfigRejectsGlobalACPSettings(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is a global setting") {
 		t.Fatalf("expected global-setting error, got: %v", err)
+	}
+}
+
+func TestSetConfigKeyGlobalWritesComments(t *testing.T) {
+	path := setupConfigFile(t)
+
+	if err := setConfigKey(path, "default_agent", "codex", true); err != nil {
+		t.Fatalf("setConfigKey: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	got := string(data)
+
+	for _, want := range []string{
+		"# Default agent when no workflow-specific agent is set.\n",
+		"default_agent = 'codex'",
+		"# Hide closed reviews by default in the TUI queue.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("global config missing %q:\n%s", want, got)
+		}
 	}
 }
 

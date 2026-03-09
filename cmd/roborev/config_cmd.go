@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"text/tabwriter"
 
-	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/spf13/cobra"
@@ -384,27 +382,39 @@ func printKeyValues(kvs []config.KeyValue) {
 	}
 }
 
-// setConfigKey sets a key in a TOML file using raw map manipulation
-// to avoid writing default values for every field.
-// isGlobal determines which struct (Config vs RepoConfig) validates the key.
+// setConfigKey sets a key in a TOML config file.
 func setConfigKey(path, key, value string, isGlobal bool) error {
-	validationCfg, err := validateKeyForScope(key, value, isGlobal)
+	_, err := validateKeyForScope(key, value, isGlobal)
 	if err != nil {
 		return err
 	}
 
-	raw, err := loadRawConfig(path)
-	if err != nil {
-		return err
+	if isGlobal {
+		cfg, err := config.LoadGlobalFrom(path)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		if err := config.SetConfigValue(cfg, key, value); err != nil {
+			return err
+		}
+		return config.SaveGlobalTo(path, cfg)
 	}
 
-	setRawMapKey(raw, key, coerceValue(validationCfg, key, value))
-
-	return atomicWriteConfig(path, raw, isGlobal)
+	repoDir := filepath.Dir(path)
+	repoCfg, err := config.LoadRepoConfig(repoDir)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if repoCfg == nil {
+		repoCfg = &config.RepoConfig{}
+	}
+	if err := config.SetConfigValue(repoCfg, key, value); err != nil {
+		return err
+	}
+	return config.SaveRepoConfigTo(path, repoCfg)
 }
 
-// validateKeyForScope validates a key against the appropriate config struct
-// and returns the populated struct for type coercion.
+// validateKeyForScope validates a key against the appropriate config scope.
 func validateKeyForScope(key, value string, isGlobal bool) (any, error) {
 	if isGlobal {
 		cfg := config.DefaultConfig()
@@ -427,72 +437,6 @@ func validateKeyForScope(key, value string, isGlobal bool) (any, error) {
 		return nil, err
 	}
 	return repoCfg, nil
-}
-
-// loadRawConfig loads an existing TOML file as a raw map, or returns
-// an empty map if the file doesn't exist.
-func loadRawConfig(path string) (map[string]any, error) {
-	raw := make(map[string]any)
-	if _, err := os.Stat(path); err == nil {
-		if _, err := toml.DecodeFile(path, &raw); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-	}
-	return raw, nil
-}
-
-// atomicWriteConfig writes a config map to a TOML file atomically using
-// a temp file and rename. It creates parent directories as needed.
-func atomicWriteConfig(path string, raw map[string]any, isGlobal bool) error {
-	// Ensure directory exists. Use restrictive perms for the global config dir
-	// since it may contain secrets (API keys, DB credentials).
-	dirMode := os.FileMode(0755)
-	if isGlobal {
-		dirMode = 0700
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, dirMode); err != nil {
-		return err
-	}
-	// MkdirAll is a no-op for existing dirs. Tighten global config dir
-	// in case it was created with a permissive umask.
-	if isGlobal {
-		if err := os.Chmod(dir, dirMode); err != nil {
-			return err
-		}
-	}
-
-	// For global config, always enforce 0600 since it may contain secrets
-	// (API keys, DB credentials). Don't inherit existing permissions — the file
-	// may have been created manually with a permissive umask (0644).
-	// For repo config, preserve existing permissions (may be tracked in git).
-	var mode os.FileMode = 0644
-	if isGlobal {
-		mode = 0600
-	} else if info, err := os.Stat(path); err == nil {
-		mode = info.Mode()
-	}
-
-	f, err := os.CreateTemp(filepath.Dir(path), ".roborev-config-*.toml")
-	if err != nil {
-		return err
-	}
-	tmpPath := f.Name()
-	defer os.Remove(tmpPath)
-
-	if err := toml.NewEncoder(f).Encode(raw); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-
-	if err := os.Chmod(tmpPath, mode); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
 }
 
 // setRawMapKey sets a value in a nested map using dot-separated keys.
@@ -524,48 +468,4 @@ func setRawMapKey(m map[string]any, key string, value any) {
 	}
 
 	current[parts[len(parts)-1]] = value
-}
-
-// coerceValue uses the typed config struct to determine the correct TOML type
-// for the given key's value.
-func coerceValue(validationCfg any, key, rawVal string) any {
-	v := reflect.ValueOf(validationCfg)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	field, err := config.FindFieldByTOMLKey(v, key)
-	if err != nil {
-		// Unreachable: key was already validated by SetConfigValue above.
-		// Fall back to raw string to avoid panicking on impossible paths.
-		return rawVal
-	}
-
-	switch field.Kind() {
-	case reflect.String:
-		return rawVal
-	case reflect.Bool:
-		return field.Bool()
-	case reflect.Int, reflect.Int64:
-		return field.Int()
-	case reflect.Slice:
-		if field.Type().Elem().Kind() == reflect.String {
-			result := make([]any, field.Len())
-			for i := 0; i < field.Len(); i++ {
-				result[i] = field.Index(i).String()
-			}
-			return result
-		}
-		return rawVal
-	case reflect.Ptr:
-		if field.IsNil() {
-			return rawVal
-		}
-		elem := field.Elem()
-		if elem.Kind() == reflect.Bool {
-			return elem.Bool()
-		}
-		return rawVal
-	default:
-		return rawVal
-	}
 }

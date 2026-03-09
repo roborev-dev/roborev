@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	tomlv2 "github.com/pelletier/go-toml/v2"
 	"github.com/roborev-dev/roborev/internal/git"
 )
 
@@ -45,7 +46,7 @@ type HookConfig struct {
 }
 
 type AdvancedConfig struct {
-	TasksEnabled bool `toml:"tasks_enabled"` // Enables advanced TUI tasks workflow
+	TasksEnabled bool `toml:"tasks_enabled" comment:"Enable the advanced Tasks workflow in the TUI."` // Enables advanced TUI tasks workflow
 }
 
 // Config holds the daemon configuration
@@ -54,7 +55,7 @@ type Config struct {
 	MaxWorkers                 int    `toml:"max_workers"`
 	ReviewContextCount         int    `toml:"review_context_count"`
 	ReuseReviewSessionLookback int    `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
-	DefaultAgent               string `toml:"default_agent"`
+	DefaultAgent               string `toml:"default_agent" comment:"Default agent when no workflow-specific agent is set."`
 	DefaultModel               string `toml:"default_model"` // Default model for agents (format varies by agent)
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
 	DefaultBackupModel         string `toml:"default_backup_model"`
@@ -141,16 +142,16 @@ type Config struct {
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 
 	// UI preferences
-	HideClosedByDefault    bool     `toml:"hide_closed_by_default"`
+	HideClosedByDefault    bool     `toml:"hide_closed_by_default" comment:"Hide closed reviews by default in the TUI queue."`
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
-	AutoFilterRepo         bool     `toml:"auto_filter_repo"`
-	AutoFilterBranch       bool     `toml:"auto_filter_branch"`
-	MouseEnabled           bool     `toml:"mouse_enabled"`     // Enable mouse capture and mouse-driven TUI interactions
-	TabWidth               int      `toml:"tab_width"`         // Tab expansion width for TUI rendering (default: 2)
-	HiddenColumns          []string `toml:"hidden_columns"`    // Column names to hide in queue table (e.g. ["branch", "agent"])
-	ColumnBorders          bool     `toml:"column_borders"`    // Show ▕ separators between columns
-	ColumnOrder            []string `toml:"column_order"`      // Custom queue column display order
-	TaskColumnOrder        []string `toml:"task_column_order"` // Custom task column display order
+	AutoFilterRepo         bool     `toml:"auto_filter_repo" comment:"Automatically filter the TUI queue to the current repo."`
+	AutoFilterBranch       bool     `toml:"auto_filter_branch" comment:"Automatically filter the TUI queue to the current branch."`
+	MouseEnabled           bool     `toml:"mouse_enabled" comment:"Enable mouse support in the TUI."`          // Enable mouse capture and mouse-driven TUI interactions
+	TabWidth               int      `toml:"tab_width"`                                                         // Tab expansion width for TUI rendering (default: 2)
+	HiddenColumns          []string `toml:"hidden_columns" comment:"Queue columns to hide in the TUI."`        // Column names to hide in queue table (e.g. ["branch", "agent"])
+	ColumnBorders          bool     `toml:"column_borders" comment:"Show column borders in the TUI queue."`    // Show ▕ separators between columns
+	ColumnOrder            []string `toml:"column_order" comment:"Custom queue column order in the TUI."`      // Custom queue column display order
+	TaskColumnOrder        []string `toml:"task_column_order" comment:"Custom Tasks column order in the TUI."` // Custom task column display order
 
 	// Advanced feature flags
 	Advanced AdvancedConfig `toml:"advanced"`
@@ -527,44 +528,44 @@ func (c *SyncConfig) Validate() []string {
 // These override the global [ci] settings when reviewing this specific repo.
 type RepoCIConfig struct {
 	// Agents overrides the list of agents for CI reviews of this repo.
-	Agents []string `toml:"agents"`
+	Agents []string `toml:"agents" comment:"Override the agents used by CI for this repo."`
 
 	// ReviewTypes overrides the list of review types for CI reviews of this repo.
-	ReviewTypes []string `toml:"review_types"`
+	ReviewTypes []string `toml:"review_types" comment:"Override the review types used by CI for this repo."`
 
 	// Reviews maps agent names to review type lists. When set, replaces
 	// the ReviewTypes x Agents cross-product for this repo.
-	Reviews map[string][]string `toml:"reviews"`
+	Reviews map[string][]string `toml:"reviews" comment:"Explicit CI review matrix for this repo: agent name to review types."`
 
 	// Reasoning overrides the reasoning level for CI reviews (thorough, standard, fast).
-	Reasoning string `toml:"reasoning"`
+	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, or thorough."`
 
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
-	MinSeverity string `toml:"min_severity"`
+	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
 
 	// UpsertComments overrides the global ci.upsert_comments setting.
 	// Use a pointer so we can distinguish "not set" from "explicitly false".
-	UpsertComments *bool `toml:"upsert_comments"`
+	UpsertComments *bool `toml:"upsert_comments" comment:"Override whether CI updates an existing PR comment instead of creating a new one."`
 }
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent                      string   `toml:"agent"`
-	Model                      string   `toml:"model"` // Model for agents (format varies by agent)
-	BackupAgent                string   `toml:"backup_agent"`
-	BackupModel                string   `toml:"backup_model"`
-	ReviewContextCount         int      `toml:"review_context_count"`
-	ReviewGuidelines           string   `toml:"review_guidelines"`
-	JobTimeoutMinutes          int      `toml:"job_timeout_minutes"`
-	ExcludedBranches           []string `toml:"excluded_branches"`
-	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns"`
-	DisplayName                string   `toml:"display_name"`
-	ReviewReasoning            string   `toml:"review_reasoning"`              // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning            string   `toml:"refine_reasoning"`              // Reasoning level for refine: thorough, standard, fast
-	FixReasoning               string   `toml:"fix_reasoning"`                 // Reasoning level for fix: thorough, standard, fast
-	FixMinSeverity             string   `toml:"fix_min_severity"`              // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity          string   `toml:"refine_min_severity"`           // Minimum severity for refine: critical, high, medium, low
-	PostCommitReview           string   `toml:"post_commit_review"`            // "commit" (default) or "branch"
+	Agent                      string   `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
+	Model                      string   `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
+	BackupAgent                string   `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
+	BackupModel                string   `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
+	ReviewContextCount         int      `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
+	ReviewGuidelines           string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
+	JobTimeoutMinutes          int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
+	ExcludedBranches           []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
+	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
+	DisplayName                string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
+	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, or thorough."`    // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, or thorough."`     // Reasoning level for refine: thorough, standard, fast
+	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, or thorough."`           // Reasoning level for fix: thorough, standard, fast
+	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
+	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."`      // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 
@@ -572,66 +573,66 @@ type RepoConfig struct {
 	CI RepoCIConfig `toml:"ci"`
 
 	// Workflow-specific agent/model configuration
-	ReviewAgent           string `toml:"review_agent"`
-	ReviewAgentFast       string `toml:"review_agent_fast"`
-	ReviewAgentStandard   string `toml:"review_agent_standard"`
-	ReviewAgentThorough   string `toml:"review_agent_thorough"`
-	RefineAgent           string `toml:"refine_agent"`
-	RefineAgentFast       string `toml:"refine_agent_fast"`
-	RefineAgentStandard   string `toml:"refine_agent_standard"`
-	RefineAgentThorough   string `toml:"refine_agent_thorough"`
-	ReviewModel           string `toml:"review_model"`
-	ReviewModelFast       string `toml:"review_model_fast"`
-	ReviewModelStandard   string `toml:"review_model_standard"`
-	ReviewModelThorough   string `toml:"review_model_thorough"`
-	RefineModel           string `toml:"refine_model"`
-	RefineModelFast       string `toml:"refine_model_fast"`
-	RefineModelStandard   string `toml:"refine_model_standard"`
-	RefineModelThorough   string `toml:"refine_model_thorough"`
-	FixAgent              string `toml:"fix_agent"`
-	FixAgentFast          string `toml:"fix_agent_fast"`
-	FixAgentStandard      string `toml:"fix_agent_standard"`
-	FixAgentThorough      string `toml:"fix_agent_thorough"`
-	FixModel              string `toml:"fix_model"`
-	FixModelFast          string `toml:"fix_model_fast"`
-	FixModelStandard      string `toml:"fix_model_standard"`
-	FixModelThorough      string `toml:"fix_model_thorough"`
-	SecurityAgent         string `toml:"security_agent"`
-	SecurityAgentFast     string `toml:"security_agent_fast"`
-	SecurityAgentStandard string `toml:"security_agent_standard"`
-	SecurityAgentThorough string `toml:"security_agent_thorough"`
-	SecurityModel         string `toml:"security_model"`
-	SecurityModelFast     string `toml:"security_model_fast"`
-	SecurityModelStandard string `toml:"security_model_standard"`
-	SecurityModelThorough string `toml:"security_model_thorough"`
-	DesignAgent           string `toml:"design_agent"`
-	DesignAgentFast       string `toml:"design_agent_fast"`
-	DesignAgentStandard   string `toml:"design_agent_standard"`
-	DesignAgentThorough   string `toml:"design_agent_thorough"`
-	DesignModel           string `toml:"design_model"`
-	DesignModelFast       string `toml:"design_model_fast"`
-	DesignModelStandard   string `toml:"design_model_standard"`
-	DesignModelThorough   string `toml:"design_model_thorough"`
+	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
+	ReviewAgentFast       string `toml:"review_agent_fast" comment:"Agent override for fast review in this repo."`
+	ReviewAgentStandard   string `toml:"review_agent_standard" comment:"Agent override for standard review in this repo."`
+	ReviewAgentThorough   string `toml:"review_agent_thorough" comment:"Agent override for thorough review in this repo."`
+	RefineAgent           string `toml:"refine_agent" comment:"Agent override for refine in this repo."`
+	RefineAgentFast       string `toml:"refine_agent_fast" comment:"Agent override for fast refine in this repo."`
+	RefineAgentStandard   string `toml:"refine_agent_standard" comment:"Agent override for standard refine in this repo."`
+	RefineAgentThorough   string `toml:"refine_agent_thorough" comment:"Agent override for thorough refine in this repo."`
+	ReviewModel           string `toml:"review_model" comment:"Model override for standard review in this repo."`
+	ReviewModelFast       string `toml:"review_model_fast" comment:"Model override for fast review in this repo."`
+	ReviewModelStandard   string `toml:"review_model_standard" comment:"Model override for standard review in this repo."`
+	ReviewModelThorough   string `toml:"review_model_thorough" comment:"Model override for thorough review in this repo."`
+	RefineModel           string `toml:"refine_model" comment:"Model override for standard refine in this repo."`
+	RefineModelFast       string `toml:"refine_model_fast" comment:"Model override for fast refine in this repo."`
+	RefineModelStandard   string `toml:"refine_model_standard" comment:"Model override for standard refine in this repo."`
+	RefineModelThorough   string `toml:"refine_model_thorough" comment:"Model override for thorough refine in this repo."`
+	FixAgent              string `toml:"fix_agent" comment:"Agent override for fix in this repo."`
+	FixAgentFast          string `toml:"fix_agent_fast" comment:"Agent override for fast fix in this repo."`
+	FixAgentStandard      string `toml:"fix_agent_standard" comment:"Agent override for standard fix in this repo."`
+	FixAgentThorough      string `toml:"fix_agent_thorough" comment:"Agent override for thorough fix in this repo."`
+	FixModel              string `toml:"fix_model" comment:"Model override for standard fix in this repo."`
+	FixModelFast          string `toml:"fix_model_fast" comment:"Model override for fast fix in this repo."`
+	FixModelStandard      string `toml:"fix_model_standard" comment:"Model override for standard fix in this repo."`
+	FixModelThorough      string `toml:"fix_model_thorough" comment:"Model override for thorough fix in this repo."`
+	SecurityAgent         string `toml:"security_agent" comment:"Agent override for security review in this repo."`
+	SecurityAgentFast     string `toml:"security_agent_fast" comment:"Agent override for fast security review in this repo."`
+	SecurityAgentStandard string `toml:"security_agent_standard" comment:"Agent override for standard security review in this repo."`
+	SecurityAgentThorough string `toml:"security_agent_thorough" comment:"Agent override for thorough security review in this repo."`
+	SecurityModel         string `toml:"security_model" comment:"Model override for standard security review in this repo."`
+	SecurityModelFast     string `toml:"security_model_fast" comment:"Model override for fast security review in this repo."`
+	SecurityModelStandard string `toml:"security_model_standard" comment:"Model override for standard security review in this repo."`
+	SecurityModelThorough string `toml:"security_model_thorough" comment:"Model override for thorough security review in this repo."`
+	DesignAgent           string `toml:"design_agent" comment:"Agent override for design review in this repo."`
+	DesignAgentFast       string `toml:"design_agent_fast" comment:"Agent override for fast design review in this repo."`
+	DesignAgentStandard   string `toml:"design_agent_standard" comment:"Agent override for standard design review in this repo."`
+	DesignAgentThorough   string `toml:"design_agent_thorough" comment:"Agent override for thorough design review in this repo."`
+	DesignModel           string `toml:"design_model" comment:"Model override for standard design review in this repo."`
+	DesignModelFast       string `toml:"design_model_fast" comment:"Model override for fast design review in this repo."`
+	DesignModelStandard   string `toml:"design_model_standard" comment:"Model override for standard design review in this repo."`
+	DesignModelThorough   string `toml:"design_model_thorough" comment:"Model override for thorough design review in this repo."`
 
 	// Backup agents for failover
-	ReviewBackupAgent   string `toml:"review_backup_agent"`
-	RefineBackupAgent   string `toml:"refine_backup_agent"`
-	FixBackupAgent      string `toml:"fix_backup_agent"`
-	SecurityBackupAgent string `toml:"security_backup_agent"`
-	DesignBackupAgent   string `toml:"design_backup_agent"`
+	ReviewBackupAgent   string `toml:"review_backup_agent" comment:"Backup agent for review in this repo."`
+	RefineBackupAgent   string `toml:"refine_backup_agent" comment:"Backup agent for refine in this repo."`
+	FixBackupAgent      string `toml:"fix_backup_agent" comment:"Backup agent for fix in this repo."`
+	SecurityBackupAgent string `toml:"security_backup_agent" comment:"Backup agent for security review in this repo."`
+	DesignBackupAgent   string `toml:"design_backup_agent" comment:"Backup agent for design review in this repo."`
 
 	// Backup models for failover (used when failing over to backup agent)
-	ReviewBackupModel   string `toml:"review_backup_model"`
-	RefineBackupModel   string `toml:"refine_backup_model"`
-	FixBackupModel      string `toml:"fix_backup_model"`
-	SecurityBackupModel string `toml:"security_backup_model"`
-	DesignBackupModel   string `toml:"design_backup_model"`
+	ReviewBackupModel   string `toml:"review_backup_model" comment:"Backup model for review in this repo."`
+	RefineBackupModel   string `toml:"refine_backup_model" comment:"Backup model for refine in this repo."`
+	FixBackupModel      string `toml:"fix_backup_model" comment:"Backup model for fix in this repo."`
+	SecurityBackupModel string `toml:"security_backup_model" comment:"Backup model for security review in this repo."`
+	DesignBackupModel   string `toml:"design_backup_model" comment:"Backup model for design review in this repo."`
 
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
 
 	// Analysis settings
-	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (overrides global default)
+	MaxPromptSize int `toml:"max_prompt_size" comment:"Maximum prompt size for this repo before falling back to file paths."` // Max prompt size in bytes before falling back to paths (overrides global default)
 }
 
 // DefaultConfig returns the default configuration
@@ -1380,18 +1381,74 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 
 // SaveGlobal saves the global configuration
 func SaveGlobal(cfg *Config) error {
-	path := GlobalConfigPath()
+	return SaveGlobalTo(GlobalConfigPath(), cfg)
+}
+
+// SaveGlobalTo saves the global configuration to a specific path.
+func SaveGlobalTo(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 
-	f, err := os.Create(path)
+	data, err := tomlv2.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	return toml.NewEncoder(f).Encode(cfg)
+	f, err := os.CreateTemp(filepath.Dir(path), ".roborev-config-*.toml")
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// SaveRepoConfigTo saves a per-repo configuration to a specific path.
+func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	data, err := tomlv2.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	mode := os.FileMode(0644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode()
+	}
+
+	f, err := os.CreateTemp(filepath.Dir(path), ".roborev-repo-config-*.toml")
+	if err != nil {
+		return err
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // roborevIDPattern validates .roborev-id content.

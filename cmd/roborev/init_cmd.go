@@ -56,8 +56,8 @@ func initCmd() *cobra.Command {
 			repoConfigPath := filepath.Join(root, ".roborev.toml")
 			if agent != "" {
 				if _, err := os.Stat(repoConfigPath); os.IsNotExist(err) {
-					repoConfig := fmt.Sprintf("# roborev per-repo configuration\nagent = %q\n", agent)
-					if err := os.WriteFile(repoConfigPath, []byte(repoConfig), 0644); err != nil {
+					repoConfig := &config.RepoConfig{Agent: agent}
+					if err := config.SaveRepoConfigTo(repoConfigPath, repoConfig); err != nil {
 						return fmt.Errorf("create repo config: %w", err)
 					}
 					fmt.Printf("  Created %s\n", repoConfigPath)
