@@ -99,9 +99,8 @@ func TestInstallWhenDirExists(t *testing.T) {
 func TestInstallIdempotent(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 
-	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
-		require.NoError(t, err)
-	}
+	err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755)
+	require.NoError(t, err)
 
 	results1, err := Install()
 	require.NoError(t, err, "First install failed: %v", err)
@@ -137,9 +136,8 @@ func TestIsInstalled(t *testing.T) {
 			name:  "Claude dir exists no skills",
 			agent: AgentClaude,
 			setup: func(t *testing.T, h string) {
-				if err := os.MkdirAll(filepath.Join(h, ".claude"), 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(filepath.Join(h, ".claude"), 0o755)
+				require.NoError(t, err)
 			},
 			shouldExist: false,
 		},
@@ -153,9 +151,8 @@ func TestIsInstalled(t *testing.T) {
 			name:  "Codex dir exists no skills",
 			agent: AgentCodex,
 			setup: func(t *testing.T, h string) {
-				if err := os.MkdirAll(filepath.Join(h, ".codex"), 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(filepath.Join(h, ".codex"), 0o755)
+				require.NoError(t, err)
 			},
 			shouldExist: false,
 		},
@@ -213,9 +210,8 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			setup: func(t *testing.T, homeDir string) {
 				createMockSkill(t, homeDir, AgentClaude, "roborev-fix")
 
-				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o755)
+				require.NoError(t, err)
 			},
 			wantResults:   1,
 			wantAgents:    []Agent{AgentClaude},
@@ -266,12 +262,10 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		{
 			name: "skips both when neither has skills",
 			setup: func(t *testing.T, homeDir string) {
-				if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
-					require.NoError(t, err)
-				}
-				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
-					require.NoError(t, err)
-				}
+				err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0o755)
+				require.NoError(t, err)
+				err = os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o755)
+				require.NoError(t, err)
 			},
 			wantResults:   0,
 			wantAgents:    []Agent{},

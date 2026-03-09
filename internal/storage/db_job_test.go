@@ -1025,3 +1025,52 @@ func TestJobTypeBackfill(t *testing.T) {
 	}
 	assert.Equal(t, len(expected), i, "unexpected condition")
 }
+
+func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "session-race")
+
+	claimJob(t, db, "worker-A")
+
+	err := db.SaveJobSessionID(job.ID, "worker-A", "session-A")
+	require.NoError(t, err, "SaveJobSessionID (worker-A): %v", err)
+
+	j, err := db.GetJobByID(job.ID)
+	require.NoError(t, err, "GetJobByID after worker-A save: %v", err)
+	assert.Equal(t, "session-A", j.SessionID, "unexpected condition")
+
+	err = db.CancelJob(job.ID)
+	require.NoError(t, err, "CancelJob: %v", err)
+
+	err = db.ReenqueueJob(job.ID)
+	require.NoError(t, err, "ReenqueueJob: %v", err)
+
+	j, err = db.GetJobByID(job.ID)
+	require.NoError(t, err, "GetJobByID after reenqueue: %v", err)
+	assert.Empty(t, j.SessionID, "unexpected condition")
+
+	claimJob(t, db, "worker-B")
+
+	err = db.SaveJobSessionID(job.ID, "worker-A", "stale-session")
+	require.NoError(t, err, "SaveJobSessionID (stale worker-A): %v", err)
+
+	j, err = db.GetJobByID(job.ID)
+	require.NoError(t, err, "GetJobByID after stale worker save: %v", err)
+	assert.Empty(t, j.SessionID, "unexpected condition")
+
+	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B")
+	require.NoError(t, err, "SaveJobSessionID (worker-B): %v", err)
+
+	j, err = db.GetJobByID(job.ID)
+	require.NoError(t, err, "GetJobByID after worker-B save: %v", err)
+	assert.Equal(t, "session-B", j.SessionID, "unexpected condition")
+
+	err = db.SaveJobSessionID(job.ID, "worker-B", "session-B2")
+	require.NoError(t, err, "SaveJobSessionID (worker-B second): %v", err)
+
+	j, err = db.GetJobByID(job.ID)
+	require.NoError(t, err, "GetJobByID after worker-B second save: %v", err)
+	assert.Equal(t, "session-B", j.SessionID, "unexpected condition")
+}

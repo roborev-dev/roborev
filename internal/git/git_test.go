@@ -62,12 +62,10 @@ func (r *TestRepo) CommitAll(msg string) {
 func (r *TestRepo) WriteFile(filename, content string) {
 	r.T.Helper()
 	path := filepath.Join(r.Dir, filename)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		r.T.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		r.T.Fatal(err)
-	}
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	require.NoError(r.T, err)
+	err = os.WriteFile(path, []byte(content), 0644)
+	require.NoError(r.T, err)
 }
 
 func (r *TestRepo) HeadSHA() string {
@@ -90,13 +88,11 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 func (r *TestRepo) InstallHook(name, script string) {
 	r.T.Helper()
 	hooksDir := filepath.Join(r.Dir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		r.T.Fatal(err)
-	}
+	err := os.MkdirAll(hooksDir, 0755)
+	require.NoError(r.T, err)
 	hookPath := filepath.Join(hooksDir, name)
-	if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
-		r.T.Fatal(err)
-	}
+	err = os.WriteFile(hookPath, []byte(script), 0755)
+	require.NoError(r.T, err)
 }
 
 func runGit(t *testing.T, dir string, args ...string) string {
