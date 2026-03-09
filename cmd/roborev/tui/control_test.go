@@ -1002,13 +1002,12 @@ func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
 			)
 			m := newModel(testServerAddr, opts...)
 
-			info := TUIRuntimeInfo{
-				PID:          os.Getpid(),
-				SocketPath:   "/tmp/test.sock",
-				ServerAddr:   testServerAddr,
-				RepoFilter:   m.activeRepoFilter,
-				BranchFilter: m.activeBranchFilter,
-			}
+			// Use buildTUIRuntimeInfo — the same helper that
+			// Run() calls — so this test breaks if Run() stops
+			// using it or if the helper regresses.
+			info := buildTUIRuntimeInfo(
+				m, "/tmp/test.sock", testServerAddr,
+			)
 
 			if err := WriteTUIRuntime(info); err != nil {
 				t.Fatalf("WriteTUIRuntime: %v", err)

@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -24,7 +25,7 @@ func isProcessAlive(pid int) bool {
 		return true
 	}
 	// EPERM means the process exists but belongs to another user.
-	return err == syscall.EPERM
+	return errors.Is(err, syscall.EPERM)
 }
 
 // restrictedUmask sets umask to 0177 so that newly created files

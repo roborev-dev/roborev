@@ -141,6 +141,21 @@ func CleanupStaleTUIRuntimes() int {
 	return cleaned
 }
 
+// buildTUIRuntimeInfo constructs the runtime metadata from the
+// resolved model state. This is the single source of truth for
+// what gets written to the runtime metadata file.
+func buildTUIRuntimeInfo(
+	m model, socketPath, serverAddr string,
+) TUIRuntimeInfo {
+	return TUIRuntimeInfo{
+		PID:          os.Getpid(),
+		SocketPath:   socketPath,
+		ServerAddr:   serverAddr,
+		RepoFilter:   m.activeRepoFilter,
+		BranchFilter: m.activeBranchFilter,
+	}
+}
+
 // defaultControlSocketPath returns the default socket path for the
 // current process: {DataDir}/tui.{PID}.sock
 func defaultControlSocketPath() string {
