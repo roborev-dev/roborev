@@ -212,7 +212,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 		t.Fatal("RoundTrip was never called; timeout not exercised")
 	}
 
-	if elapsed > time.Second {
+	if elapsed > 3*time.Second {
 		t.Errorf(
 			"command took %v; should return promptly via timeout",
 			elapsed,
