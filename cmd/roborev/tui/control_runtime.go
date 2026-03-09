@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
@@ -140,17 +139,6 @@ func CleanupStaleTUIRuntimes() int {
 		cleaned++
 	}
 	return cleaned
-}
-
-// isProcessAlive checks whether a process with the given PID exists.
-func isProcessAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 checks existence without sending a real signal.
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
 }
 
 // defaultControlSocketPath returns the default socket path for the
