@@ -1,0 +1,40 @@
+//go:build !windows
+
+package tui
+
+import (
+	"os"
+	"syscall"
+)
+
+// isProcessAlive checks whether a process with the given PID exists.
+// Returns true when the process is running, even if owned by another
+// user (EPERM). Only returns false when the process is confirmed
+// gone (ESRCH or similar).
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	// EPERM means the process exists but belongs to another user.
+	return err == syscall.EPERM
+}
+
+// restrictedUmask sets umask to 0177 so that newly created files
+// (including Unix sockets) are owner-only. Returns the previous
+// umask for restoring.
+func restrictedUmask() int {
+	return syscall.Umask(0177)
+}
+
+// restoreUmask resets the process umask to a previous value.
+func restoreUmask(old int) {
+	syscall.Umask(old)
+}

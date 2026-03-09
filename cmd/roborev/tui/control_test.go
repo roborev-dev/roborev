@@ -952,6 +952,104 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
+	setupTuiTestEnv(t)
+
+	tests := []struct {
+		name       string
+		opts       []option
+		wantRepo   []string
+		wantBranch string
+	}{
+		{
+			name:       "cli repo flag",
+			opts:       []option{withRepoFilter("/cli/repo")},
+			wantRepo:   []string{"/cli/repo"},
+			wantBranch: "",
+		},
+		{
+			name: "auto-filter repo",
+			opts: []option{
+				withAutoFilterRepo("/auto/repo"),
+			},
+			wantRepo:   []string{"/auto/repo"},
+			wantBranch: "",
+		},
+		{
+			name: "auto-filter branch",
+			opts: []option{
+				withAutoFilterBranch("feat/auto"),
+			},
+			wantRepo:   nil,
+			wantBranch: "feat/auto",
+		},
+		{
+			name: "cli overrides auto-filter",
+			opts: []option{
+				withAutoFilterBranch("feat/auto"),
+				withBranchFilter("feat/cli"),
+			},
+			wantRepo:   nil,
+			wantBranch: "feat/cli",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := append(
+				[]option{withExternalIODisabled()},
+				tt.opts...,
+			)
+			m := newModel(testServerAddr, opts...)
+
+			info := TUIRuntimeInfo{
+				PID:          os.Getpid(),
+				SocketPath:   "/tmp/test.sock",
+				ServerAddr:   testServerAddr,
+				RepoFilter:   m.activeRepoFilter,
+				BranchFilter: m.activeBranchFilter,
+			}
+
+			if err := WriteTUIRuntime(info); err != nil {
+				t.Fatalf("WriteTUIRuntime: %v", err)
+			}
+
+			runtimes, err := ListAllTUIRuntimes()
+			if err != nil {
+				t.Fatalf("ListAllTUIRuntimes: %v", err)
+			}
+			if len(runtimes) != 1 {
+				t.Fatalf(
+					"got %d runtimes, want 1", len(runtimes),
+				)
+			}
+
+			rt := runtimes[0]
+			if len(rt.RepoFilter) != len(tt.wantRepo) {
+				t.Errorf("RepoFilter = %v, want %v",
+					rt.RepoFilter, tt.wantRepo)
+			} else {
+				for i := range tt.wantRepo {
+					if rt.RepoFilter[i] != tt.wantRepo[i] {
+						t.Errorf(
+							"RepoFilter[%d] = %q, want %q",
+							i, rt.RepoFilter[i],
+							tt.wantRepo[i],
+						)
+					}
+				}
+			}
+			if rt.BranchFilter != tt.wantBranch {
+				t.Errorf("BranchFilter = %q, want %q",
+					rt.BranchFilter, tt.wantBranch)
+			}
+
+			// Clean up for next subtest
+			RemoveTUIRuntime(info.SocketPath)
+		})
+	}
+}
+
 // --- Helper ---
 
 func sendControlCommand(

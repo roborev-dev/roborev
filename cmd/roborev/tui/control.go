@@ -86,16 +86,13 @@ func startControlListener(
 		return nil, err
 	}
 
+	// Restrict umask so the socket is created with 0600 from the
+	// start, closing the TOCTOU window between Listen and Chmod.
+	oldUmask := restrictedUmask()
 	ln, err := net.Listen("unix", socketPath)
+	restoreUmask(oldUmask)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
-	}
-
-	// Restrict access to the current user
-	if err := os.Chmod(socketPath, 0600); err != nil {
-		ln.Close()
-		os.Remove(socketPath)
-		return nil, fmt.Errorf("chmod socket: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,6 +118,9 @@ func acceptLoop(ctx context.Context, ln net.Listener, p *tea.Program) {
 			default:
 			}
 			log.Printf("control: accept error: %v", err)
+			// Back off on transient errors (e.g. EMFILE) to
+			// avoid a tight CPU-pegging loop.
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		go handleControlConn(ctx, conn, p)
