@@ -24,6 +24,19 @@ func TestParsePiJSON(t *testing.T) {
 	}
 }
 
+func TestParsePiJSONLargeMessage(t *testing.T) {
+	bigText := strings.Repeat("x", 128*1024)
+	input := `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}` + "\n"
+
+	result, err := parsePiJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parsePiJSON with >64KB line: %v", err)
+	}
+	if result != bigText {
+		t.Fatalf("result length = %d, want %d", len(result), len(bigText))
+	}
+}
+
 func TestResolvePiSessionPath(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", dataDir)

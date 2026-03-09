@@ -245,8 +245,14 @@ func resolvePiSessionPath(sessionID string) string {
 	return matches[0]
 }
 
+// maxPiTokenSize is the maximum single-line size parsePiJSON
+// will tolerate. 4 MB accommodates large assistant messages
+// emitted as a single JSON line.
+const maxPiTokenSize = 4 * 1024 * 1024
+
 func parsePiJSON(r io.Reader) (string, error) {
 	br := bufio.NewScanner(r)
+	br.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxPiTokenSize)
 	var latest string
 	for br.Scan() {
 		line := strings.TrimSpace(br.Text())

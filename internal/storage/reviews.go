@@ -276,10 +276,7 @@ func (db *DB) FindReusableSessionCandidates(
 		return jobs, err
 	}
 
-	batchSize := limit * 2
-	if batchSize < 20 {
-		batchSize = 20
-	}
+	batchSize := max(limit*2, 20)
 
 	var jobs []ReviewJob
 	for offset := 0; len(jobs) < limit; offset += batchSize {

@@ -1140,7 +1140,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		}
 
 		unrelatedFile := filepath.Join(repoDir, fmt.Sprintf("unrelated-%02d.txt", i))
-		if err := os.WriteFile(unrelatedFile, []byte(fmt.Sprintf("unrelated %02d\n", i)), 0644); err != nil {
+		if err := os.WriteFile(unrelatedFile, fmt.Appendf(nil, "unrelated %02d\n", i), 0644); err != nil {
 			t.Fatalf("WriteFile failed: %v", err)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(unrelatedFile)).CombinedOutput(); err != nil {
