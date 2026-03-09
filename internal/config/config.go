@@ -50,14 +50,15 @@ type AdvancedConfig struct {
 
 // Config holds the daemon configuration
 type Config struct {
-	ServerAddr         string `toml:"server_addr"`
-	MaxWorkers         int    `toml:"max_workers"`
-	ReviewContextCount int    `toml:"review_context_count"`
-	DefaultAgent       string `toml:"default_agent"`
-	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
-	DefaultBackupAgent string `toml:"default_backup_agent"`
-	DefaultBackupModel string `toml:"default_backup_model"`
-	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
+	ServerAddr                 string `toml:"server_addr"`
+	MaxWorkers                 int    `toml:"max_workers"`
+	ReviewContextCount         int    `toml:"review_context_count"`
+	ReuseReviewSessionLookback int    `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	DefaultAgent               string `toml:"default_agent"`
+	DefaultModel               string `toml:"default_model"` // Default model for agents (format varies by agent)
+	DefaultBackupAgent         string `toml:"default_backup_agent"`
+	DefaultBackupModel         string `toml:"default_backup_model"`
+	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -115,7 +116,8 @@ type Config struct {
 	SecurityBackupModel string `toml:"security_backup_model"`
 	DesignBackupModel   string `toml:"design_backup_model"`
 
-	AllowUnsafeAgents *bool `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+	AllowUnsafeAgents  *bool `toml:"allow_unsafe_agents"`  // nil = not set, allows commands to choose their own default
+	ReuseReviewSession *bool `toml:"reuse_review_session"` // nil = not set; when true, reuse prior branch review sessions when possible
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -547,22 +549,24 @@ type RepoCIConfig struct {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent                  string   `toml:"agent"`
-	Model                  string   `toml:"model"` // Model for agents (format varies by agent)
-	BackupAgent            string   `toml:"backup_agent"`
-	BackupModel            string   `toml:"backup_model"`
-	ReviewContextCount     int      `toml:"review_context_count"`
-	ReviewGuidelines       string   `toml:"review_guidelines"`
-	JobTimeoutMinutes      int      `toml:"job_timeout_minutes"`
-	ExcludedBranches       []string `toml:"excluded_branches"`
-	ExcludedCommitPatterns []string `toml:"excluded_commit_patterns"`
-	DisplayName            string   `toml:"display_name"`
-	ReviewReasoning        string   `toml:"review_reasoning"`    // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning        string   `toml:"refine_reasoning"`    // Reasoning level for refine: thorough, standard, fast
-	FixReasoning           string   `toml:"fix_reasoning"`       // Reasoning level for fix: thorough, standard, fast
-	FixMinSeverity         string   `toml:"fix_min_severity"`    // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity      string   `toml:"refine_min_severity"` // Minimum severity for refine: critical, high, medium, low
-	PostCommitReview       string   `toml:"post_commit_review"`  // "commit" (default) or "branch"
+	Agent                      string   `toml:"agent"`
+	Model                      string   `toml:"model"` // Model for agents (format varies by agent)
+	BackupAgent                string   `toml:"backup_agent"`
+	BackupModel                string   `toml:"backup_model"`
+	ReviewContextCount         int      `toml:"review_context_count"`
+	ReviewGuidelines           string   `toml:"review_guidelines"`
+	JobTimeoutMinutes          int      `toml:"job_timeout_minutes"`
+	ExcludedBranches           []string `toml:"excluded_branches"`
+	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns"`
+	DisplayName                string   `toml:"display_name"`
+	ReviewReasoning            string   `toml:"review_reasoning"`              // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning            string   `toml:"refine_reasoning"`              // Reasoning level for refine: thorough, standard, fast
+	FixReasoning               string   `toml:"fix_reasoning"`                 // Reasoning level for fix: thorough, standard, fast
+	FixMinSeverity             string   `toml:"fix_min_severity"`              // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity          string   `toml:"refine_min_severity"`           // Minimum severity for refine: critical, high, medium, low
+	PostCommitReview           string   `toml:"post_commit_review"`            // "commit" (default) or "branch"
+	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
+	ReuseReviewSessionLookback int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
@@ -745,6 +749,36 @@ func ResolvePostCommitReview(repoPath string) string {
 		return "branch"
 	}
 	return "commit"
+}
+
+// ResolveReuseReviewSession returns whether reviews should try to resume a
+// prior session from the same branch. Priority: repo > global > default false.
+func ResolveReuseReviewSession(repoPath string, globalCfg *Config) bool {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ReuseReviewSession != nil {
+		return *repoCfg.ReuseReviewSession
+	}
+	if globalCfg != nil && globalCfg.ReuseReviewSession != nil {
+		return *globalCfg.ReuseReviewSession
+	}
+	return false
+}
+
+// ResolveReuseReviewSessionLookback returns how many recent reusable-session
+// candidates should be considered. Priority: repo > global > default unlimited.
+// Non-positive values disable the cap.
+func ResolveReuseReviewSessionLookback(repoPath string, globalCfg *Config) int {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		if rawRepo, rawErr := LoadRawRepo(repoPath); rawErr == nil && IsKeyInTOMLFile(rawRepo, "reuse_review_session_lookback") {
+			if repoCfg.ReuseReviewSessionLookback <= 0 {
+				return 0
+			}
+			return repoCfg.ReuseReviewSessionLookback
+		}
+	}
+	if globalCfg != nil && globalCfg.ReuseReviewSessionLookback > 0 {
+		return globalCfg.ReuseReviewSessionLookback
+	}
+	return 0
 }
 
 // LoadRepoConfigFromRef loads per-repo config from .roborev.toml at a

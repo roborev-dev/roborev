@@ -19,6 +19,7 @@ type OpenCodeAgent struct {
 	Model     string         // Model to use (provider/model format, e.g., "anthropic/claude-sonnet-4-20250514")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (OpenCode auto-approves in non-interactive mode)
+	SessionID string         // Existing session ID to resume
 }
 
 // NewOpenCodeAgent creates a new OpenCode agent
@@ -36,6 +37,7 @@ func (a *OpenCodeAgent) WithReasoning(level ReasoningLevel) Agent {
 		Model:     a.Model,
 		Reasoning: level,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -48,6 +50,7 @@ func (a *OpenCodeAgent) WithAgentic(agentic bool) Agent {
 		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -61,6 +64,18 @@ func (a *OpenCodeAgent) WithModel(model string) Agent {
 		Model:     model,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
+	}
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *OpenCodeAgent) WithSessionID(sessionID string) Agent {
+	return &OpenCodeAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+		SessionID: sanitizedResumeSessionID(sessionID),
 	}
 }
 
@@ -72,11 +87,20 @@ func (a *OpenCodeAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *OpenCodeAgent) CommandLine() string {
+func (a *OpenCodeAgent) buildArgs() []string {
+	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{"run", "--format", "json"}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
+	return args
+}
+
+func (a *OpenCodeAgent) CommandLine() string {
+	args := a.buildArgs()
 	return a.Command + " " + strings.Join(args, " ")
 }
 
@@ -85,10 +109,7 @@ func (a *OpenCodeAgent) Review(
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
-	args := []string{"run", "--format", "json"}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
+	args := a.buildArgs()
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath

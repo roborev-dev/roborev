@@ -2399,6 +2399,103 @@ func TestResolvePostCommitReview(t *testing.T) {
 	}
 }
 
+func TestResolveReuseReviewSession(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	tests := []struct {
+		name   string
+		global *Config
+		repo   string
+		want   bool
+	}{
+		{
+			name:   "default false",
+			global: DefaultConfig(),
+			want:   false,
+		},
+		{
+			name:   "global true",
+			global: &Config{ReuseReviewSession: &boolTrue},
+			want:   true,
+		},
+		{
+			name:   "repo overrides global true to false",
+			global: &Config{ReuseReviewSession: &boolTrue},
+			repo:   `reuse_review_session = false`,
+			want:   false,
+		},
+		{
+			name:   "repo true",
+			global: &Config{ReuseReviewSession: &boolFalse},
+			repo:   `reuse_review_session = true`,
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.repo != "" {
+				writeRepoConfigStr(t, dir, tt.repo)
+			}
+			if got := ResolveReuseReviewSession(dir, tt.global); got != tt.want {
+				t.Fatalf("ResolveReuseReviewSession() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveReuseReviewSessionLookback(t *testing.T) {
+	tests := []struct {
+		name   string
+		global *Config
+		repo   string
+		want   int
+	}{
+		{
+			name:   "default",
+			global: DefaultConfig(),
+			want:   0,
+		},
+		{
+			name:   "global override",
+			global: &Config{ReuseReviewSessionLookback: 25},
+			want:   25,
+		},
+		{
+			name:   "repo overrides global",
+			global: &Config{ReuseReviewSessionLookback: 25},
+			repo:   `reuse_review_session_lookback = 5`,
+			want:   5,
+		},
+		{
+			name:   "repo zero disables cap",
+			global: &Config{ReuseReviewSessionLookback: 25},
+			repo:   `reuse_review_session_lookback = 0`,
+			want:   0,
+		},
+		{
+			name:   "repo negative disables cap",
+			global: &Config{ReuseReviewSessionLookback: 25},
+			repo:   `reuse_review_session_lookback = -1`,
+			want:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.repo != "" {
+				writeRepoConfigStr(t, dir, tt.repo)
+			}
+			if got := ResolveReuseReviewSessionLookback(dir, tt.global); got != tt.want {
+				t.Fatalf("ResolveReuseReviewSessionLookback() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolvedThrottleInterval(t *testing.T) {
 	tests := []struct {
 		name  string

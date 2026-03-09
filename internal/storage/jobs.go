@@ -304,6 +304,7 @@ type EnqueueOpts struct {
 	CommitID     int64  // >0 for single-commit reviews
 	GitRef       string // SHA, "start..end" range, or "dirty"
 	Branch       string
+	SessionID    string
 	Agent        string
 	Model        string
 	Provider     string // e.g. "anthropic", "openai"
@@ -376,11 +377,11 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, provider, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
@@ -396,6 +397,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		RepoID:          opts.RepoID,
 		GitRef:          gitRef,
 		Branch:          opts.Branch,
+		SessionID:       opts.SessionID,
 		Agent:           opts.Agent,
 		Model:           opts.Model,
 		Provider:        opts.Provider,

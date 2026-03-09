@@ -353,10 +353,11 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 
 // reviewTestOpts configures executeReviewTest.
 type reviewTestOpts struct {
-	MockOpts MockCLIOpts
-	Model    string
-	Prompt   string
-	Writer   io.Writer
+	MockOpts  MockCLIOpts
+	Model     string
+	Prompt    string
+	Writer    io.Writer
+	SessionID string
 }
 
 // executeReviewTest handles mockAgentCLI setup, instantiation, and Review execution.
@@ -372,6 +373,9 @@ func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, strin
 	a := NewOpenCodeAgent(mock.CmdPath)
 	if opts.Model != "" {
 		a.Model = opts.Model
+	}
+	if opts.SessionID != "" {
+		a = a.WithSessionID(opts.SessionID).(*OpenCodeAgent)
 	}
 
 	out, err := a.Review(
@@ -416,6 +420,30 @@ func runMockOpenCodeReview(
 	}
 
 	return out, argsStr, stdinStr
+}
+
+func TestOpenCodeReviewSessionFlag(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	_, args, _ := func() (string, string, string) {
+		out, argsStr, stdinStr, err := executeReviewTest(t, reviewTestOpts{
+			MockOpts: MockCLIOpts{
+				CaptureArgs:  true,
+				CaptureStdin: true,
+				StdoutLines:  []string{makeTextEvent("ok")},
+			},
+			Prompt:    "prompt",
+			SessionID: "ses_123",
+		})
+		if err != nil {
+			t.Fatalf("Review failed: %v", err)
+		}
+		return out, argsStr, stdinStr
+	}()
+
+	assertContains(t, args, "--session")
+	assertContains(t, args, "ses_123")
 }
 
 func readFileOrFatal(t *testing.T, path string) []byte {

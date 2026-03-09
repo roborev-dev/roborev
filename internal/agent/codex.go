@@ -19,6 +19,7 @@ type CodexAgent struct {
 	Model     string         // Model to use (e.g., "o3", "o4-mini")
 	Reasoning ReasoningLevel // Reasoning level for the agent
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
+	SessionID string         // Existing session/thread ID to resume
 }
 
 const codexDangerousFlag = "--dangerously-bypass-approvals-and-sandbox"
@@ -43,7 +44,7 @@ func NewCodexAgent(command string) *CodexAgent {
 
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *CodexAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CodexAgent{Command: a.Command, Model: a.Model, Reasoning: level, Agentic: a.Agentic}
+	return &CodexAgent{Command: a.Command, Model: a.Model, Reasoning: level, Agentic: a.Agentic, SessionID: a.SessionID}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
@@ -53,6 +54,7 @@ func (a *CodexAgent) WithAgentic(agentic bool) Agent {
 		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -66,6 +68,18 @@ func (a *CodexAgent) WithModel(model string) Agent {
 		Model:     model,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
+	}
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *CodexAgent) WithSessionID(sessionID string) Agent {
+	return &CodexAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+		SessionID: sanitizedResumeSessionID(sessionID),
 	}
 }
 
@@ -92,7 +106,11 @@ func (a *CodexAgent) CommandName() string {
 func (a *CodexAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	// Show representative args (repo path is a runtime value)
+	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{"exec", "--json"}
+	if sessionID != "" {
+		args = []string{"exec", "resume", "--json", sessionID}
+	}
 	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	} else {
@@ -108,10 +126,14 @@ func (a *CodexAgent) CommandLine() string {
 }
 
 func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) []string {
+	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{
 		"exec",
-		"--json",
 	}
+	if sessionID != "" {
+		args = append(args, "resume")
+	}
+	args = append(args, "--json")
 	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	}
@@ -126,6 +148,9 @@ func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) [
 	}
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
+	}
+	if sessionID != "" {
+		args = append(args, sessionID)
 	}
 	// "-" must come after all flags to read prompt from stdin
 	// This avoids Windows command line length limits (~32KB)

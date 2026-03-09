@@ -94,6 +94,30 @@ func TestKiloReviewPipesPromptViaStdin(t *testing.T) {
 	assertNotContains(t, args, prompt)
 }
 
+func TestKiloReviewSessionFlag(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureArgs:  true,
+		CaptureStdin: true,
+		StdoutLines:  []string{kiloTextEvent("ok")},
+	})
+
+	a := NewKiloAgent(mock.CmdPath).WithSessionID("ses_123").(*KiloAgent)
+	if _, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil); err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	argsBytes, err := os.ReadFile(mock.ArgsFile)
+	if err != nil {
+		t.Fatalf("failed to read args file: %v", err)
+	}
+	args := string(argsBytes)
+	assertContains(t, args, "--session")
+	assertContains(t, args, "ses_123")
+}
+
 func TestKiloReviewExtractsTextFromJSONL(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)

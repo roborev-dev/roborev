@@ -20,6 +20,7 @@ type ClaudeAgent struct {
 	Model     string         // Model to use (e.g., "opus", "sonnet", or full name)
 	Reasoning ReasoningLevel // Reasoning level (for future extended thinking support)
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
+	SessionID string         // Existing session ID to resume
 }
 
 const claudeDangerousFlag = "--dangerously-skip-permissions"
@@ -41,6 +42,7 @@ func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
 		Model:     a.Model,
 		Reasoning: level,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -51,6 +53,7 @@ func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
 		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -64,6 +67,18 @@ func (a *ClaudeAgent) WithModel(model string) Agent {
 		Model:     model,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
+	}
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
+	return &ClaudeAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+		SessionID: sanitizedResumeSessionID(sessionID),
 	}
 }
 
@@ -82,12 +97,16 @@ func (a *ClaudeAgent) CommandLine() string {
 }
 
 func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
+	sessionID := sanitizedResumeSessionID(a.SessionID)
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
 
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
+	}
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
 	}
 
 	if agenticMode {

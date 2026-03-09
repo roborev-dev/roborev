@@ -402,6 +402,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
+	if job.SessionID != "" {
+		if !agent.IsValidResumeSessionID(job.SessionID) {
+			log.Printf("[%s] Ignoring invalid session_id for job %d", workerID, job.ID)
+		} else if sa, ok := a.(agent.SessionAgent); ok {
+			a = sa.WithSessionID(job.SessionID)
+		}
+	}
 
 	// Apply provider if set and agent supports it (e.g. pi agent)
 	if job.Provider != "" {

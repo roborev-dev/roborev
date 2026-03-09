@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/agent"
 )
 
 // GetReviewByJobID finds a review by its job ID
@@ -244,6 +246,112 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	}
 
 	return reviews, rows.Err()
+}
+
+// FindReusableSessionCandidates returns recent completed jobs with reusable
+// sessions for the same repo, branch, agent, and review type, newest first.
+func (db *DB) FindReusableSessionCandidates(
+	repoID int64, branch, agent, reviewType string, limit int,
+) ([]ReviewJob, error) {
+	if repoID == 0 || branch == "" || agent == "" {
+		return nil, nil
+	}
+	if reviewType == "" {
+		reviewType = "default"
+	}
+	query := `
+		SELECT id, git_ref, session_id
+		FROM review_jobs
+		WHERE repo_id = ?
+		  AND branch = ?
+		  AND agent = ?
+		  AND status = 'done'
+		  AND session_id IS NOT NULL
+		  AND session_id <> ''
+		  AND COALESCE(NULLIF(review_type, ''), 'default') = ?
+		ORDER BY COALESCE(finished_at, updated_at, enqueued_at) DESC, id DESC`
+	baseArgs := []any{repoID, branch, agent, reviewType}
+	if limit <= 0 {
+		jobs, _, err := db.scanReusableSessionCandidates(query, baseArgs, 0)
+		return jobs, err
+	}
+
+	batchSize := limit * 2
+	if batchSize < 20 {
+		batchSize = 20
+	}
+
+	var jobs []ReviewJob
+	for offset := 0; len(jobs) < limit; offset += batchSize {
+		batchQuery := query + "\n\t\tLIMIT ? OFFSET ?"
+		batchArgs := append(append([]any{}, baseArgs...), batchSize, offset)
+		batch, scanned, err := db.scanReusableSessionCandidates(batchQuery, batchArgs, limit-len(jobs))
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, batch...)
+		if scanned < batchSize {
+			break
+		}
+	}
+	return jobs, nil
+}
+
+// FindReusableSessionCandidate returns the newest reusable session candidate.
+func (db *DB) FindReusableSessionCandidate(
+	repoID int64, branch, agent, reviewType string,
+) (*ReviewJob, error) {
+	jobs, err := db.FindReusableSessionCandidates(repoID, branch, agent, reviewType, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return &jobs[0], nil
+}
+
+func (db *DB) scanReusableSessionCandidates(query string, args []any, remaining int) ([]ReviewJob, int, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var jobs []ReviewJob
+	scanned := 0
+	for rows.Next() {
+		scanned++
+		var job ReviewJob
+		var sessionID sql.NullString
+		if err := rows.Scan(&job.ID, &job.GitRef, &sessionID); err != nil {
+			return nil, 0, err
+		}
+		if !sessionID.Valid || !agent.IsValidResumeSessionID(sessionID.String) || reusableSessionCandidateTarget(job.GitRef) == "" {
+			continue
+		}
+		job.SessionID = sessionID.String
+		jobs = append(jobs, job)
+		if remaining > 0 && len(jobs) >= remaining {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return jobs, scanned, nil
+}
+
+func reusableSessionCandidateTarget(gitRef string) string {
+	gitRef = strings.TrimSpace(gitRef)
+	if gitRef == "" || gitRef == "dirty" {
+		return ""
+	}
+	if strings.Contains(gitRef, "..") {
+		parts := strings.SplitN(gitRef, "..", 2)
+		return strings.TrimSpace(parts[1])
+	}
+	return gitRef
 }
 
 // MarkReviewClosed marks a review as closed (or reopened) by review ID

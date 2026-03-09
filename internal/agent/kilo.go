@@ -18,6 +18,7 @@ type KiloAgent struct {
 	Model     string         // Model to use (provider/model format, e.g., "anthropic/claude-sonnet-4-20250514")
 	Reasoning ReasoningLevel // Reasoning level mapped to --variant flag
 	Agentic   bool           // Whether agentic mode is enabled (uses --auto)
+	SessionID string         // Existing session ID to resume
 }
 
 // NewKiloAgent creates a new Kilo agent
@@ -34,6 +35,7 @@ func (a *KiloAgent) WithReasoning(level ReasoningLevel) Agent {
 		Model:     a.Model,
 		Reasoning: level,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -43,6 +45,7 @@ func (a *KiloAgent) WithAgentic(agentic bool) Agent {
 		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -55,6 +58,18 @@ func (a *KiloAgent) WithModel(model string) Agent {
 		Model:     model,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
+	}
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *KiloAgent) WithSessionID(sessionID string) Agent {
+	return &KiloAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+		SessionID: sanitizedResumeSessionID(sessionID),
 	}
 }
 
@@ -79,7 +94,11 @@ func (a *KiloAgent) kiloVariant() string {
 }
 
 func (a *KiloAgent) buildArgs() []string {
+	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{"run", "--format", "json"}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}

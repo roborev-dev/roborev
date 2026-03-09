@@ -68,6 +68,18 @@ func TestClaudeBuildArgs(t *testing.T) {
 			[]string{"Edit", "Write", "Bash"},
 			nil)
 	})
+
+	t.Run("ResumeSession", func(t *testing.T) {
+		args := a.WithSessionID("session-123").(*ClaudeAgent).buildArgs(false)
+		assertContainsArg(t, args, "--resume")
+		assertContainsArg(t, args, "session-123")
+	})
+
+	t.Run("RejectInvalidResumeSession", func(t *testing.T) {
+		args := a.WithSessionID("-bad-session").(*ClaudeAgent).buildArgs(false)
+		assertNotContainsArg(t, args, "--resume")
+		assertNotContainsArg(t, args, "-bad-session")
+	})
 }
 
 func TestClaudeDangerousFlagSupport(t *testing.T) {
@@ -92,6 +104,24 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("expected unsupported flag error, got %v", err)
 	}
+}
+
+func TestClaudeReviewWithSessionResumePassesResumeArgs(t *testing.T) {
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureArgs: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithSessionID("session-123").(*ClaudeAgent)
+	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	args := readMockArgs(t, mock.ArgsFile)
+	assertContainsArg(t, args, "--resume")
+	assertContainsArg(t, args, "session-123")
 }
 
 func TestParseStreamJSON(t *testing.T) {

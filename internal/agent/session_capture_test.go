@@ -19,6 +19,16 @@ func TestExtractSessionID(t *testing.T) {
 			want: "camel-session-456",
 		},
 		{
+			name: "pascal sessionID",
+			line: `{"type":"text","sessionID":"pascal-session-999"}`,
+			want: "pascal-session-999",
+		},
+		{
+			name: "pi session event id",
+			line: `{"type":"session","id":"pi-session-321"}`,
+			want: "pi-session-321",
+		},
+		{
 			name: "codex thread started",
 			line: `{"type":"thread.started","thread_id":"thread-789"}`,
 			want: "thread-789",

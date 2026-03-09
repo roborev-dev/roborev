@@ -70,6 +70,32 @@ func TestCodex_buildArgs(t *testing.T) {
 	}
 }
 
+func TestCodexBuildArgsWithSessionResume(t *testing.T) {
+	a := NewCodexAgent("codex").WithSessionID("session-123").(*CodexAgent)
+
+	args := a.buildArgs("/repo", false, true)
+
+	if len(args) < 3 || args[0] != "exec" || args[1] != "resume" {
+		t.Fatalf("expected exec resume prefix, got %v", args)
+	}
+	assertContainsArg(t, args, "--json")
+	assertContainsArg(t, args, "session-123")
+	if args[len(args)-1] != "-" {
+		t.Fatalf("expected stdin marker '-' at end of args, got %v", args)
+	}
+}
+
+func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
+	a := NewCodexAgent("codex").WithSessionID("-bad-session").(*CodexAgent)
+
+	args := a.buildArgs("/repo", false, true)
+
+	if len(args) < 2 || args[0] != "exec" || args[1] == "resume" {
+		t.Fatalf("expected resume subcommand to be omitted for invalid session id, got %v", args)
+	}
+	assertNotContainsArg(t, args, "-bad-session")
+}
+
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 
@@ -115,6 +141,27 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 	if !strings.Contains(string(args), codexAutoApproveFlag) {
 		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
 	}
+}
+
+func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
+	a, mock := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage " + codexAutoApproveFlag,
+		CaptureArgs: true,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		},
+	})
+
+	a = a.WithSessionID("session-123").(*CodexAgent)
+	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	args := readMockArgs(t, mock.ArgsFile)
+	if len(args) < 4 || args[0] != "exec" || args[1] != "resume" {
+		t.Fatalf("expected exec resume invocation, got %v", args)
+	}
+	assertContainsArg(t, args, "session-123")
 }
 
 func TestCodexReviewTimeoutClosesStdoutPipe(t *testing.T) {

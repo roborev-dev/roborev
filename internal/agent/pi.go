@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,6 +20,7 @@ type PiAgent struct {
 	Provider  string         // Explicit provider (optional)
 	Reasoning ReasoningLevel // Reasoning level
 	Agentic   bool           // Agentic mode
+	SessionID string         // Existing session ID to resume
 }
 
 // NewPiAgent creates a new pi agent
@@ -39,6 +43,7 @@ func (a *PiAgent) WithReasoning(level ReasoningLevel) Agent {
 		Provider:  a.Provider,
 		Reasoning: level,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -50,6 +55,7 @@ func (a *PiAgent) WithAgentic(agentic bool) Agent {
 		Provider:  a.Provider,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -64,6 +70,7 @@ func (a *PiAgent) WithModel(model string) Agent {
 		Provider:  a.Provider,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
 	}
 }
 
@@ -78,6 +85,19 @@ func (a *PiAgent) WithProvider(provider string) Agent {
 		Provider:  provider,
 		Reasoning: a.Reasoning,
 		Agentic:   a.Agentic,
+		SessionID: a.SessionID,
+	}
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *PiAgent) WithSessionID(sessionID string) Agent {
+	return &PiAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Provider:  a.Provider,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+		SessionID: sanitizedResumeSessionID(sessionID),
 	}
 }
 
@@ -86,7 +106,20 @@ func (a *PiAgent) CommandName() string {
 }
 
 func (a *PiAgent) CommandLine() string {
-	args := []string{"-p"}
+	args := a.buildArgs("")
+	if len(args) == 0 {
+		args = []string{"-p", "--mode", "json"}
+	}
+	return a.Command + " " + strings.Join(args, " ")
+}
+
+func (a *PiAgent) buildArgs(repoPath string) []string {
+	args := []string{"-p", "--mode", "json"}
+	if repoPath != "" {
+		if sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID)); sessionPath != "" {
+			args = append(args, "--session", sessionPath)
+		}
+	}
 	if a.Provider != "" {
 		args = append(args, "--provider", a.Provider)
 	}
@@ -96,7 +129,7 @@ func (a *PiAgent) CommandLine() string {
 	if level := a.thinkingLevel(); level != "" {
 		args = append(args, "--thinking", level)
 	}
-	return a.Command + " " + strings.Join(args, " ")
+	return args
 }
 
 func (a *PiAgent) thinkingLevel() string {
@@ -132,16 +165,7 @@ func (a *PiAgent) Review(
 		return "", fmt.Errorf("close temp prompt file: %w", err)
 	}
 
-	args := []string{"-p"} // Print response and exit
-	if a.Provider != "" {
-		args = append(args, "--provider", a.Provider)
-	}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
-	if level := a.thinkingLevel(); level != "" {
-		args = append(args, "--thinking", level)
-	}
+	args := a.buildArgs(repoPath)
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.
@@ -183,14 +207,83 @@ func (a *PiAgent) Review(
 
 	result := stdoutBuf.String()
 	if result == "" {
-		// Fallback to stderr if stdout is empty (though -p should print to stdout)
 		if stderrBuf.Len() > 0 {
 			return stderrBuf.String(), nil
 		}
 		return "No review output generated", nil
 	}
 
-	return result, nil
+	parsed, parseErr := parsePiJSON(strings.NewReader(result))
+	if parseErr != nil {
+		return "", parseErr
+	}
+	if parsed == "" {
+		if stderrBuf.Len() > 0 {
+			return stderrBuf.String(), nil
+		}
+		return "No review output generated", nil
+	}
+	return parsed, nil
+}
+
+func piDataDir() string {
+	if dir := os.Getenv("PI_CODING_AGENT_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".pi", "agent")
+}
+
+func resolvePiSessionPath(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	matches, err := filepath.Glob(filepath.Join(piDataDir(), "sessions", "*", "*_"+sessionID+".jsonl"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+func parsePiJSON(r io.Reader) (string, error) {
+	br := bufio.NewScanner(r)
+	var latest string
+	for br.Scan() {
+		line := strings.TrimSpace(br.Text())
+		if line == "" {
+			continue
+		}
+
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text,omitempty"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		if ev.Message.Role != "assistant" {
+			continue
+		}
+		var parts []string
+		for _, item := range ev.Message.Content {
+			if item.Type == "text" && item.Text != "" {
+				parts = append(parts, item.Text)
+			}
+		}
+		if len(parts) > 0 {
+			latest = strings.Join(parts, "\n")
+		}
+	}
+	if err := br.Err(); err != nil {
+		return latest, fmt.Errorf("read pi stream: %w", err)
+	}
+	return latest, nil
 }
 
 func init() {

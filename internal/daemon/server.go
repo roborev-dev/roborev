@@ -796,10 +796,12 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if isDirty {
 		// Dirty review - use pre-captured diff
+		targetSHA, _ := git.ResolveSHA(gitCwd, "HEAD")
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:      repo.ID,
 			GitRef:      gitRef,
 			Branch:      req.Branch,
+			SessionID:   s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, targetSHA),
 			Agent:       agentName,
 			Model:       model,
 			Reasoning:   reasoning,
@@ -873,6 +875,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RepoID:     repo.ID,
 			GitRef:     fullRef,
 			Branch:     req.Branch,
+			SessionID:  s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, endSHA),
 			Agent:      agentName,
 			Model:      model,
 			Reasoning:  reasoning,
@@ -922,6 +925,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			CommitID:   commit.ID,
 			GitRef:     sha,
 			Branch:     req.Branch,
+			SessionID:  s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, sha),
 			Agent:      agentName,
 			Model:      model,
 			Reasoning:  reasoning,
@@ -956,6 +960,68 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeCreatedJSON(w, job)
+}
+
+func (s *Server) findReusableSessionID(
+	repoPath string, repoID int64, branch, agentName, reviewType, targetSHA string,
+) string {
+	cfg := s.configWatcher.Config()
+	if !config.ResolveReuseReviewSession(repoPath, cfg) || branch == "" || targetSHA == "" {
+		return ""
+	}
+
+	candidates, err := s.db.FindReusableSessionCandidates(
+		repoID,
+		branch,
+		agentName,
+		reviewType,
+		config.ResolveReuseReviewSessionLookback(repoPath, cfg),
+	)
+	if err != nil {
+		log.Printf("enqueue: lookup reusable session failed for repo=%d branch=%q agent=%q: %v", repoID, branch, agentName, err)
+		return ""
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	const maxSessionReuseDistance = 50
+	for _, candidate := range candidates {
+		candidateSHA := reusableSessionTarget(candidate.GitRef)
+		if candidateSHA == "" {
+			continue
+		}
+
+		isAncestor, err := git.IsAncestor(repoPath, candidateSHA, targetSHA)
+		if err != nil {
+			log.Printf("enqueue: validate reusable session failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
+			continue
+		}
+		if !isAncestor {
+			continue
+		}
+		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		if err != nil {
+			log.Printf("enqueue: compute reusable session distance failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
+			continue
+		}
+		if len(commitsSinceCandidate) > maxSessionReuseDistance {
+			continue
+		}
+		return candidate.SessionID
+	}
+	return ""
+}
+
+func reusableSessionTarget(gitRef string) string {
+	if gitRef == "" || gitRef == "dirty" {
+		return ""
+	}
+	if strings.Contains(gitRef, "..") {
+		parts := strings.SplitN(gitRef, "..", 2)
+		return strings.TrimSpace(parts[1])
+	}
+	return strings.TrimSpace(gitRef)
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {

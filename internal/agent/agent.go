@@ -79,6 +79,11 @@ type CommandAgent interface {
 	CommandName() string
 }
 
+// SessionAgent is implemented by agents that can resume an existing session.
+type SessionAgent interface {
+	WithSessionID(sessionID string) Agent
+}
+
 // Registry holds available agents
 var registry = make(map[string]Agent)
 var allowUnsafeAgents atomic.Bool

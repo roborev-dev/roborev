@@ -24,6 +24,15 @@ func ExtractSessionID(line string) string {
 	if sessionID := jsonFieldString(fields, "sessionId"); sessionID != "" {
 		return sessionID
 	}
+	if sessionID := jsonFieldString(fields, "sessionID"); sessionID != "" {
+		return sessionID
+	}
+
+	if jsonFieldString(fields, "type") == "session" {
+		if sessionID := jsonFieldString(fields, "id"); sessionID != "" {
+			return sessionID
+		}
+	}
 
 	if jsonFieldString(fields, "type") == "thread.started" {
 		if threadID := jsonFieldString(fields, "thread_id"); threadID != "" {
