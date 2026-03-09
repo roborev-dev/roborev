@@ -2,15 +2,17 @@ package daemon
 
 import (
 	"encoding/json"
+
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestHandleListRepos(t *testing.T) {
@@ -31,10 +33,14 @@ func TestHandleListRepos(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Repos) != 0 {
-			t.Errorf("Expected 0 repos, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 0 repos, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 0 {
-			t.Errorf("Expected total_count 0, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 0, got %d", response.TotalCount)
 		}
 	})
 
@@ -60,10 +66,14 @@ func TestHandleListRepos(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 5, got %d", response.TotalCount)
 		}
 
 		repoMap := make(map[string]int)
@@ -71,10 +81,14 @@ func TestHandleListRepos(t *testing.T) {
 			repoMap[r.Name] = r.Count
 		}
 		if repoMap["repo1"] != 3 {
-			t.Errorf("Expected repo1 count 3, got %d", repoMap["repo1"])
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected repo1 count 3, got %d", repoMap["repo1"])
 		}
 		if repoMap["repo2"] != 2 {
-			t.Errorf("Expected repo2 count 2, got %d", repoMap["repo2"])
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected repo2 count 2, got %d", repoMap["repo2"])
 		}
 	})
 
@@ -85,7 +99,9 @@ func TestHandleListRepos(t *testing.T) {
 		server.handleListRepos(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for POST, got %d", w.Code)
 		}
 	})
 }
@@ -118,10 +134,14 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with main branch, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos with main branch, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 4 {
-			t.Errorf("Expected total_count 4, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 4, got %d", response.TotalCount)
 		}
 	})
 
@@ -134,10 +154,14 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 1 {
-			t.Errorf("Expected 1 repo with feature branch, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 repo with feature branch, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 1 {
-			t.Errorf("Expected total_count 1, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 1, got %d", response.TotalCount)
 		}
 	})
 
@@ -150,7 +174,9 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if response.TotalCount != 0 {
-			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 0 for nonexistent branch, got %d", response.TotalCount)
 		}
 	})
 }
@@ -178,10 +204,14 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos under workspace, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos under workspace, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 5, got %d", response.TotalCount)
 		}
 	})
 
@@ -194,7 +224,9 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 0 {
-			t.Errorf("Expected 0 repos for nonexistent prefix, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 0 repos for nonexistent prefix, got %d", len(response.Repos))
 		}
 	})
 
@@ -215,10 +247,14 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with prefix+branch=main, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos with prefix+branch=main, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 4 {
-			t.Errorf("Expected total_count 4, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 4, got %d", response.TotalCount)
 		}
 	})
 
@@ -232,10 +268,14 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 1 {
-			t.Errorf("Expected 1 repo with prefix+branch=feature, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 repo with prefix+branch=feature, got %d", len(response.Repos))
 		}
 		if response.TotalCount != 1 {
-			t.Errorf("Expected total_count 1, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 1, got %d", response.TotalCount)
 		}
 	})
 
@@ -249,7 +289,9 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with trailing-slash prefix, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos with trailing-slash prefix, got %d", len(response.Repos))
 		}
 	})
 
@@ -264,7 +306,9 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf("Expected 2 repos with dot-dot prefix, got %d", len(response.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos with dot-dot prefix, got %d", len(response.Repos))
 		}
 	})
 }
@@ -297,23 +341,30 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Repos) != 2 {
-			t.Errorf(
-				"Expected 2 repos with forward-slash prefix, got %d",
-				len(response.Repos),
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 repos with forward-slash prefix, got %d",
+				len(response.Repos))
+
 		}
 		if response.TotalCount != 3 {
-			t.Errorf("Expected total_count 3, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 3, got %d", response.TotalCount)
 		}
 		names := make(map[string]bool)
 		for _, r := range response.Repos {
 			names[r.Name] = true
 		}
 		if !names["repo-x"] || !names["repo-y"] {
-			t.Errorf("Expected repo-x and repo-y, got %v", response.Repos)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected repo-x and repo-y, got %v", response.Repos)
 		}
 		if names["other-z"] {
-			t.Error("other-z should not be in prefix-filtered results")
+			assert.Condition(t, func() bool {
+				return false
+			}, "other-z should not be in prefix-filtered results")
 		}
 	})
 }
@@ -347,13 +398,19 @@ func TestHandleListBranches(t *testing.T) {
 		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Branches) != 3 {
-			t.Errorf("Expected 3 branches, got %d", len(response.Branches))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 branches, got %d", len(response.Branches))
 		}
 		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 5, got %d", response.TotalCount)
 		}
 		if response.NullsRemaining != 1 {
-			t.Errorf("Expected nulls_remaining 1, got %d", response.NullsRemaining)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected nulls_remaining 1, got %d", response.NullsRemaining)
 		}
 	})
 
@@ -367,10 +424,14 @@ func TestHandleListBranches(t *testing.T) {
 		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Branches) != 2 {
-			t.Errorf("Expected 2 branches for repo1, got %d", len(response.Branches))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 branches for repo1, got %d", len(response.Branches))
 		}
 		if response.TotalCount != 3 {
-			t.Errorf("Expected total_count 3 for repo1, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 3 for repo1, got %d", response.TotalCount)
 		}
 	})
 
@@ -385,10 +446,14 @@ func TestHandleListBranches(t *testing.T) {
 		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Branches) != 3 {
-			t.Errorf("Expected 3 branches for both repos, got %d", len(response.Branches))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 branches for both repos, got %d", len(response.Branches))
 		}
 		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5 for both repos, got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 5 for both repos, got %d", response.TotalCount)
 		}
 	})
 
@@ -401,10 +466,14 @@ func TestHandleListBranches(t *testing.T) {
 		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
 		if len(response.Branches) != 3 {
-			t.Errorf("Expected 3 branches (empty repo = no filter), got %d", len(response.Branches))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 branches (empty repo = no filter), got %d", len(response.Branches))
 		}
 		if response.TotalCount != 5 {
-			t.Errorf("Expected total_count 5 (empty repo = no filter), got %d", response.TotalCount)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected total_count 5 (empty repo = no filter), got %d", response.TotalCount)
 		}
 	})
 
@@ -415,7 +484,9 @@ func TestHandleListBranches(t *testing.T) {
 		server.handleListBranches(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for POST, got %d", w.Code)
 		}
 	})
 }
@@ -427,7 +498,9 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected 405, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 405, got %d", w.Code)
 		}
 	})
 
@@ -437,7 +510,9 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -450,7 +525,9 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleRegisterRepo(w, req)
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -462,7 +539,9 @@ func TestHandleRegisterRepo(t *testing.T) {
 		// Add a remote so identity resolves to something meaningful
 		remoteCmd := exec.Command("git", "-C", repoDir, "remote", "add", "origin", "https://github.com/test/testrepo.git")
 		if out, err := remoteCmd.CombinedOutput(); err != nil {
-			t.Fatalf("git remote add failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git remote add failed: %v\n%s", err, out)
 		}
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{
@@ -472,25 +551,35 @@ func TestHandleRegisterRepo(t *testing.T) {
 		server.handleRegisterRepo(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var repo storage.Repo
 		testutil.DecodeJSON(t, w, &repo)
 		if repo.ID == 0 {
-			t.Error("Expected non-zero repo ID")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected non-zero repo ID")
 		}
 		if repo.Identity == "" {
-			t.Error("Expected non-empty identity")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected non-empty identity")
 		}
 
 		// Verify repo is in the DB
 		repos, err := db.ListRepos()
 		if err != nil {
-			t.Fatalf("ListRepos: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ListRepos: %v", err)
 		}
 		if len(repos) != 1 {
-			t.Fatalf("Expected 1 repo in DB, got %d", len(repos))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 1 repo in DB, got %d", len(repos))
 		}
 	})
 
@@ -506,7 +595,9 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w1 := httptest.NewRecorder()
 		server.handleRegisterRepo(w1, req1)
 		if w1.Code != http.StatusOK {
-			t.Fatalf("First call: expected 200, got %d: %s", w1.Code, w1.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "First call: expected 200, got %d: %s", w1.Code, w1.Body.String())
 		}
 
 		// Second call
@@ -514,16 +605,22 @@ func TestHandleRegisterRepo(t *testing.T) {
 		w2 := httptest.NewRecorder()
 		server.handleRegisterRepo(w2, req2)
 		if w2.Code != http.StatusOK {
-			t.Fatalf("Second call: expected 200, got %d: %s", w2.Code, w2.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Second call: expected 200, got %d: %s", w2.Code, w2.Body.String())
 		}
 
 		// Still only one repo in DB
 		repos, err := db.ListRepos()
 		if err != nil {
-			t.Fatalf("ListRepos: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ListRepos: %v", err)
 		}
 		if len(repos) != 1 {
-			t.Fatalf("Expected 1 repo in DB after two calls, got %d", len(repos))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 1 repo in DB after two calls, got %d", len(repos))
 		}
 	})
 }

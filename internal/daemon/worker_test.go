@@ -3,20 +3,23 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"io"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+
+	// workerTestContext encapsulates the common setup for worker pool tests.
+	"github.com/stretchr/testify/require"
+	"io"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
 )
 
-// workerTestContext encapsulates the common setup for worker pool tests.
 const testWorkerID = "test-worker"
 
 type workerTestContext struct {
@@ -41,7 +44,9 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	b := NewBroadcaster()
@@ -61,11 +66,15 @@ func (c *workerTestContext) createJobWithAgent(t *testing.T, sha, agent string) 
 	t.Helper()
 	commit, err := c.DB.GetOrCreateCommit(c.Repo.ID, sha, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agent})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	return job
 }
@@ -76,10 +85,14 @@ func (c *workerTestContext) createAndClaimJobWithAgent(t *testing.T, sha, worker
 	job := c.createJobWithAgent(t, sha, agent)
 	claimed, err := c.DB.ClaimJob(workerID)
 	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if claimed.ID != job.ID {
-		t.Fatalf("Expected to claim job %d, got %d", job.ID, claimed.ID)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected to claim job %d, got %d", job.ID, claimed.ID)
 	}
 	return claimed
 }
@@ -103,7 +116,9 @@ func (c *workerTestContext) exhaustRetries(t *testing.T, job *storage.ReviewJob,
 		c.Pool.failOrRetryInner(workerID, job, agent, "connection reset", true)
 		reclaimed, err := c.DB.ClaimJob(workerID)
 		if err != nil || reclaimed == nil {
-			t.Fatalf("re-claim after retry %d: %v", i, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "re-claim after retry %d: %v", i, err)
 		}
 		job = reclaimed
 	}
@@ -113,7 +128,9 @@ func (c *workerTestContext) exhaustRetries(t *testing.T, job *storage.ReviewJob,
 func (c *workerTestContext) assertJobPendingCancel(t *testing.T, jobID int64, expected bool) {
 	t.Helper()
 	if got := c.Pool.IsJobPendingCancel(jobID); got != expected {
-		t.Errorf("IsJobPendingCancel(%d) = %v, want %v", jobID, got, expected)
+		assert.Condition(t, func() bool {
+			return false
+		}, "IsJobPendingCancel(%d) = %v, want %v", jobID, got, expected)
 	}
 }
 
@@ -139,7 +156,9 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	}
 
 	if activeWorkers == 0 {
-		t.Fatal("expected active worker within timeout")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected active worker within timeout")
 	}
 
 	tc.Pool.Stop()
@@ -153,7 +172,9 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 
 	// Don't start the pool - test pending cancellation manually
 	if !tc.Pool.CancelJob(job.ID) {
-		t.Error("CancelJob should return true for valid running job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return true for valid running job")
 	}
 
 	tc.assertJobPendingCancel(t, job.ID, true)
@@ -162,7 +183,9 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
 	if !canceled {
-		t.Error("Job should have been canceled immediately on registration")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job should have been canceled immediately on registration")
 	}
 
 	tc.assertJobPendingCancel(t, job.ID, false)
@@ -174,22 +197,32 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 
 	// Simulate the API path: db.CancelJob first
 	if err := tc.DB.CancelJob(job.ID); err != nil {
-		t.Fatalf("db.CancelJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "db.CancelJob failed: %v", err)
 	}
 
 	jobAfterDBCancel, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID failed: %v", err)
 	}
 	if jobAfterDBCancel.Status != storage.JobStatusCanceled {
-		t.Fatalf("Expected status 'canceled', got '%s'", jobAfterDBCancel.Status)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected status 'canceled', got '%s'", jobAfterDBCancel.Status)
 	}
 	if jobAfterDBCancel.WorkerID == "" {
-		t.Fatal("Expected WorkerID to be set after claim")
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected WorkerID to be set after claim")
 	}
 
 	if !tc.Pool.CancelJob(job.ID) {
-		t.Error("CancelJob should return true for canceled-but-claimed job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return true for canceled-but-claimed job")
 	}
 
 	tc.assertJobPendingCancel(t, job.ID, true)
@@ -198,7 +231,9 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
 	if !canceled {
-		t.Error("Job should have been canceled immediately on registration")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job should have been canceled immediately on registration")
 	}
 }
 
@@ -210,11 +245,15 @@ func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil, nil)
 
 	if pool.CancelJob(99999) {
-		t.Error("CancelJob should return false for non-existent job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return false for non-existent job")
 	}
 
 	if pool.IsJobPendingCancel(99999) {
-		t.Error("Non-existent job should not be added to pendingCancels")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Non-existent job should not be added to pendingCancels")
 	}
 }
 
@@ -223,23 +262,33 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	job := tc.createAndClaimJob(t, "finish-window", testWorkerID)
 
 	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 
 	completedJob, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID failed: %v", err)
 	}
 	if completedJob.Status != storage.JobStatusDone {
-		t.Fatalf("Expected status 'done', got '%s'", completedJob.Status)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected status 'done', got '%s'", completedJob.Status)
 	}
 
 	if tc.Pool.CancelJob(job.ID) {
-		t.Error("CancelJob should return false for completed job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return false for completed job")
 	}
 
 	if tc.Pool.IsJobPendingCancel(job.ID) {
-		t.Error("Completed job should not be added to pendingCancels")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Completed job should not be added to pendingCancels")
 	}
 }
 
@@ -251,11 +300,15 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
 	if !tc.Pool.CancelJob(job.ID) {
-		t.Error("CancelJob should return true for registered job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return true for registered job")
 	}
 
 	if !canceled {
-		t.Error("Job should have been canceled")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job should have been canceled")
 	}
 
 	tc.assertJobPendingCancel(t, job.ID, false)
@@ -275,10 +328,14 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	result := tc.Pool.CancelJob(job.ID)
 
 	if !result {
-		t.Error("CancelJob should return true")
+		assert.Condition(t, func() bool {
+			return false
+		}, "CancelJob should return true")
 	}
 	if atomic.LoadInt32(&canceled) != 1 {
-		t.Error("Job should have been canceled exactly once")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job should have been canceled exactly once")
 	}
 
 	tc.Pool.unregisterRunningJob(job.ID)
@@ -344,24 +401,36 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 
 			updated, err := tcxt.DB.GetJobByID(job.ID)
 			if err != nil {
-				t.Fatalf("GetJobByID: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "GetJobByID: %v", err)
 			}
 			if updated.Status != storage.JobStatusDone {
-				t.Fatalf("status=%q, want done", updated.Status)
+				require.Condition(t, func() bool {
+					return false
+				}, "status=%q, want done", updated.Status)
 			}
 			if updated.SessionID != tc.want {
-				t.Fatalf("session_id=%q, want %q", updated.SessionID, tc.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "session_id=%q, want %q", updated.SessionID, tc.want)
 			}
 
 			review, err := tcxt.DB.GetReviewByJobID(job.ID)
 			if err != nil {
-				t.Fatalf("GetReviewByJobID: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "GetReviewByJobID: %v", err)
 			}
 			if review.Job == nil {
-				t.Fatal("expected joined job on review")
+				require.Condition(t, func() bool {
+					return false
+				}, "expected joined job on review")
 			}
 			if review.Job.SessionID != tc.want {
-				t.Fatalf("review job session_id=%q, want %q", review.Job.SessionID, tc.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "review job session_id=%q, want %q", review.Job.SessionID, tc.want)
 			}
 		})
 	}
@@ -389,14 +458,20 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	select {
 	case result := <-done:
 		if !result {
-			t.Error("CancelJob should return true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "CancelJob should return true")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("CancelJob deadlocked - cancel() called while holding lock")
+		require.Condition(t, func() bool {
+			return false
+		}, "CancelJob deadlocked - cancel() called while holding lock")
 	}
 
 	if !canceled {
-		t.Error("Job should have been canceled via final check path")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job should have been canceled via final check path")
 	}
 }
 
@@ -429,7 +504,9 @@ func TestIsQuotaError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.errMsg, func(t *testing.T) {
 			if got := isQuotaError(tt.errMsg); got != tt.want {
-				t.Errorf("isQuotaError(%q) = %v, want %v",
+				assert.Condition(t, func() bool {
+					return false
+				}, "isQuotaError(%q) = %v, want %v",
 					tt.errMsg, got, tt.want)
 			}
 		})
@@ -496,7 +573,9 @@ func TestParseQuotaCooldown(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseQuotaCooldown(tt.errMsg, tt.fallback)
 			if got != tt.want {
-				t.Errorf("parseQuotaCooldown() = %v, want %v",
+				assert.Condition(t, func() bool {
+					return false
+				}, "parseQuotaCooldown() = %v, want %v",
 					got, tt.want)
 			}
 		})
@@ -509,30 +588,40 @@ func TestAgentCooldown(t *testing.T) {
 
 	// Not cooling down initially
 	if pool.isAgentCoolingDown("gemini") {
-		t.Error("expected gemini not in cooldown initially")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected gemini not in cooldown initially")
 	}
 
 	// Set cooldown
 	pool.cooldownAgent("gemini", time.Now().Add(1*time.Hour))
 	if !pool.isAgentCoolingDown("gemini") {
-		t.Error("expected gemini in cooldown after set")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected gemini in cooldown after set")
 	}
 
 	// Different agent not affected
 	if pool.isAgentCoolingDown("codex") {
-		t.Error("expected codex not in cooldown")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected codex not in cooldown")
 	}
 
 	// Expired cooldown returns false
 	pool.cooldownAgent("codex", time.Now().Add(-1*time.Second))
 	if pool.isAgentCoolingDown("codex") {
-		t.Error("expected expired cooldown to return false")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected expired cooldown to return false")
 	}
 
 	// cooldownAgent never shortens
 	pool.cooldownAgent("gemini", time.Now().Add(1*time.Minute))
 	if !pool.isAgentCoolingDown("gemini") {
-		t.Error("cooldown should not have been shortened")
+		assert.Condition(t, func() bool {
+			return false
+		}, "cooldown should not have been shortened")
 	}
 }
 
@@ -547,7 +636,9 @@ func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
 
 	// Should return false and clean up the entry
 	if pool.isAgentCoolingDown("gemini") {
-		t.Error("expected expired cooldown to return false")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected expired cooldown to return false")
 	}
 
 	// Entry should be deleted from the map
@@ -555,7 +646,9 @@ func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
 	_, exists := pool.agentCooldowns["gemini"]
 	pool.agentCooldownsMu.RUnlock()
 	if exists {
-		t.Error("expected expired entry to be deleted from map")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected expired entry to be deleted from map")
 	}
 }
 
@@ -579,7 +672,9 @@ func TestAgentCooldown_RefreshDuringUpgrade(t *testing.T) {
 	// The read-lock path sees expired, upgrades, recheck sees
 	// refreshed entry — should return true.
 	if !pool.isAgentCoolingDown("gemini") {
-		t.Error("expected refreshed cooldown to return true")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected refreshed cooldown to return true")
 	}
 }
 
@@ -601,13 +696,16 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusFailed {
-		t.Errorf(
-			"status=%q, want failed (cooldown via alias)",
-			updated.Status,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want failed (cooldown via alias)",
+			updated.Status)
+
 	}
 }
 
@@ -628,10 +726,11 @@ func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 	// resolution. (May also return "" if claude-code binary is not
 	// installed, which is fine — both reasons are correct.)
 	if got != "" {
-		t.Errorf(
-			"resolveBackupAgent() = %q, want empty (alias match)",
-			got,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "resolveBackupAgent() = %q, want empty (alias match)",
+			got)
+
 	}
 }
 
@@ -649,40 +748,58 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	// Job should be failed (not retried) with quota prefix
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want failed", updated.Status)
 	}
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
+		assert.Condition(t, func() bool {
+			return false
+		}, "error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 
 	// Retry count should be 0 — no retries attempted
 	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobRetryCount: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobRetryCount: %v", err)
 	}
 	if retryCount != 0 {
-		t.Errorf("retry_count=%d, want 0 (quota should skip retries)", retryCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "retry_count=%d, want 0 (quota should skip retries)", retryCount)
 	}
 
 	// Agent should be in cooldown
 	if !tc.Pool.isAgentCoolingDown("gemini") {
-		t.Error("expected gemini in cooldown after quota error")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected gemini in cooldown after quota error")
 	}
 
 	// Broadcast should have fired
 	select {
 	case ev := <-eventCh:
 		if ev.Type != "review.failed" {
-			t.Errorf("event type=%q, want review.failed", ev.Type)
+			assert.Condition(t, func() bool {
+				return false
+			}, "event type=%q, want review.failed", ev.Type)
 		}
 		if !strings.HasPrefix(ev.Error, review.QuotaErrorPrefix) {
-			t.Errorf("event error=%q, want prefix %q", ev.Error, review.QuotaErrorPrefix)
+			assert.Condition(t, func() bool {
+				return false
+			}, "event error=%q, want prefix %q", ev.Error, review.QuotaErrorPrefix)
 		}
 	case <-time.After(time.Second):
-		t.Error("no broadcast event received")
+		assert.Condition(t, func() bool {
+			return false
+		}, "no broadcast event received")
 	}
 }
 
@@ -696,17 +813,25 @@ func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want failed", updated.Status)
 	}
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
+		assert.Condition(t, func() bool {
+			return false
+		}, "error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 	retryCount, _ := tc.DB.GetJobRetryCount(job.ID)
 	if retryCount != 0 {
-		t.Errorf("retry_count=%d, want 0", retryCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "retry_count=%d, want 0", retryCount)
 	}
 }
 
@@ -720,24 +845,36 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Should be queued for retry, not failed
+		}, "GetJobByID: %v", err)
 	}
-	// Should be queued for retry, not failed
+
 	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (retry)", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want queued (retry)", updated.Status)
 	}
 
 	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobRetryCount: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobRetryCount: %v", err)
 	}
 	if retryCount != 1 {
-		t.Errorf("retry_count=%d, want 1", retryCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "retry_count=%d, want 1", retryCount)
 	}
 
 	// Agent should NOT be in cooldown
 	if tc.Pool.isAgentCoolingDown("gemini") {
-		t.Error("expected gemini NOT in cooldown for non-quota error")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected gemini NOT in cooldown for non-quota error")
 	}
 }
 
@@ -759,14 +896,22 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Should be queued for failover, agent changed to "test"
+		}, "GetJobByID: %v", err)
 	}
-	// Should be queued for failover, agent changed to "test"
+
 	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want queued (failover)", updated.Status)
 	}
 	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want test (failover)", updated.Agent)
 	}
 }
 
@@ -787,16 +932,24 @@ func TestFailoverOrFail_PassesBackupModel(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want queued (failover)", updated.Status)
 	}
 	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want test (failover)", updated.Agent)
 	}
 	if updated.Model != "claude-sonnet" {
-		t.Errorf("model=%q, want claude-sonnet (backup model)", updated.Model)
+		assert.Condition(t, func() bool {
+			return false
+		}, "model=%q, want claude-sonnet (backup model)", updated.Model)
 	}
 }
 
@@ -810,13 +963,19 @@ func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want failed", updated.Status)
 	}
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
+		assert.Condition(t, func() bool {
+			return false
+		}, "error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 }
 
@@ -851,15 +1010,23 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Should be failed, NOT queued for failover to cooled-down agent
+		}, "GetJobByID: %v", err)
 	}
-	// Should be failed, NOT queued for failover to cooled-down agent
+
 	if updated.Status != storage.JobStatusFailed {
-		t.Errorf("status=%q, want failed", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want failed", updated.Status)
 	}
 	// Agent should still be codex (not failed over)
 	if updated.Agent != "codex" {
-		t.Errorf("agent=%q, want codex (no failover)", updated.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want codex (no failover)", updated.Agent)
 	}
 }
 
@@ -889,14 +1056,22 @@ func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Should be queued for failover, agent changed to "test"
+		}, "GetJobByID: %v", err)
 	}
-	// Should be queued for failover, agent changed to "test"
+
 	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want queued (failover)", updated.Status)
 	}
 	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want test (failover)", updated.Agent)
 	}
 }
 
@@ -994,7 +1169,9 @@ func TestResolveBackupAgent(t *testing.T) {
 
 			got := pool.resolveBackupAgent(job)
 			if got != tt.want {
-				t.Errorf("resolveBackupAgent() = %q, want %q", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "resolveBackupAgent() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1016,12 +1193,16 @@ func TestFailoverWorkflow_FixJob(t *testing.T) {
 
 	gotAgent := pool.resolveBackupAgent(job)
 	if gotAgent != "test" {
-		t.Errorf("resolveBackupAgent(fix job) = %q, want %q", gotAgent, "test")
+		assert.Condition(t, func() bool {
+			return false
+		}, "resolveBackupAgent(fix job) = %q, want %q", gotAgent, "test")
 	}
 
 	gotModel := pool.resolveBackupModel(job)
 	if gotModel != "fix-model" {
-		t.Errorf("resolveBackupModel(fix job) = %q, want %q", gotModel, "fix-model")
+		assert.Condition(t, func() bool {
+			return false
+		}, "resolveBackupModel(fix job) = %q, want %q", gotModel, "fix-model")
 	}
 }
 
@@ -1040,12 +1221,16 @@ func TestFailoverWorkflow_FixJobDoesNotUseReviewBackup(t *testing.T) {
 
 	gotAgent := pool.resolveBackupAgent(job)
 	if gotAgent != "" {
-		t.Errorf("resolveBackupAgent(fix job) = %q, want empty (no fix-specific backup)", gotAgent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "resolveBackupAgent(fix job) = %q, want empty (no fix-specific backup)", gotAgent)
 	}
 
 	gotModel := pool.resolveBackupModel(job)
 	if gotModel != "" {
-		t.Errorf("resolveBackupModel(fix job) = %q, want empty", gotModel)
+		assert.Condition(t, func() bool {
+			return false
+		}, "resolveBackupModel(fix job) = %q, want empty", gotModel)
 	}
 }
 
@@ -1074,15 +1259,23 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updated.Status != storage.JobStatusQueued {
-		t.Errorf("status=%q, want queued (failover)", updated.Status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "status=%q, want queued (failover)", updated.Status)
 	}
 	if updated.Agent != "test" {
-		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want test (failover)", updated.Agent)
 	}
 	if updated.Model != "backup-model" {
-		t.Errorf("model=%q, want backup-model", updated.Model)
+		assert.Condition(t, func() bool {
+			return false
+		}, "model=%q, want backup-model", updated.Model)
 	}
 }

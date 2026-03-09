@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
@@ -51,21 +53,14 @@ func TestCodex_buildArgs(t *testing.T) {
 			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove)
 
 			for _, flag := range tt.wantFlags {
-				if !slices.Contains(args, flag) {
-					t.Errorf("buildArgs() missing expected flag %q, args: %v", flag, args)
-				}
+				assert.Contains(t, args, flag, "buildArgs() missing expected flag %q, args: %v", flag, args)
 			}
 
 			for _, flag := range tt.wantMissingFlags {
-				if slices.Contains(args, flag) {
-					t.Errorf("buildArgs() contains unexpected flag %q, args: %v", flag, args)
-				}
+				assert.NotContains(t, args, flag, "buildArgs() contains unexpected flag %q, args: %v", flag, args)
 			}
 
-			// Verify stdin marker "-" is at the end (after all flags)
-			if args[len(args)-1] != "-" {
-				t.Errorf("expected stdin marker '-' at end of args, got %v", args)
-			}
+			assert.Equal(t, "-", args[len(args)-1], "expected stdin marker '-' at end of args, got %v", args)
 		})
 	}
 }
@@ -75,14 +70,12 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 
 	args := a.buildArgs("/repo", false, true)
 
-	if len(args) < 3 || args[0] != "exec" || args[1] != "resume" {
-		t.Fatalf("expected exec resume prefix, got %v", args)
-	}
+	require.GreaterOrEqual(t, len(args), 3)
+	assert.Equal(t, "exec", args[0])
+	assert.Equal(t, "resume", args[1])
 	assertContainsArg(t, args, "--json")
 	assertContainsArg(t, args, "session-123")
-	if args[len(args)-1] != "-" {
-		t.Fatalf("expected stdin marker '-' at end of args, got %v", args)
-	}
+	assert.Equal(t, "-", args[len(args)-1], "expected stdin marker '-' at end of args, got %v", args)
 }
 
 func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
@@ -90,9 +83,9 @@ func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
 
 	args := a.buildArgs("/repo", false, true)
 
-	if len(args) < 2 || args[0] != "exec" || args[1] == "resume" {
-		t.Fatalf("expected resume subcommand to be omitted for invalid session id, got %v", args)
-	}
+	require.GreaterOrEqual(t, len(args), 2)
+	assert.Equal(t, "exec", args[0])
+	assert.NotEqual(t, "resume", args[1], "expected resume subcommand to be omitted for invalid session id, got %v", args)
 	assertNotContainsArg(t, args, "-bad-session")
 }
 
@@ -100,12 +93,8 @@ func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 
 	supported, err := codexSupportsDangerousFlag(context.Background(), cmdPath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if !supported {
-		t.Fatalf("expected dangerous flag support, got false")
-	}
+	require.NoError(t, err)
+	assert.True(t, supported, "expected dangerous flag support")
 }
 
 func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
@@ -113,12 +102,8 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 		HelpOutput: "usage",
 	})
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "does not support") {
-		t.Fatalf("expected unsupported flag error, got %v", err)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support")
 }
 
 func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
@@ -130,17 +115,12 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 		},
 	})
 
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
 
 	args, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("read args: %v", err)
-	}
-	if !strings.Contains(string(args), codexAutoApproveFlag) {
-		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
-	}
+	require.NoError(t, err)
+	assert.Contains(t, string(args), codexAutoApproveFlag, "expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
 }
 
 func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
@@ -153,14 +133,13 @@ func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	})
 
 	a = a.WithSessionID("session-123").(*CodexAgent)
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
-	if len(args) < 4 || args[0] != "exec" || args[1] != "resume" {
-		t.Fatalf("expected exec resume invocation, got %v", args)
-	}
+	require.GreaterOrEqual(t, len(args), 4)
+	assert.Equal(t, "exec", args[0])
+	assert.Equal(t, "resume", args[1])
 	assertContainsArg(t, args, "session-123")
 }
 
@@ -189,12 +168,8 @@ exit 0
 
 	start := time.Now()
 	_, err := a.Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected context deadline exceeded, got %v", err)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("Review hung for %v after timeout", elapsed)
-	}
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.LessOrEqual(t, time.Since(start), time.Second, "Review hung after timeout")
 }
 
 func TestCodexParseStreamJSON(t *testing.T) {
@@ -315,26 +290,22 @@ func TestCodexParseStreamJSON(t *testing.T) {
 
 			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w)
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
-				}
-				if result != "" {
-					t.Errorf("parseStreamJSON() result = %q, want empty string on error", result)
-				}
-			} else if err != nil {
-				t.Fatalf("parseStreamJSON() unexpected error: %v", err)
+				require.ErrorIs(t, err, tt.wantErr)
+				assert.Empty(t, result, "parseStreamJSON() result = %q, want empty string on error", result)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if tt.notWantErr != nil && errors.Is(err, tt.notWantErr) {
-				t.Errorf("got unwanted error: %v", err)
+			if tt.notWantErr != nil {
+				require.Condition(t, func() bool { return !errors.Is(err, tt.notWantErr) }, "got unwanted error: %v", err)
 			}
 
-			if err == nil && result != tt.want {
-				t.Errorf("parseStreamJSON() = %q, want %q", result, tt.want)
+			if err == nil {
+				assert.Equal(t, tt.want, result, "parseStreamJSON()")
 			}
 
-			if tt.wantWriterContent != "" && !strings.Contains(buf.String(), tt.wantWriterContent) {
-				t.Errorf("writer output = %q, expected to contain %q", buf.String(), tt.wantWriterContent)
+			if tt.wantWriterContent != "" {
+				assert.Contains(t, buf.String(), tt.wantWriterContent, "writer output = %q, expected to contain %q", buf.String(), tt.wantWriterContent)
 			}
 		})
 	}
@@ -350,17 +321,12 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	})
 
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil)
+	require.NoError(t, err)
 
 	received, err := os.ReadFile(mock.StdinFile)
-	if err != nil {
-		t.Fatalf("read stdin file: %v", err)
-	}
-	if string(received) != testPrompt {
-		t.Fatalf("prompt not piped correctly via stdin\nexpected: %q\ngot: %q", testPrompt, string(received))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, testPrompt, string(received), "prompt not piped correctly via stdin")
 }
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
@@ -370,13 +336,7 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 	})
 
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "did not emit valid --json events") {
-		t.Fatalf("expected compatibility error, got %v", err)
-	}
-	if !errors.Is(err, errNoCodexJSON) {
-		t.Fatalf("expected wrapped errNoCodexJSON, got %v", err)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not emit valid --json events")
+	assert.ErrorIs(t, err, errNoCodexJSON)
 }

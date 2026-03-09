@@ -1,10 +1,11 @@
 package tui
 
 import (
-	"testing"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
@@ -22,13 +23,19 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != viewQueue {
-		t.Error("Expected to return to queue view")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to queue view")
 	}
 	if !m2.loadingJobs {
-		t.Error("Expected loadingJobs to be true when escaping with hideClosed active")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected loadingJobs to be true when escaping with hideClosed active")
 	}
 	if cmd == nil {
-		t.Error("Expected a command to be returned for refresh")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected a command to be returned for refresh")
 	}
 }
 
@@ -47,10 +54,14 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != viewQueue {
-		t.Error("Expected to return to queue view")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to queue view")
 	}
 	if m2.loadingJobs {
-		t.Error("Should not trigger refresh when hideClosed is not active")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Should not trigger refresh when hideClosed is not active")
 	}
 	// cmd may be non-nil (mouse re-enable on view transition) but
 	// the important assertion is that no job refresh was triggered
@@ -72,17 +83,23 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	m2, _ := updateModel(t, m, commitMsgMsg{jobID: 1, content: "test message"})
 
 	if m2.currentView != viewCommitMsg {
-		t.Errorf("Expected viewCommitMsg, got %d", m2.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected viewCommitMsg, got %d", m2.currentView)
 	}
 
 	// Press escape to go back
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != viewQueue {
-		t.Errorf("Expected to return to viewQueue, got %d", m3.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to viewQueue, got %d", m3.currentView)
 	}
 	if m3.commitMsgContent != "" {
-		t.Error("Expected commitMsgContent to be cleared")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected commitMsgContent to be cleared")
 	}
 }
 
@@ -101,7 +118,9 @@ func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != viewReview {
-		t.Errorf("Expected to return to viewReview, got %d", m2.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to viewReview, got %d", m2.currentView)
 	}
 }
 
@@ -116,7 +135,9 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	m2, _ := pressKey(m, 'q')
 
 	if m2.currentView != viewReview {
-		t.Errorf("Expected to return to viewReview after 'q', got %d", m2.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to viewReview after 'q', got %d", m2.currentView)
 	}
 }
 
@@ -126,7 +147,9 @@ func TestTUICtrlDQuitsFromQueueView(t *testing.T) {
 	_, cmd := pressSpecial(m, tea.KeyCtrlD)
 
 	if cmd == nil {
-		t.Fatal("Expected quit command")
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected quit command")
 	}
 	assertMsgType[tea.QuitMsg](t, cmd())
 }
@@ -154,13 +177,19 @@ func TestTUICtrlDNoOpInCommentModal(t *testing.T) {
 
 	assertView(t, got, viewKindComment)
 	if got.commentText != "draft comment" {
-		t.Errorf("Expected comment text preserved, got %q", got.commentText)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected comment text preserved, got %q", got.commentText)
 	}
 	if got.commentJobID != 42 {
-		t.Errorf("Expected comment job ID preserved, got %d", got.commentJobID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected comment job ID preserved, got %d", got.commentJobID)
 	}
 	if cmd != nil {
-		t.Fatal("Expected no command from Ctrl-D in comment modal")
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected no command from Ctrl-D in comment modal")
 	}
 }
 
@@ -282,14 +311,20 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 
 			result, ok := msg.(commitMsgMsg)
 			if !ok {
-				t.Fatalf("Expected commitMsgMsg, got %T", msg)
+				require.Condition(t, func() bool {
+					return false
+				}, "Expected commitMsgMsg, got %T", msg)
 			}
 
 			if tt.expectError != "" {
 				if result.err == nil {
-					t.Errorf("Expected error %q, got nil", tt.expectError)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected error %q, got nil", tt.expectError)
 				} else if result.err.Error() != tt.expectError {
-					t.Errorf("Expected error %q, got %q", tt.expectError, result.err.Error())
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected error %q, got %q", tt.expectError, result.err.Error())
 				}
 			} else {
 				// For valid commits, we expect a git error (repo doesn't exist in test)
@@ -297,10 +332,14 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				if result.err != nil {
 					errMsg := result.err.Error()
 					if errMsg == "no commit message for task jobs" {
-						t.Errorf("Regular commit with Prompt should not be detected as task job")
+						assert.Condition(t, func() bool {
+							return false
+						}, "Regular commit with Prompt should not be detected as task job")
 					}
 					if errMsg == "no commit message for uncommitted changes" {
-						t.Errorf("Regular commit should not be detected as uncommitted changes")
+						assert.Condition(t, func() bool {
+							return false
+						}, "Regular commit should not be detected as uncommitted changes")
 					}
 					// Other errors (like git errors) are expected in test environment
 				}
@@ -318,17 +357,23 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != viewHelp {
-		t.Errorf("Expected viewHelp, got %d", m2.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected viewHelp, got %d", m2.currentView)
 	}
 	if m2.helpFromView != viewQueue {
-		t.Errorf("Expected helpFromView to be viewQueue, got %d", m2.helpFromView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected helpFromView to be viewQueue, got %d", m2.helpFromView)
 	}
 
 	// Press '?' again to close help
 	m3, _ := pressKey(m2, '?')
 
 	if m3.currentView != viewQueue {
-		t.Errorf("Expected to return to viewQueue, got %d", m3.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to viewQueue, got %d", m3.currentView)
 	}
 }
 
@@ -343,16 +388,22 @@ func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != viewHelp {
-		t.Errorf("Expected viewHelp, got %d", m2.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected viewHelp, got %d", m2.currentView)
 	}
 	if m2.helpFromView != viewReview {
-		t.Errorf("Expected helpFromView to be viewReview, got %d", m2.helpFromView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected helpFromView to be viewReview, got %d", m2.helpFromView)
 	}
 
 	// Press escape to close help
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != viewReview {
-		t.Errorf("Expected to return to viewReview, got %d", m3.currentView)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected to return to viewReview, got %d", m3.currentView)
 	}
 }

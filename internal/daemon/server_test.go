@@ -4,6 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,12 +20,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testenv"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 // safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access
@@ -96,16 +98,24 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 	case storage.JobStatusCanceled:
 		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
 	default:
-		t.Fatalf("unsupported status in helper: %v", status)
+		require.Condition(t, func() bool {
+			return false
+		}, "unsupported status in helper: %v", status)
 	}
 	res, err := db.Exec(query, jobID)
 	if err != nil {
-		t.Fatalf("failed to set job status: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to set job status: %v", err)
 	}
 	if rows, err := res.RowsAffected(); err != nil {
-		t.Fatalf("failed to get rows affected: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to get rows affected: %v", err)
 	} else if rows != 1 {
-		t.Fatalf("expected 1 row affected when setting job status, got %d", rows)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 row affected when setting job status, got %d", rows)
 	}
 }
 
@@ -114,15 +124,21 @@ func createTestJob(t *testing.T, db *storage.DB, dir, gitRef, agent string) *sto
 	t.Helper()
 	repo, err := db.GetOrCreateRepo(dir)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 	commit, err := db.GetOrCreateCommit(repo.ID, gitRef, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: gitRef, Agent: agent})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	return job
 }
@@ -137,7 +153,9 @@ func testInvalidIDParsing(t *testing.T, handler http.HandlerFunc, urlTemplate st
 			w := httptest.NewRecorder()
 			handler(w, req)
 			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected status %d for id %s, got %d", http.StatusBadRequest, invalidID, w.Code)
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected status %d for id %s, got %d", http.StatusBadRequest, invalidID, w.Code)
 			}
 		})
 	}
@@ -169,10 +187,14 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			server := NewServer(db, cfg, "")
 			err := server.Start(context.Background())
 			if err == nil {
-				t.Fatalf("expected start error for %q", tt.addr)
+				require.Condition(t, func() bool {
+					return false
+				}, "expected start error for %q", tt.addr)
 			}
 			if !strings.Contains(err.Error(), "loopback host") {
-				t.Fatalf("unexpected error for %q: %v", tt.addr, err)
+				require.Condition(t, func() bool {
+					return false
+				}, "unexpected error for %q: %v", tt.addr, err)
 			}
 		})
 	}
@@ -185,13 +207,19 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 
 	ready, serveExited, err := waitForServerReady(context.Background(), "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
 	if ready {
-		t.Fatal("expected ready=false when serve exits early")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected ready=false when serve exits early")
 	}
 	if !serveExited {
-		t.Fatal("expected serveExited=true when serveErrCh was consumed")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected serveExited=true when serveErrCh was consumed")
 	}
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("expected error %v, got %v", wantErr, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error %v, got %v", wantErr, err)
 	}
 }
 
@@ -204,13 +232,19 @@ func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *te
 
 	ready, serveExited, err := waitForServerReady(ctx, "127.0.0.1:1", 50*time.Millisecond, serveErrCh)
 	if ready {
-		t.Fatal("expected ready=false when startup is canceled")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected ready=false when startup is canceled")
 	}
 	if serveExited {
-		t.Fatal("expected serveExited=false when waitForServerReady exits before reading serveErrCh")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected serveExited=false when waitForServerReady exits before reading serveErrCh")
 	}
 	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected nil error, got %v", err)
 	}
 }
 
@@ -224,10 +258,14 @@ func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenServeAlreadyExited(
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected nil error, got %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("awaitServeExitOnUnreadyStartup blocked even though serve had already exited")
+		require.Condition(t, func() bool {
+			return false
+		}, "awaitServeExitOnUnreadyStartup blocked even though serve had already exited")
 	}
 }
 
@@ -240,7 +278,9 @@ func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
 
 	select {
 	case err := <-done:
-		t.Fatalf("expected helper to block before serve exit, got %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected helper to block before serve exit, got %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 
@@ -249,10 +289,14 @@ func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected nil error, got %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("awaitServeExitOnUnreadyStartup did not return after serve exited")
+		require.Condition(t, func() bool {
+			return false
+		}, "awaitServeExitOnUnreadyStartup did not return after serve exited")
 	}
 }
 
@@ -279,7 +323,9 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
-			t.Fatalf("server exited before becoming ready: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "server exited before becoming ready: %v", err)
 		default:
 		}
 
@@ -287,29 +333,40 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 		if err == nil {
 			host, _, splitErr := net.SplitHostPort(info.Addr)
 			if splitErr != nil {
-				t.Fatalf("runtime addr %q is invalid: %v", info.Addr, splitErr)
+				require.Condition(t, func() bool {
+					return false
+				}, "runtime addr %q is invalid: %v", info.Addr, splitErr)
 			}
 			if host != "::1" {
-				t.Fatalf("expected IPv6 loopback host, got %q", host)
+				require.Condition(t, func() bool {
+					return false
+				}, "expected IPv6 loopback host, got %q", host)
 			}
 			if stopErr := server.Stop(); stopErr != nil {
-				t.Fatalf("server.Stop() error: %v", stopErr)
+				require.Condition(t, func() bool {
+					return false
+				}, "server.Stop() error: %v", stopErr)
 			}
 			select {
 			case err := <-errCh:
 				if err != nil {
-					t.Fatalf("server.Start() returned error after stop: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "server.Start() returned error after stop: %v", err)
 				}
 			case <-time.After(5 * time.Second):
-				t.Fatal("timed out waiting for server to stop")
+				require.Condition(t, func() bool {
+					return false
+				}, "timed out waiting for server to stop")
 			}
 			return
 		}
 
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	t.Fatal("timed out waiting for IPv6 daemon runtime")
+	require.Condition(t, func() bool {
+		return false
+	}, "timed out waiting for IPv6 daemon runtime")
 }
 
 func TestNewServerAllowUnsafeAgents(t *testing.T) {
@@ -331,7 +388,9 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		_ = NewServer(db, cfg, "")
 
 		if agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be false when config is nil")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected AllowUnsafeAgents to be false when config is nil")
 		}
 	})
 
@@ -349,7 +408,9 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		_ = NewServer(db, cfg, "")
 
 		if agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be false when config is false")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected AllowUnsafeAgents to be false when config is false")
 		}
 	})
 
@@ -367,7 +428,9 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		_ = NewServer(db, cfg, "")
 
 		if !agent.AllowUnsafeAgents() {
-			t.Error("expected AllowUnsafeAgents to be true when config is true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected AllowUnsafeAgents to be true when config is true")
 		}
 	})
 }
@@ -378,7 +441,9 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 	t.Helper()
 	repo, err := db.GetOrCreateRepo(repoPath)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	var jobs []*storage.ReviewJob
@@ -386,11 +451,15 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 		sha := fmt.Sprintf("%ssha%c", shaPrefix, 'a'+i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
 		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetOrCreateCommit failed: %v", err)
 		}
 		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob failed: %v", err)
 		}
 		jobs = append(jobs, job)
 	}
@@ -401,7 +470,9 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
 	t.Helper()
 	if _, err := db.Exec("UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
-		t.Fatalf("setJobBranch failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "setJobBranch failed: %v", err)
 	}
 }
 
@@ -412,13 +483,17 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		// First call should fetch from DB and cache
 		id1 := server.getMachineID()
 		if id1 == "" {
-			t.Fatal("Expected non-empty machine ID on first call")
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected non-empty machine ID on first call")
 		}
 
 		// Second call should return cached value
 		id2 := server.getMachineID()
 		if id2 != id1 {
-			t.Errorf("Expected cached value %q, got %q", id1, id2)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected cached value %q, got %q", id1, id2)
 		}
 
 		// Verify internal state is cached
@@ -426,7 +501,9 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		cachedID := server.machineID
 		server.machineIDMu.Unlock()
 		if cachedID != id1 {
-			t.Errorf("Expected internal machineID to be %q, got %q", id1, cachedID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected internal machineID to be %q, got %q", id1, cachedID)
 		}
 	})
 
@@ -444,21 +521,27 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		// First call should return empty since DB is closed
 		id1 := server.getMachineID()
 		if id1 != "" {
-			t.Fatalf("Expected empty machine ID on error, got %q", id1)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected empty machine ID on error, got %q", id1)
 		}
 
 		// Verify nothing was cached
 		server.machineIDMu.Lock()
 		if server.machineID != "" {
 			server.machineIDMu.Unlock()
-			t.Fatal("Should not cache on error")
+			require.Condition(t, func() bool {
+				return false
+			}, "Should not cache on error")
 		}
 		server.machineIDMu.Unlock()
 
 		// "Fix" the error by opening a new DB and replacing it
 		newDB, err := storage.Open(filepath.Join(tmpDir, "reviews.db"))
 		if err != nil {
-			t.Fatalf("Failed to reopen DB: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Failed to reopen DB: %v", err)
 		}
 		t.Cleanup(func() { newDB.Close() })
 		server.db = newDB
@@ -466,7 +549,9 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		// Second call should succeed and cache
 		id2 := server.getMachineID()
 		if id2 == "" {
-			t.Fatal("Expected non-empty machine ID after DB recovery")
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected non-empty machine ID after DB recovery")
 		}
 
 		// Verify it's now cached
@@ -474,13 +559,17 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		cachedID := server.machineID
 		server.machineIDMu.Unlock()
 		if cachedID != id2 {
-			t.Errorf("Expected cached ID %q, got %q", id2, cachedID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected cached ID %q, got %q", id2, cachedID)
 		}
 
 		// Third call should return cached value
 		id3 := server.getMachineID()
 		if id3 != id2 {
-			t.Errorf("Expected cached ID %q on third call, got %q", id2, id3)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected cached ID %q on third call, got %q", id2, id3)
 		}
 	})
 }
@@ -494,21 +583,29 @@ func TestServerStop_StopsCIPoller(t *testing.T) {
 
 	poller := NewCIPoller(db, NewStaticConfig(cfg), server.Broadcaster())
 	if err := poller.Start(); err != nil {
-		t.Fatalf("Start poller: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Start poller: %v", err)
 	}
 
 	healthy, _ := poller.HealthCheck()
 	if !healthy {
-		t.Fatal("expected poller running after Start")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected poller running after Start")
 	}
 
 	server.SetCIPoller(poller)
 	if err := server.Stop(); err != nil {
-		t.Fatalf("Server.Stop: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Server.Stop: %v", err)
 	}
 
 	healthy, msg := poller.HealthCheck()
 	if healthy {
-		t.Fatalf("expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
 	}
 }

@@ -369,12 +369,16 @@ func TestSetConfigKeyRepoConfigWritesComments(t *testing.T) {
 	path := filepath.Join(dir, ".roborev.toml")
 
 	if err := setConfigKey(path, "agent", "claude-code", false); err != nil {
-		t.Fatalf("setConfigKey repo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "setConfigKey repo: %v", err)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "read config: %v", err)
 	}
 	got := string(data)
 
@@ -383,7 +387,9 @@ func TestSetConfigKeyRepoConfigWritesComments(t *testing.T) {
 		"agent = 'claude-code'",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("repo config missing %q:\n%s", want, got)
+			require.Condition(t, func() bool {
+				return false
+			}, "repo config missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -400,12 +406,16 @@ func TestSetConfigKeyGlobalWritesComments(t *testing.T) {
 	path := setupConfigFile(t)
 
 	if err := setConfigKey(path, "default_agent", "codex", true); err != nil {
-		t.Fatalf("setConfigKey: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "setConfigKey: %v", err)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "read config: %v", err)
 	}
 	got := string(data)
 
@@ -415,7 +425,9 @@ func TestSetConfigKeyGlobalWritesComments(t *testing.T) {
 		"# Hide closed reviews by default in the TUI queue.\n",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("global config missing %q:\n%s", want, got)
+			require.Condition(t, func() bool {
+				return false
+			}, "global config missing %q:\n%s", want, got)
 		}
 	}
 }

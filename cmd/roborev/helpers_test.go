@@ -3,9 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +12,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
+
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // TestGitRepo wraps a temporary git repository for test use.
@@ -32,7 +34,7 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 	dir := t.TempDir()
 	resolved, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err, "Failed to resolve symlinks: %v")
-	
+
 	r := &TestGitRepo{Dir: resolved, t: t}
 	r.Run("init")
 	r.Run("config", "user.email", "test@test.com")
@@ -45,7 +47,7 @@ func chdir(t *testing.T, dir string) {
 	t.Helper()
 	orig, err := os.Getwd()
 	require.NoError(t, err, "Failed to getwd: %v")
-	
+
 	if err := os.Chdir(dir); err != nil {
 		require.NoError(t, err, "Failed to chdir: %v")
 	}
@@ -83,9 +85,7 @@ func (r *TestGitRepo) Run(args ...string) string {
 	}
 	cmd.Env = gitEnv
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
+	require.NoError(r.t, err, "git %v failed:\n%s", args, out)
 	return strings.TrimSpace(string(out))
 }
 
@@ -94,12 +94,10 @@ func (r *TestGitRepo) Run(args ...string) string {
 func (r *TestGitRepo) CommitFile(name, content, msg string) string {
 	r.t.Helper()
 	fullPath := filepath.Join(r.Dir, name)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-		r.t.Fatal(err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		r.t.Fatal(err)
-	}
+	err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+	require.NoError(r.t, err)
+	err = os.WriteFile(fullPath, []byte(content), 0644)
+	require.NoError(r.t, err)
 	r.Run("add", name)
 	r.Run("commit", "-m", msg)
 	return r.Run("rev-parse", "HEAD")

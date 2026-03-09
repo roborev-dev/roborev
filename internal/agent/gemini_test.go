@@ -179,9 +179,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
-				if res != want {
-					t.Errorf("expected result %q, got %q", want, res)
-				}
+				assert.Equal(t, want, res)
 			},
 		},
 		{
@@ -193,9 +191,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
-				if res != want {
-					t.Errorf("expected result %q, got %q", want, res)
-				}
+				assert.Equal(t, want, res)
 			},
 		},
 		{

@@ -3,6 +3,10 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"math"
 	"net"
 	"net/http"
@@ -13,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 const (
@@ -43,11 +45,15 @@ func createRuntimeFile(t *testing.T, dir string, pid int, data *runtimeData) str
 	}
 	bytes, err := json.Marshal(data)
 	if err != nil {
-		t.Fatalf("Failed to marshal runtime data: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to marshal runtime data: %v", err)
 	}
 	path := filepath.Join(dir, fmt.Sprintf("daemon.%d.json", pid))
 	if err := os.WriteFile(path, bytes, 0644); err != nil {
-		t.Fatalf("Failed to write runtime file: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to write runtime file: %v", err)
 	}
 	return path
 }
@@ -75,14 +81,20 @@ func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
 	addr, port, err := FindAvailablePort(defaultTestAddr)
 	if err != nil {
-		t.Fatalf("FindAvailablePort failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FindAvailablePort failed: %v", err)
 	}
 
 	if addr == "" {
-		t.Error("Expected non-empty address")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected non-empty address")
 	}
 	if port < defaultTestPort {
-		t.Errorf("Expected port >= %d, got %d", defaultTestPort, port)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected port >= %d, got %d", defaultTestPort, port)
 	}
 }
 
@@ -90,18 +102,26 @@ func TestFindAvailablePort_Ephemeral(t *testing.T) {
 	// Test finding an available port with ephemeral :0
 	addr, port, err := FindAvailablePort("127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("FindAvailablePort failed for ephemeral port: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FindAvailablePort failed for ephemeral port: %v", err)
 	}
 
 	if addr == "" {
-		t.Error("Expected non-empty address")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected non-empty address")
 	}
 	if port == 0 {
-		t.Error("Expected non-zero port assigned by OS")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected non-zero port assigned by OS")
 	}
 	expectedAddr := fmt.Sprintf("127.0.0.1:%d", port)
 	if addr != expectedAddr {
-		t.Errorf("Expected address %q, got %q", expectedAddr, addr)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected address %q, got %q", expectedAddr, addr)
 	}
 }
 
@@ -114,18 +134,26 @@ func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
 
 	addr, port, err := FindAvailablePort("[::1]:0")
 	if err != nil {
-		t.Fatalf("FindAvailablePort failed for IPv6 loopback: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FindAvailablePort failed for IPv6 loopback: %v", err)
 	}
 
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
-		t.Fatalf("returned address %q is invalid: %v", addr, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "returned address %q is invalid: %v", addr, err)
 	}
 	if host != "::1" {
-		t.Fatalf("expected host ::1, got %q", host)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected host ::1, got %q", host)
 	}
 	if portText == "0" || port == 0 {
-		t.Fatalf("expected an assigned port, got addr=%q port=%d", addr, port)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected an assigned port, got addr=%q port=%d", addr, port)
 	}
 }
 
@@ -136,26 +164,38 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 		// Write runtime info
 		err := WriteRuntime(defaultTestAddr, defaultTestPort, "test-version")
 		if err != nil {
-			t.Fatalf("WriteRuntime failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "WriteRuntime failed: %v", err)
 		}
 
 		// Read it back
 		info, err := ReadRuntime()
 		if err != nil {
-			t.Fatalf("ReadRuntime failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ReadRuntime failed: %v", err)
 		}
 
 		if info.Addr != defaultTestAddr {
-			t.Errorf("Expected addr '%s', got '%s'", defaultTestAddr, info.Addr)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected addr '%s', got '%s'", defaultTestAddr, info.Addr)
 		}
 		if info.Port != defaultTestPort {
-			t.Errorf("Expected port %d, got %d", defaultTestPort, info.Port)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected port %d, got %d", defaultTestPort, info.Port)
 		}
 		if info.PID == 0 {
-			t.Error("Expected non-zero PID")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected non-zero PID")
 		}
 		if info.Version != "test-version" {
-			t.Errorf("Expected version 'test-version', got '%s'", info.Version)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected version 'test-version', got '%s'", info.Version)
 		}
 	})
 
@@ -166,7 +206,9 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 		// Should fail to read now
 		_, err := ReadRuntime()
 		if err == nil {
-			t.Error("Expected error after RemoveRuntime")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error after RemoveRuntime")
 		}
 	})
 }
@@ -175,7 +217,9 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 	// Verify that isLoopbackAddr correctly rejects non-loopback addresses,
 	// which prevents KillDaemon from making HTTP requests to them.
 	if isLoopbackAddr("192.168.1.100:7373") {
-		t.Fatal("192.168.1.100:7373 should not be identified as loopback")
+		require.Condition(t, func() bool {
+			return false
+		}, "192.168.1.100:7373 should not be identified as loopback")
 	}
 
 	// Mock identifyProcess so we don't have to rely on actual OS PID behavior
@@ -195,7 +239,9 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 
 	// killProcess confirms the process is not roborev, so KillDaemon returns true
 	if !result {
-		t.Error("KillDaemon should return true for process confirmed not roborev")
+		assert.Condition(t, func() bool {
+			return false
+		}, "KillDaemon should return true for process confirmed not roborev")
 	}
 }
 
@@ -227,15 +273,21 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	// ListAllRuntimes should return the readable entry without error
 	runtimes, err := ListAllRuntimes()
 	if err != nil {
-		t.Fatalf("ListAllRuntimes should not error on unreadable files: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListAllRuntimes should not error on unreadable files: %v", err)
 	}
 
 	// Should have found the valid runtime
 	if len(runtimes) != 1 {
-		t.Fatalf("Expected exactly 1 runtime, got %d", len(runtimes))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected exactly 1 runtime, got %d", len(runtimes))
 	}
 	if runtimes[0].PID != math.MaxInt32 {
-		t.Errorf("Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
 	}
 }
 
@@ -247,7 +299,9 @@ func TestIdentifyProcessTriState(t *testing.T) {
 	result := identifyProcess(math.MaxInt32)
 	// Either unknown or not-roborev is acceptable for non-existent PID
 	if result == processIsRoborev {
-		t.Error("identifyProcess(math.MaxInt32) should not return processIsRoborev for non-existent PID")
+		assert.Condition(t, func() bool {
+			return false
+		}, "identifyProcess(math.MaxInt32) should not return processIsRoborev for non-existent PID")
 	}
 
 	// Current process is a test binary, not roborev daemon
@@ -255,7 +309,9 @@ func TestIdentifyProcessTriState(t *testing.T) {
 	currentPID := os.Getpid()
 	result = identifyProcess(currentPID)
 	if result == processIsRoborev {
-		t.Errorf("identifyProcess(%d) should not return processIsRoborev for test process", currentPID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "identifyProcess(%d) should not return processIsRoborev for test process", currentPID)
 	}
 	// On most systems we should be able to identify our own process
 	if result == processUnknown {
@@ -272,7 +328,9 @@ func TestKillProcessConservativeOnUnknown(t *testing.T) {
 	// This is safe because the process doesn't exist at all
 	result := killProcess(nonExistentPID)
 	if !result {
-		t.Error("killProcess should return true for non-existent PID")
+		assert.Condition(t, func() bool {
+			return false
+		}, "killProcess should return true for non-existent PID")
 	}
 }
 
@@ -289,7 +347,9 @@ func TestKillProcessUnknownIdentityIsConservative(t *testing.T) {
 	// when identity is unknown for a live process
 	result := killProcess(currentPID)
 	if result {
-		t.Error("killProcess should return false (conservative) when identity is unknown for live process")
+		assert.Condition(t, func() bool {
+			return false
+		}, "killProcess should return false (conservative) when identity is unknown for live process")
 	}
 }
 
@@ -323,7 +383,9 @@ func TestIsLoopbackAddr(t *testing.T) {
 		t.Run(tt.addr, func(t *testing.T) {
 			got := isLoopbackAddr(tt.addr)
 			if got != tt.want {
-				t.Errorf("isLoopbackAddr(%q) = %v, want %v", tt.addr, got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "isLoopbackAddr(%q) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
 	}
@@ -341,13 +403,19 @@ func TestProbeDaemonPrefersPing(t *testing.T) {
 
 	info, err := ProbeDaemon(addr, time.Second)
 	if err != nil {
-		t.Fatalf("ProbeDaemon failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ProbeDaemon failed: %v", err)
 	}
 	if info.Service != daemonServiceName {
-		t.Fatalf("ProbeDaemon service = %q, want %q", info.Service, daemonServiceName)
+		require.Condition(t, func() bool {
+			return false
+		}, "ProbeDaemon service = %q, want %q", info.Service, daemonServiceName)
 	}
 	if info.Version != "v-test" {
-		t.Fatalf("ProbeDaemon version = %q, want %q", info.Version, "v-test")
+		require.Condition(t, func() bool {
+			return false
+		}, "ProbeDaemon version = %q, want %q", info.Version, "v-test")
 	}
 }
 
@@ -362,10 +430,14 @@ func TestProbeDaemonFallsBackToLegacyStatus(t *testing.T) {
 
 	info, err := ProbeDaemon(addr, time.Second)
 	if err != nil {
-		t.Fatalf("ProbeDaemon legacy fallback failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ProbeDaemon legacy fallback failed: %v", err)
 	}
 	if info.Version != "v-legacy" {
-		t.Fatalf("ProbeDaemon version = %q, want %q", info.Version, "v-legacy")
+		require.Condition(t, func() bool {
+			return false
+		}, "ProbeDaemon version = %q, want %q", info.Version, "v-legacy")
 	}
 }
 
@@ -411,7 +483,9 @@ func TestIsDaemonAliveLegacyStatusCodes(t *testing.T) {
 			})
 			got := IsDaemonAlive(addr)
 			if got != tt.wantAlive {
-				t.Errorf("IsDaemonAlive with %d = %v, want %v", tt.statusCode, got, tt.wantAlive)
+				assert.Condition(t, func() bool {
+					return false
+				}, "IsDaemonAlive with %d = %v, want %v", tt.statusCode, got, tt.wantAlive)
 			}
 		})
 	}
@@ -423,7 +497,9 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	// Create a subdirectory with brackets (glob metacharacter)
 	dataDir := filepath.Join(tmpDir, "data[test]")
 	if err := os.Mkdir(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create test directory: %v", err)
 	}
 
 	// Set ROBOREV_DATA_DIR to the directory with metacharacters
@@ -435,13 +511,19 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	// ListAllRuntimes should work despite glob metacharacters in path
 	runtimes, err := ListAllRuntimes()
 	if err != nil {
-		t.Fatalf("ListAllRuntimes failed with glob metacharacters in path: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListAllRuntimes failed with glob metacharacters in path: %v", err)
 	}
 
 	if len(runtimes) != 1 {
-		t.Fatalf("Expected exactly 1 runtime, got %d", len(runtimes))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected exactly 1 runtime, got %d", len(runtimes))
 	}
 	if runtimes[0].PID != math.MaxInt32 {
-		t.Errorf("Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
 	}
 }

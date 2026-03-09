@@ -63,7 +63,9 @@ func mockEnqueue(
 		select {
 		case ch <- req:
 		default:
-			t.Errorf("mockEnqueue: unexpected extra enqueue request")
+			assert.Condition(t, func() bool {
+				return false
+			}, "mockEnqueue: unexpected extra enqueue request")
 			http.Error(w, "duplicate request", http.StatusConflict)
 			return
 		}
@@ -460,7 +462,9 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		assert.Condition(t, func() bool {
+			return false
+		}, "unexpected request %s %s", r.Method, r.URL.Path)
 	})
 
 	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")

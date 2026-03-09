@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentRegistry(t *testing.T) {
@@ -18,19 +21,13 @@ func TestAgentRegistry(t *testing.T) {
 	agents := expectedAgents
 	for _, name := range agents {
 		a, err := Get(name)
-		if err != nil {
-			t.Fatalf("Failed to get %s agent: %v", name, err)
-		}
-		if a.Name() != name {
-			t.Errorf("Expected name '%s', got '%s'", name, a.Name())
-		}
+		require.NoError(t, err, "Failed to get %s agent", name)
+		assert.Equal(t, name, a.Name())
 	}
 
 	// Check unknown agent
 	_, err := Get("unknown-agent")
-	if err == nil {
-		t.Error("Expected error for unknown agent")
-	}
+	require.Error(t, err)
 }
 
 func TestCanonicalNameAliases(t *testing.T) {
@@ -44,60 +41,40 @@ func TestCanonicalNameAliases(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := CanonicalName(tt.input); got != tt.want {
-			t.Errorf("CanonicalName(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		assert.Equal(t, tt.want, CanonicalName(tt.input), "CanonicalName(%q)", tt.input)
 	}
 }
 
 func TestGetSupportsAgentAlias(t *testing.T) {
 	a, err := Get("agent")
-	if err != nil {
-		t.Fatalf("Get(agent) returned error: %v", err)
-	}
-	if a.Name() != "cursor" {
-		t.Fatalf("Get(agent) resolved to %q, want %q", a.Name(), "cursor")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "cursor", a.Name())
 }
 
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
-	if len(agents) < len(expectedAgents) {
-		t.Errorf("Expected at least %d agents, got %d: %v", len(expectedAgents), len(agents), agents)
-	}
+	assert.GreaterOrEqual(t, len(agents), len(expectedAgents), "agents=%v", agents)
 
 	for _, name := range expectedAgents {
-		if !containsString(agents, name) {
-			t.Errorf("Expected %s in available agents", name)
-		}
+		assert.Contains(t, agents, name)
 	}
 }
 
 func TestSyncWriter(t *testing.T) {
 	t.Run("nil input returns nil", func(t *testing.T) {
 		sw := newSyncWriter(nil)
-		if sw != nil {
-			t.Error("expected nil for nil input")
-		}
+		assert.Nil(t, sw)
 	})
 
 	t.Run("wraps writer correctly", func(t *testing.T) {
 		var buf bytes.Buffer
 		sw := newSyncWriter(&buf)
-		if sw == nil {
-			t.Fatal("expected non-nil syncWriter")
-		}
+		require.NotNil(t, sw)
 
 		n, err := sw.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("expected 5 bytes written, got %d", n)
-		}
-		if buf.String() != "hello" {
-			t.Errorf("expected 'hello', got %q", buf.String())
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 5, n)
+		assert.Equal(t, "hello", buf.String())
 	})
 
 	t.Run("concurrent writes are safe", func(t *testing.T) {
@@ -114,9 +91,7 @@ func TestSyncWriter(t *testing.T) {
 		}
 		wg.Wait()
 
-		if buf.Len() != 100 {
-			t.Errorf("expected 100 bytes, got %d", buf.Len())
-		}
+		assert.Equal(t, 100, buf.Len())
 	})
 }
 
@@ -133,25 +108,16 @@ func TestTestAgentStreaming(t *testing.T) {
 
 		var buf bytes.Buffer
 		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", &buf)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if buf.String() != result {
-			t.Errorf("streamed output should match result\nstreamed: %q\nresult: %q", buf.String(), result)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, result, buf.String(), "streamed output should match result")
 	})
 
 	t.Run("nil output writer works", func(t *testing.T) {
 		agent := setup()
 
 		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == "" {
-			t.Error("expected non-empty result")
-		}
+		require.NoError(t, err)
+		assert.NotEmpty(t, result)
 	})
 
 	t.Run("returns write error", func(t *testing.T) {
@@ -159,12 +125,8 @@ func TestTestAgentStreaming(t *testing.T) {
 
 		errWriter := &FailingWriter{Err: errors.New("write failed")}
 		_, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", errWriter)
-		if err == nil {
-			t.Fatal("expected error from failing writer")
-		}
-		if !errors.Is(err, errWriter.Err) {
-			t.Errorf("expected wrapped write error, got: %v", err)
-		}
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errWriter.Err)
 	})
 }
 
@@ -184,9 +146,7 @@ func TestParseReasoningLevel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := ParseReasoningLevel(tt.input); got != tt.want {
-			t.Errorf("ParseReasoningLevel(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		assert.Equal(t, tt.want, ParseReasoningLevel(tt.input), "ParseReasoningLevel(%q)", tt.input)
 	}
 }
 
@@ -203,12 +163,8 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 	for _, tt := range tests {
 		a := NewCodexAgent("").WithReasoning(tt.level)
 		codex, ok := a.(*CodexAgent)
-		if !ok {
-			t.Fatalf("expected CodexAgent, got %T", a)
-		}
-		if got := codex.codexReasoningEffort(); got != tt.want {
-			t.Errorf("codexReasoningEffort(%q) = %q, want %q", tt.level, got, tt.want)
-		}
+		require.True(t, ok, "expected CodexAgent, got %T", a)
+		assert.Equal(t, tt.want, codex.codexReasoningEffort(), "codexReasoningEffort(%q)", tt.level)
 	}
 }
 
@@ -235,9 +191,7 @@ var agentFixtures = []agentTestDef{
 func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
 	t.Helper()
 	for token := range strings.FieldsSeq(cmdLine) {
-		if token == flag || strings.HasPrefix(token, flag+"=") {
-			t.Errorf("command line %q unexpectedly contained flag %q", cmdLine, flag)
-		}
+		assert.Condition(t, func() bool { return token != flag && !strings.HasPrefix(token, flag+"=") }, "command line %q unexpectedly contained flag %q", cmdLine, flag)
 	}
 }
 
@@ -318,23 +272,21 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	a := NewCodexAgent("").WithModel("o4-mini").WithReasoning(ReasoningThorough)
 	cmdLine := a.CommandLine()
 
-	if !strings.Contains(cmdLine, "-m o4-mini") {
-		t.Errorf("expected -m o4-mini in command line %q", cmdLine)
-	}
-	if !strings.Contains(cmdLine, `-c model_reasoning_effort="high"`) {
-		t.Errorf("expected reasoning effort config in command line %q", cmdLine)
-	}
+	assert.Contains(t, cmdLine, "-m o4-mini")
+	assert.Contains(t, cmdLine, `-c model_reasoning_effort="high"`)
 }
 
 func assertArgsContain(t *testing.T, cmdLine, flag, value string) {
 	t.Helper()
 	tokens := strings.Fields(cmdLine)
+	found := false
 	for i := 0; i < len(tokens)-1; i++ {
 		if tokens[i] == flag && tokens[i+1] == value {
-			return
+			found = true
+			break
 		}
 	}
-	t.Errorf("command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
+	assert.Condition(t, func() bool { return found }, "command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
 }
 
 func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
@@ -361,14 +313,10 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 
 			agent := tt.factory(mock.CmdPath).WithModel(tt.testModel)
 			_, err := agent.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
-			if err != nil {
-				t.Fatalf("Review failed: %v", err)
-			}
+			require.NoError(t, err)
 
 			argsBytes, err := os.ReadFile(mock.ArgsFile)
-			if err != nil {
-				t.Fatalf("read args file: %v", err)
-			}
+			require.NoError(t, err)
 			args := string(argsBytes)
 
 			assertArgsContain(t, args, tt.modelFlag, tt.testModel)
@@ -393,12 +341,8 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 
 func TestGetAvailableRejectsUnknownAgent(t *testing.T) {
 	_, err := GetAvailable("typo-agent")
-	if err == nil {
-		t.Fatal("Expected error for unknown agent name")
-	}
-	if !strings.Contains(err.Error(), "unknown agent") {
-		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown agent")
 }
 
 func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
@@ -411,9 +355,7 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 		binName += ".exe"
 	}
 	claudeBin := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("failed to create fake claude binary: %v", err)
-	}
+	require.NoError(t, os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
 	originalRegistry := registry
@@ -424,15 +366,8 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 	t.Cleanup(func() { registry = originalRegistry })
 
 	resolved, err := GetAvailable("codex")
-	if err != nil {
-		if strings.Contains(err.Error(), "unknown agent") {
-			t.Fatalf("Known agent should not produce unknown agent error: %v", err)
-		}
-		t.Fatalf("Expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("Expected fallback to 'claude-code', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", resolved.Name())
 }
 
 func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
@@ -446,9 +381,7 @@ func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
 			name += ".exe"
 		}
 		p := filepath.Join(fakeBin, name)
-		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatalf("create fake %s binary: %v", bin, err)
-		}
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	}
 	t.Setenv("PATH", fakeBin)
 
@@ -462,21 +395,13 @@ func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
 
 	// With backup, should pick gemini (not claude-code from chain)
 	resolved, err := GetAvailable("codex", "gemini")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "gemini" {
-		t.Fatalf("expected backup agent 'gemini', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "gemini", resolved.Name())
 
 	// Without backup, should still fall through to claude-code
 	resolved, err = GetAvailable("codex")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", resolved.Name())
 }
 
 func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
@@ -487,9 +412,7 @@ func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
 		binName += ".exe"
 	}
 	p := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("create fake binary: %v", err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
 	originalRegistry := registry
@@ -501,12 +424,8 @@ func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
 
 	// Backup same as preferred → skipped, falls through to chain
 	resolved, err := GetAvailable("codex", "codex", "")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", resolved.Name())
 }
 
 func TestGetAvailableBackupResolvesAliases(t *testing.T) {
@@ -517,9 +436,7 @@ func TestGetAvailableBackupResolvesAliases(t *testing.T) {
 		binName += ".exe"
 	}
 	p := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("create fake binary: %v", err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
 	originalRegistry := registry
@@ -530,12 +447,8 @@ func TestGetAvailableBackupResolvesAliases(t *testing.T) {
 	t.Cleanup(func() { registry = originalRegistry })
 
 	resolved, err := GetAvailable("codex", "claude")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("expected alias-resolved 'claude-code', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", resolved.Name())
 }
 
 func TestGetAvailableBackupUnavailableFallsToChain(t *testing.T) {
@@ -546,9 +459,7 @@ func TestGetAvailableBackupUnavailableFallsToChain(t *testing.T) {
 		binName += ".exe"
 	}
 	p := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("create fake binary: %v", err)
-	}
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
 	originalRegistry := registry
@@ -561,10 +472,6 @@ func TestGetAvailableBackupUnavailableFallsToChain(t *testing.T) {
 
 	// Backup gemini is registered but unavailable → falls to chain
 	resolved, err := GetAvailable("codex", "gemini")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	if resolved.Name() != "claude-code" {
-		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", resolved.Name())
 }

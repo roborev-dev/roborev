@@ -139,9 +139,7 @@ func TestACPWrapperScripts(t *testing.T) {
 			"PATH":                basePath,
 		})
 		require.Error(t, err, "expected unsupported adapter to fail")
-		if err == nil {
-			t.Fatalf("expected unsupported adapter to fail, stdout=%q stderr=%q", stdout, stderr)
-		}
+		assert.NotEmpty(t, stdout+stderr)
 		assert.Contains(t, stderr, "unsupported ACP adapter", "expected unsupported adapter error message")
 	})
 }

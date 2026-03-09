@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParsePiJSON(t *testing.T) {
@@ -16,12 +19,8 @@ func TestParsePiJSON(t *testing.T) {
 	}, "\n") + "\n"
 
 	result, err := parsePiJSON(strings.NewReader(input))
-	if err != nil {
-		t.Fatalf("parsePiJSON: %v", err)
-	}
-	if result != "Hello\nWorld" {
-		t.Fatalf("parsePiJSON() = %q, want %q", result, "Hello\nWorld")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Hello\nWorld", result)
 }
 
 func TestParsePiJSONLargeMessage(t *testing.T) {
@@ -29,12 +28,8 @@ func TestParsePiJSONLargeMessage(t *testing.T) {
 	input := `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}` + "\n"
 
 	result, err := parsePiJSON(strings.NewReader(input))
-	if err != nil {
-		t.Fatalf("parsePiJSON with >64KB line: %v", err)
-	}
-	if result != bigText {
-		t.Fatalf("result length = %d, want %d", len(result), len(bigText))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, bigText, result)
 }
 
 func TestResolvePiSessionPath(t *testing.T) {
@@ -43,16 +38,9 @@ func TestResolvePiSessionPath(t *testing.T) {
 
 	sessionID := "46109439-3160-40f0-81e7-7dfa4f3647b3"
 	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
-	if err := os.MkdirAll(filepath.Dir(sessionPath), 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	if got := resolvePiSessionPath(sessionID); got != sessionPath {
-		t.Fatalf("resolvePiSessionPath() = %q, want %q", got, sessionPath)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(sessionPath), 0o755))
+	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o644))
+	assert.Equal(t, sessionPath, resolvePiSessionPath(sessionID))
 }
 
 func TestPiReviewSessionFlag(t *testing.T) {
@@ -63,12 +51,8 @@ func TestPiReviewSessionFlag(t *testing.T) {
 
 	sessionID := "46109439-3160-40f0-81e7-7dfa4f3647b3"
 	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
-	if err := os.MkdirAll(filepath.Dir(sessionPath), 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(sessionPath), 0o755))
+	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o644))
 
 	mock := mockAgentCLI(t, MockCLIOpts{
 		CaptureArgs: true,
@@ -80,12 +64,8 @@ func TestPiReviewSessionFlag(t *testing.T) {
 
 	a := NewPiAgent(mock.CmdPath).WithSessionID(sessionID).(*PiAgent)
 	result, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
-	if result != "ok" {
-		t.Fatalf("Review() = %q, want %q", result, "ok")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
 
 	args := readMockArgs(t, mock.ArgsFile)
 	assertContainsArg(t, args, "--session")

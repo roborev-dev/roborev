@@ -432,17 +432,23 @@ func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {
 		cmd := initCmd()
 		cmd.SetArgs([]string{"--no-daemon", "--agent", "codex"})
 		if err := cmd.Execute(); err != nil {
-			t.Fatalf("init failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "init failed: %v", err)
 		}
 	})
 
 	if !strings.Contains(output, "Created ") || !strings.Contains(output, ".roborev.toml") {
-		t.Fatalf("init output missing repo config creation message:\n%s", output)
+		require.Condition(t, func() bool {
+			return false
+		}, "init output missing repo config creation message:\n%s", output)
 	}
 
 	data, err := os.ReadFile(filepath.Join(repo.Root, ".roborev.toml"))
 	if err != nil {
-		t.Fatalf("read repo config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "read repo config: %v", err)
 	}
 	got := string(data)
 	for _, want := range []string{
@@ -450,7 +456,9 @@ func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {
 		"agent = 'codex'",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("repo config missing %q:\n%s", want, got)
+			require.Condition(t, func() bool {
+				return false
+			}, "repo config missing %q:\n%s", want, got)
 		}
 	}
 }

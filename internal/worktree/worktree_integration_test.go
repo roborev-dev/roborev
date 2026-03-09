@@ -3,13 +3,14 @@
 package worktree_test
 
 import (
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/roborev-dev/roborev/internal/worktree"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/roborev-dev/roborev/internal/testutil"
-	"github.com/roborev-dev/roborev/internal/worktree"
 )
 
 func TestWorktreeCleanupBetweenIterations(t *testing.T) {
@@ -25,19 +26,25 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	for i := range 3 {
 		wt, err := worktree.Create(repo.Root, "HEAD")
 		if err != nil {
-			t.Fatalf("iteration %d: worktree.Create failed: %v", i, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "iteration %d: worktree.Create failed: %v", i, err)
 		}
 
 		// Verify previous worktree was cleaned up
 		if prevPath != "" {
 			if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-				t.Fatalf("iteration %d: previous worktree %s still exists after cleanup", i, prevPath)
+				require.Condition(t, func() bool {
+					return false
+				}, "iteration %d: previous worktree %s still exists after cleanup", i, prevPath)
 			}
 		}
 
 		// Verify current worktree exists
 		if _, err := os.Stat(wt.Dir); err != nil {
-			t.Fatalf("iteration %d: worktree %s should exist: %v", i, wt.Dir, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "iteration %d: worktree %s should exist: %v", i, wt.Dir, err)
 		}
 
 		// Simulate the explicit cleanup call (as done on error/no-change paths)
@@ -47,7 +54,9 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 
 	// Verify the last worktree was also cleaned up
 	if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-		t.Fatalf("last worktree %s still exists after cleanup", prevPath)
+		require.Condition(t, func() bool {
+			return false
+		}, "last worktree %s still exists after cleanup", prevPath)
 	}
 }
 
@@ -74,22 +83,30 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 	// worktree.Create should succeed because it suppresses hooks
 	wt, err := worktree.Create(repo.Root, "HEAD")
 	if err != nil {
-		t.Fatalf("worktree.Create should succeed with failing hook: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "worktree.Create should succeed with failing hook: %v", err)
 	}
 	defer wt.Close()
 
 	// Verify the worktree directory exists and has the file from the repo
 	if _, err := os.Stat(wt.Dir); err != nil {
-		t.Fatalf("worktree directory should exist: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "worktree directory should exist: %v", err)
 	}
 
 	baseFile := filepath.Join(wt.Dir, "base.txt")
 	content, err := os.ReadFile(baseFile)
 	if err != nil {
-		t.Fatalf("expected base.txt in worktree: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected base.txt in worktree: %v", err)
 	}
 	if string(content) != "base" {
-		t.Errorf("expected content 'base', got %q", string(content))
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected content 'base', got %q", string(content))
 	}
 }
 
@@ -112,11 +129,15 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 
 	wt, err := worktree.Create(mainRepo.Root, "HEAD")
 	if err != nil {
-		t.Fatalf("worktree.Create failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "worktree.Create failed: %v", err)
 	}
 	defer wt.Close()
 
 	if _, err := os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt")); err != nil {
-		t.Fatalf("expected submodule file in worktree: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected submodule file in worktree: %v", err)
 	}
 }

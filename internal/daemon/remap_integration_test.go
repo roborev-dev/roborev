@@ -4,15 +4,17 @@ package daemon
 
 import (
 	"encoding/json"
+
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	gitpkg "github.com/roborev-dev/roborev/internal/git"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 type remapContext struct {
@@ -39,13 +41,17 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 
 	dbRepo, err := ctx.db.GetOrCreateRepo(ctx.repo.Path())
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo: %v", err)
 	}
 
 	ctx.oldSHA = ctx.repo.HeadSHA()
 	ctx.patchID = gitpkg.GetPatchID(ctx.repo.Path(), ctx.oldSHA)
 	if ctx.patchID == "" {
-		t.Fatal("expected non-empty patch-id for feature commit")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected non-empty patch-id for feature commit")
 	}
 
 	// Create commit record
@@ -53,7 +59,9 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 		dbRepo.ID, ctx.oldSHA, "Test", "setup message", time.Now(),
 	)
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit: %v", err)
 	}
 
 	// Enqueue job
@@ -65,17 +73,24 @@ func (ctx *remapContext) seedCompletedReview(t *testing.T) {
 		PatchID:  ctx.patchID,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Claim and complete job
+		}, "EnqueueJob: %v", err)
 	}
 
-	// Claim and complete job
 	_, err = ctx.db.ClaimJob("worker-int")
 	if err != nil {
-		t.Fatalf("ClaimJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob: %v", err)
 	}
 	err = ctx.db.CompleteJob(job.ID, "test", "prompt", "LGTM - no issues found")
 	if err != nil {
-		t.Fatalf("CompleteJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob: %v", err)
 	}
 
 	ctx.jobID = job.ID
@@ -90,7 +105,9 @@ func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapRe
 
 	info, err := gitpkg.GetCommitInfo(ctx.repo.Path(), newSHA)
 	if err != nil {
-		t.Fatalf("GetCommitInfo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetCommitInfo: %v", err)
 	}
 
 	// POST /api/remap
@@ -112,12 +129,16 @@ func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapRe
 	ctx.server.handleRemap(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var result remapResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	return result
 }
@@ -126,10 +147,14 @@ func assertJobUpdated(t *testing.T, db *storage.DB, jobID int64, expectedSHA str
 	t.Helper()
 	updatedJob, err := db.GetJobByID(jobID)
 	if err != nil {
-		t.Fatalf("GetJobByID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID: %v", err)
 	}
 	if updatedJob.GitRef != expectedSHA {
-		t.Errorf("expected git_ref=%s, got %s", expectedSHA, updatedJob.GitRef)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected git_ref=%s, got %s", expectedSHA, updatedJob.GitRef)
 	}
 }
 
@@ -137,13 +162,19 @@ func assertReviewReachable(t *testing.T, db *storage.DB, newSHA string) {
 	t.Helper()
 	review, err := db.GetReviewByCommitSHA(newSHA)
 	if err != nil {
-		t.Fatalf("GetReviewByCommitSHA(%s): %v", newSHA, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetReviewByCommitSHA(%s): %v", newSHA, err)
 	}
 	if review == nil {
-		t.Fatal("review should be reachable via new SHA after remap")
+		require.Condition(t, func() bool {
+			return false
+		}, "review should be reachable via new SHA after remap")
 	}
 	if !strings.Contains(review.Output, "LGTM") {
-		t.Errorf("unexpected review output: %s", review.Output)
+		assert.Condition(t, func() bool {
+			return false
+		}, "unexpected review output: %s", review.Output)
 	}
 }
 
@@ -175,19 +206,25 @@ func TestRemapAfterRebase(t *testing.T) {
 	newSHA := fixture.repo.HeadSHA()
 
 	if fixture.oldSHA == newSHA {
-		t.Fatal("SHAs should differ after rebase")
+		require.Condition(t, func() bool {
+			return false
+		}, "SHAs should differ after rebase")
 	}
 
 	newPatchID := gitpkg.GetPatchID(fixture.repo.Path(), newSHA)
 	if fixture.patchID != newPatchID {
-		t.Fatalf("patch-ids should match after clean rebase: %s != %s",
+		require.Condition(t, func() bool {
+			return false
+		}, "patch-ids should match after clean rebase: %s != %s",
 			fixture.patchID, newPatchID)
 	}
 
 	// Act
 	response := executeRemapRequest(t, fixture, newSHA)
 	if response.Remapped != 1 {
-		t.Fatalf("expected remapped=1, got %d", response.Remapped)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected remapped=1, got %d", response.Remapped)
 	}
 
 	// Assert
@@ -210,19 +247,25 @@ func TestRemapAfterAmendMessageOnly(t *testing.T) {
 	newSHA := fixture.repo.HeadSHA()
 
 	if fixture.oldSHA == newSHA {
-		t.Fatal("SHAs should differ after amend")
+		require.Condition(t, func() bool {
+			return false
+		}, "SHAs should differ after amend")
 	}
 
 	newPatchID := gitpkg.GetPatchID(fixture.repo.Path(), newSHA)
 	if fixture.patchID != newPatchID {
-		t.Fatalf("patch-ids should match for message-only amend: %s != %s",
+		require.Condition(t, func() bool {
+			return false
+		}, "patch-ids should match for message-only amend: %s != %s",
 			fixture.patchID, newPatchID)
 	}
 
 	// Act
 	response := executeRemapRequest(t, fixture, newSHA)
 	if response.Remapped != 1 {
-		t.Fatalf("expected remapped=1, got %d", response.Remapped)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected remapped=1, got %d", response.Remapped)
 	}
 
 	// Assert
@@ -232,6 +275,8 @@ func TestRemapAfterAmendMessageOnly(t *testing.T) {
 	// Old SHA should no longer find the review
 	oldReview, err := fixture.db.GetReviewByCommitSHA(fixture.oldSHA)
 	if err == nil && oldReview != nil {
-		t.Error("old SHA should not find the review after remap")
+		assert.Condition(t, func() bool {
+			return false
+		}, "old SHA should not find the review after remap")
 	}
 }

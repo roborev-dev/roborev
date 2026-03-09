@@ -2,31 +2,33 @@ package config
 
 import (
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
+	assert.Condition(t, func() bool {
+		return cfg.ServerAddr == "127.0.0.1:7373"
+	}, "Expected ServerAddr '127.0.0.1:7373', got '%s'", cfg.ServerAddr)
+	assert.Condition(t, func() bool {
+		return cfg.MaxWorkers == 4
+	}, "Expected MaxWorkers 4, got %d", cfg.MaxWorkers)
+	assert.Condition(t, func() bool {
+		return cfg.DefaultAgent == "codex"
+	}, "Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
+	assert.Condition(t, func() bool {
+		return cfg.MouseEnabled
+	}, "Expected MouseEnabled to default to true")
 
-	if cfg.ServerAddr != "127.0.0.1:7373" {
-		t.Errorf("Expected ServerAddr '127.0.0.1:7373', got '%s'", cfg.ServerAddr)
-	}
-	if cfg.MaxWorkers != 4 {
-		t.Errorf("Expected MaxWorkers 4, got %d", cfg.MaxWorkers)
-	}
-	if cfg.DefaultAgent != "codex" {
-		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
-	}
-	if !cfg.MouseEnabled {
-		t.Error("Expected MouseEnabled to default to true")
-	}
 }
 
 func TestDataDir(t *testing.T) {
@@ -37,7 +39,9 @@ func TestDataDir(t *testing.T) {
 		home, _ := os.UserHomeDir()
 		expected := filepath.Join(home, ".roborev")
 		if dir != expected {
-			t.Errorf("Expected %s, got %s", expected, dir)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %s, got %s", expected, dir)
 		}
 	})
 
@@ -46,7 +50,9 @@ func TestDataDir(t *testing.T) {
 
 		dir := DataDir()
 		if dir != "/custom/data/dir" {
-			t.Errorf("Expected /custom/data/dir, got %s", dir)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected /custom/data/dir, got %s", dir)
 		}
 	})
 
@@ -57,7 +63,9 @@ func TestDataDir(t *testing.T) {
 		path := GlobalConfigPath()
 		expected := filepath.Join(testDir, "config.toml")
 		if path != expected {
-			t.Errorf("Expected %s, got %s", expected, path)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %s, got %s", expected, path)
 		}
 	})
 }
@@ -68,29 +76,30 @@ func TestResolveAgent(t *testing.T) {
 
 	// Test explicit agent takes precedence
 	agent := ResolveAgent("claude-code", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code', got '%s'", agent)
-	}
+	assert.Condition(t, func() bool {
+		return agent == "claude-code"
+	}, "Expected 'claude-code', got '%s'", agent)
 
 	// Test empty explicit falls back to global config
 	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (from global), got '%s'", agent)
-	}
+	assert.Condition(t, func() bool {
+		return agent == "codex"
+	}, "Expected 'codex' (from global), got '%s'", agent)
 
 	// Test per-repo config
 	writeRepoConfigStr(t, tmpDir, `agent = "claude-code"`)
 
 	agent = ResolveAgent("", tmpDir, cfg)
-	if agent != "claude-code" {
-		t.Errorf("Expected 'claude-code' (from repo config), got '%s'", agent)
-	}
+	assert.Condition(t, func() bool {
+		return agent == "claude-code"
+	}, "Expected 'claude-code' (from repo config), got '%s'", agent)
 
 	// Explicit still takes precedence over repo config
 	agent = ResolveAgent("codex", tmpDir, cfg)
-	if agent != "codex" {
-		t.Errorf("Expected 'codex' (explicit), got '%s'", agent)
-	}
+	assert.Condition(t, func() bool {
+		return agent == "codex"
+	}, "Expected 'codex' (explicit), got '%s'", agent)
+
 }
 
 func TestSaveAndLoadGlobal(t *testing.T) {
@@ -101,21 +110,21 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	cfg.MaxWorkers = 8
 
 	err := SaveGlobal(cfg)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "SaveGlobal failed: %v", err)
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return loaded.DefaultAgent == "claude-code"
+	}, "Expected DefaultAgent 'claude-code', got '%s'", loaded.DefaultAgent)
+	assert.Condition(t, func() bool {
+		return loaded.MaxWorkers == 8
+	}, "Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
 
-	if loaded.DefaultAgent != "claude-code" {
-		t.Errorf("Expected DefaultAgent 'claude-code', got '%s'", loaded.DefaultAgent)
-	}
-	if loaded.MaxWorkers != 8 {
-		t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
-	}
 }
 
 func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
@@ -123,36 +132,42 @@ func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.AutoFilterBranch = true
+	{
 
-	if err := SaveGlobal(cfg); err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+		err := SaveGlobal(cfg)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "SaveGlobal failed: %v", err)
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return loaded.AutoFilterBranch
+	}, "AutoFilterBranch should be true after round-trip")
 
-	if !loaded.AutoFilterBranch {
-		t.Error("AutoFilterBranch should be true after round-trip")
-	}
 }
 
 func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
+	{
+		err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "write config: %v", err)
 	}
 
 	cfg, err := LoadGlobalFrom(path)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobalFrom failed: %v", err)
+	assert.Condition(t, func() bool {
+		return cfg.AutoFilterBranch
+	}, "AutoFilterBranch should be true when loaded from TOML")
 
-	if !cfg.AutoFilterBranch {
-		t.Error("AutoFilterBranch should be true when loaded from TOML")
-	}
 }
 
 func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
@@ -160,36 +175,42 @@ func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.MouseEnabled = false
+	{
 
-	if err := SaveGlobal(cfg); err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+		err := SaveGlobal(cfg)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "SaveGlobal failed: %v", err)
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return !loaded.MouseEnabled
+	}, "MouseEnabled should be false after round-trip")
 
-	if loaded.MouseEnabled {
-		t.Error("MouseEnabled should be false after round-trip")
-	}
 }
 
 func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
+	{
+		err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "write config: %v", err)
 	}
 
 	cfg, err := LoadGlobalFrom(path)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobalFrom failed: %v", err)
+	assert.Condition(t, func() bool {
+		return !cfg.MouseEnabled
+	}, "MouseEnabled should be false when loaded from TOML")
 
-	if cfg.MouseEnabled {
-		t.Error("MouseEnabled should be false when loaded from TOML")
-	}
 }
 
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
@@ -203,42 +224,38 @@ All public APIs must have documentation comments.
 `)
 
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadRepoConfig failed: %v", err)
+	require.Condition(t, func() bool {
+		return cfg != nil
+	}, "Expected non-nil config")
+	assert.Condition(t, func() bool {
+		return cfg.Agent == "claude-code"
+	}, "Expected agent 'claude-code', got '%s'", cfg.Agent)
+	assert.Condition(t, func() bool {
+		return strings.Contains(cfg.ReviewGuidelines, "database migrations")
+	}, "Expected guidelines to contain 'database migrations', got '%s'", cfg.ReviewGuidelines)
+	assert.Condition(t, func() bool {
+		return strings.Contains(cfg.ReviewGuidelines, "composition over inheritance")
+	}, "Expected guidelines to contain 'composition over inheritance'")
 
-	if cfg == nil {
-		t.Fatal("Expected non-nil config")
-	}
-
-	if cfg.Agent != "claude-code" {
-		t.Errorf("Expected agent 'claude-code', got '%s'", cfg.Agent)
-	}
-
-	if !strings.Contains(cfg.ReviewGuidelines, "database migrations") {
-		t.Errorf("Expected guidelines to contain 'database migrations', got '%s'", cfg.ReviewGuidelines)
-	}
-
-	if !strings.Contains(cfg.ReviewGuidelines, "composition over inheritance") {
-		t.Errorf("Expected guidelines to contain 'composition over inheritance'")
-	}
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `agent = "codex"`)
 
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadRepoConfig failed: %v", err)
+	require.Condition(t, func() bool {
+		return cfg != nil
+	}, "Expected non-nil config")
+	assert.Condition(t, func() bool {
+		return cfg.ReviewGuidelines == ""
+	}, "Expected empty guidelines, got '%s'", cfg.ReviewGuidelines)
 
-	if cfg == nil {
-		t.Fatal("Expected non-nil config")
-	}
-
-	if cfg.ReviewGuidelines != "" {
-		t.Errorf("Expected empty guidelines, got '%s'", cfg.ReviewGuidelines)
-	}
 }
 
 func TestLoadRepoConfigMissing(t *testing.T) {
@@ -246,13 +263,13 @@ func TestLoadRepoConfigMissing(t *testing.T) {
 
 	// Test loading from directory with no config file
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadRepoConfig failed: %v", err)
+	assert.Condition(t, func() bool {
+		return cfg == nil
+	}, "Expected nil config when file doesn't exist")
 
-	if cfg != nil {
-		t.Error("Expected nil config when file doesn't exist")
-	}
 }
 
 func TestResolveJobTimeout(t *testing.T) {
@@ -318,7 +335,9 @@ func TestResolveJobTimeout(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveJobTimeout(tmpDir, tt.globalConfig)
 			if got != tt.want {
-				t.Errorf("ResolveJobTimeout() = %v, want %v", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolveJobTimeout() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -349,10 +368,14 @@ func TestResolveReasoning(t *testing.T) {
 					tmpDir := newTempRepo(t, tt.repoConfig)
 					got, err := fn(tt.explicit, tmpDir)
 					if (err != nil) != tt.wantErr {
-						t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
+						assert.Condition(t, func() bool {
+							return false
+						}, "error = %v, wantErr %v", err, tt.wantErr)
 					}
 					if !tt.wantErr && got != tt.want {
-						t.Errorf("got %q, want %q", got, tt.want)
+						assert.Condition(t, func() bool {
+							return false
+						}, "got %q, want %q", got, tt.want)
 					}
 				})
 			}
@@ -375,22 +398,23 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 	})
 
 	reasoning, err := ResolveFixReasoning("", tmpDir)
-	if err != nil {
-		t.Fatalf("ResolveFixReasoning: %v", err)
-	}
-	if reasoning != "standard" {
-		t.Fatalf("expected default reasoning 'standard', got %q", reasoning)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "ResolveFixReasoning: %v", err)
+	require.Condition(t, func() bool {
+		return reasoning == "standard"
+	}, "expected default reasoning 'standard', got %q", reasoning)
 
 	agent := ResolveAgentForWorkflow("", tmpDir, nil, "fix", reasoning)
-	if agent != "claude" {
-		t.Errorf("expected fix_agent_standard 'claude', got %q", agent)
-	}
+	assert.Condition(t, func() bool {
+		return agent == "claude"
+	}, "expected fix_agent_standard 'claude', got %q", agent)
 
 	model := ResolveModelForWorkflow("", tmpDir, nil, "fix", reasoning)
-	if model != "" {
-		t.Errorf("expected empty model (none configured), got %q", model)
-	}
+	assert.Condition(t, func() bool {
+		return model == ""
+	}, "expected empty model (none configured), got %q", model)
+
 }
 
 func TestIsBranchExcluded(t *testing.T) {
@@ -462,7 +486,9 @@ func TestIsBranchExcluded(t *testing.T) {
 
 			got := IsBranchExcluded(tmpDir, tt.branch)
 			if got != tt.want {
-				t.Errorf("IsBranchExcluded(%q) = %v, want %v", tt.branch, got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "IsBranchExcluded(%q) = %v, want %v", tt.branch, got, tt.want)
 			}
 		})
 	}
@@ -529,7 +555,9 @@ func TestIsCommitMessageExcluded(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := IsCommitMessageExcluded(tmpDir, tt.message)
 			if got != tt.want {
-				t.Errorf("IsCommitMessageExcluded(%q) = %v, want %v", tt.message, got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "IsCommitMessageExcluded(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
 	}
@@ -583,10 +611,11 @@ func TestAllCommitMessagesExcluded(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := AllCommitMessagesExcluded(tmpDir, tt.messages)
 			if got != tt.want {
-				t.Errorf(
-					"AllCommitMessagesExcluded() = %v, want %v",
-					got, tt.want,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "AllCommitMessagesExcluded() = %v, want %v",
+					got, tt.want)
+
 			}
 		})
 	}
@@ -596,14 +625,18 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	t.Run("empty URL returns empty", func(t *testing.T) {
 		cfg := SyncConfig{}
 		if got := cfg.PostgresURLExpanded(); got != "" {
-			t.Errorf("Expected empty string, got %q", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty string, got %q", got)
 		}
 	})
 
 	t.Run("URL without env vars unchanged", func(t *testing.T) {
 		cfg := SyncConfig{PostgresURL: "postgres://user:pass@localhost:5432/db"}
 		if got := cfg.PostgresURLExpanded(); got != cfg.PostgresURL {
-			t.Errorf("Expected %q, got %q", cfg.PostgresURL, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got %q", cfg.PostgresURL, got)
 		}
 	})
 
@@ -613,7 +646,9 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 		cfg := SyncConfig{PostgresURL: "postgres://user:${TEST_PG_PASS}@localhost:5432/db"}
 		expected := "postgres://user:secret123@localhost:5432/db"
 		if got := cfg.PostgresURLExpanded(); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got %q", expected, got)
 		}
 	})
 
@@ -622,7 +657,9 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
 		expected := "postgres://user:@localhost:5432/db"
 		if got := cfg.PostgresURLExpanded(); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got %q", expected, got)
 		}
 	})
 }
@@ -631,14 +668,18 @@ func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 	t.Run("nil receiver returns empty", func(t *testing.T) {
 		var cfg *SyncConfig
 		if got := cfg.GetRepoDisplayName("any"); got != "" {
-			t.Errorf("Expected empty string for nil receiver, got %q", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty string for nil receiver, got %q", got)
 		}
 	})
 
 	t.Run("nil map returns empty", func(t *testing.T) {
 		cfg := &SyncConfig{}
 		if got := cfg.GetRepoDisplayName("any"); got != "" {
-			t.Errorf("Expected empty string for nil map, got %q", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty string for nil map, got %q", got)
 		}
 	})
 
@@ -649,7 +690,9 @@ func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 			},
 		}
 		if got := cfg.GetRepoDisplayName("unknown"); got != "" {
-			t.Errorf("Expected empty string for missing key, got %q", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty string for missing key, got %q", got)
 		}
 	})
 
@@ -661,7 +704,9 @@ func TestSyncConfigGetRepoDisplayName(t *testing.T) {
 		}
 		expected := "my-custom-name"
 		if got := cfg.GetRepoDisplayName("git@github.com:org/repo.git"); got != expected {
-			t.Errorf("Expected %q, got %q", expected, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got %q", expected, got)
 		}
 	})
 }
@@ -671,7 +716,9 @@ func TestSyncConfigValidate(t *testing.T) {
 		cfg := SyncConfig{Enabled: false}
 		warnings := cfg.Validate()
 		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings when disabled, got %v", warnings)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no warnings when disabled, got %v", warnings)
 		}
 	})
 
@@ -679,10 +726,14 @@ func TestSyncConfigValidate(t *testing.T) {
 		cfg := SyncConfig{Enabled: true, PostgresURL: ""}
 		warnings := cfg.Validate()
 		if len(warnings) != 1 {
-			t.Errorf("Expected 1 warning, got %d", len(warnings))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 warning, got %d", len(warnings))
 		}
 		if !strings.Contains(warnings[0], "postgres_url is not set") {
-			t.Errorf("Expected warning about missing URL, got %q", warnings[0])
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected warning about missing URL, got %q", warnings[0])
 		}
 	})
 
@@ -693,7 +744,9 @@ func TestSyncConfigValidate(t *testing.T) {
 		}
 		warnings := cfg.Validate()
 		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings for valid config, got %v", warnings)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no warnings for valid config, got %v", warnings)
 		}
 	})
 
@@ -705,10 +758,14 @@ func TestSyncConfigValidate(t *testing.T) {
 		}
 		warnings := cfg.Validate()
 		if len(warnings) != 1 {
-			t.Errorf("Expected 1 warning for unexpanded var, got %d: %v", len(warnings), warnings)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 warning for unexpanded var, got %d: %v", len(warnings), warnings)
 		}
 		if !strings.Contains(warnings[0], "unexpanded") {
-			t.Errorf("Expected warning about unexpanded vars, got %q", warnings[0])
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected warning about unexpanded vars, got %q", warnings[0])
 		}
 	})
 
@@ -721,7 +778,9 @@ func TestSyncConfigValidate(t *testing.T) {
 		}
 		warnings := cfg.Validate()
 		if len(warnings) != 0 {
-			t.Errorf("Expected no warnings when env var is set, got %v", warnings)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no warnings when env var is set, got %v", warnings)
 		}
 	})
 }
@@ -729,7 +788,8 @@ func TestSyncConfigValidate(t *testing.T) {
 func TestLoadGlobalWithSyncConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	{
+		err := os.WriteFile(configPath, []byte(`
 default_agent = "codex"
 
 [sync]
@@ -738,30 +798,32 @@ postgres_url = "postgres://roborev:pass@localhost:5432/roborev"
 interval = "10m"
 machine_name = "test-machine"
 connect_timeout = "10s"
-`), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
+`), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "Failed to write config: %v", err)
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobalFrom failed: %v", err)
+	assert.Condition(t, func() bool {
+		return cfg.Sync.Enabled
+	}, "Expected Sync.Enabled to be true")
+	assert.Condition(t, func() bool {
+		return cfg.Sync.PostgresURL == "postgres://roborev:pass@localhost:5432/roborev"
+	}, "Unexpected PostgresURL: %s", cfg.Sync.PostgresURL)
+	assert.Condition(t, func() bool {
+		return cfg.Sync.Interval == "10m"
+	}, "Expected Interval '10m', got '%s'", cfg.Sync.Interval)
+	assert.Condition(t, func() bool {
+		return cfg.Sync.MachineName == "test-machine"
+	}, "Expected MachineName 'test-machine', got '%s'", cfg.Sync.MachineName)
+	assert.Condition(t, func() bool {
+		return cfg.Sync.ConnectTimeout == "10s"
+	}, "Expected ConnectTimeout '10s', got '%s'", cfg.Sync.ConnectTimeout)
 
-	if !cfg.Sync.Enabled {
-		t.Error("Expected Sync.Enabled to be true")
-	}
-	if cfg.Sync.PostgresURL != "postgres://roborev:pass@localhost:5432/roborev" {
-		t.Errorf("Unexpected PostgresURL: %s", cfg.Sync.PostgresURL)
-	}
-	if cfg.Sync.Interval != "10m" {
-		t.Errorf("Expected Interval '10m', got '%s'", cfg.Sync.Interval)
-	}
-	if cfg.Sync.MachineName != "test-machine" {
-		t.Errorf("Expected MachineName 'test-machine', got '%s'", cfg.Sync.MachineName)
-	}
-	if cfg.Sync.ConnectTimeout != "10s" {
-		t.Errorf("Expected ConnectTimeout '10s', got '%s'", cfg.Sync.ConnectTimeout)
-	}
 }
 
 func TestGetDisplayName(t *testing.T) {
@@ -769,7 +831,9 @@ func TestGetDisplayName(t *testing.T) {
 		tmpDir := t.TempDir()
 		name := GetDisplayName(tmpDir)
 		if name != "" {
-			t.Errorf("Expected empty display name when no config file, got '%s'", name)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty display name when no config file, got '%s'", name)
 		}
 	})
 
@@ -777,7 +841,9 @@ func TestGetDisplayName(t *testing.T) {
 		tmpDir := newTempRepo(t, `agent = "codex"`)
 		name := GetDisplayName(tmpDir)
 		if name != "" {
-			t.Errorf("Expected empty display name when not set, got '%s'", name)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty display name when not set, got '%s'", name)
 		}
 	})
 
@@ -785,7 +851,9 @@ func TestGetDisplayName(t *testing.T) {
 		tmpDir := newTempRepo(t, `display_name = "My Cool Project"`)
 		name := GetDisplayName(tmpDir)
 		if name != "My Cool Project" {
-			t.Errorf("Expected display name 'My Cool Project', got '%s'", name)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected display name 'My Cool Project', got '%s'", name)
 		}
 	})
 
@@ -797,7 +865,9 @@ excluded_branches = ["wip"]
 `)
 		name := GetDisplayName(tmpDir)
 		if name != "Backend Service" {
-			t.Errorf("Expected display name 'Backend Service', got '%s'", name)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected display name 'Backend Service', got '%s'", name)
 		}
 	})
 }
@@ -832,7 +902,9 @@ func TestValidateRoborevID(t *testing.T) {
 			errMsg := ValidateRoborevID(tt.id)
 			gotErr := errMsg != ""
 			if gotErr != tt.wantErr {
-				t.Errorf("ValidateRoborevID(%q) error = %q, wantErr = %v", tt.id, errMsg, tt.wantErr)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ValidateRoborevID(%q) error = %q, wantErr = %v", tt.id, errMsg, tt.wantErr)
 			}
 		})
 	}
@@ -843,66 +915,94 @@ func TestReadRoborevID(t *testing.T) {
 		tmpDir := t.TempDir()
 		id, err := ReadRoborevID(tmpDir)
 		if err != nil {
-			t.Errorf("Expected no error for missing file, got: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no error for missing file, got: %v", err)
 		}
 		if id != "" {
-			t.Errorf("Expected empty ID for missing file, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty ID for missing file, got: %q", id)
 		}
 	})
 
 	t.Run("valid file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
 		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Unexpected error: %v", err)
 		}
 		if id != "my-project" {
-			t.Errorf("Expected 'my-project', got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'my-project', got: %q", id)
 		}
 	})
 
 	t.Run("valid file with whitespace", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
 		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Unexpected error: %v", err)
 		}
 		if id != "my-project" {
-			t.Errorf("Expected 'my-project', got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'my-project', got: %q", id)
 		}
 	})
 
 	t.Run("invalid file content", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
 		if err == nil {
-			t.Error("Expected error for invalid content")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error for invalid content")
 		}
 		if id != "" {
-			t.Errorf("Expected empty ID on error, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty ID on error, got: %q", id)
 		}
 	})
 
 	t.Run("empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		id, err := ReadRoborevID(tmpDir)
 		if err == nil {
-			t.Error("Expected error for empty file")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error for empty file")
 		}
 		if id != "" {
-			t.Errorf("Expected empty ID on error, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty ID on error, got: %q", id)
 		}
 	})
 }
@@ -911,7 +1011,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("uses roborev-id when present", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 
 		mockRemote := func(repoPath, remoteName string) string {
@@ -920,7 +1022,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		if id != "my-custom-id" {
-			t.Errorf("Expected 'my-custom-id', got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'my-custom-id', got: %q", id)
 		}
 	})
 
@@ -933,7 +1037,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		if id != "https://github.com/user/repo.git" {
-			t.Errorf("Expected git remote URL, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected git remote URL, got: %q", id)
 		}
 	})
 
@@ -947,7 +1053,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		expected := "local://" + tmpDir
 		if id != expected {
-			t.Errorf("Expected %q, got: %q", expected, id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got: %q", expected, id)
 		}
 	})
 
@@ -961,7 +1069,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 		// With nil getRemoteURL, should use git.GetRemoteURL and find the remote
 		id := ResolveRepoIdentity(tmpDir, nil)
 		if id != "https://github.com/test/repo.git" {
-			t.Errorf("Expected 'https://github.com/test/repo.git', got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'https://github.com/test/repo.git', got: %q", id)
 		}
 	})
 
@@ -972,7 +1082,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 		id := ResolveRepoIdentity(tmpDir, nil)
 		expected := "local://" + tmpDir
 		if id != expected {
-			t.Errorf("Expected %q, got: %q", expected, id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected %q, got: %q", expected, id)
 		}
 	})
 
@@ -980,7 +1092,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 		tmpDir := t.TempDir()
 		// Write invalid content (starts with dot)
 		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 
 		mockRemote := func(repoPath, remoteName string) string {
@@ -989,7 +1103,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		if id != "https://github.com/user/repo.git" {
-			t.Errorf("Expected git remote URL when roborev-id is invalid, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected git remote URL when roborev-id is invalid, got: %q", id)
 		}
 	})
 
@@ -1002,7 +1118,9 @@ func TestResolveRepoIdentity(t *testing.T) {
 
 		id := ResolveRepoIdentity(tmpDir, mockRemote)
 		if id != "https://github.com/org/repo.git" {
-			t.Errorf("Expected credentials stripped from URL, got: %q", id)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected credentials stripped from URL, got: %q", id)
 		}
 	})
 }
@@ -1091,7 +1209,9 @@ func TestResolveModel(t *testing.T) {
 			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveModel(tt.explicit, tmpDir, tt.globalConfig)
 			if got != tt.want {
-				t.Errorf("ResolveModel() = %q, want %q", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolveModel() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1102,7 +1222,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		tmpDir := t.TempDir()
 		size := ResolveMaxPromptSize(tmpDir, nil)
 		if size != DefaultMaxPromptSize {
-			t.Errorf("Expected default %d, got %d", DefaultMaxPromptSize, size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected default %d, got %d", DefaultMaxPromptSize, size)
 		}
 	})
 
@@ -1111,7 +1233,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 0}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != DefaultMaxPromptSize {
-			t.Errorf("Expected default %d when global is 0, got %d", DefaultMaxPromptSize, size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected default %d when global is 0, got %d", DefaultMaxPromptSize, size)
 		}
 	})
 
@@ -1120,7 +1244,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global config, got %d", size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 500KB from global config, got %d", size)
 		}
 	})
 
@@ -1129,7 +1255,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 300000 {
-			t.Errorf("Expected 300000 from repo config, got %d", size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 300000 from repo config, got %d", size)
 		}
 	})
 
@@ -1138,7 +1266,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global (repo is 0), got %d", size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 500KB from global (repo is 0), got %d", size)
 		}
 	})
 
@@ -1147,7 +1277,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 600 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 600*1024 {
-			t.Errorf("Expected 600KB from global (repo has no max_prompt_size), got %d", size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 600KB from global (repo has no max_prompt_size), got %d", size)
 		}
 	})
 
@@ -1156,7 +1288,9 @@ func TestResolveMaxPromptSize(t *testing.T) {
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 500*1024 {
-			t.Errorf("Expected 500KB from global (repo config malformed), got %d", size)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 500KB from global (repo config malformed), got %d", size)
 		}
 	})
 }
@@ -1235,7 +1369,9 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 			writeRepoConfig(t, tmpDir, tt.repo)
 			got := ResolveAgentForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
 			if got != tt.expect {
-				t.Errorf("got %q, want %q", got, tt.expect)
+				assert.Condition(t, func() bool {
+					return false
+				}, "got %q, want %q", got, tt.expect)
 			}
 		})
 	}
@@ -1292,7 +1428,9 @@ func TestResolveModelForWorkflow(t *testing.T) {
 			writeRepoConfig(t, tmpDir, tt.repo)
 			got := ResolveModelForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
 			if got != tt.expect {
-				t.Errorf("got %q, want %q", got, tt.expect)
+				assert.Condition(t, func() bool {
+					return false
+				}, "got %q, want %q", got, tt.expect)
 			}
 		})
 	}
@@ -1383,7 +1521,9 @@ func TestResolveWorkflowModel(t *testing.T) {
 			writeRepoConfig(t, tmpDir, tt.repo)
 			got := ResolveWorkflowModel(tmpDir, tt.global, tt.workflow, tt.level)
 			if got != tt.expect {
-				t.Errorf("got %q, want %q", got, tt.expect)
+				assert.Condition(t, func() bool {
+					return false
+				}, "got %q, want %q", got, tt.expect)
 			}
 		})
 	}
@@ -1450,7 +1590,9 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 			result := ResolveBackupAgentForWorkflow(repoDir, tt.global, tt.workflow)
 
 			if result != tt.expect {
-				t.Errorf("ResolveBackupAgentForWorkflow(%q, global, %q) = %q, want %q",
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolveBackupAgentForWorkflow(%q, global, %q) = %q, want %q",
 					repoDir, tt.workflow, result, tt.expect)
 			}
 		})
@@ -1508,7 +1650,9 @@ func TestResolveBackupModelForWorkflow(t *testing.T) {
 			}
 			result := ResolveBackupModelForWorkflow(repoDir, tt.global, tt.workflow)
 			if result != tt.expect {
-				t.Errorf("ResolveBackupModelForWorkflow(%q, global, %q) = %q, want %q",
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolveBackupModelForWorkflow(%q, global, %q) = %q, want %q",
 					repoDir, tt.workflow, result, tt.expect)
 			}
 		})
@@ -1520,7 +1664,9 @@ func TestResolvedReviewTypes(t *testing.T) {
 		ci := CIConfig{ReviewTypes: []string{"security", "review"}}
 		got := ci.ResolvedReviewTypes()
 		if len(got) != 2 || got[0] != "security" || got[1] != "review" {
-			t.Errorf("got %v, want [security review]", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v, want [security review]", got)
 		}
 	})
 
@@ -1528,7 +1674,9 @@ func TestResolvedReviewTypes(t *testing.T) {
 		ci := CIConfig{}
 		got := ci.ResolvedReviewTypes()
 		if len(got) != 1 || got[0] != "security" {
-			t.Errorf("got %v, want [security]", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v, want [security]", got)
 		}
 	})
 }
@@ -1538,7 +1686,9 @@ func TestResolvedAgents(t *testing.T) {
 		ci := CIConfig{Agents: []string{"codex", "gemini"}}
 		got := ci.ResolvedAgents()
 		if len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
-			t.Errorf("got %v, want [codex gemini]", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v, want [codex gemini]", got)
 		}
 	})
 
@@ -1546,7 +1696,9 @@ func TestResolvedAgents(t *testing.T) {
 		ci := CIConfig{}
 		got := ci.ResolvedAgents()
 		if len(got) != 1 || got[0] != "" {
-			t.Errorf("got %v, want [\"\"]", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v, want [\"\"]", got)
 		}
 	})
 }
@@ -1569,7 +1721,9 @@ func TestResolvedMaxRepos(t *testing.T) {
 			ci := CIConfig{MaxRepos: tt.maxRepos}
 			got := ci.ResolvedMaxRepos()
 			if got != tt.want {
-				t.Errorf("ResolvedMaxRepos() = %d, want %d", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolvedMaxRepos() = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -1586,25 +1740,37 @@ repos = ["myorg/*", "other/repo"]
 exclude_repos = ["myorg/archived-*", "myorg/internal-*"]
 max_repos = 50
 `), 0644); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 
 		cfg, err := LoadGlobalFrom(configPath)
 		if err != nil {
-			t.Fatalf("LoadGlobalFrom: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "LoadGlobalFrom: %v", err)
 		}
 
 		if len(cfg.CI.Repos) != 2 {
-			t.Errorf("got %d repos, want 2", len(cfg.CI.Repos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d repos, want 2", len(cfg.CI.Repos))
 		}
 		if len(cfg.CI.ExcludeRepos) != 2 {
-			t.Errorf("got %d exclude_repos, want 2", len(cfg.CI.ExcludeRepos))
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d exclude_repos, want 2", len(cfg.CI.ExcludeRepos))
 		}
 		if cfg.CI.MaxRepos != 50 {
-			t.Errorf("got max_repos %d, want 50", cfg.CI.MaxRepos)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got max_repos %d, want 50", cfg.CI.MaxRepos)
 		}
 		if cfg.CI.ResolvedMaxRepos() != 50 {
-			t.Errorf("ResolvedMaxRepos() = %d, want 50", cfg.CI.ResolvedMaxRepos())
+			assert.Condition(t, func() bool {
+				return false
+			}, "ResolvedMaxRepos() = %d, want 50", cfg.CI.ResolvedMaxRepos())
 		}
 	})
 }
@@ -1631,10 +1797,14 @@ func TestNormalizeMinSeverity(t *testing.T) {
 		t.Run("input_"+tt.input, func(t *testing.T) {
 			got, err := NormalizeMinSeverity(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("NormalizeMinSeverity(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+				require.Condition(t, func() bool {
+					return false
+				}, "NormalizeMinSeverity(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
 			}
 			if got != tt.want {
-				t.Errorf("NormalizeMinSeverity(%q) = %q, want %q", tt.input, got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "NormalizeMinSeverity(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -1652,16 +1822,24 @@ reasoning = "standard"
 `)
 		cfg, err := LoadRepoConfig(tmpDir)
 		if err != nil {
-			t.Fatalf("LoadRepoConfig: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "LoadRepoConfig: %v", err)
 		}
 		if len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != "claude" {
-			t.Errorf("got agents %v, want [gemini claude]", cfg.CI.Agents)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got agents %v, want [gemini claude]", cfg.CI.Agents)
 		}
 		if len(cfg.CI.ReviewTypes) != 2 || cfg.CI.ReviewTypes[0] != "security" || cfg.CI.ReviewTypes[1] != "review" {
-			t.Errorf("got review_types %v, want [security review]", cfg.CI.ReviewTypes)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got review_types %v, want [security review]", cfg.CI.ReviewTypes)
 		}
 		if cfg.CI.Reasoning != "standard" {
-			t.Errorf("got reasoning %q, want %q", cfg.CI.Reasoning, "standard")
+			assert.Condition(t, func() bool {
+				return false
+			}, "got reasoning %q, want %q", cfg.CI.Reasoning, "standard")
 		}
 	})
 
@@ -1669,16 +1847,24 @@ reasoning = "standard"
 		tmpDir := newTempRepo(t, `agent = "codex"`)
 		cfg, err := LoadRepoConfig(tmpDir)
 		if err != nil {
-			t.Fatalf("LoadRepoConfig: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "LoadRepoConfig: %v", err)
 		}
 		if len(cfg.CI.Agents) != 0 {
-			t.Errorf("got agents %v, want empty", cfg.CI.Agents)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got agents %v, want empty", cfg.CI.Agents)
 		}
 		if len(cfg.CI.ReviewTypes) != 0 {
-			t.Errorf("got review_types %v, want empty", cfg.CI.ReviewTypes)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got review_types %v, want empty", cfg.CI.ReviewTypes)
 		}
 		if cfg.CI.Reasoning != "" {
-			t.Errorf("got reasoning %q, want empty", cfg.CI.Reasoning)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got reasoning %q, want empty", cfg.CI.Reasoning)
 		}
 	})
 }
@@ -1693,10 +1879,14 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallationID: 999999,
 		}}
 		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 111111", got)
 		}
 		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
-			t.Errorf("got %d, want 222222", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 222222", got)
 		}
 	})
 
@@ -1706,14 +1896,18 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallationID: 999999,
 		}}
 		if got := ci.InstallationIDForOwner("unknown-org"); got != 999999 {
-			t.Errorf("got %d, want 999999", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 999999", got)
 		}
 	})
 
 	t.Run("zero when unset", func(t *testing.T) {
 		ci := CIConfig{}
 		if got := ci.InstallationIDForOwner("wesm"); got != 0 {
-			t.Errorf("got %d, want 0", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 0", got)
 		}
 	})
 
@@ -1723,7 +1917,9 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallationID: 999999,
 		}}
 		if got := ci.InstallationIDForOwner("wesm"); got != 999999 {
-			t.Errorf("got %d, want 999999 (fallback to singular)", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 999999 (fallback to singular)", got)
 		}
 	})
 
@@ -1732,16 +1928,24 @@ func TestInstallationIDForOwner(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "NormalizeInstallations: %v", err)
 		}
 		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 111111", got)
 		}
 		if got := ci.InstallationIDForOwner("WESM"); got != 111111 {
-			t.Errorf("got %d, want 111111", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 111111", got)
 		}
 		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
-			t.Errorf("got %d, want 222222", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %d, want 222222", got)
 		}
 	})
 }
@@ -1752,23 +1956,33 @@ func TestNormalizeInstallations(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "NormalizeInstallations: %v", err)
 		}
 		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
-			t.Error("expected lowercase key 'wesm' after normalization")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected lowercase key 'wesm' after normalization")
 		}
 		if _, ok := ci.GitHubAppInstallations["roborev-dev"]; !ok {
-			t.Error("expected lowercase key 'roborev-dev' after normalization")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected lowercase key 'roborev-dev' after normalization")
 		}
 		if _, ok := ci.GitHubAppInstallations["Wesm"]; ok {
-			t.Error("original mixed-case key 'Wesm' should not exist after normalization")
+			assert.Condition(t, func() bool {
+				return false
+			}, "original mixed-case key 'Wesm' should not exist after normalization")
 		}
 	})
 
 	t.Run("noop on nil map", func(t *testing.T) {
 		ci := CIConfig{}
 		if err := ci.NormalizeInstallations(); err != nil {
-			t.Fatalf("NormalizeInstallations on nil map: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "NormalizeInstallations on nil map: %v", err)
 		}
 	})
 
@@ -1778,10 +1992,14 @@ func TestNormalizeInstallations(t *testing.T) {
 		}}
 		err := ci.NormalizeInstallations()
 		if err == nil {
-			t.Fatal("expected error for case-colliding keys")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected error for case-colliding keys")
 		}
 		if !strings.Contains(err.Error(), "case-colliding") {
-			t.Errorf("expected case-colliding error, got: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected case-colliding error, got: %v", err)
 		}
 	})
 }
@@ -1789,7 +2007,8 @@ func TestNormalizeInstallations(t *testing.T) {
 func TestLoadGlobalFrom_NormalizesInstallations(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	{
+		err := os.WriteFile(configPath, []byte(`
 [ci]
 github_app_id = 12345
 github_app_private_key = "~/.roborev/app.pem"
@@ -1797,21 +2016,31 @@ github_app_private_key = "~/.roborev/app.pem"
 [ci.github_app_installations]
 Wesm = 111111
 RoboRev-Dev = 222222
-`), 0644); err != nil {
-		t.Fatal(err)
+`), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, err)
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom: %v", err)
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobalFrom: %v", err)
+	{
+
+		got := cfg.CI.InstallationIDForOwner("wesm")
+		assert.Condition(t, func() bool {
+			return got == 111111
+		}, "got %d, want 111111 for normalized 'wesm'", got)
+	}
+	{
+
+		got := cfg.CI.InstallationIDForOwner("roborev-dev")
+		assert.Condition(t, func() bool {
+			return got == 222222
+		}, "got %d, want 222222 for normalized 'roborev-dev'", got)
 	}
 
-	if got := cfg.CI.InstallationIDForOwner("wesm"); got != 111111 {
-		t.Errorf("got %d, want 111111 for normalized 'wesm'", got)
-	}
-	if got := cfg.CI.InstallationIDForOwner("roborev-dev"); got != 222222 {
-		t.Errorf("got %d, want 222222 for normalized 'roborev-dev'", got)
-	}
 }
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
@@ -1822,7 +2051,9 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppInstallations: map[string]int64{"wesm": 111111},
 		}}
 		if !ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == true with map only")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected GitHubAppConfigured() == true with map only")
 		}
 	})
 
@@ -1833,7 +2064,9 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppInstallationID: 111111,
 		}}
 		if !ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == true with singular only")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected GitHubAppConfigured() == true with singular only")
 		}
 	})
 
@@ -1843,7 +2076,9 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppPrivateKey: "~/.roborev/app.pem",
 		}}
 		if ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == false without any installation ID")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected GitHubAppConfigured() == false without any installation ID")
 		}
 	})
 
@@ -1853,7 +2088,9 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 			GitHubAppInstallationID: 111111,
 		}}
 		if ci.GitHubAppConfigured() {
-			t.Error("expected GitHubAppConfigured() == false without private key")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected GitHubAppConfigured() == false without private key")
 		}
 	})
 }
@@ -1863,18 +2100,25 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	dir := t.TempDir()
 	pemFile := filepath.Join(dir, "test.pem")
 	pemContent := "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----"
-	if err := os.WriteFile(pemFile, []byte(pemContent), 0600); err != nil {
-		t.Fatal(err)
+	{
+		err := os.WriteFile(pemFile, []byte(pemContent), 0600)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, err)
 	}
 
 	t.Run("inline PEM returned directly", func(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemContent}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		if got != pemContent {
-			t.Errorf("got %q, want inline PEM", got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %q, want inline PEM", got)
 		}
 	})
 
@@ -1882,10 +2126,14 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemFile}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		if got != pemContent {
-			t.Errorf("got %q, want %q", got, pemContent)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %q, want %q", got, pemContent)
 		}
 	})
 
@@ -1897,19 +2145,27 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 
 		fakePem := filepath.Join(fakeHome, ".roborev", "test.pem")
 		if err := os.MkdirAll(filepath.Dir(fakePem), 0700); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		if err := os.WriteFile(fakePem, []byte(pemContent), 0600); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
-			t.Fatalf("tilde expansion failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "tilde expansion failed: %v", err)
 		}
 		if got != pemContent {
-			t.Errorf("got %q, want %q", got, pemContent)
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %q, want %q", got, pemContent)
 		}
 	})
 
@@ -1917,7 +2173,9 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: ""}}
 		_, err := ci.GitHubAppPrivateKeyResolved()
 		if err == nil {
-			t.Error("expected error for empty key")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected error for empty key")
 		}
 	})
 }
@@ -1974,7 +2232,9 @@ func TestStripURLCredentials(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := stripURLCredentials(tt.input)
 			if result != tt.expected {
-				t.Errorf("stripURLCredentials(%q) = %q, want %q", tt.input, result, tt.expected)
+				assert.Condition(t, func() bool {
+					return false
+				}, "stripURLCredentials(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -1986,33 +2246,34 @@ func TestHideClosedDefaultPersistence(t *testing.T) {
 	// Test saving hide_closed_by_default as true
 	cfg := &Config{HideClosedByDefault: true}
 	err := SaveGlobal(cfg)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "SaveGlobal failed: %v", err)
 
 	// Load and verify it persisted
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if !loaded.HideClosedByDefault {
-		t.Error("Expected HideClosedByDefault to be true")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return loaded.HideClosedByDefault
+	}, "Expected HideClosedByDefault to be true")
 
 	// Toggle to false and verify
 	loaded.HideClosedByDefault = false
 	err = SaveGlobal(loaded)
-	if err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "SaveGlobal failed: %v", err)
 
 	reloaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if reloaded.HideClosedByDefault {
-		t.Error("Expected HideClosedByDefault to be false")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return !reloaded.HideClosedByDefault
+	}, "Expected HideClosedByDefault to be false")
+
 }
 
 func TestAdvancedTasksEnabledPersistence(t *testing.T) {
@@ -2020,30 +2281,37 @@ func TestAdvancedTasksEnabledPersistence(t *testing.T) {
 
 	cfg := &Config{}
 	cfg.Advanced.TasksEnabled = true
-	if err := SaveGlobal(cfg); err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+	{
+		err := SaveGlobal(cfg)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "SaveGlobal failed: %v", err)
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if !loaded.Advanced.TasksEnabled {
-		t.Error("Expected Advanced.TasksEnabled to be true")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return loaded.Advanced.TasksEnabled
+	}, "Expected Advanced.TasksEnabled to be true")
 
 	loaded.Advanced.TasksEnabled = false
-	if err := SaveGlobal(loaded); err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+	{
+		err := SaveGlobal(loaded)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "SaveGlobal failed: %v", err)
 	}
 
 	reloaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if reloaded.Advanced.TasksEnabled {
-		t.Error("Expected Advanced.TasksEnabled to be false")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return !reloaded.Advanced.TasksEnabled
+	}, "Expected Advanced.TasksEnabled to be false")
+
 }
 
 func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
@@ -2054,15 +2322,19 @@ func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
 	cfg.HideClosedByDefault = true
 	cfg.MouseEnabled = false
 	cfg.Advanced.TasksEnabled = true
+	{
 
-	if err := SaveGlobal(cfg); err != nil {
-		t.Fatalf("SaveGlobal failed: %v", err)
+		err := SaveGlobal(cfg)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "SaveGlobal failed: %v", err)
 	}
 
 	data, err := os.ReadFile(GlobalConfigPath())
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "ReadFile failed: %v", err)
+
 	got := string(data)
 
 	for _, want := range []string{
@@ -2072,9 +2344,10 @@ func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
 		"[advanced]\n# Enable the advanced Tasks workflow in the TUI.\ntasks_enabled = true",
 		"max_workers = 4",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("saved config missing documented setting %q:\n%s", want, got)
-		}
+		require.Condition(t, func() bool {
+			return strings.Contains(got, want)
+		}, "saved config missing documented setting %q:\n%s", want, got)
+
 	}
 }
 
@@ -2083,24 +2356,32 @@ func TestHideAddressedDeprecatedMigration(t *testing.T) {
 
 	// Write a config using the deprecated hide_addressed_by_default key
 	cfgPath := GlobalConfigPath()
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(cfgPath), 0755)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "mkdir failed: %v", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+	{
+
+		err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "WriteFile failed: %v", err)
 	}
 
 	// Load should migrate to HideClosedByDefault
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if !loaded.HideClosedByDefault {
-		t.Error("Expected deprecated hide_addressed_by_default to migrate to HideClosedByDefault")
-	}
-	if loaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be cleared after migration")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return loaded.HideClosedByDefault
+	}, "Expected deprecated hide_addressed_by_default to migrate to HideClosedByDefault")
+	assert.Condition(t, func() bool {
+		return !loaded.HideAddressedByDefault
+	}, "Expected HideAddressedByDefault to be cleared after migration")
+
 }
 
 func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
@@ -2108,38 +2389,48 @@ func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
 
 	// Both deprecated and new key set — explicit new key should win
 	cfgPath := GlobalConfigPath()
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	{
+		err := os.MkdirAll(filepath.Dir(cfgPath), 0755)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "mkdir failed: %v", err)
 	}
+
 	content := "hide_addressed_by_default = true\nhide_closed_by_default = false\n"
-	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+	{
+		err := os.WriteFile(cfgPath, []byte(content), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, "WriteFile failed: %v", err)
 	}
 
 	loaded, err := LoadGlobal()
-	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
-	}
-	if loaded.HideClosedByDefault {
-		t.Error("Deprecated key should not override explicit hide_closed_by_default = false")
-	}
-	if loaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be cleared after migration")
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobal failed: %v", err)
+	assert.Condition(t, func() bool {
+		return !loaded.HideClosedByDefault
+	}, "Deprecated key should not override explicit hide_closed_by_default = false")
+	assert.Condition(t, func() bool {
+		return !loaded.HideAddressedByDefault
+	}, "Expected HideAddressedByDefault to be cleared after migration")
+
 }
 
 func TestIsDefaultReviewType(t *testing.T) {
 	defaults := []string{"", "default", "general", "review"}
 	for _, rt := range defaults {
-		if !IsDefaultReviewType(rt) {
-			t.Errorf("expected %q to be default review type", rt)
-		}
+		assert.Condition(t, func() bool {
+			return IsDefaultReviewType(rt)
+		}, "expected %q to be default review type", rt)
+
 	}
 	nonDefaults := []string{"security", "design", "bogus"}
 	for _, rt := range nonDefaults {
-		if IsDefaultReviewType(rt) {
-			t.Errorf("expected %q to NOT be default review type", rt)
-		}
+		assert.Condition(t, func() bool {
+			return !IsDefaultReviewType(rt)
+		}, "expected %q to NOT be default review type", rt)
+
 	}
 }
 
@@ -2162,23 +2453,25 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 	t.Run("loads config from ref", func(t *testing.T) {
 		cfg, err := LoadRepoConfigFromRef(dir, sha)
 		if err != nil {
-			t.Fatalf("LoadRepoConfigFromRef: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "LoadRepoConfigFromRef: %v", err)
 		}
-		if cfg == nil {
-			t.Fatal("expected non-nil config")
-		}
-		if cfg.ReviewGuidelines != "Use descriptive variable names." {
-			t.Errorf("got %q", cfg.ReviewGuidelines)
-		}
+		require.NotNil(t, cfg, "expected non-nil config")
+		assert.Equal(t, "Use descriptive variable names.", cfg.ReviewGuidelines, "got review guidelines")
 	})
 
 	t.Run("returns nil for nonexistent ref", func(t *testing.T) {
 		cfg, err := LoadRepoConfigFromRef(dir, "0000000000000000000000000000000000000000")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if cfg != nil {
-			t.Error("expected nil config for nonexistent ref")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected nil config for nonexistent ref")
 		}
 	})
 
@@ -2190,10 +2483,14 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 
 		cfg, err := LoadRepoConfigFromRef(dir, headSHA)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if cfg != nil {
-			t.Error("expected nil config when file removed from ref")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected nil config when file removed from ref")
 		}
 	})
 }
@@ -2251,20 +2548,27 @@ func TestValidateReviewTypes(t *testing.T) {
 			got, err := ValidateReviewTypes(tt.input)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("expected error")
+					require.Condition(t, func() bool {
+						return false
+					}, "expected error")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "unexpected error: %v", err)
 			}
 			if len(got) != len(tt.want) {
-				t.Fatalf("got %v, want %v", got, tt.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "got %v, want %v", got, tt.want)
 			}
 			for i := range got {
 				if got[i] != tt.want[i] {
-					t.Errorf(
-						"got[%d] = %q, want %q",
+					assert.Condition(t, func() bool {
+						return false
+					}, "got[%d] = %q, want %q",
 						i, got[i], tt.want[i])
 				}
 			}
@@ -2280,7 +2584,9 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 4 {
-			t.Fatalf("got %d entries, want 4", len(matrix))
+			require.Condition(t, func() bool {
+				return false
+			}, "got %d entries, want 4", len(matrix))
 		}
 		// Cross-product: reviewTypes outer, agents inner
 		want := []AgentReviewType{
@@ -2291,10 +2597,11 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		}
 		for i, got := range matrix {
 			if got != want[i] {
-				t.Errorf(
-					"matrix[%d] = %v, want %v",
-					i, got, want[i],
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "matrix[%d] = %v, want %v",
+					i, got, want[i])
+
 			}
 		}
 	})
@@ -2311,7 +2618,9 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 3 {
-			t.Fatalf("got %d entries, want 3", len(matrix))
+			require.Condition(t, func() bool {
+				return false
+			}, "got %d entries, want 3", len(matrix))
 		}
 		// Sort for deterministic comparison (map iteration order)
 		sort.Slice(matrix, func(i, j int) bool {
@@ -2327,10 +2636,11 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		}
 		for i, got := range matrix {
 			if got != want[i] {
-				t.Errorf(
-					"matrix[%d] = %v, want %v",
-					i, got, want[i],
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "matrix[%d] = %v, want %v",
+					i, got, want[i])
+
 			}
 		}
 	})
@@ -2340,10 +2650,14 @@ func TestResolvedReviewMatrix(t *testing.T) {
 		matrix := ci.ResolvedReviewMatrix()
 		// Default: [""] x ["security"]
 		if len(matrix) != 1 {
-			t.Fatalf("got %d entries, want 1", len(matrix))
+			require.Condition(t, func() bool {
+				return false
+			}, "got %d entries, want 1", len(matrix))
 		}
 		if matrix[0].Agent != "" || matrix[0].ReviewType != "security" {
-			t.Errorf("got %v, want {\"\" security}", matrix[0])
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v, want {\"\" security}", matrix[0])
 		}
 	})
 }
@@ -2355,7 +2669,9 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 			ReviewTypes: []string{"security"},
 		}
 		if matrix := ci.ResolvedReviewMatrix(); matrix != nil {
-			t.Errorf("expected nil, got %v", matrix)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected nil, got %v", matrix)
 		}
 	})
 
@@ -2367,11 +2683,15 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if len(matrix) != 1 {
-			t.Fatalf("got %d entries, want 1", len(matrix))
+			require.Condition(t, func() bool {
+				return false
+			}, "got %d entries, want 1", len(matrix))
 		}
 		if matrix[0].Agent != "codex" ||
 			matrix[0].ReviewType != "security" {
-			t.Errorf("got %v", matrix[0])
+			assert.Condition(t, func() bool {
+				return false
+			}, "got %v", matrix[0])
 		}
 	})
 
@@ -2381,10 +2701,14 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if matrix == nil {
-			t.Fatal("expected non-nil empty slice, got nil")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected non-nil empty slice, got nil")
 		}
 		if len(matrix) != 0 {
-			t.Errorf("expected 0 entries, got %d", len(matrix))
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 0 entries, got %d", len(matrix))
 		}
 	})
 
@@ -2394,10 +2718,14 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 		}
 		matrix := ci.ResolvedReviewMatrix()
 		if matrix == nil {
-			t.Fatal("expected non-nil empty slice, got nil")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected non-nil empty slice, got nil")
 		}
 		if len(matrix) != 0 {
-			t.Errorf("expected 0 entries, got %d", len(matrix))
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 0 entries, got %d", len(matrix))
 		}
 	})
 }
@@ -2425,7 +2753,9 @@ func TestResolvePostCommitReview(t *testing.T) {
 			}
 			got := ResolvePostCommitReview(dir)
 			if got != tt.want {
-				t.Errorf("ResolvePostCommitReview() = %q, want %q", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolvePostCommitReview() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -2472,7 +2802,9 @@ func TestResolveReuseReviewSession(t *testing.T) {
 				writeRepoConfigStr(t, dir, tt.repo)
 			}
 			if got := ResolveReuseReviewSession(dir, tt.global); got != tt.want {
-				t.Fatalf("ResolveReuseReviewSession() = %v, want %v", got, tt.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "ResolveReuseReviewSession() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -2522,7 +2854,9 @@ func TestResolveReuseReviewSessionLookback(t *testing.T) {
 				writeRepoConfigStr(t, dir, tt.repo)
 			}
 			if got := ResolveReuseReviewSessionLookback(dir, tt.global); got != tt.want {
-				t.Fatalf("ResolveReuseReviewSessionLookback() = %d, want %d", got, tt.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "ResolveReuseReviewSessionLookback() = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -2546,10 +2880,11 @@ func TestResolvedThrottleInterval(t *testing.T) {
 			ci := CIConfig{ThrottleInterval: tt.value}
 			got := ci.ResolvedThrottleInterval()
 			if got != tt.want {
-				t.Errorf(
-					"ResolvedThrottleInterval() = %v, want %v",
-					got, tt.want,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ResolvedThrottleInterval() = %v, want %v",
+					got, tt.want)
+
 			}
 		})
 	}
@@ -2558,7 +2893,8 @@ func TestResolvedThrottleInterval(t *testing.T) {
 func TestCIConfigReviewsFieldParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	{
+		err := os.WriteFile(configPath, []byte(`
 [ci]
 enabled = true
 throttle_interval = "30m"
@@ -2566,33 +2902,32 @@ throttle_interval = "30m"
 [ci.reviews]
 codex = ["security", "default"]
 gemini = ["default"]
-`), 0644); err != nil {
-		t.Fatal(err)
+`), 0644)
+		require.Condition(t, func() bool {
+			return err == nil
+		}, err)
 	}
 
 	cfg, err := LoadGlobalFrom(configPath)
-	if err != nil {
-		t.Fatalf("LoadGlobalFrom: %v", err)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadGlobalFrom: %v", err)
+	assert.Condition(t, func() bool {
+		return cfg.CI.ThrottleInterval == "30m"
+	}, "got throttle_interval %q, want %q",
+		cfg.CI.ThrottleInterval, "30m")
+	require.Condition(t, func() bool {
+		return len(cfg.CI.Reviews) == 2
+	}, "got %d review entries, want 2",
+		len(cfg.CI.Reviews))
 
-	if cfg.CI.ThrottleInterval != "30m" {
-		t.Errorf(
-			"got throttle_interval %q, want %q",
-			cfg.CI.ThrottleInterval, "30m",
-		)
-	}
-	if len(cfg.CI.Reviews) != 2 {
-		t.Fatalf(
-			"got %d review entries, want 2",
-			len(cfg.CI.Reviews),
-		)
-	}
 	codexTypes := cfg.CI.Reviews["codex"]
-	if len(codexTypes) != 2 ||
-		codexTypes[0] != "security" ||
-		codexTypes[1] != "default" {
-		t.Errorf("got codex types %v", codexTypes)
-	}
+	assert.Condition(t, func() bool {
+		return len(codexTypes) == 2 &&
+			codexTypes[0] == "security" &&
+			codexTypes[1] == "default"
+	}, "got codex types %v", codexTypes)
+
 }
 
 func TestIsThrottleBypassed(t *testing.T) {
@@ -2616,10 +2951,11 @@ func TestIsThrottleBypassed(t *testing.T) {
 		t.Run(tt.login, func(t *testing.T) {
 			got := ci.IsThrottleBypassed(tt.login)
 			if got != tt.want {
-				t.Errorf(
-					"IsThrottleBypassed(%q) = %v, want %v",
-					tt.login, got, tt.want,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "IsThrottleBypassed(%q) = %v, want %v",
+					tt.login, got, tt.want)
+
 			}
 		})
 	}
@@ -2627,7 +2963,9 @@ func TestIsThrottleBypassed(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		empty := CIConfig{}
 		if empty.IsThrottleBypassed("wesm") {
-			t.Error("expected false for empty bypass list")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected false for empty bypass list")
 		}
 	})
 }
@@ -2644,15 +2982,14 @@ codex = ["security"]
 gemini = ["default"]
 `)
 	cfg, err := LoadRepoConfig(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadRepoConfig: %v", err)
-	}
-	if len(cfg.CI.Reviews) != 2 {
-		t.Fatalf(
-			"got %d review entries, want 2",
-			len(cfg.CI.Reviews),
-		)
-	}
+	require.Condition(t, func() bool {
+		return err == nil
+	}, "LoadRepoConfig: %v", err)
+	require.Condition(t, func() bool {
+		return len(cfg.CI.Reviews) == 2
+	}, "got %d review entries, want 2",
+		len(cfg.CI.Reviews))
+
 }
 
 func TestResolveMinSeverity(t *testing.T) {
@@ -2707,13 +3044,16 @@ func TestResolveMinSeverity(t *testing.T) {
 					tmpDir := newTempRepo(t, tt.repoConfig)
 					got, err := fn(tt.explicit, tmpDir)
 					if (err != nil) != tt.wantErr {
-						t.Errorf(
-							"error = %v, wantErr %v",
-							err, tt.wantErr,
-						)
+						assert.Condition(t, func() bool {
+							return false
+						}, "error = %v, wantErr %v",
+							err, tt.wantErr)
+
 					}
 					if !tt.wantErr && got != tt.want {
-						t.Errorf("got %q, want %q", got, tt.want)
+						assert.Condition(t, func() bool {
+							return false
+						}, "got %q, want %q", got, tt.want)
 					}
 				})
 			}
@@ -2768,30 +3108,34 @@ func TestSeverityInstruction(t *testing.T) {
 			got := SeverityInstruction(tt.minSeverity)
 			if tt.wantEmpty {
 				if got != "" {
-					t.Errorf(
-						"SeverityInstruction(%q) = %q, want empty",
-						tt.minSeverity, got,
-					)
+					assert.Condition(t, func() bool {
+						return false
+					}, "SeverityInstruction(%q) = %q, want empty",
+						tt.minSeverity, got)
+
 				}
 				return
 			}
 			if got == "" {
-				t.Fatalf(
-					"SeverityInstruction(%q) = empty, want non-empty",
-					tt.minSeverity,
-				)
+				require.Condition(t, func() bool {
+					return false
+				}, "SeverityInstruction(%q) = empty, want non-empty",
+					tt.minSeverity)
+
 			}
 			if !strings.Contains(got, tt.wantSubstr) {
-				t.Errorf(
-					"SeverityInstruction(%q) = %q, missing %q",
-					tt.minSeverity, got, tt.wantSubstr,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "SeverityInstruction(%q) = %q, missing %q",
+					tt.minSeverity, got, tt.wantSubstr)
+
 			}
 			if !strings.Contains(got, SeverityThresholdMarker) {
-				t.Errorf(
-					"SeverityInstruction(%q) missing threshold marker %q",
-					tt.minSeverity, SeverityThresholdMarker,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "SeverityInstruction(%q) missing threshold marker %q",
+					tt.minSeverity, SeverityThresholdMarker)
+
 			}
 		})
 	}

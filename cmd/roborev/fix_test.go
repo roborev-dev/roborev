@@ -1321,20 +1321,22 @@ func TestSplitIntoBatches(t *testing.T) {
 		batchesNoSev := splitIntoBatches(entries, 1200, "")
 		batchesWithSev := splitIntoBatches(entries, 1200, "high")
 		if len(batchesWithSev) < len(batchesNoSev) {
-			t.Errorf(
-				"severity filter should not reduce batch count: "+
-					"without=%d, with=%d",
-				len(batchesNoSev), len(batchesWithSev),
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "severity filter should not reduce batch count: "+
+				"without=%d, with=%d",
+				len(batchesNoSev), len(batchesWithSev))
+
 		}
 		// Verify the prompt respects the size estimate
 		for i, batch := range batchesWithSev {
 			p := buildBatchFixPrompt(batch, "high")
 			if len(batch) > 1 && len(p) > 1200 {
-				t.Errorf(
-					"batch %d prompt size %d exceeds limit 1200",
-					i, len(p),
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "batch %d prompt size %d exceeds limit 1200",
+					i, len(p))
+
 			}
 		}
 	})
@@ -2460,30 +2462,42 @@ func TestBuildGenericFixPromptMinSeverity(t *testing.T) {
 	t.Run("no filter", func(t *testing.T) {
 		p := buildGenericFixPrompt(output, "")
 		if strings.Contains(p, "Severity filter") {
-			t.Error("empty minSeverity should not inject filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "empty minSeverity should not inject filter")
 		}
 		if !strings.Contains(p, output) {
-			t.Error("prompt should contain the analysis output")
+			assert.Condition(t, func() bool {
+				return false
+			}, "prompt should contain the analysis output")
 		}
 	})
 
 	t.Run("high filter", func(t *testing.T) {
 		p := buildGenericFixPrompt(output, "high")
 		if !strings.Contains(p, "Severity filter") {
-			t.Error("high minSeverity should inject filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "high minSeverity should inject filter")
 		}
 		if !strings.Contains(p, "High and Critical") {
-			t.Error("instruction should mention High and Critical")
+			assert.Condition(t, func() bool {
+				return false
+			}, "instruction should mention High and Critical")
 		}
 		if !strings.Contains(p, output) {
-			t.Error("prompt should still contain the analysis output")
+			assert.Condition(t, func() bool {
+				return false
+			}, "prompt should still contain the analysis output")
 		}
 	})
 
 	t.Run("low filter is no-op", func(t *testing.T) {
 		p := buildGenericFixPrompt(output, "low")
 		if strings.Contains(p, "Severity filter") {
-			t.Error("low minSeverity should not inject filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "low minSeverity should not inject filter")
 		}
 	})
 }
@@ -2500,17 +2514,23 @@ func TestBuildBatchFixPromptMinSeverity(t *testing.T) {
 	t.Run("no filter", func(t *testing.T) {
 		p := buildBatchFixPrompt(entries, "")
 		if strings.Contains(p, "Severity filter") {
-			t.Error("empty minSeverity should not inject filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "empty minSeverity should not inject filter")
 		}
 	})
 
 	t.Run("critical filter", func(t *testing.T) {
 		p := buildBatchFixPrompt(entries, "critical")
 		if !strings.Contains(p, "Severity filter") {
-			t.Error("critical minSeverity should inject filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "critical minSeverity should inject filter")
 		}
 		if !strings.Contains(p, "Only include Critical") {
-			t.Error("instruction should mention Critical only")
+			assert.Condition(t, func() bool {
+				return false
+			}, "instruction should mention Critical only")
 		}
 	})
 }

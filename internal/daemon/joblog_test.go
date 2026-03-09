@@ -153,26 +153,38 @@ func TestJobLogWriter(t *testing.T) {
 
 		n, err := w.Write([]byte("line 1\n"))
 		if err != nil {
-			t.Fatalf("Write error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write error: %v", err)
 		}
 		if n != 7 {
-			t.Errorf("Write returned %d, want 7", n)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Write returned %d, want 7", n)
 		}
 
 		n, err = w.Write([]byte("line 2\n"))
 		if err != nil {
-			t.Fatalf("Write error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write error: %v", err)
 		}
 		if n != 7 {
-			t.Errorf("Write returned %d, want 7", n)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Write returned %d, want 7", n)
 		}
 
 		if err := w.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Close: %v", err)
 		}
 		data, _ := os.ReadFile(JobLogPath(200))
 		if string(data) != "line 1\nline 2\n" {
-			t.Errorf("contents = %q", data)
+			assert.Condition(t, func() bool {
+				return false
+			}, "contents = %q", data)
 		}
 	})
 
@@ -186,34 +198,50 @@ func TestJobLogWriter(t *testing.T) {
 
 		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
 		if err := os.MkdirAll(logsDir, 0700); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "MkdirAll: %v", err)
 		}
 		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "WriteFile: %v", err)
 		}
 
 		w := newJobLogWriter(201)
 		if _, err := w.Write([]byte("line 1\n")); err != nil {
-			t.Fatalf("Write while blocked: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write while blocked: %v", err)
 		}
 
 		if err := os.Remove(JobLogDir()); err != nil {
-			t.Fatalf("Remove blocker: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Remove blocker: %v", err)
 		}
 
 		if _, err := w.Write([]byte("line 2\n")); err != nil {
-			t.Fatalf("Write after recovery: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write after recovery: %v", err)
 		}
 		if err := w.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Close: %v", err)
 		}
 
 		data, err := os.ReadFile(JobLogPath(201))
 		if err != nil {
-			t.Fatalf("ReadFile: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ReadFile: %v", err)
 		}
 		if string(data) != "line 1\nline 2\n" {
-			t.Errorf("contents = %q, want %q", data, "line 1\nline 2\n")
+			assert.Condition(t, func() bool {
+				return false
+			}, "contents = %q, want %q", data, "line 1\nline 2\n")
 		}
 	})
 
@@ -227,30 +255,44 @@ func TestJobLogWriter(t *testing.T) {
 
 		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
 		if err := os.MkdirAll(logsDir, 0700); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "MkdirAll: %v", err)
 		}
 		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "WriteFile: %v", err)
 		}
 
 		w := newJobLogWriter(202)
 		if _, err := w.Write([]byte("buffered\n")); err != nil {
-			t.Fatalf("Write while blocked: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write while blocked: %v", err)
 		}
 
 		if err := os.Remove(JobLogDir()); err != nil {
-			t.Fatalf("Remove blocker: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Remove blocker: %v", err)
 		}
 		if err := w.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Close: %v", err)
 		}
 
 		data, err := os.ReadFile(JobLogPath(202))
 		if err != nil {
-			t.Fatalf("ReadFile: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ReadFile: %v", err)
 		}
 		if string(data) != "buffered\n" {
-			t.Errorf("contents = %q, want %q", data, "buffered\n")
+			assert.Condition(t, func() bool {
+				return false
+			}, "contents = %q, want %q", data, "buffered\n")
 		}
 	})
 
@@ -261,18 +303,26 @@ func TestJobLogWriter(t *testing.T) {
 
 		mw := io.MultiWriter(w, failingWriter{})
 		if _, err := mw.Write([]byte("persist me\n")); err == nil {
-			t.Fatal("expected companion writer failure")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected companion writer failure")
 		}
 		if err := w.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Close: %v", err)
 		}
 
 		data, err := os.ReadFile(JobLogPath(203))
 		if err != nil {
-			t.Fatalf("ReadFile: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ReadFile: %v", err)
 		}
 		if string(data) != "persist me\n" {
-			t.Errorf("contents = %q, want %q", data, "persist me\n")
+			assert.Condition(t, func() bool {
+				return false
+			}, "contents = %q, want %q", data, "persist me\n")
 		}
 	})
 
@@ -281,21 +331,31 @@ func TestJobLogWriter(t *testing.T) {
 		w := &jobLogWriter{jobID: 204, f: pw}
 
 		if _, err := w.Write([]byte("abcdef")); err != nil {
-			t.Fatalf("Write: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Write: %v", err)
 		}
 		if got := pw.String(); got != "abc" {
-			t.Fatalf("written prefix = %q, want %q", got, "abc")
+			require.Condition(t, func() bool {
+				return false
+			}, "written prefix = %q, want %q", got, "abc")
 		}
 		if got := w.buf.String(); got != "def" {
-			t.Fatalf("buffered suffix = %q, want %q", got, "def")
+			require.Condition(t, func() bool {
+				return false
+			}, "buffered suffix = %q, want %q", got, "def")
 		}
 
 		w.f = pw
 		if err := w.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Close: %v", err)
 		}
 		if got := pw.String(); got != "abcdef" {
-			t.Fatalf("final content = %q, want %q", got, "abcdef")
+			require.Condition(t, func() bool {
+				return false
+			}, "final content = %q, want %q", got, "abcdef")
 		}
 	})
 
@@ -306,20 +366,30 @@ func TestJobLogWriter(t *testing.T) {
 
 		err := w.flushBufferedLocked()
 		if err == nil {
-			t.Fatal("expected flush error")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected flush error")
 		}
 		if got := pw.String(); got != "abc" {
-			t.Fatalf("written prefix = %q, want %q", got, "abc")
+			require.Condition(t, func() bool {
+				return false
+			}, "written prefix = %q, want %q", got, "abc")
 		}
 		if got := w.buf.String(); got != "def" {
-			t.Fatalf("remaining buffer = %q, want %q", got, "def")
+			require.Condition(t, func() bool {
+				return false
+			}, "remaining buffer = %q, want %q", got, "def")
 		}
 
 		if err := w.flushBufferedLocked(); err != nil {
-			t.Fatalf("second flush: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "second flush: %v", err)
 		}
 		if got := pw.String(); got != "abcdef" {
-			t.Fatalf("final content = %q, want %q", got, "abcdef")
+			require.Condition(t, func() bool {
+				return false
+			}, "final content = %q, want %q", got, "abcdef")
 		}
 	})
 
@@ -331,23 +401,35 @@ func TestJobLogWriter(t *testing.T) {
 
 		err := w.flushBufferedLocked()
 		if err == nil {
-			t.Fatal("expected flush error")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected flush error")
 		}
 		if got := pw.String(); got != "NOT" {
-			t.Fatalf("written prefix = %q, want %q", got, "NOT")
+			require.Condition(t, func() bool {
+				return false
+			}, "written prefix = %q, want %q", got, "NOT")
 		}
 		if got := w.notice.String(); got != "ICE" {
-			t.Fatalf("remaining notice = %q, want %q", got, "ICE")
+			require.Condition(t, func() bool {
+				return false
+			}, "remaining notice = %q, want %q", got, "ICE")
 		}
 		if got := w.buf.String(); got != "tail" {
-			t.Fatalf("buffer should remain queued until notice completes, got %q", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "buffer should remain queued until notice completes, got %q", got)
 		}
 
 		if err := w.flushBufferedLocked(); err != nil {
-			t.Fatalf("second flush: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "second flush: %v", err)
 		}
 		if got := pw.String(); got != "NOTICEtail" {
-			t.Fatalf("final content = %q, want %q", got, "NOTICEtail")
+			require.Condition(t, func() bool {
+				return false
+			}, "final content = %q, want %q", got, "NOTICEtail")
 		}
 	})
 }
@@ -386,24 +468,32 @@ func TestReadJobLog(t *testing.T) {
 	t.Run("existing", func(t *testing.T) {
 		f := openJobLog(300)
 		if f == nil {
-			t.Fatal("openJobLog returned nil")
+			require.Condition(t, func() bool {
+				return false
+			}, "openJobLog returned nil")
 		}
 		_, _ = f.WriteString("log content")
 		f.Close()
 
 		data, err := ReadJobLog(300)
 		if err != nil {
-			t.Fatalf("ReadJobLog: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ReadJobLog: %v", err)
 		}
 		if string(data) != "log content" {
-			t.Errorf("contents = %q, want %q", data, "log content")
+			assert.Condition(t, func() bool {
+				return false
+			}, "contents = %q, want %q", data, "log content")
 		}
 	})
 
 	t.Run("missing", func(t *testing.T) {
 		_, err := ReadJobLog(999)
 		if err == nil {
-			t.Error("ReadJobLog should error for missing file")
+			assert.Condition(t, func() bool {
+				return false
+			}, "ReadJobLog should error for missing file")
 		}
 	})
 }
@@ -412,17 +502,23 @@ func TestJobLogExists(t *testing.T) {
 	setupTestEnv(t)
 
 	if JobLogExists(400) {
-		t.Error("should not exist before creation")
+		assert.Condition(t, func() bool {
+			return false
+		}, "should not exist before creation")
 	}
 
 	f := openJobLog(400)
 	if f == nil {
-		t.Fatal("openJobLog returned nil")
+		require.Condition(t, func() bool {
+			return false
+		}, "openJobLog returned nil")
 	}
 	f.Close()
 
 	if !JobLogExists(400) {
-		t.Error("should exist after creation")
+		assert.Condition(t, func() bool {
+			return false
+		}, "should exist after creation")
 	}
 }
 
@@ -445,7 +541,9 @@ func TestParseJobIDFromLogName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			id, ok := ParseJobIDFromLogName(tt.input)
 			if id != tt.wantID || ok != tt.wantOK {
-				t.Errorf("ParseJobIDFromLogName(%q) = (%d, %v), want (%d, %v)",
+				assert.Condition(t, func() bool {
+					return false
+				}, "ParseJobIDFromLogName(%q) = (%d, %v), want (%d, %v)",
 					tt.input, id, ok, tt.wantID, tt.wantOK)
 			}
 		})

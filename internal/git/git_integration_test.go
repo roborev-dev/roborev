@@ -3,6 +3,8 @@
 package git
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,16 +16,22 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		mainRoot, err := GetMainRepoRoot(repo.Dir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot failed: %v", err)
 		}
 
 		repoRoot, err := GetRepoRoot(repo.Dir)
 		if err != nil {
-			t.Fatalf("GetRepoRoot failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetRepoRoot failed: %v", err)
 		}
 
 		if mainRoot != repoRoot {
-			t.Errorf("GetMainRepoRoot returned %s, expected %s (same as GetRepoRoot)", mainRoot, repoRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot returned %s, expected %s (same as GetRepoRoot)", mainRoot, repoRoot)
 		}
 	})
 
@@ -36,12 +44,16 @@ func TestGetMainRepoRoot(t *testing.T) {
 		// GetRepoRoot from worktree returns the worktree path
 		worktreeRoot, err := GetRepoRoot(wt.Dir)
 		if err != nil {
-			t.Fatalf("GetRepoRoot on worktree failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetRepoRoot on worktree failed: %v", err)
 		}
 
 		mainRepoRoot, err := GetRepoRoot(repo.Dir)
 		if err != nil {
-			t.Fatalf("GetRepoRoot on main repo failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetRepoRoot on main repo failed: %v", err)
 		}
 
 		if worktreeRoot == mainRepoRoot {
@@ -50,11 +62,15 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		mainRoot, err := GetMainRepoRoot(wt.Dir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on worktree failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on worktree failed: %v", err)
 		}
 
 		if mainRoot != mainRepoRoot {
-			t.Errorf("GetMainRepoRoot on worktree returned %s, expected %s", mainRoot, mainRepoRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on worktree returned %s, expected %s", mainRoot, mainRepoRoot)
 		}
 	})
 
@@ -62,7 +78,9 @@ func TestGetMainRepoRoot(t *testing.T) {
 		nonRepo := t.TempDir()
 		_, err := GetMainRepoRoot(nonRepo)
 		if err == nil {
-			t.Error("expected error for non-repo")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected error for non-repo")
 		}
 	})
 
@@ -84,16 +102,22 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		subRoot, err := GetMainRepoRoot(submoduleDir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on submodule failed: %v", err)
 		}
 
 		parentRoot, err := GetMainRepoRoot(parentRepo.Dir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on parent failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on parent failed: %v", err)
 		}
 
 		if subRoot == parentRoot {
-			t.Errorf("submodule root should be distinct from parent: sub=%s parent=%s", subRoot, parentRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "submodule root should be distinct from parent: sub=%s parent=%s", subRoot, parentRoot)
 		}
 
 		subRootResolved, _ := filepath.EvalSymlinks(subRoot)
@@ -101,7 +125,9 @@ func TestGetMainRepoRoot(t *testing.T) {
 			subRootResolved = subRoot
 		}
 		if subRootResolved != submoduleDirResolved {
-			t.Errorf("GetMainRepoRoot on submodule returned %s, expected %s", subRoot, submoduleDir)
+			assert.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on submodule returned %s, expected %s", subRoot, submoduleDir)
 		}
 	})
 
@@ -125,29 +151,41 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		wtRoot, err := GetMainRepoRoot(worktreeDir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule worktree failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on submodule worktree failed: %v", err)
 		}
 
 		subRoot, err := GetMainRepoRoot(submoduleDir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on submodule failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on submodule failed: %v", err)
 		}
 
 		if wtRoot != subRoot {
-			t.Errorf("worktree from submodule should return submodule root: wt=%s sub=%s", wtRoot, subRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "worktree from submodule should return submodule root: wt=%s sub=%s", wtRoot, subRoot)
 		}
 
 		parentRoot, err := GetMainRepoRoot(parentRepo.Dir)
 		if err != nil {
-			t.Fatalf("GetMainRepoRoot on parent failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot on parent failed: %v", err)
 		}
 
 		if wtRoot == parentRoot {
-			t.Errorf("worktree from submodule should NOT return parent root: wt=%s parent=%s", wtRoot, parentRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "worktree from submodule should NOT return parent root: wt=%s parent=%s", wtRoot, parentRoot)
 		}
 
 		if info, err := os.Stat(wtRoot); err != nil || !info.IsDir() {
-			t.Errorf("GetMainRepoRoot returned invalid path: %s", wtRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot returned invalid path: %s", wtRoot)
 		}
 	})
 
@@ -157,7 +195,9 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		mainHead, err := ResolveSHA(mainRepo.Dir, "HEAD")
 		if err != nil {
-			t.Fatalf("ResolveSHA main HEAD failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ResolveSHA main HEAD failed: %v", err)
 		}
 
 		wt := mainRepo.AddWorktree("wt-branch")
@@ -167,25 +207,35 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 		wtHead, err := ResolveSHA(wt.Dir, "HEAD")
 		if err != nil {
-			t.Fatalf("ResolveSHA worktree HEAD failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ResolveSHA worktree HEAD failed: %v", err)
 		}
 
 		if wtHead == mainHead {
-			t.Error("worktree HEAD should differ from main HEAD after new commit")
+			assert.Condition(t, func() bool {
+				return false
+			}, "worktree HEAD should differ from main HEAD after new commit")
 		}
 
 		mainHeadAgain, err := ResolveSHA(mainRepo.Dir, "HEAD")
 		if err != nil {
-			t.Fatalf("ResolveSHA main HEAD again failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ResolveSHA main HEAD again failed: %v", err)
 		}
 		if mainHeadAgain != mainHead {
-			t.Errorf("main HEAD changed unexpectedly: was %s, now %s", mainHead, mainHeadAgain)
+			assert.Condition(t, func() bool {
+				return false
+			}, "main HEAD changed unexpectedly: was %s, now %s", mainHead, mainHeadAgain)
 		}
 
 		mainRoot, _ := GetMainRepoRoot(mainRepo.Dir)
 		wtRoot, _ := GetMainRepoRoot(wt.Dir)
 		if mainRoot != wtRoot {
-			t.Errorf("GetMainRepoRoot should return same root: main=%s wt=%s", mainRoot, wtRoot)
+			assert.Condition(t, func() bool {
+				return false
+			}, "GetMainRepoRoot should return same root: main=%s wt=%s", mainRoot, wtRoot)
 		}
 	})
 }
@@ -214,10 +264,14 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 
 		branch, err := GetDefaultBranch(clone.Dir)
 		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetDefaultBranch failed: %v", err)
 		}
 		if branch != "origin/main" {
-			t.Fatalf("expected origin/main, got %s", branch)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected origin/main, got %s", branch)
 		}
 	})
 
@@ -232,10 +286,14 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 
 		branch, err := GetDefaultBranch(clone.Dir)
 		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetDefaultBranch failed: %v", err)
 		}
 		if branch != "origin/main" {
-			t.Fatalf("expected origin/main, got %s", branch)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected origin/main, got %s", branch)
 		}
 	})
 
@@ -250,15 +308,21 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 		// Local main branch should still exist
 		localBranchOut := clone.Run("rev-parse", "--verify", "main")
 		if localBranchOut == "" {
-			t.Fatal("expected local main branch to exist")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected local main branch to exist")
 		}
 
 		branch, err := GetDefaultBranch(clone.Dir)
 		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetDefaultBranch failed: %v", err)
 		}
 		if branch != "main" {
-			t.Fatalf("expected main (local branch fallback), got %s", branch)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected main (local branch fallback), got %s", branch)
 		}
 	})
 }

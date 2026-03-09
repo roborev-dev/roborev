@@ -2,6 +2,13 @@ package daemon
 
 import (
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,11 +19,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
-	gitpkg "github.com/roborev-dev/roborev/internal/git"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestHandleListJobsWithFilter(t *testing.T) {
@@ -33,7 +35,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -42,7 +46,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs, got %d", len(response.Jobs))
 		}
 	})
 
@@ -54,7 +60,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -63,13 +71,17 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs for repo1, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 jobs for repo1, got %d", len(response.Jobs))
 		}
 
 		// Verify all jobs are from repo1
 		for _, job := range response.Jobs {
 			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected RepoName 'repo1', got '%s'", job.RepoName)
 			}
 		}
 	})
@@ -81,7 +93,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -90,7 +104,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs with limit=2, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 jobs with limit=2, got %d", len(response.Jobs))
 		}
 	})
 
@@ -101,7 +117,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -110,7 +128,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs with limit=0 (no limit), got %d", len(response.Jobs))
 		}
 	})
 
@@ -121,7 +141,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -130,13 +152,17 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 jobs with repo filter and limit=2, got %d", len(response.Jobs))
 		}
 
 		// Verify all jobs are from repo1
 		for _, job := range response.Jobs {
 			if job.RepoName != "repo1" {
-				t.Errorf("Expected RepoName 'repo1', got '%s'", job.RepoName)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected RepoName 'repo1', got '%s'", job.RepoName)
 			}
 		}
 	})
@@ -148,7 +174,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -158,7 +186,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 
 		// Negative clamped to 0 (unlimited), should return all 5 jobs
 		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with limit=-1 (clamped to unlimited), got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs with limit=-1 (clamped to unlimited), got %d", len(response.Jobs))
 		}
 	})
 
@@ -169,7 +199,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -179,7 +211,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 
 		// Large limit capped to 10000, but we only have 5 jobs
 		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs (all available), got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs (all available), got %d", len(response.Jobs))
 		}
 	})
 
@@ -190,7 +224,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -200,7 +236,9 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 
 		// Invalid limit uses default (50), we have 5 jobs
 		if len(response.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with invalid limit (uses default), got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs with invalid limit (uses default), got %d", len(response.Jobs))
 		}
 	})
 }
@@ -218,7 +256,9 @@ func TestListJobsPagination(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d", w.Code)
 		}
 
 		var result struct {
@@ -228,10 +268,14 @@ func TestListJobsPagination(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs, got %d", len(result.Jobs))
 		}
 		if !result.HasMore {
-			t.Error("Expected has_more=true when more jobs exist")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected has_more=true when more jobs exist")
 		}
 	})
 
@@ -242,7 +286,9 @@ func TestListJobsPagination(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d", w.Code)
 		}
 
 		var result struct {
@@ -252,10 +298,14 @@ func TestListJobsPagination(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 10 {
-			t.Errorf("Expected 10 jobs, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 10 jobs, got %d", len(result.Jobs))
 		}
 		if result.HasMore {
-			t.Error("Expected has_more=false when all jobs returned")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected has_more=false when all jobs returned")
 		}
 	})
 
@@ -284,7 +334,9 @@ func TestListJobsPagination(t *testing.T) {
 		for _, j1 := range result1.Jobs {
 			for _, j2 := range result2.Jobs {
 				if j1.ID == j2.ID {
-					t.Errorf("Job %d appears in both pages", j1.ID)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Job %d appears in both pages", j1.ID)
 				}
 			}
 		}
@@ -298,7 +350,9 @@ func TestListJobsPagination(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d", w.Code)
 		}
 
 		var result struct {
@@ -308,7 +362,9 @@ func TestListJobsPagination(t *testing.T) {
 
 		// Should return all 10 jobs since offset is ignored with limit=0
 		if len(result.Jobs) != 10 {
-			t.Errorf("Expected 10 jobs (offset ignored with limit=0), got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 10 jobs (offset ignored with limit=0), got %d", len(result.Jobs))
 		}
 	})
 }
@@ -330,7 +386,9 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d", w.Code)
 		}
 
 		var result struct {
@@ -339,10 +397,14 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 job, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 job, got %d", len(result.Jobs))
 		}
 		if len(result.Jobs) > 0 && result.Jobs[0].GitRef != "abc123" {
-			t.Errorf("Expected GitRef 'abc123', got '%s'", result.Jobs[0].GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected GitRef 'abc123', got '%s'", result.Jobs[0].GitRef)
 		}
 	})
 
@@ -357,7 +419,9 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 0 {
-			t.Errorf("Expected 0 jobs, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 0 jobs, got %d", len(result.Jobs))
 		}
 	})
 
@@ -372,7 +436,9 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 job with range ref, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 job with range ref, got %d", len(result.Jobs))
 		}
 	})
 }
@@ -404,7 +470,9 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 		}
 		testutil.DecodeJSON(t, w, &result)
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 open job, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 open job, got %d", len(result.Jobs))
 		}
 	})
 
@@ -418,7 +486,9 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 		}
 		testutil.DecodeJSON(t, w, &result)
 		if len(result.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 jobs on main, got %d", len(result.Jobs))
 		}
 	})
 }
@@ -432,14 +502,18 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	// Switch to excluded branch
 	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "wip-feature")
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	// Create .roborev.toml with excluded_branches
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
 	configContent := `excluded_branches = ["wip-feature", "draft"]`
 	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write repo config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to write repo config: %v", err)
 	}
 
 	t.Run("enqueue on excluded branch returns skipped", func(t *testing.T) {
@@ -450,7 +524,9 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200 for skipped enqueue, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200 for skipped enqueue, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -460,16 +536,22 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if !response.Skipped {
-			t.Error("Expected skipped=true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected skipped=true")
 		}
 		if !strings.Contains(response.Reason, "wip-feature") {
-			t.Errorf("Expected reason to mention branch name, got %q", response.Reason)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected reason to mention branch name, got %q", response.Reason)
 		}
 
 		// Verify no job was created
 		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 0 {
-			t.Errorf("Expected 0 queued jobs, got %d", queued)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 0 queued jobs, got %d", queued)
 		}
 	})
 
@@ -478,7 +560,9 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		checkoutCmd := exec.Command("git", "checkout", "-b", "feature-ok")
 		checkoutCmd.Dir = repoDir
 		if out, err := checkoutCmd.CombinedOutput(); err != nil {
-			t.Fatalf("git checkout failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git checkout failed: %v\n%s", err, out)
 		}
 
 		reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Agent: "test"}
@@ -488,13 +572,17 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Errorf("Expected status 201 for successful enqueue, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 201 for successful enqueue, got %d: %s", w.Code, w.Body.String())
 		}
 
 		// Verify job was created
 		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 1 {
-			t.Errorf("Expected 1 queued job, got %d", queued)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 queued job, got %d", queued)
 		}
 	})
 }
@@ -509,14 +597,18 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
 	configContent := `excluded_commit_patterns = ["[skip review]", "[wip]"]`
 	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write repo config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to write repo config: %v", err)
 	}
 
 	// Create a commit whose message matches an exclusion pattern
 	addExcluded := exec.Command("git", "-C", repoDir,
 		"commit", "--allow-empty", "-m", "wip: checkpoint [skip review]")
 	if out, err := addExcluded.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git commit failed: %v\n%s", err, out)
 	}
 
 	t.Run("matching commit returns skipped", func(t *testing.T) {
@@ -530,7 +622,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("expected 200, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 200, got %d: %s",
 				w.Code, w.Body.String())
 		}
 
@@ -541,17 +635,23 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if !resp.Skipped {
-			t.Error("expected skipped=true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected skipped=true")
 		}
 		if !strings.Contains(resp.Reason, "excluded") {
-			t.Errorf("reason should mention excluded, got %q",
+			assert.Condition(t, func() bool {
+				return false
+			}, "reason should mention excluded, got %q",
 				resp.Reason)
 		}
 
 		// No job should have been created
 		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 0 {
-			t.Errorf("expected 0 queued jobs, got %d", queued)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 0 queued jobs, got %d", queued)
 		}
 	})
 
@@ -559,7 +659,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	addNormal := exec.Command("git", "-C", repoDir,
 		"commit", "--allow-empty", "-m", "feat: add endpoint")
 	if out, err := addNormal.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git commit failed: %v\n%s", err, out)
 	}
 
 	t.Run("non-matching commit enqueues normally", func(t *testing.T) {
@@ -573,13 +675,17 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Errorf("expected 201, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 201, got %d: %s",
 				w.Code, w.Body.String())
 		}
 
 		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 1 {
-			t.Errorf("expected 1 queued job, got %d", queued)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected 1 queued job, got %d", queued)
 		}
 	})
 
@@ -589,7 +695,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			branchCmd := exec.Command("git", "-C", repoDir,
 				"checkout", "-b", "all-excluded")
 			if out, err := branchCmd.CombinedOutput(); err != nil {
-				t.Fatalf("checkout failed: %v\n%s", err, out)
+				require.Condition(t, func() bool {
+					return false
+				}, "checkout failed: %v\n%s", err, out)
 			}
 			base := testutil.GetHeadSHA(t, repoDir)
 
@@ -598,7 +706,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 					"commit", "--allow-empty",
 					"-m", fmt.Sprintf("[wip] checkpoint %d", i))
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("commit failed: %v\n%s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "commit failed: %v\n%s", err, out)
 				}
 			}
 
@@ -613,7 +723,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != http.StatusOK {
-				t.Errorf("expected 200, got %d: %s",
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected 200, got %d: %s",
 					w.Code, w.Body.String())
 			}
 
@@ -623,7 +735,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			}
 			testutil.DecodeJSON(t, w, &resp)
 			if !resp.Skipped {
-				t.Error("expected skipped=true for all-excluded range")
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected skipped=true for all-excluded range")
 			}
 		})
 
@@ -632,7 +746,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			branchCmd := exec.Command("git", "-C", repoDir,
 				"checkout", "-b", "mixed-range")
 			if out, err := branchCmd.CombinedOutput(); err != nil {
-				t.Fatalf("checkout failed: %v\n%s", err, out)
+				require.Condition(t, func() bool {
+					return false
+				}, "checkout failed: %v\n%s", err, out)
 			}
 			base := testutil.GetHeadSHA(t, repoDir)
 
@@ -644,7 +760,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				cmd := exec.Command("git", append(
 					[]string{"-C", repoDir}, args...)...)
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("commit failed: %v\n%s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "commit failed: %v\n%s", err, out)
 				}
 			}
 
@@ -659,7 +777,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != http.StatusCreated {
-				t.Errorf("expected 201, got %d: %s",
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected 201, got %d: %s",
 					w.Code, w.Body.String())
 			}
 		})
@@ -679,7 +799,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			branchCmd := exec.Command("git", "-C", repoDir,
 				"checkout", "-b", "corrupt-range")
 			if out, err := branchCmd.CombinedOutput(); err != nil {
-				t.Fatalf("checkout failed: %v\n%s", err, out)
+				require.Condition(t, func() bool {
+					return false
+				}, "checkout failed: %v\n%s", err, out)
 			}
 			base := testutil.GetHeadSHA(t, repoDir)
 
@@ -689,7 +811,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 					"commit", "--allow-empty",
 					"-m", fmt.Sprintf("[wip] corrupt %d", i))
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("commit failed: %v\n%s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "commit failed: %v\n%s", err, out)
 				}
 			}
 			tip := testutil.GetHeadSHA(t, repoDir)
@@ -699,7 +823,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				"rev-parse", "HEAD~1")
 			midOut, err := midCmd.Output()
 			if err != nil {
-				t.Fatalf("rev-parse HEAD~1: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "rev-parse HEAD~1: %v", err)
 			}
 			mid := strings.TrimSpace(string(midOut))
 
@@ -708,7 +834,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				mid[:2], mid[2:],
 			)
 			if err := os.Remove(objFile); err != nil {
-				t.Fatalf("remove object: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "remove object: %v", err)
 			}
 
 			// ResolveSHA succeeds for both endpoints (base
@@ -727,7 +855,9 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != http.StatusCreated {
-				t.Errorf("expected 201, got %d: %s",
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected 201, got %d: %s",
 					w.Code, w.Body.String())
 			}
 		})
@@ -741,10 +871,14 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 
 	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 	if branch := gitpkg.GetCurrentBranch(repoDir); branch != "feature/session" {
-		t.Fatalf("current branch = %q, want %q", branch, "feature/session")
+		require.Condition(t, func() bool {
+			return false
+		}, "current branch = %q, want %q", branch, "feature/session")
 	}
 
 	reuseSessions := true
@@ -752,17 +886,23 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	sha := testutil.GetHeadSHA(t, repoDir)
 	commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 
 	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
@@ -774,32 +914,40 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("test-worker"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(prevJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-123", prevJob.ID); err != nil {
-		t.Fatalf("failed to seed session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed session_id: %v", err)
 	}
 
 	candidate, err := db.FindReusableSessionCandidate(repo.ID, "feature/session", "test", config.ReviewTypeDefault)
 	if err != nil {
-		t.Fatalf("FindReusableSessionCandidate failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FindReusableSessionCandidate failed: %v", err)
 	}
-	if candidate == nil {
-		t.Fatal("expected reusable session candidate")
-	}
-	if candidate.SessionID != "session-123" {
-		t.Fatalf("candidate session_id = %q, want %q", candidate.SessionID, "session-123")
-	}
+	require.NotNil(t, candidate, "expected reusable session candidate")
+	assert.Equal(t, "session-123", candidate.SessionID, "candidate session_id")
 
 	reused := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, sha)
 	if reused != "session-123" {
-		t.Fatalf("findReusableSessionID() = %q, want %q", reused, "session-123")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() = %q, want %q", reused, "session-123")
 	}
 
 	reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Branch: "feature/session", Agent: "test"}
@@ -809,31 +957,45 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, w, &job)
 	if job.RepoID != repo.ID {
-		t.Fatalf("repo_id = %d, want %d", job.RepoID, repo.ID)
+		require.Condition(t, func() bool {
+			return false
+		}, "repo_id = %d, want %d", job.RepoID, repo.ID)
 	}
 	if job.Branch != "feature/session" {
-		t.Fatalf("branch = %q, want %q", job.Branch, "feature/session")
+		require.Condition(t, func() bool {
+			return false
+		}, "branch = %q, want %q", job.Branch, "feature/session")
 	}
 	if job.Agent != "test" {
-		t.Fatalf("agent = %q, want %q", job.Agent, "test")
+		require.Condition(t, func() bool {
+			return false
+		}, "agent = %q, want %q", job.Agent, "test")
 	}
 
 	if job.SessionID != "session-123" {
-		t.Fatalf("session_id = %q, want %q", job.SessionID, "session-123")
+		require.Condition(t, func() bool {
+			return false
+		}, "session_id = %q, want %q", job.SessionID, "session-123")
 	}
 
 	stored, err := db.GetJobByID(job.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID failed: %v", err)
 	}
 	if stored.SessionID != "session-123" {
-		t.Fatalf("stored session_id = %q, want %q", stored.SessionID, "session-123")
+		require.Condition(t, func() bool {
+			return false
+		}, "stored session_id = %q, want %q", stored.SessionID, "session-123")
 	}
 }
 
@@ -845,7 +1007,9 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 
 	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -853,34 +1017,50 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", "branch-reused").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout --orphan failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout --orphan failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-		t.Fatalf("git rm failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git rm failed: %v\n%s", err, out)
 	}
 	unrelatedFile := filepath.Join(repoDir, "unrelated.txt")
 	if err := os.WriteFile(unrelatedFile, []byte("unrelated\n"), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "WriteFile failed: %v", err)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "add", "unrelated.txt").CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git add failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", "unrelated history").CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git commit failed: %v\n%s", err, out)
 	}
 	unrelatedSHA := testutil.GetHeadSHA(t, repoDir)
 
 	prevCommit, err := db.GetOrCreateCommit(repo.ID, unrelatedSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -891,25 +1071,37 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("test-worker"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(prevJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
-		t.Fatalf("failed to seed session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed session_id: %v", err)
 	}
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout feature/session failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout feature/session failed: %v\n%s", err, out)
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
-		t.Fatalf("findReusableSessionID() = %q, want empty for unrelated history", got)
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() = %q, want empty for unrelated history", got)
 	}
 }
 
@@ -921,7 +1113,9 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 
 	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -929,17 +1123,23 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	candidateSHA := testutil.GetHeadSHA(t, repoDir)
 	candidateCommit, err := db.GetOrCreateCommit(repo.ID, candidateSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -950,34 +1150,50 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("test-worker"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(prevJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
-		t.Fatalf("failed to seed session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed session_id: %v", err)
 	}
 
 	for i := range 51 {
 		nextFile := filepath.Join(repoDir, fmt.Sprintf("commit-%02d.txt", i))
 		if err := os.WriteFile(nextFile, fmt.Appendf(nil, "%d\n", i), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "WriteFile failed: %v", err)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(nextFile)).CombinedOutput(); err != nil {
-			t.Fatalf("git add failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git add failed: %v\n%s", err, out)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", fmt.Sprintf("commit %02d", i)).CombinedOutput(); err != nil {
-			t.Fatalf("git commit failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git commit failed: %v\n%s", err, out)
 		}
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
-		t.Fatalf("findReusableSessionID() = %q, want empty for old candidate", got)
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() = %q, want empty for old candidate", got)
 	}
 }
 
@@ -988,7 +1204,9 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -996,17 +1214,23 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	validSHA := testutil.GetHeadSHA(t, repoDir)
 	validCommit, err := db.GetOrCreateCommit(repo.ID, validSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	validJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -1017,38 +1241,58 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-valid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(validJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
-		t.Fatalf("failed to seed valid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed valid session_id: %v", err)
 	}
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", "branch-reused").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout --orphan failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout --orphan failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-		t.Fatalf("git rm failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git rm failed: %v\n%s", err, out)
 	}
 	unrelatedFile := filepath.Join(repoDir, "unrelated-newer.txt")
 	if err := os.WriteFile(unrelatedFile, []byte("unrelated newer\n"), 0644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "WriteFile failed: %v", err)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(unrelatedFile)).CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git add failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", "new unrelated history").CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git commit failed: %v\n%s", err, out)
 	}
 	invalidSHA := testutil.GetHeadSHA(t, repoDir)
 	invalidCommit, err := db.GetOrCreateCommit(repo.ID, invalidSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	invalidJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -1059,25 +1303,37 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-invalid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(invalidJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-invalid", invalidJob.ID); err != nil {
-		t.Fatalf("failed to seed invalid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed invalid session_id: %v", err)
 	}
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout feature/session failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout feature/session failed: %v\n%s", err, out)
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
-		t.Fatalf("findReusableSessionID() = %q, want %q", got, "session-valid")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() = %q, want %q", got, "session-valid")
 	}
 }
 
@@ -1088,7 +1344,9 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -1097,17 +1355,23 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	validSHA := testutil.GetHeadSHA(t, repoDir)
 	validCommit, err := db.GetOrCreateCommit(repo.ID, validSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	validJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -1118,42 +1382,62 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-valid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(validJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-12 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
-		t.Fatalf("failed to seed valid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed valid session_id: %v", err)
 	}
 
 	for i := range 11 {
 		branchName := fmt.Sprintf("branch-reused-%02d", i)
 		if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", branchName).CombinedOutput(); err != nil {
-			t.Fatalf("git checkout --orphan failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git checkout --orphan failed: %v\n%s", err, out)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-			t.Fatalf("git rm failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git rm failed: %v\n%s", err, out)
 		}
 
 		unrelatedFile := filepath.Join(repoDir, fmt.Sprintf("unrelated-%02d.txt", i))
 		if err := os.WriteFile(unrelatedFile, fmt.Appendf(nil, "unrelated %02d\n", i), 0644); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "WriteFile failed: %v", err)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(unrelatedFile)).CombinedOutput(); err != nil {
-			t.Fatalf("git add failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git add failed: %v\n%s", err, out)
 		}
 		if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", fmt.Sprintf("unrelated %02d", i)).CombinedOutput(); err != nil {
-			t.Fatalf("git commit failed: %v\n%s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git commit failed: %v\n%s", err, out)
 		}
 
 		invalidSHA := testutil.GetHeadSHA(t, repoDir)
 		invalidCommit, err := db.GetOrCreateCommit(repo.ID, invalidSHA, "Author", "Subject", time.Now())
 		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetOrCreateCommit failed: %v", err)
 		}
 		invalidJob, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
@@ -1164,37 +1448,53 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 			ReviewType: config.ReviewTypeDefault,
 		})
 		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob failed: %v", err)
 		}
 		if _, err := db.ClaimJob(fmt.Sprintf("worker-invalid-%02d", i)); err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ClaimJob failed: %v", err)
 		}
 		if err := db.CompleteJob(invalidJob.ID, "test", "prompt", "No issues found."); err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CompleteJob failed: %v", err)
 		}
 		offsetMinutes := 11 - i
 		if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', ?) WHERE id = ?`, fmt.Sprintf("session-invalid-%02d", i), fmt.Sprintf("-%d minutes", offsetMinutes), invalidJob.ID); err != nil {
-			t.Fatalf("failed to seed invalid session_id: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "failed to seed invalid session_id: %v", err)
 		}
 	}
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout feature/session failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout feature/session failed: %v\n%s", err, out)
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
-		t.Fatalf("findReusableSessionID() with default lookback = %q, want %q", got, "session-valid")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() with default lookback = %q, want %q", got, "session-valid")
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 10
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
-		t.Fatalf("findReusableSessionID() with capped lookback = %q, want empty", got)
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() with capped lookback = %q, want empty", got)
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 12
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
-		t.Fatalf("findReusableSessionID() with expanded lookback = %q, want %q", got, "session-valid")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() with expanded lookback = %q, want %q", got, "session-valid")
 	}
 }
 
@@ -1205,7 +1505,9 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -1214,17 +1516,23 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 	validCommit, err := db.GetOrCreateCommit(repo.ID, targetSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	validJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
@@ -1235,16 +1543,24 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-valid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(validJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-2 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
-		t.Fatalf("failed to seed valid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed valid session_id: %v", err)
 	}
 
 	dirtyJob, err := db.EnqueueJob(storage.EnqueueOpts{
@@ -1256,16 +1572,24 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-dirty"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(dirtyJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-dirty", dirtyJob.ID); err != nil {
-		t.Fatalf("failed to seed dirty session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed dirty session_id: %v", err)
 	}
 
 	malformedJob, err := db.EnqueueJob(storage.EnqueueOpts{
@@ -1277,20 +1601,30 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-malformed"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(malformedJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET git_ref = ?, session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, targetSHA+"..", "session-malformed", malformedJob.ID); err != nil {
-		t.Fatalf("failed to seed malformed session candidate: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed malformed session candidate: %v", err)
 	}
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
-		t.Fatalf("findReusableSessionID() with unusable newer refs = %q, want %q", got, "session-valid")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() with unusable newer refs = %q, want %q", got, "session-valid")
 	}
 }
 
@@ -1301,7 +1635,9 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	reuseSessions := true
@@ -1310,17 +1646,23 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 
 	repoRoot, err := gitpkg.GetMainRepoRoot(repoDir)
 	if err != nil {
-		t.Fatalf("GetMainRepoRoot failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetMainRepoRoot failed: %v", err)
 	}
 	repo, err := db.GetOrCreateRepo(repoRoot)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 	commit, err := db.GetOrCreateCommit(repo.ID, targetSHA, "Author", "Subject", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 
 	validJob, err := db.EnqueueJob(storage.EnqueueOpts{
@@ -1332,16 +1674,24 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-valid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(validJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
-		t.Fatalf("failed to seed valid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed valid session_id: %v", err)
 	}
 
 	invalidJob, err := db.EnqueueJob(storage.EnqueueOpts{
@@ -1353,20 +1703,30 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob failed: %v", err)
 	}
 	if _, err := db.ClaimJob("worker-invalid"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob failed: %v", err)
 	}
 	if err := db.CompleteJob(invalidJob.ID, "test", "prompt", "No issues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "-bad-session", invalidJob.ID); err != nil {
-		t.Fatalf("failed to seed invalid session_id: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to seed invalid session_id: %v", err)
 	}
 
 	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
-		t.Fatalf("findReusableSessionID() with invalid stored session_id = %q, want %q", got, "session-valid")
+		require.Condition(t, func() bool {
+			return false
+		}, "findReusableSessionID() with invalid stored session_id = %q, want %q", got, "session-valid")
 	}
 }
 
@@ -1379,7 +1739,9 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	// Switch to a named branch
 	branchCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "my-feature")
 	if out, err := branchCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git checkout failed: %v\n%s", err, out)
 	}
 
 	// Enqueue with empty branch field
@@ -1393,7 +1755,9 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var respJob storage.ReviewJob
@@ -1402,10 +1766,14 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	// Verify the job has the detected branch, not empty
 	job, err := db.GetJobByID(respJob.ID)
 	if err != nil {
-		t.Fatalf("GetJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJob: %v", err)
 	}
 	if job.Branch != "my-feature" {
-		t.Errorf("expected branch %q, got %q", "my-feature", job.Branch)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected branch %q, got %q", "my-feature", job.Branch)
 	}
 }
 
@@ -1430,7 +1798,9 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusRequestEntityTooLarge {
-			t.Errorf("Expected status 413, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 413, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1439,7 +1809,9 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if !strings.Contains(response.Error, "too large") {
-			t.Errorf("Expected error about body size, got %q", response.Error)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error about body size, got %q", response.Error)
 		}
 	})
 
@@ -1457,7 +1829,9 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1466,7 +1840,9 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if !strings.Contains(response.Error, "diff_content required") {
-			t.Errorf("Expected error about diff_content required, got %q", response.Error)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error about diff_content required, got %q", response.Error)
 		}
 	})
 
@@ -1485,7 +1861,9 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 201, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 }
@@ -1506,7 +1884,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1516,10 +1896,14 @@ func TestHandleListJobsByID(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 1 {
-			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected exactly 1 job, got %d", len(response.Jobs))
 		}
 		if response.Jobs[0].ID != job1ID {
-			t.Errorf("Expected job ID %d, got %d", job1ID, response.Jobs[0].ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected job ID %d, got %d", job1ID, response.Jobs[0].ID)
 		}
 	})
 
@@ -1530,7 +1914,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1539,10 +1925,14 @@ func TestHandleListJobsByID(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 1 {
-			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected exactly 1 job, got %d", len(response.Jobs))
 		}
 		if response.Jobs[0].ID != job2ID {
-			t.Errorf("Expected job ID %d, got %d", job2ID, response.Jobs[0].ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected job ID %d, got %d", job2ID, response.Jobs[0].ID)
 		}
 	})
 
@@ -1553,7 +1943,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1562,7 +1954,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 0 {
-			t.Errorf("Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
 		}
 	})
 
@@ -1572,7 +1966,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -1583,7 +1979,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response struct {
@@ -1593,7 +1991,9 @@ func TestHandleListJobsByID(t *testing.T) {
 
 		// Should have all 3 jobs
 		if len(response.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs, got %d", len(response.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 jobs, got %d", len(response.Jobs))
 		}
 
 		// Verify all job IDs are present (order may vary due to same-second timestamps)
@@ -1602,7 +2002,9 @@ func TestHandleListJobsByID(t *testing.T) {
 			foundIDs[job.ID] = true
 		}
 		if !foundIDs[job1ID] || !foundIDs[job2ID] || !foundIDs[job3ID] {
-			t.Errorf("Expected jobs %d, %d, %d but found %v", job1ID, job2ID, job3ID, foundIDs)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected jobs %d, %d, %d but found %v", job1ID, job2ID, job3ID, foundIDs)
 		}
 	})
 }
@@ -1626,20 +2028,28 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var job storage.ReviewJob
 		testutil.DecodeJSON(t, w, &job)
 
 		if job.GitRef != "prompt" {
-			t.Errorf("Expected git_ref 'prompt', got '%s'", job.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected git_ref 'prompt', got '%s'", job.GitRef)
 		}
 		if job.Agent != "test" {
-			t.Errorf("Expected agent 'test', got '%s'", job.Agent)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected agent 'test', got '%s'", job.Agent)
 		}
 		if job.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", job.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'queued', got '%s'", job.Status)
 		}
 	})
 
@@ -1661,14 +2071,20 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		// Should fail because there's no branch named "prompt", not because
 		// custom_prompt is missing
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 (invalid commit), got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 (invalid commit), got %d: %s", w.Code, w.Body.String())
 		}
 
 		if strings.Contains(w.Body.String(), "custom_prompt required") {
-			t.Errorf("Should NOT require custom_prompt for git_ref=prompt, got: %s", w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Should NOT require custom_prompt for git_ref=prompt, got: %s", w.Body.String())
 		}
 		if !strings.Contains(w.Body.String(), "invalid commit") {
-			t.Errorf("Expected 'invalid commit' error, got: %s", w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'invalid commit' error, got: %s", w.Body.String())
 		}
 	})
 
@@ -1686,14 +2102,18 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var job storage.ReviewJob
 		testutil.DecodeJSON(t, w, &job)
 
 		if job.Reasoning != "fast" {
-			t.Errorf("Expected reasoning 'fast', got '%s'", job.Reasoning)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected reasoning 'fast', got '%s'", job.Reasoning)
 		}
 	})
 
@@ -1711,14 +2131,18 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var job storage.ReviewJob
 		testutil.DecodeJSON(t, w, &job)
 
 		if !job.Agentic {
-			t.Error("Expected Agentic to be true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Agentic to be true")
 		}
 	})
 
@@ -1735,14 +2159,18 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		server.handleEnqueue(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var job storage.ReviewJob
 		testutil.DecodeJSON(t, w, &job)
 
 		if job.Agentic {
-			t.Error("Expected Agentic to be false by default")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Agentic to be false by default")
 		}
 	})
 }
@@ -1759,18 +2187,24 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 	// Symlinks don't work reliably on Windows, so we use wrapper scripts.
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
-		t.Fatal("git not found in PATH")
+		require.Condition(t, func() bool {
+			return false
+		}, "git not found in PATH")
 	}
 	gitOnlyDir := t.TempDir()
 	if runtime.GOOS == "windows" {
 		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
 		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 	} else {
 		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
 		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 	}
 
@@ -1867,7 +2301,9 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 					content = "@exit /b 0\r\n"
 				}
 				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
-					t.Fatal(err)
+					require.Condition(t, func() bool {
+						return false
+					}, err)
 				}
 			}
 			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
@@ -1886,7 +2322,9 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != tt.expectedCode {
-				t.Fatalf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+				require.Condition(t, func() bool {
+					return false
+				}, "Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
 			}
 
 			if tt.expectedCode != http.StatusCreated {
@@ -1897,7 +2335,9 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			testutil.DecodeJSON(t, w, &job)
 
 			if job.Agent != tt.expectedAgent {
-				t.Errorf("Expected agent %q, got %q", tt.expectedAgent, job.Agent)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected agent %q, got %q", tt.expectedAgent, job.Agent)
 			}
 		})
 	}
@@ -1919,13 +2359,17 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 	worktreeDir := filepath.Join(tmpDir, "worktree")
 	wtCmd := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch", worktreeDir)
 	if out, err := wtCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git worktree add failed: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git worktree add failed: %v\n%s", err, out)
 	}
 
 	// Make a new commit in the worktree so HEAD differs (commit B)
 	wtFile := filepath.Join(worktreeDir, "worktree-file.txt")
 	if err := os.WriteFile(wtFile, []byte("worktree content"), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write file: %v", err)
 	}
 	for _, args := range [][]string{
 		{"git", "-C", worktreeDir, "add", "."},
@@ -1933,13 +2377,17 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v failed: %v\n%s", args, err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "%v failed: %v\n%s", args, err, out)
 		}
 	}
 	commitB := testutil.GetHeadSHA(t, worktreeDir)
 
 	if commitA == commitB {
-		t.Fatal("test setup error: commits A and B should differ")
+		require.Condition(t, func() bool {
+			return false
+		}, "test setup error: commits A and B should differ")
 	}
 
 	enqueue := func(t *testing.T) storage.ReviewJob {
@@ -1954,7 +2402,9 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleEnqueue(w, req)
 		if w.Code != http.StatusCreated {
-			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 		var job storage.ReviewJob
 		testutil.DecodeJSON(t, w, &job)
@@ -1972,7 +2422,9 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		// With GIT_DIR leaked, git resolves HEAD from the main repo (commit A)
 		// instead of the worktree (commit B). This is the bug.
 		if job.GitRef != commitA {
-			t.Errorf("expected leaked GIT_DIR to resolve commit A (%s), got %s", commitA, job.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected leaked GIT_DIR to resolve commit A (%s), got %s", commitA, job.GitRef)
 		}
 	})
 
@@ -1986,7 +2438,9 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 
 		// Without GIT_DIR, git uses cmd.Dir correctly and resolves the worktree's HEAD.
 		if job.GitRef != commitB {
-			t.Errorf("expected worktree commit B (%s), got %s", commitB, job.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected worktree commit B (%s), got %s", commitB, job.GitRef)
 		}
 	})
 }
@@ -2001,13 +2455,17 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	// Get the root commit SHA
 	rootSHA, err := gitpkg.ResolveSHA(repoDir, "HEAD")
 	if err != nil {
-		t.Fatalf("resolve root SHA: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "resolve root SHA: %v", err)
 	}
 
 	// Add a second commit so we have a range
 	testFile := filepath.Join(repoDir, "second.txt")
 	if err := os.WriteFile(testFile, []byte("second"), 0644); err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	for _, args := range [][]string{
 		{"git", "-C", repoDir, "add", "."},
@@ -2015,12 +2473,16 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v failed: %v\n%s", args, err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "%v failed: %v\n%s", args, err, out)
 		}
 	}
 	endSHA, err := gitpkg.ResolveSHA(repoDir, "HEAD")
 	if err != nil {
-		t.Fatalf("resolve end SHA: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "resolve end SHA: %v", err)
 	}
 
 	server, _, _ := newTestServer(t)
@@ -2039,7 +2501,9 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var job storage.ReviewJob
@@ -2048,7 +2512,9 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	// The stored range should use the empty tree SHA as the start
 	expectedRef := gitpkg.EmptyTreeSHA + ".." + endSHA
 	if job.GitRef != expectedRef {
-		t.Errorf("expected git_ref %q, got %q", expectedRef, job.GitRef)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected git_ref %q, got %q", expectedRef, job.GitRef)
 	}
 }
 
@@ -2060,14 +2526,18 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 
 	endSHA, err := gitpkg.ResolveSHA(repoDir, "HEAD")
 	if err != nil {
-		t.Fatalf("resolve HEAD: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "resolve HEAD: %v", err)
 	}
 
 	// Get a blob SHA (the test.txt file created by InitTestGitRepo)
 	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD:test.txt")
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("get blob SHA: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "get blob SHA: %v", err)
 	}
 	blobSHA := strings.TrimSpace(string(out))
 
@@ -2086,10 +2556,14 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "invalid start commit") {
-		t.Errorf("expected 'invalid start commit' error, got: %s", w.Body.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 'invalid start commit' error, got: %s", w.Body.String())
 	}
 }
 
@@ -2134,7 +2608,9 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp struct {
@@ -2143,12 +2619,15 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 1 {
-			t.Fatalf("Expected 1 fix job, got %d", len(resp.Jobs))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 1 fix job, got %d", len(resp.Jobs))
 		}
 		if resp.Jobs[0].JobType != storage.JobTypeFix {
-			t.Errorf(
-				"Expected job_type 'fix', got %q", resp.Jobs[0].JobType,
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected job_type 'fix', got %q", resp.Jobs[0].JobType)
+
 		}
 	})
 
@@ -2160,7 +2639,9 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp struct {
@@ -2169,7 +2650,9 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 2 {
-			t.Errorf("Expected 2 jobs total, got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 jobs total, got %d", len(resp.Jobs))
 		}
 	})
 
@@ -2181,7 +2664,9 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		server.handleListJobs(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp struct {
@@ -2190,10 +2675,14 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 1 {
-			t.Fatalf("Expected 1 non-fix job, got %d", len(resp.Jobs))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 1 non-fix job, got %d", len(resp.Jobs))
 		}
 		if resp.Jobs[0].JobType == storage.JobTypeFix {
-			t.Error("Expected non-fix job, got fix")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected non-fix job, got fix")
 		}
 	})
 }
@@ -2220,12 +2709,16 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
 		}
 		wsSlash := filepath.ToSlash(workspace) + "/"
 		for _, j := range resp.Jobs {
 			if !strings.HasPrefix(j.RepoPath, wsSlash) {
-				t.Errorf("Job repo_path %q does not start with workspace prefix", j.RepoPath)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Job repo_path %q does not start with workspace prefix", j.RepoPath)
 			}
 		}
 	})
@@ -2245,7 +2738,9 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 
 		// Should still be 5 (not 6) - the exact workspace path match is excluded
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs (excluding exact path match), got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs (excluding exact path match), got %d", len(resp.Jobs))
 		}
 	})
 
@@ -2262,7 +2757,9 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 3 {
-			t.Errorf("Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
 		}
 	})
 
@@ -2278,7 +2775,9 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with trailing-slash prefix, got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs with trailing-slash prefix, got %d", len(resp.Jobs))
 		}
 	})
 
@@ -2296,7 +2795,9 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 5 {
-			t.Errorf("Expected 5 jobs with dot-dot prefix, got %d", len(resp.Jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 5 jobs with dot-dot prefix, got %d", len(resp.Jobs))
 		}
 	})
 }
@@ -2370,14 +2871,18 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != http.StatusCreated {
-				t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+				require.Condition(t, func() bool {
+					return false
+				}, "expected 201, got %d: %s", w.Code, w.Body.String())
 			}
 
 			var job storage.ReviewJob
 			testutil.DecodeJSON(t, w, &job)
 
 			if job.Model != tt.wantModel {
-				t.Errorf("model = %q, want %q", job.Model, tt.wantModel)
+				assert.Condition(t, func() bool {
+					return false
+				}, "model = %q, want %q", job.Model, tt.wantModel)
 			}
 		})
 	}
@@ -2404,10 +2909,14 @@ func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) 
 	}
 	claudePath := filepath.Join(binDir, claudeName)
 	if err := os.WriteFile(claudePath, claudeScript, 0o755); err != nil {
-		t.Fatalf("write fake claude: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write fake claude: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, gitName), gitWrapper, 0o755); err != nil {
-		t.Fatalf("write git wrapper: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write git wrapper: %v", err)
 	}
 	t.Setenv("PATH", binDir)
 
@@ -2433,17 +2942,23 @@ func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) 
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, w, &job)
 
 	if job.Agent != "claude-code" {
-		t.Fatalf("agent = %q, want %q", job.Agent, "claude-code")
+		require.Condition(t, func() bool {
+			return false
+		}, "agent = %q, want %q", job.Agent, "claude-code")
 	}
 	if job.Model != "gpt-5.4" {
-		t.Fatalf("model = %q, want %q", job.Model, "gpt-5.4")
+		require.Condition(t, func() bool {
+			return false
+		}, "model = %q, want %q", job.Model, "gpt-5.4")
 	}
 }
 
@@ -2474,7 +2989,9 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	server.handleEnqueue(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var job storage.ReviewJob
@@ -2482,10 +2999,11 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 
 	// Fix reasoning default is "standard", review default is "thorough"
 	if job.Reasoning != "standard" {
-		t.Errorf(
-			"compact job reasoning = %q, want %q (fix default)",
-			job.Reasoning, "standard",
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "compact job reasoning = %q, want %q (fix default)",
+			job.Reasoning, "standard")
+
 	}
 }
 
@@ -2511,17 +3029,19 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Jobs) != 3 {
-			t.Errorf(
-				"Expected 3 jobs with forward-slash prefix, got %d",
-				len(resp.Jobs),
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 3 jobs with forward-slash prefix, got %d",
+				len(resp.Jobs))
+
 		}
 		for _, j := range resp.Jobs {
 			if !strings.HasPrefix(j.RepoPath, ws+"/") {
-				t.Errorf(
-					"Job %d repo_path %q should be under %s",
-					j.ID, j.RepoPath, ws,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Job %d repo_path %q should be under %s",
+					j.ID, j.RepoPath, ws)
+
 			}
 		}
 	})

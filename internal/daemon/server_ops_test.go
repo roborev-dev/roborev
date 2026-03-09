@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,9 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestHandleBatchJobs(t *testing.T) {
@@ -23,23 +25,31 @@ func TestHandleBatchJobs(t *testing.T) {
 
 	repo, err := db.GetOrCreateRepo("/tmp/repo", "")
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	// Job 1: with review
 	job1, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	setJobStatus(t, db, job1.ID, storage.JobStatusRunning)
 	if err := db.CompleteJob(job1.ID, "test", "p1", "o1"); err != nil {
-		t.Fatalf("CompleteJob failed for job1: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob failed for job1: %v", err)
 	}
 
 	// Job 2: no review
 	job2, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "def456", Agent: "test"})
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 
 	nonExistentJobID := int64(9999)
@@ -59,27 +69,39 @@ func TestHandleBatchJobs(t *testing.T) {
 		testutil.DecodeJSON(t, w, &resp)
 
 		if len(resp.Results) != 2 {
-			t.Fatalf("Expected 2 results, got %d", len(resp.Results))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 2 results, got %d", len(resp.Results))
 		}
 
 		// Check job 1 (with review)
 		res1, ok := resp.Results[job1.ID]
 		if !ok {
-			t.Errorf("Result for job %d not found", job1.ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Result for job %d not found", job1.ID)
 		}
 		if res1.Review == nil {
-			t.Error("Expected review for job 1")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review for job 1")
 		} else if res1.Review.Output != "o1" {
-			t.Errorf("Expected output 'o1', got %q", res1.Review.Output)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected output 'o1', got %q", res1.Review.Output)
 		}
 
 		// Check job 2 (no review)
 		res2, ok := resp.Results[job2.ID]
 		if !ok {
-			t.Errorf("Result for job %d not found", job2.ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Result for job %d not found", job2.ID)
 		}
 		if res2.Review != nil {
-			t.Error("Expected nil review for job 2")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected nil review for job 2")
 		}
 	})
 
@@ -114,7 +136,9 @@ func TestHandleBatchJobs(t *testing.T) {
 		server.handleBatchJobs(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 		if !strings.Contains(w.Body.String(), "too many job IDs") {
-			t.Errorf("Expected error message about batch size, got: %s", w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected error message about batch size, got: %s", w.Body.String())
 		}
 	})
 }
@@ -125,7 +149,9 @@ func TestHandleRemap(t *testing.T) {
 	// Set up a git repo so handleRemap can resolve paths
 	repoDir := filepath.Join(tmpDir, "remap-repo")
 	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	for _, args := range [][]string{
 		{"init"},
@@ -135,7 +161,9 @@ func TestHandleRemap(t *testing.T) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoDir
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %s: %v", args, out, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "git %v: %s: %v", args, out, err)
 		}
 	}
 
@@ -148,11 +176,15 @@ func TestHandleRemap(t *testing.T) {
 
 	repo, err := db.GetOrCreateRepo(resolvedDir)
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	commit, err := db.GetOrCreateCommit(repo.ID, "oldsha111", "Test", "old commit", time.Now())
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 	_, err = db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   repo.ID,
@@ -162,7 +194,9 @@ func TestHandleRemap(t *testing.T) {
 		PatchID:  "patchXYZ",
 	})
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 
 	t.Run("remap updates job", func(t *testing.T) {
@@ -184,7 +218,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var result struct {
@@ -192,7 +228,9 @@ func TestHandleRemap(t *testing.T) {
 		}
 		testutil.DecodeJSON(t, w, &result)
 		if result.Remapped != 1 {
-			t.Errorf("expected remapped=1, got %d", result.Remapped)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected remapped=1, got %d", result.Remapped)
 		}
 	})
 
@@ -208,7 +246,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -216,12 +256,16 @@ func TestHandleRemap(t *testing.T) {
 		// Create a valid git repo that is NOT registered in the DB
 		unregistered := filepath.Join(tmpDir, "unregistered-repo")
 		if err := os.MkdirAll(unregistered, 0755); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 		cmd := exec.Command("git", "init")
 		cmd.Dir = unregistered
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %v", out, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %v", out, err)
 		}
 
 		reqData := RemapRequest{
@@ -235,7 +279,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -258,7 +304,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -283,7 +331,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s",
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 400, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -308,7 +358,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s",
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 400, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -333,7 +385,9 @@ func TestHandleRemap(t *testing.T) {
 		server.handleRemap(w, req)
 
 		if w.Code != http.StatusRequestEntityTooLarge {
-			t.Fatalf("expected 413, got %d: %s",
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 413, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -345,13 +399,17 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 	repoPath := filepath.Join(tmpDir, "repo-review-parse")
 	repo, err := db.GetOrCreateRepo(repoPath)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo: %v", err)
 	}
 	commit, err := db.GetOrCreateCommit(
 		repo.ID, "abc123", "msg", "Author", time.Now(),
 	)
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit: %v", err)
 	}
 	job, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   repo.ID,
@@ -361,19 +419,27 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 		Agent:    "test",
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob: %v", err)
 	}
 	claimed, err := db.ClaimJob("test-worker")
 	if err != nil {
-		t.Fatalf("ClaimJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob: %v", err)
 	}
 	if claimed == nil || claimed.ID != job.ID {
-		t.Fatalf("ClaimJob: expected job %d", job.ID)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimJob: expected job %d", job.ID)
 	}
 	if err := db.CompleteJob(
 		job.ID, "test", "prompt", "review output",
 	); err != nil {
-		t.Fatalf("CompleteJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CompleteJob: %v", err)
 	}
 
 	tests := []struct {
@@ -420,10 +486,11 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 			server.handleGetReview(w, req)
 
 			if w.Code != tt.wantStatus {
-				t.Errorf(
-					"expected status %d, got %d: %s",
-					tt.wantStatus, w.Code, w.Body.String(),
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected status %d, got %d: %s",
+					tt.wantStatus, w.Code, w.Body.String())
+
 			}
 		})
 	}
@@ -467,42 +534,49 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for fix enqueue, got %d: %s",
-				w.Code, w.Body.String(),
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for fix enqueue, got %d: %s",
+				w.Code, w.Body.String())
+
 		}
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 		if fixJob.CommitID == nil || *fixJob.CommitID != commit.ID {
-			t.Fatalf(
-				"Expected fix job commit_id=%d, got %v",
-				commit.ID, fixJob.CommitID,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected fix job commit_id=%d, got %v",
+				commit.ID, fixJob.CommitID)
+
 		}
 		if fixJob.CommitSubject != commit.Subject {
-			t.Fatalf(
-				"Expected fix job commit_subject %q, got %q",
-				commit.Subject, fixJob.CommitSubject,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected fix job commit_subject %q, got %q",
+				commit.Subject, fixJob.CommitSubject)
+
 		}
 
 		stored, err := db.GetJobByID(fixJob.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID(%d): %v", fixJob.ID, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID(%d): %v", fixJob.ID, err)
 		}
 		if stored.CommitID == nil || *stored.CommitID != commit.ID {
-			t.Fatalf(
-				"Expected stored fix job commit_id=%d, got %v",
-				commit.ID, stored.CommitID,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected stored fix job commit_id=%d, got %v",
+				commit.ID, stored.CommitID)
+
 		}
 		if stored.CommitSubject != commit.Subject {
-			t.Fatalf(
-				"Expected stored fix job commit_subject %q, got %q",
-				commit.Subject, stored.CommitSubject,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected stored fix job commit_subject %q, got %q",
+				commit.Subject, stored.CommitSubject)
+
 		}
 	})
 
@@ -518,10 +592,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for fix enqueue with custom prompt, got %d: %s",
-				w.Code, w.Body.String(),
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for fix enqueue with custom prompt, got %d: %s",
+				w.Code, w.Body.String())
+
 		}
 
 		var fixJob storage.ReviewJob
@@ -529,21 +604,25 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 		stored, err := db.GetJobByID(fixJob.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID(%d): %v", fixJob.ID, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID(%d): %v", fixJob.ID, err)
 		}
 
 		// The stored prompt must contain both the review output AND the custom instructions
 		if !strings.Contains(stored.Prompt, "FAIL: issues found") {
-			t.Fatalf(
-				"Expected fix prompt to contain review output, got:\n%s",
-				stored.Prompt,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected fix prompt to contain review output, got:\n%s",
+				stored.Prompt)
+
 		}
 		if !strings.Contains(stored.Prompt, "Ignore the security concern") {
-			t.Fatalf(
-				"Expected fix prompt to contain custom instructions, got:\n%s",
-				stored.Prompt,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected fix prompt to contain custom instructions, got:\n%s",
+				stored.Prompt)
+
 		}
 	})
 
@@ -568,10 +647,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf(
-				"Expected 400 for fix-job parent, got %d: %s",
-				w.Code, w.Body.String(),
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for fix-job parent, got %d: %s",
+				w.Code, w.Body.String())
+
 		}
 	})
 
@@ -585,7 +665,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for non-fix stale job, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for non-fix stale job, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -622,7 +704,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for wrong-parent stale job, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for wrong-parent stale job, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -649,7 +733,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for patchless stale job, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for patchless stale job, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -671,7 +757,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					ParentJobID: reviewJob.ID,
 				})
 				if err != nil {
-					t.Fatalf("EnqueueJob: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "EnqueueJob: %v", err)
 				}
 
 				// Set status directly to avoid ClaimJob picking
@@ -682,20 +770,25 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 						string(status), fixJob.ID,
 					)
 					if err != nil {
-						t.Fatalf("Set status to %s: %v", status, err)
+						require.Condition(t, func() bool {
+							return false
+						}, "Set status to %s: %v", status, err)
 					}
 				}
 
 				// Verify the job is in the expected state
 				got, err := db.GetJobByID(fixJob.ID)
 				if err != nil {
-					t.Fatalf("GetJobByID: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "GetJobByID: %v", err)
 				}
 				if got.Status != status {
-					t.Fatalf(
-						"Expected job %d status %s, got %s",
-						fixJob.ID, status, got.Status,
-					)
+					require.Condition(t, func() bool {
+						return false
+					}, "Expected job %d status %s, got %s",
+						fixJob.ID, status, got.Status)
+
 				}
 
 				req := testutil.MakeJSONRequest(
@@ -706,10 +799,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				server.handleFixJob(w, req)
 
 				if w.Code != http.StatusBadRequest {
-					t.Errorf(
-						"Expected 400 for %s stale job, got %d: %s",
-						status, w.Code, w.Body.String(),
-					)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected 400 for %s stale job, got %d: %s",
+						status, w.Code, w.Body.String())
+
 				}
 			})
 		}
@@ -740,17 +834,23 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for compact parent fix, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for compact parent fix, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 
 		if fixJob.GitRef == "" {
-			t.Errorf("Fix job git_ref must not be empty for compact parent")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Fix job git_ref must not be empty for compact parent")
 		}
 		if fixJob.GitRef != "main" {
-			t.Errorf("Expected fix job git_ref 'main' (branch fallback), got %q", fixJob.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected fix job git_ref 'main' (branch fallback), got %q", fixJob.GitRef)
 		}
 	})
 
@@ -774,17 +874,23 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for range parent fix, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for range parent fix, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 
 		if strings.Contains(fixJob.GitRef, "..") {
-			t.Errorf("Fix job git_ref must not be a range, got %q", fixJob.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Fix job git_ref must not be a range, got %q", fixJob.GitRef)
 		}
 		if fixJob.GitRef != "feature/foo" {
-			t.Errorf("Expected fix job git_ref 'feature/foo' (branch fallback), got %q", fixJob.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected fix job git_ref 'feature/foo' (branch fallback), got %q", fixJob.GitRef)
 		}
 	})
 
@@ -797,7 +903,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("Expected 400 for dash-prefixed git_ref, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for dash-prefixed git_ref, got %d", w.Code)
 		}
 	})
 
@@ -810,7 +918,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("Expected 400 for control-char git_ref, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for control-char git_ref, got %d", w.Code)
 		}
 	})
 
@@ -823,10 +933,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf(
-				"Expected 400 for space+dash git_ref, got %d",
-				w.Code,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for space+dash git_ref, got %d",
+				w.Code)
+
 		}
 	})
 
@@ -842,10 +953,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		// no user-provided ref — the server falls through to
 		// the parent ref/branch/HEAD resolution chain.
 		if w.Code != http.StatusCreated {
-			t.Fatalf(
-				"Expected 201 for whitespace-only git_ref (treated as empty), got %d: %s",
-				w.Code, w.Body.String(),
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for whitespace-only git_ref (treated as empty), got %d: %s",
+				w.Code, w.Body.String())
+
 		}
 	})
 
@@ -858,13 +970,17 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusCreated {
-			t.Fatalf("Expected 201 for valid git_ref, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 201 for valid git_ref, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 		if fixJob.GitRef != "feature/my-branch" {
-			t.Errorf("Expected git_ref 'feature/my-branch', got %q", fixJob.GitRef)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected git_ref 'feature/my-branch', got %q", fixJob.GitRef)
 		}
 	})
 
@@ -902,7 +1018,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		server.handleFixJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 for cross-repo stale job, got %d: %s",
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 400 for cross-repo stale job, got %d: %s",
 				w.Code, w.Body.String())
 		}
 	})
@@ -912,18 +1030,24 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 	// Create shared git repo + completed parent review job.
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
-		t.Fatal("git not found in PATH")
+		require.Condition(t, func() bool {
+			return false
+		}, "git not found in PATH")
 	}
 	gitOnlyDir := t.TempDir()
 	if runtime.GOOS == "windows" {
 		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
 		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 	} else {
 		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
 		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
-			t.Fatal(err)
+			require.Condition(t, func() bool {
+				return false
+			}, err)
 		}
 	}
 
@@ -978,7 +1102,9 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 					content = "@exit /b 0\r\n"
 				}
 				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
-					t.Fatal(err)
+					require.Condition(t, func() bool {
+						return false
+					}, err)
 				}
 			}
 			origPath := os.Getenv("PATH")
@@ -993,7 +1119,9 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 			server.handleFixJob(w, req)
 
 			if w.Code != tt.expectedCode {
-				t.Fatalf("Expected status %d, got %d: %s",
+				require.Condition(t, func() bool {
+					return false
+				}, "Expected status %d, got %d: %s",
 					tt.expectedCode, w.Code, w.Body.String())
 			}
 		})

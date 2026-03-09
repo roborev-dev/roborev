@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"github.com/stretchr/testify/assert"
 	"math"
 	"net/http"
 	"sync/atomic"
@@ -35,9 +36,13 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	KillDaemon(info)
 
 	if !shutdownCalled.Load() {
-		t.Error("KillDaemon should make HTTP shutdown request to loopback addresses")
+		assert.Condition(t, func() bool {
+			return false
+		}, "KillDaemon should make HTTP shutdown request to loopback addresses")
 	}
 	if requestCount.Load() == 0 {
-		t.Error("KillDaemon should have made at least one HTTP request")
+		assert.Condition(t, func() bool {
+			return false
+		}, "KillDaemon should have made at least one HTTP request")
 	}
 }

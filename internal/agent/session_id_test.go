@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestIsValidResumeSessionID(t *testing.T) {
 	tests := []struct {
@@ -17,8 +21,6 @@ func TestIsValidResumeSessionID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := IsValidResumeSessionID(tt.sessionID); got != tt.want {
-			t.Fatalf("IsValidResumeSessionID(%q) = %v, want %v", tt.sessionID, got, tt.want)
-		}
+		assert.Equal(t, tt.want, IsValidResumeSessionID(tt.sessionID), "IsValidResumeSessionID(%q)", tt.sessionID)
 	}
 }

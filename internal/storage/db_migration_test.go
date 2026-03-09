@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,16 +15,22 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 	t.Helper()
 	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("Failed to open raw DB: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to open raw DB: %v", err)
 	}
 	defer rawDB.Close()
 
 	if _, err := rawDB.Exec(schema); err != nil {
-		t.Fatalf("Failed to create old schema: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create old schema: %v", err)
 	}
 	if seedData != "" {
 		if _, err := rawDB.Exec(seedData); err != nil {
-			t.Fatalf("Failed to insert seed data: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Failed to insert seed data: %v", err)
 		}
 	}
 }
@@ -93,17 +101,23 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	// Now open with our Open() function - should trigger migration
 	db, err := Open(dbPath)
 	if err != nil {
-		t.Fatalf("Open() failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Open() failed after migration: %v", err)
 	}
 	defer db.Close()
 
 	// Verify the old data is preserved
 	review, err := db.GetReviewByJobID(1)
 	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetReviewByJobID failed: %v", err)
 	}
 	if review.Output != "test output" {
-		t.Errorf("Expected output 'test output', got '%s'", review.Output)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected output 'test output', got '%s'", review.Output)
 	}
 
 	// Verify the new constraint allows 'canceled' status
@@ -114,54 +128,74 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'def456', 'codex', 'queued')`,
 		repo.ID, commit.ID)
 	if err != nil {
-		t.Fatalf("Failed to insert job: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert job: %v", err)
 	}
 	jobID, _ := result.LastInsertId()
 
 	// Claim the job so we can cancel it
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Failed to claim job: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to claim job: %v", err)
 	}
 
 	// This should succeed with new schema (would fail with old constraint)
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Setting canceled status failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting canceled status failed after migration: %v", err)
 	}
 
 	// Verify the status was set correctly
 	var status string
 	err = db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, jobID).Scan(&status)
 	if err != nil {
-		t.Fatalf("Failed to query job status: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to query job status: %v", err)
 	}
 	if status != "canceled" {
-		t.Errorf("Expected status 'canceled', got '%s'", status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected status 'canceled', got '%s'", status)
 	}
 
 	// Verify 'applied' and 'rebased' statuses work after migration
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Failed to set done status: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to set done status: %v", err)
 	}
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'applied' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Setting applied status failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting applied status failed after migration: %v", err)
 	}
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Failed to reset to done: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to reset to done: %v", err)
 	}
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'rebased' WHERE id = ?`, jobID)
 	if err != nil {
-		t.Fatalf("Setting rebased status failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting rebased status failed after migration: %v", err)
 	}
 
 	// Verify constraint still rejects invalid status
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'invalid' WHERE id = ?`, jobID)
 	if err == nil {
-		t.Error("Expected constraint violation for invalid status")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected constraint violation for invalid status")
 	}
 
 	// Verify FK enforcement works after migration
@@ -172,7 +206,9 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		t.Fatalf("Failed to get connection: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to get connection: %v", err)
 	}
 	defer conn.Close()
 
@@ -180,17 +216,23 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	// This is informational - FKs are OFF by default in SQLite
 	var fkEnabled int
 	if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fkEnabled); err != nil {
-		t.Fatalf("Failed to check foreign_keys pragma: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to check foreign_keys pragma: %v", err)
 	}
 	t.Logf("foreign_keys pragma on pooled connection: %d", fkEnabled)
 
 	// Enable FK enforcement and verify it works (proves schema is correct for FKs)
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
-		t.Fatalf("Failed to enable foreign keys: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to enable foreign keys: %v", err)
 	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output) VALUES (99999, 'test', 'p', 'o')`)
 	if err == nil {
-		t.Error("Expected foreign key violation for invalid job_id - FKs may not be working")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected foreign key violation for invalid job_id - FKs may not be working")
 	}
 }
 
@@ -202,20 +244,28 @@ func TestMigrationAddsVerdictBoolColumn(t *testing.T) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'verdict_bool'`).Scan(&count)
 	if err != nil {
-		t.Fatalf("Failed to check verdict_bool column: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to check verdict_bool column: %v", err)
 	}
 	if count != 1 {
-		t.Fatal("verdict_bool column not found in reviews table")
+		require.Condition(t, func() bool {
+			return false
+		}, "verdict_bool column not found in reviews table")
 	}
 
 	// Verify the index exists
 	var indexCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount)
 	if err != nil {
-		t.Fatalf("Failed to check verdict_bool index: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to check verdict_bool index: %v", err)
 	}
 	if indexCount != 1 {
-		t.Fatal("idx_reviews_verdict_bool index not found")
+		require.Condition(t, func() bool {
+			return false
+		}, "idx_reviews_verdict_bool index not found")
 	}
 }
 
@@ -226,10 +276,14 @@ func TestMigrationAddsSessionIDColumn(t *testing.T) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_id'`).Scan(&count)
 	if err != nil {
-		t.Fatalf("Failed to check session_id column: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to check session_id column: %v", err)
 	}
 	if count != 1 {
-		t.Fatal("session_id column not found in review_jobs table")
+		require.Condition(t, func() bool {
+			return false
+		}, "session_id column not found in review_jobs table")
 	}
 }
 
@@ -243,25 +297,35 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 	t.Run("pass review stores verdict_bool=1", func(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict123", Agent: "codex"})
 		if err != nil {
-			t.Fatalf("EnqueueJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob: %v", err)
 		}
 		claimed := claimJob(t, db, "w1")
 		if claimed == nil {
-			t.Fatal("no job to claim")
+			require.Condition(t, func() bool {
+				return false
+			}, "no job to claim")
 		}
 
 		err = db.CompleteJob(job.ID, "codex", "prompt", "No issues found.")
 		if err != nil {
-			t.Fatalf("CompleteJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CompleteJob: %v", err)
 		}
 
 		var verdictBool sql.NullInt64
 		err = db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
 		if err != nil {
-			t.Fatalf("query verdict_bool: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "query verdict_bool: %v", err)
 		}
 		if !verdictBool.Valid || verdictBool.Int64 != 1 {
-			t.Errorf("expected verdict_bool=1 (pass), got %v", verdictBool)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected verdict_bool=1 (pass), got %v", verdictBool)
 		}
 	})
 
@@ -269,25 +333,35 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 		commit2 := createCommit(t, db, repo.ID, "verdict456")
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "verdict456", Agent: "codex"})
 		if err != nil {
-			t.Fatalf("EnqueueJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob: %v", err)
 		}
 		claimed := claimJob(t, db, "w2")
 		if claimed == nil {
-			t.Fatal("no job to claim")
+			require.Condition(t, func() bool {
+				return false
+			}, "no job to claim")
 		}
 
 		err = db.CompleteJob(job.ID, "codex", "prompt", "- High — SQL injection in login handler")
 		if err != nil {
-			t.Fatalf("CompleteJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CompleteJob: %v", err)
 		}
 
 		var verdictBool sql.NullInt64
 		err = db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
 		if err != nil {
-			t.Fatalf("query verdict_bool: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "query verdict_bool: %v", err)
 		}
 		if !verdictBool.Valid || verdictBool.Int64 != 0 {
-			t.Errorf("expected verdict_bool=0 (fail), got %v", verdictBool)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected verdict_bool=0 (fail), got %v", verdictBool)
 		}
 	})
 }
@@ -303,7 +377,9 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 
 	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("Failed to open raw DB: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to open raw DB: %v", err)
 	}
 
 	// Create base schema
@@ -342,7 +418,9 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	`)
 	if err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to create base schema: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create base schema: %v", err)
 	}
 
 	// Simulate a prior migration that rebuilt the table via RENAME,
@@ -385,7 +463,9 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	`)
 	if err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to create renamed table: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create renamed table: %v", err)
 	}
 
 	// Verify the table name is quoted in sqlite_master
@@ -394,14 +474,17 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
 	).Scan(&tableSql); err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to read table schema: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to read table schema: %v", err)
 	}
 	if !strings.Contains(tableSql, `"review_jobs"`) {
 		rawDB.Close()
-		t.Fatalf(
-			"Expected quoted table name, got: %s",
-			tableSql[:min(len(tableSql), 80)],
-		)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected quoted table name, got: %s",
+			tableSql[:min(len(tableSql), 80)])
+
 	}
 
 	// Insert valid data
@@ -417,7 +500,9 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	`)
 	if err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to insert valid data: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert valid data: %v", err)
 	}
 
 	// Insert an orphaned row (repo_id=999 doesn't exist) to simulate
@@ -428,24 +513,32 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	`)
 	if err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to insert orphaned row: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert orphaned row: %v", err)
 	}
 	rawDB.Close()
 
 	// Open with our migration code — must not fail
 	db, err := Open(dbPath)
 	if err != nil {
-		t.Fatalf("Open() failed on quoted-table DB: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Open() failed on quoted-table DB: %v", err)
 	}
 	defer db.Close()
 
 	// Verify data preserved
 	review, err := db.GetReviewByJobID(1)
 	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetReviewByJobID failed: %v", err)
 	}
 	if review.Output != "looks good" {
-		t.Errorf("Review output not preserved: got %q", review.Output)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Review output not preserved: got %q", review.Output)
 	}
 
 	// Verify applied/rebased statuses work
@@ -453,20 +546,26 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
 	)
 	if err != nil {
-		t.Fatalf("Setting applied status failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting applied status failed: %v", err)
 	}
 	_, err = db.Exec(
 		`UPDATE review_jobs SET status = 'rebased' WHERE id = 1`,
 	)
 	if err != nil {
-		t.Fatalf("Setting rebased status failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting rebased status failed: %v", err)
 	}
 
 	// Verify orphaned row still exists (migration didn't drop data)
 	var count int
 	db.QueryRow(`SELECT count(*) FROM review_jobs WHERE id = 2`).Scan(&count)
 	if count != 1 {
-		t.Errorf("Orphaned row was lost during migration")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Orphaned row was lost during migration")
 	}
 }
 
@@ -478,7 +577,9 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 
 	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
 	if err != nil {
-		t.Fatalf("Failed to open raw DB: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to open raw DB: %v", err)
 	}
 
 	_, err = rawDB.Exec(`
@@ -554,13 +655,17 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 	`)
 	if err != nil {
 		rawDB.Close()
-		t.Fatalf("Failed to create schema: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create schema: %v", err)
 	}
 	rawDB.Close()
 
 	db, err := Open(dbPath)
 	if err != nil {
-		t.Fatalf("Open() failed with stale temp table: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Open() failed with stale temp table: %v", err)
 	}
 	defer db.Close()
 
@@ -570,10 +675,14 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='review_jobs_new'`,
 	).Scan(&tempCount)
 	if err != nil {
-		t.Fatalf("Failed to check for stale temp table: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to check for stale temp table: %v", err)
 	}
 	if tempCount != 0 {
-		t.Error("review_jobs_new should not exist after migration")
+		assert.Condition(t, func() bool {
+			return false
+		}, "review_jobs_new should not exist after migration")
 	}
 
 	// Verify applied works and row was preserved
@@ -581,14 +690,20 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
 	)
 	if err != nil {
-		t.Fatalf("Setting applied status failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting applied status failed: %v", err)
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {
-		t.Fatalf("RowsAffected: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "RowsAffected: %v", err)
 	}
 	if affected != 1 {
-		t.Errorf("Expected 1 row affected, got %d", affected)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected 1 row affected, got %d", affected)
 	}
 
 	// Confirm status was actually set
@@ -597,10 +712,14 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 		`SELECT status FROM review_jobs WHERE id = 1`,
 	).Scan(&status)
 	if err != nil {
-		t.Fatalf("Failed to read back status: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to read back status: %v", err)
 	}
 	if status != "applied" {
-		t.Errorf("Expected status 'applied', got %q", status)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected status 'applied', got %q", status)
 	}
 }
 
@@ -671,49 +790,69 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 	// even when column order differs from schema definition
 	db, err := Open(dbPath)
 	if err != nil {
-		t.Fatalf("Open() failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Open() failed after migration: %v", err)
 	}
 	defer db.Close()
 
 	// Verify job data is preserved with correct values
 	job, err := db.GetJobByID(1)
 	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetJobByID failed: %v", err)
 	}
 	if job.GitRef != "alter123" {
-		t.Errorf("Expected git_ref 'alter123', got '%s'", job.GitRef)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected git_ref 'alter123', got '%s'", job.GitRef)
 	}
 	if job.Agent != "codex" {
-		t.Errorf("Expected agent 'codex', got '%s'", job.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected agent 'codex', got '%s'", job.Agent)
 	}
 
 	// Verify retry_count was preserved (query directly since GetJobByID doesn't load it)
 	var retryCount int
 	err = db.QueryRow(`SELECT retry_count FROM review_jobs WHERE id = 1`).Scan(&retryCount)
 	if err != nil {
-		t.Fatalf("Failed to query retry_count: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to query retry_count: %v", err)
 	}
 	if retryCount != 2 {
-		t.Errorf("Expected retry_count 2, got %d", retryCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected retry_count 2, got %d", retryCount)
 	}
 
 	// Verify prompt was preserved
 	var prompt string
 	err = db.QueryRow(`SELECT prompt FROM review_jobs WHERE id = 1`).Scan(&prompt)
 	if err != nil {
-		t.Fatalf("Failed to query prompt: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to query prompt: %v", err)
 	}
 	if prompt != "my prompt" {
-		t.Errorf("Expected prompt 'my prompt', got '%s'", prompt)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected prompt 'my prompt', got '%s'", prompt)
 	}
 
 	// Verify review data is preserved
 	review, err := db.GetReviewByJobID(1)
 	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetReviewByJobID failed: %v", err)
 	}
 	if review.Output != "test output" {
-		t.Errorf("Expected output 'test output', got '%s'", review.Output)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected output 'test output', got '%s'", review.Output)
 	}
 
 	// Verify new constraint works by creating and canceling a job.
@@ -721,39 +860,53 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 	// not have all columns that the high-level EnqueueJob function requires.
 	repo2, err := db.GetOrCreateRepo("/tmp/test2")
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 	commit2, err := db.GetOrCreateCommit(repo2.ID, "newsha", "A", "S", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 	result2, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'newsha', 'codex', 'queued')`,
 		repo2.ID, commit2.ID)
 	if err != nil {
-		t.Fatalf("Failed to insert job: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert job: %v", err)
 	}
 	newJobID, _ := result2.LastInsertId()
 
 	// Claim the job
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, newJobID)
 	if err != nil {
-		t.Fatalf("Failed to claim job: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to claim job: %v", err)
 	}
 
 	// Verify the claimed status
 	var claimedStatus string
 	err = db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, newJobID).Scan(&claimedStatus)
 	if err != nil {
-		t.Fatalf("Failed to query job status: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to query job status: %v", err)
 	}
 	if claimedStatus != "running" {
-		t.Fatalf("Expected job status 'running', got '%s'", claimedStatus)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected job status 'running', got '%s'", claimedStatus)
 	}
 
 	// Cancel - this should succeed with new schema (would fail with old constraint)
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, newJobID)
 	if err != nil {
-		t.Fatalf("Setting canceled status failed after migration: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Setting canceled status failed after migration: %v", err)
 	}
 }
 
@@ -803,16 +956,22 @@ func TestMigrationReasoningColumn(t *testing.T) {
 
 		db, err := Open(dbPath)
 		if err != nil {
-			t.Fatalf("Open() failed after migration: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Open() failed after migration: %v", err)
 		}
 		defer db.Close()
 
 		var reasoning string
 		if err := db.QueryRow(`SELECT reasoning FROM review_jobs WHERE id = 1`).Scan(&reasoning); err != nil {
-			t.Fatalf("Failed to read reasoning: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Failed to read reasoning: %v", err)
 		}
 		if reasoning != "thorough" {
-			t.Errorf("Expected default reasoning 'thorough', got '%s'", reasoning)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected default reasoning 'thorough', got '%s'", reasoning)
 		}
 	})
 
@@ -862,16 +1021,22 @@ func TestMigrationReasoningColumn(t *testing.T) {
 
 		db, err := Open(dbPath)
 		if err != nil {
-			t.Fatalf("Open() failed after migration: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Open() failed after migration: %v", err)
 		}
 		defer db.Close()
 
 		var reasoning string
 		if err := db.QueryRow(`SELECT reasoning FROM review_jobs WHERE id = 1`).Scan(&reasoning); err != nil {
-			t.Fatalf("Failed to read reasoning: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Failed to read reasoning: %v", err)
 		}
 		if reasoning != "fast" {
-			t.Errorf("Expected preserved reasoning 'fast', got '%s'", reasoning)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected preserved reasoning 'fast', got '%s'", reasoning)
 		}
 	})
 }
@@ -883,9 +1048,13 @@ func TestPatchIDMigration(t *testing.T) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'patch_id'`).Scan(&count)
 	if err != nil {
-		t.Fatalf("check patch_id column: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "check patch_id column: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("expected patch_id column to exist, got count=%d", count)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected patch_id column to exist, got count=%d", count)
 	}
 }

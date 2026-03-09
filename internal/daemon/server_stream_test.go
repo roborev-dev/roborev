@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,8 +34,11 @@ func startStreamHandler(t *testing.T, server *Server, url string) (context.Cance
 
 	// Wait for handler to subscribe
 	if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-		cancel() // Clean up context if timeout
-		t.Fatal("Timed out waiting for subscriber")
+		cancel()
+		require. // Clean up context if timeout
+				Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for subscriber")
 	}
 
 	return cancel, w, done
@@ -51,13 +56,19 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Check headers
 		if ct := w.Header().Get("Content-Type"); ct != "application/x-ndjson" {
-			t.Errorf("Expected Content-Type 'application/x-ndjson', got '%s'", ct)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Content-Type 'application/x-ndjson', got '%s'", ct)
 		}
 		if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
-			t.Errorf("Expected Cache-Control 'no-cache', got '%s'", cc)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Cache-Control 'no-cache', got '%s'", cc)
 		}
 		if conn := w.Header().Get("Connection"); conn != "keep-alive" {
-			t.Errorf("Expected Connection 'keep-alive', got '%s'", conn)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Connection 'keep-alive', got '%s'", conn)
 		}
 	})
 
@@ -68,7 +79,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		server.handleStreamEvents(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for POST, got %d", w.Code)
 		}
 	})
 
@@ -102,7 +115,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		// Wait for events to be written
 		if !waitForEvents(w, 2, time.Second) {
 			cancel()
-			t.Fatal("Timed out waiting for events")
+			require.Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for events")
 		}
 
 		// Cancel and wait for handler to finish
@@ -120,29 +135,43 @@ func TestHandleStreamEvents(t *testing.T) {
 			}
 			var ev Event
 			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v, line: %s", err, line)
+				require.Condition(t, func() bool {
+					return false
+				}, "Failed to parse JSONL line: %v, line: %s", err, line)
 			}
 			events = append(events, ev)
 		}
 
 		if len(events) != 2 {
-			t.Fatalf("Expected 2 events, got %d", len(events))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 2 events, got %d", len(events))
 		}
 
 		if events[0].Type != "review.completed" || events[0].JobID != 1 {
-			t.Errorf("First event mismatch: %+v", events[0])
+			assert.Condition(t, func() bool {
+				return false
+			}, "First event mismatch: %+v", events[0])
 		}
 		if events[0].RepoName != "repo1" {
-			t.Errorf("Expected RepoName 'repo1', got '%s'", events[0].RepoName)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected RepoName 'repo1', got '%s'", events[0].RepoName)
 		}
 		if events[0].Verdict != "pass" {
-			t.Errorf("Expected Verdict 'pass', got '%s'", events[0].Verdict)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Verdict 'pass', got '%s'", events[0].Verdict)
 		}
 		if events[1].Type != "review.failed" || events[1].JobID != 2 {
-			t.Errorf("Second event mismatch: %+v", events[1])
+			assert.Condition(t, func() bool {
+				return false
+			}, "Second event mismatch: %+v", events[1])
 		}
 		if events[1].Error != "agent timeout" {
-			t.Errorf("Expected Error 'agent timeout', got '%s'", events[1].Error)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Error 'agent timeout', got '%s'", events[1].Error)
 		}
 	})
 
@@ -187,7 +216,9 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		if !waitForEvents(w, 4, time.Second) {
 			cancel()
-			t.Fatal("Timed out waiting for events")
+			require.Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for events")
 		}
 		cancel()
 		<-done
@@ -203,18 +234,24 @@ func TestHandleStreamEvents(t *testing.T) {
 			}
 			var raw map[string]any
 			if err := json.Unmarshal([]byte(line), &raw); err != nil {
-				t.Fatalf("Failed to parse JSONL: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "Failed to parse JSONL: %v", err)
 			}
 			rawEvents = append(rawEvents, raw)
 		}
 
 		expectedTypes := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
 		if len(rawEvents) != len(expectedTypes) {
-			t.Fatalf("Expected %d events, got %d", len(expectedTypes), len(rawEvents))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected %d events, got %d", len(expectedTypes), len(rawEvents))
 		}
 		for i, exp := range expectedTypes {
 			if rawEvents[i]["type"] != exp {
-				t.Errorf("Event %d: expected type '%s', got '%v'", i, exp, rawEvents[i]["type"])
+				assert.Condition(t, func() bool {
+					return false
+				}, "Event %d: expected type '%s', got '%v'", i, exp, rawEvents[i]["type"])
 			}
 		}
 
@@ -222,18 +259,26 @@ func TestHandleStreamEvents(t *testing.T) {
 		for i, raw := range rawEvents {
 			eventType, ok := raw["type"].(string)
 			if !ok {
-				t.Fatalf("Event %d: 'type' key missing or not a string", i)
+				require.Condition(t, func() bool {
+					return false
+				}, "Event %d: 'type' key missing or not a string", i)
 			}
 			errorVal, hasError := raw["error"]
 			if eventType == "review.failed" {
 				if !hasError {
-					t.Error("Expected 'error' key present in review.failed event")
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected 'error' key present in review.failed event")
 				} else if errorStr, ok := errorVal.(string); !ok || errorStr != "connection refused" {
-					t.Errorf("Expected error 'connection refused', got %v", errorVal)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected error 'connection refused', got %v", errorVal)
 				}
 			} else {
 				if hasError {
-					t.Errorf("Unexpected 'error' key in %s event", eventType)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Unexpected 'error' key in %s event", eventType)
 				}
 			}
 		}
@@ -242,18 +287,26 @@ func TestHandleStreamEvents(t *testing.T) {
 		for i, raw := range rawEvents {
 			eventType, ok := raw["type"].(string)
 			if !ok {
-				t.Fatalf("Event %d: 'type' key missing or not a string", i)
+				require.Condition(t, func() bool {
+					return false
+				}, "Event %d: 'type' key missing or not a string", i)
 			}
 			verdictVal, hasVerdict := raw["verdict"]
 			if eventType == "review.completed" {
 				if !hasVerdict {
-					t.Error("Expected 'verdict' key present in review.completed event")
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected 'verdict' key present in review.completed event")
 				} else if verdictStr, ok := verdictVal.(string); !ok || verdictStr != "pass" {
-					t.Errorf("Expected verdict 'pass', got %v", verdictVal)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Expected verdict 'pass', got %v", verdictVal)
 				}
 			} else {
 				if hasVerdict {
-					t.Errorf("Unexpected 'verdict' key in %s event", eventType)
+					assert.Condition(t, func() bool {
+						return false
+					}, "Unexpected 'verdict' key in %s event", eventType)
 				}
 			}
 		}
@@ -274,7 +327,9 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		if !waitForEvents(w, 1, time.Second) {
 			cancel()
-			t.Fatal("Timed out waiting for events")
+			require.Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for events")
 		}
 		cancel()
 		<-done
@@ -282,10 +337,14 @@ func TestHandleStreamEvents(t *testing.T) {
 		body := w.bodyString()
 		// Check that empty fields are not in the JSON output
 		if bytes.Contains([]byte(body), []byte(`"verdict"`)) {
-			t.Error("Expected 'verdict' to be omitted when empty")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'verdict' to be omitted when empty")
 		}
 		if bytes.Contains([]byte(body), []byte(`"error"`)) {
-			t.Error("Expected 'error' to be omitted when empty")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 'error' to be omitted when empty")
 		}
 	})
 
@@ -319,7 +378,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		// Wait for events to be written (expect 2 for repo1, repo2 event is filtered)
 		if !waitForEvents(w, 2, time.Second) {
 			cancel()
-			t.Fatal("Timed out waiting for events")
+			require.Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for events")
 		}
 
 		// Cancel and wait
@@ -337,19 +398,25 @@ func TestHandleStreamEvents(t *testing.T) {
 			}
 			var ev Event
 			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "Failed to parse JSONL line: %v", err)
 			}
 			events = append(events, ev)
 		}
 
 		// Should only have 2 events (repo1), not the repo2 event
 		if len(events) != 2 {
-			t.Fatalf("Expected 2 events (filtered), got %d", len(events))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 2 events (filtered), got %d", len(events))
 		}
 
 		for _, ev := range events {
 			if ev.Repo != "/test/repo1" {
-				t.Errorf("Expected all events for /test/repo1, got event for %s", ev.Repo)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected all events for /test/repo1, got event for %s", ev.Repo)
 			}
 		}
 	})
@@ -378,7 +445,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		// Wait for the event that passes filter
 		if !waitForEvents(w, 1, time.Second) {
 			cancel()
-			t.Fatal("Timed out waiting for events")
+			require.Condition(t, func() bool {
+				return false
+			}, "Timed out waiting for events")
 		}
 		cancel()
 		<-done
@@ -394,16 +463,22 @@ func TestHandleStreamEvents(t *testing.T) {
 			}
 			var ev Event
 			if err := json.Unmarshal([]byte(line), &ev); err != nil {
-				t.Fatalf("Failed to parse JSONL line: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "Failed to parse JSONL line: %v", err)
 			}
 			events = append(events, ev)
 		}
 
 		if len(events) != 1 {
-			t.Fatalf("Expected 1 event for repo with spaces, got %d", len(events))
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected 1 event for repo with spaces, got %d", len(events))
 		}
 		if events[0].Repo != repoPath {
-			t.Errorf("Expected repo '%s', got '%s'", repoPath, events[0].Repo)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected repo '%s', got '%s'", repoPath, events[0].Repo)
 		}
 	})
 }

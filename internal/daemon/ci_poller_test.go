@@ -5,20 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/review"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+
+	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/review"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
-// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 type ciPollerHarness struct {
 	DB       *storage.DB
 	RepoPath string
@@ -35,7 +38,9 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	repoPath := t.TempDir()
 	repo, err := db.GetOrCreateRepo(repoPath, identity)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo: %v", err)
 	}
 	cfg := config.DefaultConfig()
 	cfg.CI.Enabled = true
@@ -97,22 +102,30 @@ func (h *ciPollerHarness) seedBatchWithJobs(t *testing.T, prNum int, sha string,
 	t.Helper()
 	batch, _, err := h.DB.CreateCIBatch("acme/api", prNum, sha, len(specs))
 	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CreateCIBatch: %v", err)
 	}
 
 	var jobs []*storage.ReviewJob
 	for _, spec := range specs {
 		if spec.ReviewType == "" {
-			t.Fatalf("seedBatchWithJobs: ReviewType required in jobSpec for agent %q", spec.Agent)
+			require.Condition(t, func() bool {
+				return false
+			}, "seedBatchWithJobs: ReviewType required in jobSpec for agent %q", spec.Agent)
 		}
 		job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
 			RepoID: h.Repo.ID, GitRef: "a..b", Agent: spec.Agent, ReviewType: spec.ReviewType,
 		})
 		if err != nil {
-			t.Fatalf("EnqueueJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob: %v", err)
 		}
 		if err := h.DB.RecordBatchJob(batch.ID, job.ID); err != nil {
-			t.Fatalf("RecordBatchJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "RecordBatchJob: %v", err)
 		}
 
 		switch spec.Status {
@@ -125,7 +138,9 @@ func (h *ciPollerHarness) seedBatchWithJobs(t *testing.T, prNum int, sha string,
 		case "", "queued":
 			// no-op, job remains in queued state
 		default:
-			t.Fatalf("seedBatchWithJobs: unknown status %q", spec.Status)
+			require.Condition(t, func() bool {
+				return false
+			}, "seedBatchWithJobs: unknown status %q", spec.Status)
 		}
 		jobs = append(jobs, job)
 	}
@@ -137,16 +152,22 @@ func (h *ciPollerHarness) seedBatchJob(t *testing.T, ghRepo string, prNum int, h
 	t.Helper()
 	batch, _, err := h.DB.CreateCIBatch(ghRepo, prNum, headSHA, 1)
 	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CreateCIBatch: %v", err)
 	}
 	job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID: h.Repo.ID, GitRef: gitRef, Agent: agent, ReviewType: reviewType,
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob: %v", err)
 	}
 	if err := h.DB.RecordBatchJob(batch.ID, job.ID); err != nil {
-		t.Fatalf("RecordBatchJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "RecordBatchJob: %v", err)
 	}
 	return batch, job
 }
@@ -155,10 +176,14 @@ func (h *ciPollerHarness) seedBatchJob(t *testing.T, ghRepo string, prNum int, h
 func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent, output string) {
 	t.Helper()
 	if _, err := h.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id = ?`, jobID); err != nil {
-		t.Fatalf("mark done: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "mark done: %v", err)
 	}
 	if _, err := h.DB.Exec(`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, ?, 'p', ?)`, jobID, agent, output); err != nil {
-		t.Fatalf("insert review: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert review: %v", err)
 	}
 }
 
@@ -166,7 +191,9 @@ func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent
 func (h *ciPollerHarness) markJobFailed(t *testing.T, jobID int64, errText string) {
 	t.Helper()
 	if _, err := h.DB.Exec(`UPDATE review_jobs SET status='failed', error=? WHERE id = ?`, errText, jobID); err != nil {
-		t.Fatalf("mark failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "mark failed: %v", err)
 	}
 }
 
@@ -174,7 +201,9 @@ func (h *ciPollerHarness) markJobFailed(t *testing.T, jobID int64, errText strin
 func (h *ciPollerHarness) markJobCanceled(t *testing.T, jobID int64, errText string) {
 	t.Helper()
 	if _, err := h.DB.Exec(`UPDATE review_jobs SET status='canceled', error=? WHERE id = ?`, errText, jobID); err != nil {
-		t.Fatalf("mark canceled: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "mark canceled: %v", err)
 	}
 }
 
@@ -198,13 +227,19 @@ func (h *ciPollerHarness) AssertBatchState(t *testing.T, batchID int64, wantSynt
 	var claimedAt sql.NullString
 	err := h.DB.QueryRow(`SELECT synthesized, claimed_at FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&synthesized, &claimedAt)
 	if err != nil {
-		t.Fatalf("query batch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "query batch: %v", err)
 	}
 	if synthesized != wantSynthesized {
-		t.Errorf("synthesized=%d, want %d", synthesized, wantSynthesized)
+		assert.Condition(t, func() bool {
+			return false
+		}, "synthesized=%d, want %d", synthesized, wantSynthesized)
 	}
 	if claimedAt.Valid != wantClaimed {
-		t.Errorf("claimed=%v, want %v", claimedAt.Valid, wantClaimed)
+		assert.Condition(t, func() bool {
+			return false
+		}, "claimed=%v, want %v", claimedAt.Valid, wantClaimed)
 	}
 }
 
@@ -213,10 +248,14 @@ func (h *ciPollerHarness) AssertBatchCounts(t *testing.T, batchID int64, wantCom
 	t.Helper()
 	var completed, failed int
 	if err := h.DB.QueryRow(`SELECT completed_jobs, failed_jobs FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&completed, &failed); err != nil {
-		t.Fatalf("query reconciled counts: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "query reconciled counts: %v", err)
 	}
 	if completed != wantCompleted || failed != wantFailed {
-		t.Fatalf("expected counts %d/%d, got %d/%d", wantCompleted, wantFailed, completed, failed)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected counts %d/%d, got %d/%d", wantCompleted, wantFailed, completed, failed)
 	}
 }
 
@@ -225,10 +264,14 @@ func (h *ciPollerHarness) AssertBatchUnclaimed(t *testing.T, batchID int64) {
 	t.Helper()
 	var synthesized int
 	if err := h.DB.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&synthesized); err != nil {
-		t.Fatalf("query batch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "query batch: %v", err)
 	}
 	if synthesized != 0 {
-		t.Fatalf("expected batch to be unclaimed (synthesized=0), got %d", synthesized)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch to be unclaimed (synthesized=0), got %d", synthesized)
 	}
 }
 
@@ -237,7 +280,9 @@ func assertContainsAll(t *testing.T, s string, wantLabel string, subs ...string)
 	t.Helper()
 	for _, sub := range subs {
 		if !strings.Contains(s, sub) {
-			t.Errorf("%s missing %q\nDocument content:\n%s", wantLabel, sub, s)
+			assert.Condition(t, func() bool {
+				return false
+			}, "%s missing %q\nDocument content:\n%s", wantLabel, sub, s)
 		}
 	}
 }
@@ -282,8 +327,9 @@ func TestFormatRawBatchComment(t *testing.T) {
 	)
 
 	if strings.Contains(comment, "<details>") {
-		t.Error(
-			"raw batch comment should not use <details> blocks")
+		assert.Condition(t, func() bool {
+			return false
+		}, "raw batch comment should not use <details> blocks")
 	}
 }
 
@@ -348,21 +394,29 @@ func TestGhEnvForRepo_FiltersExistingTokens(t *testing.T) {
 			found = true
 		}
 		if strings.HasPrefix(e, "GITHUB_TOKEN=") {
-			t.Error("GITHUB_TOKEN should have been filtered out")
+			assert.Condition(t, func() bool {
+				return false
+			}, "GITHUB_TOKEN should have been filtered out")
 		}
 		if strings.HasPrefix(e, "GH_TOKEN=personal_token") {
-			t.Error("original GH_TOKEN should have been filtered out")
+			assert.Condition(t, func() bool {
+				return false
+			}, "original GH_TOKEN should have been filtered out")
 		}
 	}
 	if !found {
-		t.Error("expected GH_TOKEN=ghs_app_token_123 in env")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected GH_TOKEN=ghs_app_token_123 in env")
 	}
 }
 
 func TestGhEnvForRepo_NilProvider(t *testing.T) {
 	p := &CIPoller{tokenProvider: nil}
 	if env := p.ghEnvForRepo("acme/api"); env != nil {
-		t.Errorf("expected nil env when no token provider, got %v", env)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected nil env when no token provider, got %v", env)
 	}
 }
 
@@ -378,7 +432,9 @@ func TestGhEnvForRepo_UnknownOwner(t *testing.T) {
 
 	env := p.ghEnvForRepo("unknown-org/repo")
 	if env != nil {
-		t.Errorf("expected nil env for unknown owner, got %v", env)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected nil env for unknown owner, got %v", env)
 	}
 }
 
@@ -406,7 +462,9 @@ func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
 		}
 	}
 	if !found1 {
-		t.Error("expected wesm's token for wesm/my-repo")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected wesm's token for wesm/my-repo")
 	}
 
 	// Check roborev-dev repo uses org installation token
@@ -418,7 +476,9 @@ func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
 		}
 	}
 	if !found2 {
-		t.Error("expected roborev-dev's token for roborev-dev/other-repo")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected roborev-dev's token for roborev-dev/other-repo")
 	}
 }
 
@@ -441,7 +501,9 @@ func TestGhEnvForRepo_CaseInsensitiveOwner(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected token for case-variant owner 'Wesm' matching config key 'wesm'")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected token for case-variant owner 'Wesm' matching config key 'wesm'")
 	}
 }
 
@@ -452,7 +514,9 @@ func TestFormatRawBatchComment_Truncation(t *testing.T) {
 
 	comment := review.FormatRawBatchComment(reviews, "abc123def456")
 	if !strings.Contains(comment, "...(truncated)") {
-		t.Error("expected truncation for large output")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected truncation for large output")
 	}
 }
 
@@ -467,10 +531,14 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
 	h.Poller.mergeBaseFn = func(_, ref1, ref2 string) (string, error) {
 		if ref1 != "origin/main" {
-			t.Fatalf("merge-base ref1=%q, want origin/main", ref1)
+			require.Condition(t, func() bool {
+				return false
+			}, "merge-base ref1=%q, want origin/main", ref1)
 		}
 		if ref2 != "head-sha-123" {
-			t.Fatalf("merge-base ref2=%q, want head-sha-123", ref2)
+			require.Condition(t, func() bool {
+				return false
+			}, "merge-base ref2=%q, want head-sha-123", ref2)
 		}
 		return "base-sha-999", nil
 	}
@@ -481,32 +549,46 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 		BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch("acme/api", 42, "head-sha-123")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected CI batch to be created")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected CI batch to be created")
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha-999..head-sha-123"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 4 {
-		t.Fatalf("expected 4 jobs, got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 4 jobs, got %d", len(jobs))
 	}
 
 	got := make(map[string]bool)
 	for _, j := range jobs {
 		if j.Reasoning != "thorough" {
-			t.Errorf("job %d reasoning=%q, want thorough", j.ID, j.Reasoning)
+			assert.Condition(t, func() bool {
+				return false
+			}, "job %d reasoning=%q, want thorough", j.ID, j.Reasoning)
 		}
 		if j.Model != "gpt-test" {
-			t.Errorf("job %d model=%q, want gpt-test", j.ID, j.Model)
+			assert.Condition(t, func() bool {
+				return false
+			}, "job %d model=%q, want gpt-test", j.ID, j.Model)
 		}
 		got[j.Agent+"|"+j.ReviewType] = true
 	}
@@ -518,7 +600,9 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	}
 	for _, key := range want {
 		if !got[key] {
-			t.Errorf("missing job combination %q", key)
+			assert.Condition(t, func() bool {
+				return false
+			}, "missing job combination %q", key)
 		}
 	}
 }
@@ -537,19 +621,27 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 	h.stubProcessPRGit()
 
 	if err := h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg); err != nil {
-		t.Fatalf("pollRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "pollRepo: %v", err)
 	}
 
 	hasA, err := h.DB.HasCIBatch("acme/api", 7, "11111111aaaaaaaa")
 	if err != nil {
-		t.Fatalf("HasCIBatch A: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch A: %v", err)
 	}
 	hasB, err := h.DB.HasCIBatch("acme/api", 8, "22222222bbbbbbbb")
 	if err != nil {
-		t.Fatalf("HasCIBatch B: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch B: %v", err)
 	}
 	if !hasA || !hasB {
-		t.Fatalf("expected both batches to exist, got hasA=%v hasB=%v", hasA, hasB)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected both batches to exist, got hasA=%v hasB=%v", hasA, hasB)
 	}
 }
 
@@ -562,19 +654,25 @@ func TestCIPollerStartStopHealth(t *testing.T) {
 	p := NewCIPoller(db, NewStaticConfig(cfg), NewBroadcaster())
 
 	if err := p.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Start: %v", err)
 	}
 
 	healthy, msg := p.HealthCheck()
 	if !healthy || msg != "running" {
-		t.Fatalf("HealthCheck after Start = (%v, %q), want (true, running)", healthy, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "HealthCheck after Start = (%v, %q), want (true, running)", healthy, msg)
 	}
 
 	p.Stop()
 
 	healthy, msg = p.HealthCheck()
 	if healthy || msg != "not running" {
-		t.Fatalf("HealthCheck after Stop = (%v, %q), want (false, not running)", healthy, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "HealthCheck after Stop = (%v, %q), want (false, not running)", healthy, msg)
 	}
 }
 
@@ -584,14 +682,20 @@ func TestCIPollerHandleBatchJobDone_PartialBatchDoesNotPost(t *testing.T) {
 	// Batch expects 2 jobs but we only seed 1 — partial
 	batch, _, err := h.DB.CreateCIBatch("acme/api", 1, "sha", 2)
 	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CreateCIBatch: %v", err)
 	}
 	job, err := h.DB.EnqueueJob(storage.EnqueueOpts{RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security"})
 	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob: %v", err)
 	}
 	if err := h.DB.RecordBatchJob(batch.ID, job.ID); err != nil {
-		t.Fatalf("RecordBatchJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "RecordBatchJob: %v", err)
 	}
 
 	captured := h.CaptureComments()
@@ -599,7 +703,9 @@ func TestCIPollerHandleBatchJobDone_PartialBatchDoesNotPost(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
 	if len(*captured) != 0 {
-		t.Fatalf("expected no PR comment yet, got %d", len(*captured))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no PR comment yet, got %d", len(*captured))
 	}
 }
 
@@ -615,14 +721,20 @@ func TestCIPollerHandleBatchJobDone_CompleteBatchPostsAndFinalizes(t *testing.T)
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
 	if len(*captured) != 1 {
-		t.Fatalf("expected 1 posted comment, got %d", len(*captured))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 posted comment, got %d", len(*captured))
 	}
 	c := (*captured)[0]
 	if c.Repo != "acme/api" || c.PR != 2 {
-		t.Fatalf("posted to %s#%d, want acme/api#2", c.Repo, c.PR)
+		require.Condition(t, func() bool {
+			return false
+		}, "posted to %s#%d, want acme/api#2", c.Repo, c.PR)
 	}
 	if !strings.Contains(c.Body, "roborev") {
-		t.Fatalf("expected roborev comment body, got: %q", c.Body)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected roborev comment body, got: %q", c.Body)
 	}
 
 	h.AssertBatchState(t, batch.ID, 1, false)
@@ -639,11 +751,15 @@ func TestCIPollerReconcileStaleBatches_PostsCanceledJobsAsFailed(t *testing.T) {
 	h.Poller.reconcileStaleBatches()
 
 	if len(*captured) == 0 {
-		t.Fatal("expected comment to be posted, got none")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected comment to be posted, got none")
 	}
 	postedBody := (*captured)[0].Body
 	if !strings.Contains(postedBody, "All review jobs in this batch failed.") {
-		t.Fatalf("expected all-failed comment, got: %q", postedBody)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected all-failed comment, got: %q", postedBody)
 	}
 
 	h.AssertBatchCounts(t, batch.ID, 0, 1)
@@ -656,11 +772,15 @@ func TestCIPollerHandleReviewCompleted_LegacyCIReviewPostsComment(t *testing.T) 
 		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
 	})
 	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnqueueJob: %v", err)
 	}
 	h.markJobDoneWithReview(t, job.ID, "codex", "No issues found.")
 	if err := h.DB.RecordCIReview("acme/api", 12, "head-sha", job.ID); err != nil {
-		t.Fatalf("RecordCIReview: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "RecordCIReview: %v", err)
 	}
 
 	captured := h.CaptureComments()
@@ -668,14 +788,20 @@ func TestCIPollerHandleReviewCompleted_LegacyCIReviewPostsComment(t *testing.T) 
 	h.Poller.handleReviewCompleted(Event{JobID: job.ID, Verdict: "P"})
 
 	if len(*captured) != 1 {
-		t.Fatalf("expected one post call, got %d", len(*captured))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected one post call, got %d", len(*captured))
 	}
 	c := (*captured)[0]
 	if c.Repo != "acme/api" || c.PR != 12 {
-		t.Fatalf("posted to %s#%d, want acme/api#12", c.Repo, c.PR)
+		require.Condition(t, func() bool {
+			return false
+		}, "posted to %s#%d, want acme/api#12", c.Repo, c.PR)
 	}
 	if !strings.Contains(c.Body, "roborev") {
-		t.Fatalf("unexpected body: %q", c.Body)
+		require.Condition(t, func() bool {
+			return false
+		}, "unexpected body: %q", c.Body)
 	}
 }
 
@@ -691,10 +817,14 @@ func TestCIPollerHandleReviewFailed_BatchPath(t *testing.T) {
 	h.Poller.handleReviewFailed(Event{JobID: job.ID})
 
 	if len(*captured) == 0 {
-		t.Fatal("expected failure comment, got none")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected failure comment, got none")
 	}
 	if !strings.Contains((*captured)[0].Body, "Review Failed") {
-		t.Fatalf("expected failure comment, got: %q", (*captured)[0].Body)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected failure comment, got: %q", (*captured)[0].Body)
 	}
 }
 
@@ -715,10 +845,14 @@ func TestCIPollerPostBatchResults_SynthesisPathUsesMock(t *testing.T) {
 	h.Poller.postBatchResults(batch)
 
 	if len(*captured) == 0 {
-		t.Fatal("expected comment, got none")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected comment, got none")
 	}
 	if !strings.Contains((*captured)[0].Body, "SYNTHESIZED-RESULT") {
-		t.Fatalf("expected synthesized output, got: %q", (*captured)[0].Body)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected synthesized output, got: %q", (*captured)[0].Body)
 	}
 }
 
@@ -742,10 +876,14 @@ func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
 
 	found, err := h.Poller.findLocalRepo("acme/api")
 	if err != nil {
-		t.Fatalf("findLocalRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "findLocalRepo: %v", err)
 	}
 	if found.ID != h.Repo.ID {
-		t.Fatalf("found repo id %d, want %d", found.ID, h.Repo.ID)
+		require.Condition(t, func() bool {
+			return false
+		}, "found repo id %d, want %d", found.ID, h.Repo.ID)
 	}
 }
 
@@ -757,7 +895,9 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		identity, "api", identity)
 	if err != nil {
-		t.Fatalf("insert placeholder: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert placeholder: %v", err)
 	}
 
 	cfg := config.DefaultConfig()
@@ -766,28 +906,40 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	// With only a placeholder, should get errLocalRepoNotFound
 	_, err = p.findLocalRepo("acme/api")
 	if err == nil {
-		t.Fatal("expected error when only placeholder exists")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error when only placeholder exists")
 	}
 	if !errors.Is(err, errLocalRepoNotFound) {
-		t.Fatalf("expected errLocalRepoNotFound, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected errLocalRepoNotFound, got: %v", err)
 	}
 
 	// Add a real local checkout — should find it and skip the placeholder
 	repoPath := t.TempDir()
 	repo, err := db.GetOrCreateRepo(repoPath, identity)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo: %v", err)
 	}
 
 	found, err := p.findLocalRepo("acme/api")
 	if err != nil {
-		t.Fatalf("findLocalRepo with real repo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "findLocalRepo with real repo: %v", err)
 	}
 	if found.ID != repo.ID {
-		t.Errorf("found repo id %d, want %d", found.ID, repo.ID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "found repo id %d, want %d", found.ID, repo.ID)
 	}
 	if found.RootPath != repo.RootPath {
-		t.Errorf("found repo root_path %q, want %q", found.RootPath, repo.RootPath)
+		assert.Condition(t, func() bool {
+			return false
+		}, "found repo root_path %q, want %q", found.RootPath, repo.RootPath)
 	}
 }
 
@@ -800,25 +952,35 @@ func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
 	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"   \"\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 50, HeadRefOid: "whitespace-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..whitespace-reasoning-sha"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job, got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job, got %d", len(jobs))
 	}
 	if jobs[0].Reasoning != "thorough" {
-		t.Errorf("reasoning=%q, want thorough (whitespace should fall back to default)", jobs[0].Reasoning)
+		assert.Condition(t, func() bool {
+			return false
+		}, "reasoning=%q, want thorough (whitespace should fall back to default)", jobs[0].Reasoning)
 	}
 }
 
@@ -831,25 +993,35 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
 	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"invalid\"\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 51, HeadRefOid: "invalid-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..invalid-reasoning-sha"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job, got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job, got %d", len(jobs))
 	}
 	if jobs[0].Reasoning != "thorough" {
-		t.Errorf("reasoning=%q, want thorough (invalid should fall back to default)", jobs[0].Reasoning)
+		assert.Condition(t, func() bool {
+			return false
+		}, "reasoning=%q, want thorough (invalid should fall back to default)", jobs[0].Reasoning)
 	}
 }
 
@@ -867,10 +1039,14 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 		cfg,
 	)
 	if err != nil {
-		t.Fatalf("synthesizeBatchResults: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "synthesizeBatchResults: %v", err)
 	}
 	if !strings.Contains(out, "## roborev: Combined Review (`deadbee`)") {
-		t.Fatalf("expected combined review header with SHA, got: %q", out)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected combined review header with SHA, got: %q", out)
 	}
 }
 
@@ -882,17 +1058,23 @@ func TestCIPollerSynthesizeBatchResults_UsesRepoPath(t *testing.T) {
 
 	reviews, err := h.DB.GetBatchReviews(batch.ID)
 	if err != nil {
-		t.Fatalf("GetBatchReviews: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetBatchReviews: %v", err)
 	}
 
 	out, err := h.Poller.synthesizeBatchResults(batch, reviews, h.Cfg)
 	if err != nil {
-		t.Fatalf("synthesizeBatchResults: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "synthesizeBatchResults: %v", err)
 	}
 	// The test agent includes "Repo: <path>" in its output.
 	// Verify the repo's root_path was passed (not empty string).
 	if !strings.Contains(out, "Repo: "+h.RepoPath) {
-		t.Errorf("expected synthesis to run with repoPath=%q, got output: %q", h.RepoPath, out)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected synthesis to run with repoPath=%q, got output: %q", h.RepoPath, out)
 	}
 }
 
@@ -911,10 +1093,14 @@ func TestSynthesizeBatchResults_BackupOnPrimaryFailure(t *testing.T) {
 		cfg,
 	)
 	if err != nil {
-		t.Fatalf("expected backup to succeed, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected backup to succeed, got: %v", err)
 	}
 	if !strings.Contains(out, "## roborev: Combined Review") {
-		t.Fatalf("expected combined review header, got: %q", out)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected combined review header, got: %q", out)
 	}
 }
 
@@ -932,10 +1118,14 @@ func TestSynthesizeBatchResults_BothAgentsFail(t *testing.T) {
 		cfg,
 	)
 	if err == nil {
-		t.Fatal("expected error when both agents fail")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error when both agents fail")
 	}
 	if !strings.Contains(err.Error(), "backup") {
-		t.Fatalf("expected error to mention backup, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error to mention backup, got: %v", err)
 	}
 }
 
@@ -953,13 +1143,19 @@ func TestSynthesizeBatchResults_NoBackupConfigured(t *testing.T) {
 		cfg,
 	)
 	if err == nil {
-		t.Fatal("expected error when primary fails with no backup")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error when primary fails with no backup")
 	}
 	if !strings.Contains(err.Error(), "primary") {
-		t.Fatalf("expected error to mention primary, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error to mention primary, got: %v", err)
 	}
 	if strings.Contains(err.Error(), "backup") {
-		t.Fatalf("error should not mention backup when none configured, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "error should not mention backup when none configured, got: %v", err)
 	}
 }
 
@@ -974,18 +1170,26 @@ func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 		Number: 1, HeadRefOid: "head-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err == nil {
-		t.Fatal("expected error for invalid review type")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error for invalid review type")
 	}
 	if !strings.Contains(err.Error(), "invalid review_type") {
-		t.Fatalf("expected 'invalid review_type' error, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 'invalid review_type' error, got: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch("acme/api", 1, "head-sha")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if hasBatch {
-		t.Fatal("expected no batch for invalid review type")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no batch for invalid review type")
 	}
 }
 
@@ -1000,10 +1204,14 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 		Number: 2, HeadRefOid: "head-sha-2", BaseRefName: "main",
 	}, h.Cfg)
 	if err == nil {
-		t.Fatal("expected error for empty review type")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error for empty review type")
 	}
 	if !strings.Contains(err.Error(), "invalid review_type") {
-		t.Fatalf("expected 'invalid review_type' error, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 'invalid review_type' error, got: %v", err)
 	}
 }
 
@@ -1019,19 +1227,27 @@ func TestCIPollerProcessPR_DesignReviewType(t *testing.T) {
 		Number: 10, HeadRefOid: "design-head", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..design-head"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job, got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job, got %d", len(jobs))
 	}
 
 	if jobs[0].ReviewType != "design" {
-		t.Errorf("ReviewType=%q, want design", jobs[0].ReviewType)
+		assert.Condition(t, func() bool {
+			return false
+		}, "ReviewType=%q, want design", jobs[0].ReviewType)
 	}
 }
 
@@ -1048,18 +1264,26 @@ func TestCIPollerProcessPR_AliasDeduplication(t *testing.T) {
 		Number: 11, HeadRefOid: "dedup-head", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..dedup-head"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job (deduped from 3 aliases), got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job (deduped from 3 aliases), got %d", len(jobs))
 	}
 	if jobs[0].ReviewType != "default" {
-		t.Errorf("ReviewType=%q, want default", jobs[0].ReviewType)
+		assert.Condition(t, func() bool {
+			return false
+		}, "ReviewType=%q, want default", jobs[0].ReviewType)
 	}
 }
 
@@ -1074,28 +1298,40 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 
 		batch, created, err := h.DB.CreateCIBatch("acme/api", 50, "head-sha-50", 1)
 		if err != nil {
-			t.Fatalf("CreateCIBatch: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CreateCIBatch: %v", err)
 		}
 		if !created {
-			t.Fatal("expected to create batch")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected to create batch")
 		}
 		if _, err := h.DB.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes'), updated_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
-			t.Fatalf("backdate batch: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "backdate batch: %v", err)
 		}
 
 		err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
 			Number: 50, HeadRefOid: "head-sha-50", BaseRefName: "main",
 		}, h.Cfg)
 		if err != nil {
-			t.Fatalf("processPR: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "processPR: %v", err)
 		}
 
 		jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-50"))
 		if err != nil {
-			t.Fatalf("ListJobs: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ListJobs: %v", err)
 		}
 		if len(jobs) != 1 {
-			t.Fatalf("expected 1 job after recovery, got %d", len(jobs))
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 1 job after recovery, got %d", len(jobs))
 		}
 	})
 
@@ -1104,51 +1340,75 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 
 		batch, _, err := h.DB.CreateCIBatch("acme/api", 51, "head-sha-51", 2)
 		if err != nil {
-			t.Fatalf("CreateCIBatch: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CreateCIBatch: %v", err)
 		}
 
 		stale, err := h.DB.IsBatchStale(batch.ID)
 		if err != nil {
-			t.Fatalf("IsBatchStale: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "IsBatchStale: %v", err)
 		}
 		if stale {
-			t.Error("fresh batch should not be stale")
+			assert.Condition(t, func() bool {
+				return false
+			}, "fresh batch should not be stale")
 		}
 
 		if _, err := h.DB.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes'), updated_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
-			t.Fatalf("backdate batch: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "backdate batch: %v", err)
 		}
 		stale, err = h.DB.IsBatchStale(batch.ID)
 		if err != nil {
-			t.Fatalf("IsBatchStale: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "IsBatchStale: %v", err)
 		}
 		if !stale {
-			t.Error("batch with old updated_at should be stale")
+			assert.Condition(t, func() bool {
+				return false
+			}, "batch with old updated_at should be stale")
 		}
 
 		job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
 			RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
 		})
 		if err != nil {
-			t.Fatalf("EnqueueJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob: %v", err)
 		}
 		if err := h.DB.RecordBatchJob(batch.ID, job.ID); err != nil {
-			t.Fatalf("RecordBatchJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "RecordBatchJob: %v", err)
 		}
 		stale, err = h.DB.IsBatchStale(batch.ID)
 		if err != nil {
-			t.Fatalf("IsBatchStale after RecordBatchJob: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "IsBatchStale after RecordBatchJob: %v", err)
 		}
 		if stale {
-			t.Error("batch should not be stale after RecordBatchJob heartbeat")
+			assert.Condition(t, func() bool {
+				return false
+			}, "batch should not be stale after RecordBatchJob heartbeat")
 		}
 
 		ids, err := h.DB.GetBatchJobIDs(batch.ID)
 		if err != nil {
-			t.Fatalf("GetBatchJobIDs: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetBatchJobIDs: %v", err)
 		}
 		if len(ids) != 1 || ids[0] != job.ID {
-			t.Fatalf("GetBatchJobIDs = %v, want [%d]", ids, job.ID)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetBatchJobIDs = %v, want [%d]", ids, job.ID)
 		}
 	})
 
@@ -1162,25 +1422,35 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 
 		_, created, err := h.DB.CreateCIBatch("acme/api", 52, "head-sha-52", 1)
 		if err != nil {
-			t.Fatalf("CreateCIBatch: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "CreateCIBatch: %v", err)
 		}
 		if !created {
-			t.Fatal("expected to create batch")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected to create batch")
 		}
 
 		err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
 			Number: 52, HeadRefOid: "head-sha-52", BaseRefName: "main",
 		}, h.Cfg)
 		if err != nil {
-			t.Fatalf("processPR: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "processPR: %v", err)
 		}
 
 		jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-52"))
 		if err != nil {
-			t.Fatalf("ListJobs: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ListJobs: %v", err)
 		}
 		if len(jobs) != 0 {
-			t.Fatalf("expected 0 jobs (fresh batch skipped), got %d", len(jobs))
+			require.Condition(t, func() bool {
+				return false
+			}, "expected 0 jobs (fresh batch skipped), got %d", len(jobs))
 		}
 	})
 }
@@ -1191,11 +1461,15 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoError(t *testing.T) {
 	// Create two repos with the same identity (different local paths)
 	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone1", "api", "https://github.com/acme/api.git"); err != nil {
-		t.Fatalf("insert repo1: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert repo1: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone2", "api", "https://github.com/acme/api.git"); err != nil {
-		t.Fatalf("insert repo2: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert repo2: %v", err)
 	}
 
 	cfg := config.DefaultConfig()
@@ -1203,10 +1477,14 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoError(t *testing.T) {
 
 	_, err := p.findLocalRepo("acme/api")
 	if err == nil {
-		t.Fatal("expected error for ambiguous repo match")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error for ambiguous repo match")
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("expected ambiguity error, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected ambiguity error, got: %v", err)
 	}
 }
 
@@ -1218,11 +1496,15 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguity(t *testing.T) {
 	// through to partial suffix matching where both match "acme/widgets"
 	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git"); err != nil {
-		t.Fatalf("insert repo1: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert repo1: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe2", "widgets", "https://ghe.corp.com/acme/widgets"); err != nil {
-		t.Fatalf("insert repo2: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "insert repo2: %v", err)
 	}
 
 	cfg := config.DefaultConfig()
@@ -1230,10 +1512,14 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguity(t *testing.T) {
 
 	_, err := p.findLocalRepo("acme/widgets")
 	if err == nil {
-		t.Fatal("expected error for ambiguous partial repo match")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error for ambiguous partial repo match")
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("expected ambiguity error, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected ambiguity error, got: %v", err)
 	}
 }
 
@@ -1251,7 +1537,9 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 	stub := stubGitCloneFn(t, "https://github.com/acme/newrepo.git", &cloneCalled)
 	p.gitCloneFn = func(ctx context.Context, ghRepo, targetPath string, args []string) error {
 		if ghRepo != "acme/newrepo" {
-			t.Errorf("ghRepo=%q, want acme/newrepo", ghRepo)
+			assert.Condition(t, func() bool {
+				return false
+			}, "ghRepo=%q, want acme/newrepo", ghRepo)
 		}
 		return stub(ctx, ghRepo, targetPath, args)
 	}
@@ -1260,21 +1548,19 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 		context.Background(), "acme/newrepo",
 	)
 	if err != nil {
-		t.Fatalf("findOrCloneRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "findOrCloneRepo: %v", err)
 	}
 	if !cloneCalled {
-		t.Fatal("expected gitCloneFn to be called")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected gitCloneFn to be called")
 	}
-	if repo == nil {
-		t.Fatal("expected non-nil repo")
-	}
+	require.NotNil(t, repo, "expected non-nil repo")
 
 	wantPath := filepath.ToSlash(filepath.Join(dataDir, "clones", "acme", "newrepo"))
-	if repo.RootPath != wantPath {
-		t.Errorf(
-			"repo.RootPath=%q, want %q", repo.RootPath, wantPath,
-		)
-	}
+	assert.Equal(t, wantPath, repo.RootPath, "repo.RootPath")
 
 	// Second call should reuse the clone (no re-clone)
 	cloneCalled = false
@@ -1282,16 +1568,21 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 		context.Background(), "acme/newrepo",
 	)
 	if err != nil {
-		t.Fatalf("findOrCloneRepo (reuse): %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "findOrCloneRepo (reuse): %v", err)
 	}
 	if cloneCalled {
-		t.Error("expected no re-clone on second call")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected no re-clone on second call")
 	}
 	if repo2.ID != repo.ID {
-		t.Errorf(
-			"expected same repo ID on reuse: got %d, want %d",
-			repo2.ID, repo.ID,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected same repo ID on reuse: got %d, want %d",
+			repo2.ID, repo.ID)
+
 	}
 }
 
@@ -1307,25 +1598,33 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 	// leftover from a previous run where DB was wiped).
 	clonePath := filepath.Join(dataDir, "clones", "acme", "leftover")
 	if err := os.MkdirAll(clonePath, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "mkdir: %v", err)
 	}
 	cmd := exec.Command("git", "init", "-b", "main", clonePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %s: %s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git init: %s: %s", err, out)
 	}
 	cmd = exec.Command(
 		"git", "-C", clonePath, "remote", "add",
 		"origin", "https://github.com/acme/leftover.git",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git remote add: %s: %s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "git remote add: %s: %s", err, out)
 	}
 
 	// gitCloneFn should NOT be called since dir already exists
 	p.gitCloneFn = func(
 		_ context.Context, _, _ string, _ []string,
 	) error {
-		t.Fatal("gitCloneFn should not be called for existing dir")
+		require.Condition(t, func() bool {
+			return false
+		}, "gitCloneFn should not be called for existing dir")
 		return nil
 	}
 
@@ -1333,12 +1632,15 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 		context.Background(), "acme/leftover",
 	)
 	if err != nil {
-		t.Fatalf("findOrCloneRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "findOrCloneRepo: %v", err)
 	}
 	if repo.RootPath != filepath.ToSlash(clonePath) {
-		t.Errorf(
-			"repo.RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath),
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "repo.RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath))
+
 	}
 }
 
@@ -1353,7 +1655,9 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			repoName: "acme/empty",
 			setupFs: func(t *testing.T, _ string, p string) {
 				if err := os.MkdirAll(p, 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "mkdir: %v", err)
 				}
 			},
 		},
@@ -1362,10 +1666,14 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			repoName: "acme/notgit",
 			setupFs: func(t *testing.T, _ string, p string) {
 				if err := os.MkdirAll(p, 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "mkdir: %v", err)
 				}
 				if err := os.WriteFile(filepath.Join(p, "README.md"), []byte("not a repo"), 0o644); err != nil {
-					t.Fatalf("write: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "write: %v", err)
 				}
 			},
 		},
@@ -1375,10 +1683,14 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			setupFs: func(t *testing.T, dataDir string, p string) {
 				parentDir := filepath.Join(dataDir, "clones", "acme")
 				if err := os.MkdirAll(parentDir, 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "mkdir: %v", err)
 				}
 				if err := os.WriteFile(p, []byte("oops"), 0o644); err != nil {
-					t.Fatalf("write: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "write: %v", err)
 				}
 			},
 		},
@@ -1387,15 +1699,21 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			repoName: "acme/mismatch",
 			setupFs: func(t *testing.T, _ string, p string) {
 				if err := os.MkdirAll(p, 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "mkdir: %v", err)
 				}
 				cmd := exec.Command("git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("git init: %s: %s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "git init: %s: %s", err, out)
 				}
 				cmd = exec.Command("git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("git remote add: %s: %s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "git remote add: %s: %s", err, out)
 				}
 			},
 		},
@@ -1404,11 +1722,15 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			repoName: "acme/noorigin",
 			setupFs: func(t *testing.T, _ string, p string) {
 				if err := os.MkdirAll(p, 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "mkdir: %v", err)
 				}
 				cmd := exec.Command("git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("git init: %s: %s", err, out)
+					require.Condition(t, func() bool {
+						return false
+					}, "git init: %s: %s", err, out)
 				}
 			},
 		},
@@ -1431,17 +1753,25 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 
 			repo, err := p.findOrCloneRepo(context.Background(), tt.repoName)
 			if err != nil {
-				t.Fatalf("findOrCloneRepo: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "findOrCloneRepo: %v", err)
 			}
 			if !cloneCalled {
-				t.Fatal("expected re-clone for invalid dir")
+				require.Condition(t, func() bool {
+					return false
+				}, "expected re-clone for invalid dir")
 			}
 			if repo == nil {
-				t.Fatal("expected non-nil repo")
+				require.Condition(t, func() bool {
+					return false
+				}, "expected non-nil repo")
 			}
 			if tt.name == "empty dir is re-cloned" {
 				if repo.RootPath != filepath.ToSlash(clonePath) {
-					t.Errorf("RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath))
+					assert.Condition(t, func() bool {
+						return false
+					}, "RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath))
 				}
 			}
 		})
@@ -1453,22 +1783,30 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %s", err, out)
 		}
 		cmd = exec.Command(
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/acme/match.git",
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git remote add: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git remote add: %s: %s", err, out)
 		}
 
 		ok, err := cloneRemoteMatches(dir, "acme/match")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if !ok {
-			t.Error("expected match")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected match")
 		}
 	})
 
@@ -1476,15 +1814,21 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %s", err, out)
 		}
 
 		ok, err := cloneRemoteMatches(dir, "acme/any")
 		if err != nil {
-			t.Fatalf("expected nil error for missing origin, got: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected nil error for missing origin, got: %v", err)
 		}
 		if ok {
-			t.Error("expected false for missing origin")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected false for missing origin")
 		}
 	})
 
@@ -1492,22 +1836,30 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %s", err, out)
 		}
 		cmd = exec.Command(
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/other/repo.git",
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git remote add: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git remote add: %s: %s", err, out)
 		}
 
 		ok, err := cloneRemoteMatches(dir, "acme/different")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if ok {
-			t.Error("expected false for mismatched origin")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected false for mismatched origin")
 		}
 	})
 
@@ -1518,10 +1870,14 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		ok, err := cloneRemoteMatches(dir, "acme/any")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if ok {
-			t.Error("expected false for non-git directory")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected false for non-git directory")
 		}
 	})
 
@@ -1531,22 +1887,29 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %s", err, out)
 		}
 		cfgPath := filepath.Join(dir, ".git", "config")
 		if err := os.Remove(cfgPath); err != nil {
-			t.Fatalf("remove .git/config: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "remove .git/config: %v", err)
 		}
 
 		ok, err := cloneRemoteMatches(dir, "acme/any")
 		if err != nil {
-			t.Fatalf(
-				"expected nil error for missing config, got: %v",
-				err,
-			)
+			require.Condition(t, func() bool {
+				return false
+			}, "expected nil error for missing config, got: %v",
+				err)
+
 		}
 		if ok {
-			t.Error("expected false for missing .git/config")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected false for missing .git/config")
 		}
 	})
 
@@ -1556,18 +1919,24 @@ func TestCloneRemoteMatches(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git init: %s: %s", err, out)
 		}
 		cfgPath := filepath.Join(dir, ".git", "config")
 		if err := os.WriteFile(
 			cfgPath, []byte("<<<bad config>>>"), 0o644,
 		); err != nil {
-			t.Fatalf("write corrupt config: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "write corrupt config: %v", err)
 		}
 
 		_, err := cloneRemoteMatches(dir, "acme/any")
 		if err == nil {
-			t.Fatal("expected error for corrupted .git/config")
+			require.Condition(t, func() bool {
+				return false
+			}, "expected error for corrupted .git/config")
 		}
 	})
 
@@ -1590,16 +1959,22 @@ func TestCloneRemoteMatches(t *testing.T) {
 		for _, args := range cmds {
 			cmd := exec.Command(args[0], args[1:]...)
 			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("%v: %s: %s", args, err, out)
+				require.Condition(t, func() bool {
+					return false
+				}, "%v: %s: %s", args, err, out)
 			}
 		}
 
 		ok, err := cloneRemoteMatches(dir, "acme/rewritten")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "unexpected error: %v", err)
 		}
 		if !ok {
-			t.Error("expected match after insteadOf resolution")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected match after insteadOf resolution")
 		}
 	})
 }
@@ -1629,10 +2004,11 @@ func TestOwnerRepoFromURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ownerRepoFromURL(tt.url)
 			if got != tt.want {
-				t.Errorf(
-					"ownerRepoFromURL(%q) = %q, want %q",
-					tt.url, got, tt.want,
-				)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ownerRepoFromURL(%q) = %q, want %q",
+					tt.url, got, tt.want)
+
 			}
 		})
 	}
@@ -1656,9 +2032,10 @@ func TestCIPollerEnsureClone_RejectsMalformedRepo(t *testing.T) {
 	for _, input := range bad {
 		_, err := p.ensureClone(context.Background(), input)
 		if err == nil {
-			t.Errorf(
-				"ensureClone(%q) should have failed", input,
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "ensureClone(%q) should have failed", input)
+
 		}
 	}
 }
@@ -1681,10 +2058,14 @@ func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
 		context.Background(), "acme/private",
 	)
 	if err == nil {
-		t.Fatal("expected error on clone failure")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error on clone failure")
 	}
 	if !strings.Contains(err.Error(), "auth failed") {
-		t.Errorf("expected 'auth failed' in error, got: %v", err)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 'auth failed' in error, got: %v", err)
 	}
 }
 
@@ -1698,7 +2079,9 @@ func TestCIPollerFindOrCloneRepo_PropagatesAmbiguity(t *testing.T) {
 			 VALUES (?, ?, ?)`,
 			path, "api", "https://github.com/acme/api.git",
 		); err != nil {
-			t.Fatalf("insert: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "insert: %v", err)
 		}
 	}
 
@@ -1709,7 +2092,9 @@ func TestCIPollerFindOrCloneRepo_PropagatesAmbiguity(t *testing.T) {
 	p.gitCloneFn = func(
 		_ context.Context, _, _ string, _ []string,
 	) error {
-		t.Fatal("should not clone on ambiguous match")
+		require.Condition(t, func() bool {
+			return false
+		}, "should not clone on ambiguous match")
 		return nil
 	}
 
@@ -1717,10 +2102,14 @@ func TestCIPollerFindOrCloneRepo_PropagatesAmbiguity(t *testing.T) {
 		context.Background(), "acme/api",
 	)
 	if err == nil {
-		t.Fatal("expected ambiguity error")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected ambiguity error")
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("expected 'ambiguous' in error, got: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 'ambiguous' in error, got: %v", err)
 	}
 }
 
@@ -1759,16 +2148,23 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 		BaseRefName: "main",
 	}, cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Verify batch was created
+		}, "processPR: %v", err)
 	}
 
-	// Verify batch was created
 	hasBatch, err := db.HasCIBatch("org/newrepo", 1, "abc123")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected CI batch to be created via auto-clone")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected CI batch to be created via auto-clone")
 	}
 }
 
@@ -1780,11 +2176,16 @@ func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
 
 	prompt := review.BuildSynthesisPrompt(reviews, "")
 
-	if len(prompt) > 16500 { // 15k truncated + headers/instructions
-		t.Errorf("synthesis prompt too large (%d chars), expected truncation", len(prompt))
+	if len(prompt) > 16500 {
+		assert. // 15k truncated + headers/instructions
+			Condition(t, func() bool {
+				return false
+			}, "synthesis prompt too large (%d chars), expected truncation", len(prompt))
 	}
 	if !strings.Contains(prompt, "...(truncated)") {
-		t.Error("expected truncation marker in synthesis prompt")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected truncation marker in synthesis prompt")
 	}
 }
 
@@ -1797,33 +2198,47 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
 	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nagents = [\"codex\"]\nreview_types = [\"review\"]\nreasoning = \"fast\"\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 99, HeadRefOid: "repo-override-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..repo-override-sha"))
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job (repo override), got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job (repo override), got %d", len(jobs))
 	}
 
 	j := jobs[0]
 	if j.ReviewType != "default" {
-		t.Errorf("review_type=%q, want default (canonicalized from review)", j.ReviewType)
+		assert.Condition(t, func() bool {
+			return false
+		}, "review_type=%q, want default (canonicalized from review)", j.ReviewType)
 	}
 	if j.Agent != "codex" {
-		t.Errorf("agent=%q, want codex", j.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want codex", j.Agent)
 	}
 	if j.Reasoning != "fast" {
-		t.Errorf("reasoning=%q, want fast", j.Reasoning)
+		assert.Condition(t, func() bool {
+			return false
+		}, "reasoning=%q, want fast", j.Reasoning)
 	}
 }
 
@@ -1833,10 +2248,14 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	}
 	prompt := review.BuildSynthesisPrompt(reviews, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
-		t.Error("raw error text should not appear in synthesis prompt")
+		assert.Condition(t, func() bool {
+			return false
+		}, "raw error text should not appear in synthesis prompt")
 	}
 	if !strings.Contains(prompt, "[FAILED]") {
-		t.Error("expected [FAILED] marker in synthesis prompt")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected [FAILED] marker in synthesis prompt")
 	}
 }
 
@@ -1848,14 +2267,18 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 	t.Run("no filter when empty", func(t *testing.T) {
 		prompt := review.BuildSynthesisPrompt(reviews, "")
 		if strings.Contains(prompt, "Omit findings below") {
-			t.Error("expected no severity filter instruction when minSeverity is empty")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected no severity filter instruction when minSeverity is empty")
 		}
 	})
 
 	t.Run("no filter when low", func(t *testing.T) {
 		prompt := review.BuildSynthesisPrompt(reviews, "low")
 		if strings.Contains(prompt, "Omit findings below") {
-			t.Error("expected no severity filter instruction when minSeverity is low")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected no severity filter instruction when minSeverity is low")
 		}
 	})
 
@@ -1953,13 +2376,17 @@ func TestResolveMinSeverity(t *testing.T) {
 			}
 			if tt.repoConfig != "" && dir != "" {
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.repoConfig), 0644); err != nil {
-					t.Fatalf("write config: %v", err)
+					require.Condition(t, func() bool {
+						return false
+					}, "write config: %v", err)
 				}
 			}
 
 			got := resolveMinSeverity(tt.global, dir, "acme/api")
 			if got != tt.want {
-				t.Errorf("resolveMinSeverity() = %q, want %q", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "resolveMinSeverity() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1981,7 +2408,9 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
+			require.Condition(t, func() bool {
+				return false
+			}, "git %v: %v\n%s", args, err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
@@ -1989,7 +2418,9 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644); err != nil {
-		t.Fatalf("write README.md: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write README.md: %v", err)
 	}
 	runGit("add", "-A")
 	runGit("commit", "-m", "initial")
@@ -2005,7 +2436,9 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 	// Commit .roborev.toml on main with CI agents override
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 		[]byte("[ci]\nagents = [\"claude\"]\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 	runGit("add", ".roborev.toml")
 	runGit("commit", "-m", "add config")
@@ -2013,14 +2446,12 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 
 	cfg, err := loadCIRepoConfig(dir)
 	if err != nil {
-		t.Fatalf("loadCIRepoConfig: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "loadCIRepoConfig: %v", err)
 	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
-	}
-	if len(cfg.CI.Agents) != 1 || cfg.CI.Agents[0] != "claude" {
-		t.Errorf("agents=%v, want [claude]", cfg.CI.Agents)
-	}
+	require.NotNil(t, cfg, "expected non-nil config")
+	assert.Equal(t, []string{"claude"}, cfg.CI.Agents, "agents")
 }
 
 func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
@@ -2029,19 +2460,19 @@ func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
 	// No .roborev.toml on origin/main, but put one in the working tree
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	cfg, err := loadCIRepoConfig(dir)
 	if err != nil {
-		t.Fatalf("loadCIRepoConfig: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "loadCIRepoConfig: %v", err)
 	}
-	if cfg == nil {
-		t.Fatal("expected filesystem fallback config")
-	}
-	if len(cfg.CI.Agents) != 1 || cfg.CI.Agents[0] != "codex" {
-		t.Errorf("agents=%v, want [codex] from filesystem fallback", cfg.CI.Agents)
-	}
+	require.NotNil(t, cfg, "expected filesystem fallback config")
+	assert.Equal(t, []string{"codex"}, cfg.CI.Agents, "agents from filesystem fallback")
 }
 
 func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
@@ -2050,7 +2481,9 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 	// Commit invalid TOML on main
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 		[]byte("this is not valid toml [[["), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 	runGit("add", ".roborev.toml")
 	runGit("commit", "-m", "add bad config")
@@ -2059,15 +2492,21 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 	// Also put valid config in working tree -- should NOT be used
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
 		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	cfg, err := loadCIRepoConfig(dir)
 	if err == nil {
-		t.Fatalf("expected parse error, got cfg=%+v", cfg)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected parse error, got cfg=%+v", cfg)
 	}
 	if !config.IsConfigParseError(err) {
-		t.Errorf("expected ConfigParseError, got: %v", err)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected ConfigParseError, got: %v", err)
 	}
 }
 
@@ -2085,24 +2524,36 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 		Number: 60, HeadRefOid: "status-test-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	if len(*captured) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*captured))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*captured))
 	}
 	sc := (*captured)[0]
 	if sc.Repo != "acme/api" {
-		t.Errorf("repo=%q, want acme/api", sc.Repo)
+		assert.Condition(t, func() bool {
+			return false
+		}, "repo=%q, want acme/api", sc.Repo)
 	}
 	if sc.SHA != "status-test-sha" {
-		t.Errorf("sha=%q, want status-test-sha", sc.SHA)
+		assert.Condition(t, func() bool {
+			return false
+		}, "sha=%q, want status-test-sha", sc.SHA)
 	}
 	if sc.State != "pending" {
-		t.Errorf("state=%q, want pending", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want pending", sc.State)
 	}
 	if sc.Desc != "Review in progress" {
-		t.Errorf("desc=%q, want %q", sc.Desc, "Review in progress")
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, want %q", sc.Desc, "Review in progress")
 	}
 }
 
@@ -2120,14 +2571,20 @@ func TestCIPollerPostBatchResults_SetsSuccessStatus(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	if sc.State != "success" {
-		t.Errorf("state=%q, want success", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want success", sc.State)
 	}
 	if sc.SHA != "success-sha" {
-		t.Errorf("sha=%q, want success-sha", sc.SHA)
+		assert.Condition(t, func() bool {
+			return false
+		}, "sha=%q, want success-sha", sc.SHA)
 	}
 }
 
@@ -2144,14 +2601,20 @@ func TestCIPollerPostBatchResults_SetsErrorStatusOnAllFailed(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, job.ID, false)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	if sc.State != "error" {
-		t.Errorf("state=%q, want error", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want error", sc.State)
 	}
 	if sc.Desc != "All reviews failed" {
-		t.Errorf("desc=%q, want 'All reviews failed'", sc.Desc)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, want 'All reviews failed'", sc.Desc)
 	}
 }
 
@@ -2175,24 +2638,34 @@ func TestCIPollerPostBatchResults_SetsFailureStatusOnMixedOutcome(t *testing.T) 
 	// First call: job1 succeeded — batch not yet complete
 	h.Poller.handleBatchJobDone(batch, job1.ID, true)
 	if len(*capturedStatuses) != 0 {
-		t.Fatalf("expected no status call after first job, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no status call after first job, got %d", len(*capturedStatuses))
 	}
 
 	// Second call: job2 failed — batch now complete
 	h.Poller.handleBatchJobDone(batch, job2.ID, false)
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call after batch complete, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call after batch complete, got %d", len(*capturedStatuses))
 	}
 
 	sc := (*capturedStatuses)[0]
 	if sc.State != "failure" {
-		t.Errorf("state=%q, want failure", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want failure", sc.State)
 	}
 	if sc.SHA != "mixed-sha" {
-		t.Errorf("sha=%q, want mixed-sha", sc.SHA)
+		assert.Condition(t, func() bool {
+			return false
+		}, "sha=%q, want mixed-sha", sc.SHA)
 	}
 	if !strings.Contains(sc.Desc, "1/2 jobs failed") {
-		t.Errorf("desc=%q, should mention 1/2 jobs failed", sc.Desc)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, should mention 1/2 jobs failed", sc.Desc)
 	}
 }
 
@@ -2213,15 +2686,21 @@ func TestCIPollerPostBatchResults_QuotaSkippedNotFailure(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, jobs[1].ID, false)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	// Quota skip with at least one success → success, not failure
 	if sc.State != "success" {
-		t.Errorf("state=%q, want success (quota skip not a failure)", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want success (quota skip not a failure)", sc.State)
 	}
 	if !strings.Contains(sc.Desc, "skipped") {
-		t.Errorf("desc=%q, expected mention of skipped", sc.Desc)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, expected mention of skipped", sc.Desc)
 	}
 }
 
@@ -2238,14 +2717,20 @@ func TestCIPollerPostBatchResults_AllQuotaSkippedIsSuccess(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, jobs[0].ID, false)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	if sc.State != "success" {
-		t.Errorf("state=%q, want success (all-quota batch is not an error)", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want success (all-quota batch is not an error)", sc.State)
 	}
 	if !strings.Contains(sc.Desc, "skipped") {
-		t.Errorf("desc=%q, expected mention of skipped", sc.Desc)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, expected mention of skipped", sc.Desc)
 	}
 }
 
@@ -2264,12 +2749,16 @@ func TestCIPollerPostBatchResults_MixedQuotaAndRealFailure(t *testing.T) {
 	h.Poller.handleBatchJobDone(batch, jobs[1].ID, false)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	// Real failure + quota skip → error (CompletedJobs == 0 and realFailures > 0)
 	if sc.State != "error" {
-		t.Errorf("state=%q, want error (real failure present)", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want error (real failure present)", sc.State)
 	}
 }
 
@@ -2286,7 +2775,9 @@ func TestFormatAllFailedComment_AllQuotaSkipped(t *testing.T) {
 		"skipped (quota)",
 	)
 	if strings.Contains(comment, "Check daemon logs") {
-		t.Error("all-quota comment should not mention daemon logs")
+		assert.Condition(t, func() bool {
+			return false
+		}, "all-quota comment should not mention daemon logs")
 	}
 }
 
@@ -2319,7 +2810,9 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 	// Should NOT contain [FAILED] for the quota-skipped review
 	// Count occurrences of [FAILED]
 	if strings.Contains(prompt, "[FAILED]") {
-		t.Error("quota-skipped review should use [SKIPPED], not [FAILED]")
+		assert.Condition(t, func() bool {
+			return false
+		}, "quota-skipped review should use [SKIPPED], not [FAILED]")
 	}
 }
 
@@ -2345,22 +2838,29 @@ func TestToReviewResults(t *testing.T) {
 
 	rrs := toReviewResults(brs)
 	if len(rrs) != 2 {
-		t.Fatalf("len=%d, want 2", len(rrs))
+		require.Condition(t, func() bool {
+			return false
+		}, "len=%d, want 2", len(rrs))
 	}
 
 	// First result
 	if rrs[0].Agent != "codex" || rrs[0].Status != "done" ||
 		rrs[0].Output != "All clear." {
-		t.Errorf("rrs[0] mismatch: %+v", rrs[0])
+		assert.Condition(t, func() bool {
+			return false
+		}, "rrs[0] mismatch: %+v", rrs[0])
 	}
 
 	// Second result — quota failure should be detected
 	if !review.IsQuotaFailure(rrs[1]) {
-		t.Error(
-			"expected quota failure for converted result")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected quota failure for converted result")
 	}
 	if rrs[1].Agent != "gemini" {
-		t.Errorf("rrs[1].Agent=%q, want gemini", rrs[1].Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "rrs[1].Agent=%q, want gemini", rrs[1].Agent)
 	}
 }
 
@@ -2378,14 +2878,20 @@ func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing
 	h.Poller.postBatchResults(batch)
 
 	if len(*capturedStatuses) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*capturedStatuses))
 	}
 	sc := (*capturedStatuses)[0]
 	if sc.State != "error" {
-		t.Errorf("state=%q, want error", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want error", sc.State)
 	}
 	if sc.Desc != "Review failed to post" {
-		t.Errorf("desc=%q, want 'Review failed to post'", sc.Desc)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, want 'Review failed to post'", sc.Desc)
 	}
 }
 
@@ -2412,17 +2918,23 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("first processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "first processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch(
 		"acme/api", 70, "first-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected batch for first push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for first push")
 	}
 
 	// Second push within throttle window — supersedes
@@ -2436,18 +2948,23 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("second processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "second processPR: %v", err)
 	}
 
 	hasBatch, err = h.DB.HasCIBatch(
 		"acme/api", 70, "second-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal(
-			"expected batch for second push (supersedes in-progress first)")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for second push (supersedes in-progress first)")
 	}
 
 	// First-sha batch should be canceled (deleted).
@@ -2455,18 +2972,22 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 		"acme/api", 70, "first-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch first-sha: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch first-sha: %v", err)
 	}
 	if hasBatch {
-		t.Fatal(
-			"expected first-sha batch to be canceled")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected first-sha batch to be canceled")
 	}
 
 	// No "Review deferred" status should have been set.
 	for _, sc := range *captured {
 		if strings.Contains(sc.Desc, "Review deferred") {
-			t.Errorf(
-				"unexpected deferred status: %+v", sc)
+			assert.Condition(t, func() bool {
+				return false
+			}, "unexpected deferred status: %+v", sc)
 		}
 	}
 }
@@ -2493,17 +3014,23 @@ func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("first processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "first processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch(
 		"acme/api", 71, "first-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected batch for first push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for first push")
 	}
 
 	// Mark first batch as synthesized + finalized (completed review).
@@ -2512,13 +3039,19 @@ func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
 		"acme/api", 71, "first-sha", 0,
 	)
 	if err != nil {
-		t.Fatalf("CreateCIBatch lookup: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "CreateCIBatch lookup: %v", err)
 	}
 	if _, err := h.DB.ClaimBatchForSynthesis(batch.ID); err != nil {
-		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ClaimBatchForSynthesis: %v", err)
 	}
 	if err := h.DB.FinalizeBatch(batch.ID); err != nil {
-		t.Fatalf("FinalizeBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FinalizeBatch: %v", err)
 	}
 
 	// Second push within throttle window — should be throttled
@@ -2532,33 +3065,42 @@ func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("second processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "second processPR: %v", err)
 	}
 
 	hasBatch, err = h.DB.HasCIBatch(
 		"acme/api", 71, "second-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if hasBatch {
-		t.Fatal(
-			"expected no batch for throttled second push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no batch for throttled second push")
 	}
 
 	// Verify pending status was set with deferred message
 	if len(*captured) != 1 {
-		t.Fatalf(
-			"expected 1 status call, got %d",
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d",
 			len(*captured))
 	}
 	sc := (*captured)[0]
 	if sc.State != "pending" {
-		t.Errorf("state=%q, want pending", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want pending", sc.State)
 	}
 	if !strings.Contains(sc.Desc, "Review deferred") {
-		t.Errorf(
-			"desc=%q, want 'Review deferred' substring",
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, want 'Review deferred' substring",
 			sc.Desc)
 	}
 }
@@ -2587,17 +3129,23 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 			Author:      ghPRAuthor{Login: "wesm"},
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("first processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "first processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch(
 		"acme/api", 80, "first-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected batch for first push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for first push")
 	}
 
 	// Second push within throttle window — bypass user should
@@ -2611,18 +3159,23 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 			Author:      ghPRAuthor{Login: "wesm"},
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("second processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "second processPR: %v", err)
 	}
 
 	hasBatch, err = h.DB.HasCIBatch(
 		"acme/api", 80, "second-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal(
-			"expected batch for bypass user's second push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for bypass user's second push")
 	}
 }
 
@@ -2648,7 +3201,9 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("first processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "first processPR: %v", err)
 	}
 
 	// Second push — should NOT be throttled
@@ -2660,19 +3215,24 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("second processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "second processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch(
 		"acme/api", 71, "second-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal(
-			"expected batch for second push " +
-				"when throttle disabled")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for second push "+
+			"when throttle disabled")
 	}
 }
 
@@ -2699,7 +3259,9 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs(
@@ -2707,10 +3269,14 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 		storage.WithGitRef("base-sha..matrix-sha"),
 	)
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs: %v", err)
 	}
 	if len(jobs) != 3 {
-		t.Fatalf("expected 3 jobs, got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 3 jobs, got %d", len(jobs))
 	}
 
 	got := make(map[string]bool)
@@ -2724,7 +3290,9 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 	}
 	for _, key := range want {
 		if !got[key] {
-			t.Errorf("missing job combination %q", key)
+			assert.Condition(t, func() bool {
+				return false
+			}, "missing job combination %q", key)
 		}
 	}
 }
@@ -2752,7 +3320,9 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 		filepath.Join(h.RepoPath, ".roborev.toml"),
 		[]byte(repoConfig), 0644,
 	); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	err := h.Poller.processPR(
@@ -2763,7 +3333,9 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "processPR: %v", err)
 	}
 
 	jobs, err := h.DB.ListJobs(
@@ -2771,21 +3343,29 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 		storage.WithGitRef("base-sha..repo-matrix-sha"),
 	)
 	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Repo reviews map: codex→[security] only
+		}, "ListJobs: %v", err)
 	}
-	// Repo reviews map: codex→[security] only
+
 	if len(jobs) != 1 {
-		t.Fatalf(
-			"expected 1 job (repo reviews override), "+
-				"got %d", len(jobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 job (repo reviews override), "+
+			"got %d", len(jobs))
 	}
 	j := jobs[0]
 	if j.Agent != "codex" {
-		t.Errorf("agent=%q, want codex", j.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "agent=%q, want codex", j.Agent)
 	}
 	if j.ReviewType != "security" {
-		t.Errorf(
-			"review_type=%q, want security",
+		assert.Condition(t, func() bool {
+			return false
+		}, "review_type=%q, want security",
 			j.ReviewType)
 	}
 }
@@ -2813,7 +3393,9 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 		filepath.Join(h.RepoPath, ".roborev.toml"),
 		[]byte(repoConfig), 0644,
 	); err != nil {
-		t.Fatalf("write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write .roborev.toml: %v", err)
 	}
 
 	err := h.Poller.processPR(
@@ -2824,21 +3406,27 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// No batch should have been created (repo disabled reviews)
+		}, "processPR: %v", err)
 	}
 
-	// No batch should have been created (repo disabled reviews)
 	hasBatch, err := h.DB.HasCIBatch(
 		"acme/api", 74, "empty-reviews-sha",
 	)
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if hasBatch {
-		t.Fatal(
-			"expected no batch when repo disables reviews " +
-				"via empty [ci.reviews]",
-		)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no batch when repo disables reviews "+
+			"via empty [ci.reviews]")
+
 	}
 }
 
@@ -2873,33 +3461,46 @@ func TestCIPollerPollRepo_CancelsClosedPRBatches(t *testing.T) {
 	}
 
 	if err := h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg); err != nil {
-		t.Fatalf("pollRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Batch for closed PR #5 should be deleted
+		}, "pollRepo: %v", err)
 	}
 
-	// Batch for closed PR #5 should be deleted
 	var count int
 	if err := h.DB.QueryRow(
 		`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ?`,
 		batch5.ID,
 	).Scan(&count); err != nil {
-		t.Fatalf("count batch5: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "count batch5: %v", err)
 	}
 	if count != 0 {
-		t.Error("batch for closed PR #5 should have been deleted")
+		assert.Condition(t, func() bool {
+			return false
+		}, "batch for closed PR #5 should have been deleted")
 	}
 
 	// jobCancelFn should have been called
 	if len(canceledJobs) != 1 {
-		t.Errorf("expected 1 job canceled, got %d", len(canceledJobs))
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 1 job canceled, got %d", len(canceledJobs))
 	}
 
 	// Batch for open PR #3 should still exist
 	has, err := h.DB.HasCIBatch("acme/api", 3, "sha3")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !has {
-		t.Error("batch for open PR #3 should still exist")
+		assert.Condition(t, func() bool {
+			return false
+		}, "batch for open PR #3 should still exist")
 	}
 
 	_ = batch3 // used for setup
@@ -2920,7 +3521,9 @@ func TestCIPollerPostBatchResults_SkipsClosedPR(t *testing.T) {
 
 	// No comment should have been posted
 	if len(*captured) != 0 {
-		t.Errorf("expected no comments, got %d", len(*captured))
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected no comments, got %d", len(*captured))
 	}
 
 	// Batch should be finalized (synthesized=1, claimed_at=NULL)
@@ -2943,10 +3546,14 @@ func TestCIPollerPostBatchResults_PostsOpenPR(t *testing.T) {
 
 	// Comment should have been posted
 	if len(*captured) != 1 {
-		t.Fatalf("expected 1 comment, got %d", len(*captured))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 comment, got %d", len(*captured))
 	}
 	if (*captured)[0].PR != 11 {
-		t.Errorf("comment PR=%d, want 11", (*captured)[0].PR)
+		assert.Condition(t, func() bool {
+			return false
+		}, "comment PR=%d, want 11", (*captured)[0].PR)
 	}
 
 	// Batch should be finalized normally
@@ -2983,23 +3590,30 @@ func TestCIPollerPollRepo_SkipsCancelWhenPRStillOpen(t *testing.T) {
 	if err := h.Poller.pollRepo(
 		context.Background(), "acme/api", h.Cfg,
 	); err != nil {
-		t.Fatalf("pollRepo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// Batch should NOT have been canceled
+		}, "pollRepo: %v", err)
 	}
 
-	// Batch should NOT have been canceled
 	has, err := h.DB.HasCIBatch("acme/api", 99, "sha99")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !has {
-		t.Error(
-			"batch for still-open PR #99 should not be canceled",
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "batch for still-open PR #99 should not be canceled")
+
 	}
 	if len(canceledJobs) != 0 {
-		t.Errorf(
-			"expected 0 jobs canceled, got %d", len(canceledJobs),
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 0 jobs canceled, got %d", len(canceledJobs))
+
 	}
 
 	_ = batch99
@@ -3028,16 +3642,23 @@ func TestCIPollerProcessPR_EmptyMatrixSkipsBatch(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+
+			// No batch should have been created
+		}, "processPR: %v", err)
 	}
 
-	// No batch should have been created
 	hasBatch, err := h.DB.HasCIBatch("acme/api", 90, "head-sha")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if hasBatch {
-		t.Fatal("expected no batch for empty review matrix")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no batch for empty review matrix")
 	}
 }
 
@@ -3065,15 +3686,21 @@ func TestCIPollerProcessPR_EmptyMatrixStillCancelsSuperseded(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("first processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "first processPR: %v", err)
 	}
 
 	hasBatch, err := h.DB.HasCIBatch("acme/api", 95, "old-sha")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if !hasBatch {
-		t.Fatal("expected batch for first push")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch for first push")
 	}
 
 	// Now switch to empty matrix (config change removes all reviews)
@@ -3103,26 +3730,32 @@ func TestCIPollerProcessPR_EmptyMatrixStillCancelsSuperseded(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err != nil {
-		t.Fatalf("second processPR: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "second processPR: %v", err)
 	}
 
 	// Old batch should have been canceled
 	if len(canceledJobs) != 1 {
-		t.Errorf(
-			"expected 1 superseded job canceled, got %d",
-			len(canceledJobs),
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 1 superseded job canceled, got %d",
+			len(canceledJobs))
+
 	}
 
 	// No new batch should have been created
 	hasBatch, err = h.DB.HasCIBatch("acme/api", 95, "new-sha")
 	if err != nil {
-		t.Fatalf("HasCIBatch: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", err)
 	}
 	if hasBatch {
-		t.Fatal(
-			"expected no batch for empty matrix after supersede",
-		)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected no batch for empty matrix after supersede")
+
 	}
 }
 
@@ -3154,7 +3787,9 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 			BaseRefName: "main",
 		}, h.Cfg)
 	if err == nil {
-		t.Fatal("expected error from processPR")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected error from processPR")
 	}
 
 	// No batch should remain (rolled back)
@@ -3162,36 +3797,48 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 		"acme/api", 91, "head-sha-91",
 	)
 	if dbErr != nil {
-		t.Fatalf("HasCIBatch: %v", dbErr)
+		require.Condition(t, func() bool {
+			return false
+		}, "HasCIBatch: %v", dbErr)
 	}
 	if hasBatch {
-		t.Fatal("expected batch to be rolled back")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected batch to be rolled back")
 	}
 
 	// Error commit status should have been set
 	if len(*statuses) != 1 {
-		t.Fatalf(
-			"expected 1 status call, got %d", len(*statuses),
-		)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected 1 status call, got %d", len(*statuses))
+
 	}
 	sc := (*statuses)[0]
 	if sc.State != "error" {
-		t.Errorf("state=%q, want error", sc.State)
+		assert.Condition(t, func() bool {
+			return false
+		}, "state=%q, want error", sc.State)
 	}
 	if sc.SHA != "head-sha-91" {
-		t.Errorf("SHA=%q, want head-sha-91", sc.SHA)
+		assert.Condition(t, func() bool {
+			return false
+		}, "SHA=%q, want head-sha-91", sc.SHA)
 	}
 	if !strings.Contains(sc.Desc, "agent") {
-		t.Errorf(
-			"desc=%q, want substring 'agent'", sc.Desc,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "desc=%q, want substring 'agent'", sc.Desc)
+
 	}
 }
 
 func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	if h.Poller.resolveUpsertComments("acme/api") {
-		t.Fatal("expected false by default")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected false by default")
 	}
 }
 
@@ -3199,7 +3846,9 @@ func TestResolveUpsertComments_GlobalTrue(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.UpsertComments = true
 	if !h.Poller.resolveUpsertComments("acme/api") {
-		t.Fatal("expected true from global config")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected true from global config")
 	}
 }
 
@@ -3213,11 +3862,15 @@ func TestResolveUpsertComments_RepoOverridesGlobal(t *testing.T) {
 		"[ci]\nupsert_comments = false\n",
 	), 0o644)
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 
 	if h.Poller.resolveUpsertComments("acme/api") {
-		t.Fatal("expected repo config (false) to override global (true)")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected repo config (false) to override global (true)")
 	}
 }
 
@@ -3231,10 +3884,14 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 		"[ci]\nupsert_comments = true\n",
 	), 0o644)
 	if err != nil {
-		t.Fatal(err)
+		require.Condition(t, func() bool {
+			return false
+		}, err)
 	}
 
 	if !h.Poller.resolveUpsertComments("acme/api") {
-		t.Fatal("expected repo config (true) to override global (false)")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected repo config (true) to override global (false)")
 	}
 }

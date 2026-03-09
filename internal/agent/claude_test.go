@@ -88,8 +88,8 @@ func TestClaudeDangerousFlagSupport(t *testing.T) {
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+claudeDangerousFlag+"\"; exit 1\n")
 
-		supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
-		require.NoError(t, err)
+	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
+	require.NoError(t, err)
 	assert.True(supported, "expected dangerous flag support")
 }
 
@@ -101,8 +101,8 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
 
 	a := NewClaudeAgent(cmdPath)
-		_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-		require.Error(t, err)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
 	assert.Contains(err.Error(), "does not support")
 }
 
@@ -115,9 +115,8 @@ func TestClaudeReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithSessionID("session-123").(*ClaudeAgent)
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
 	assertContainsArg(t, args, "--resume")

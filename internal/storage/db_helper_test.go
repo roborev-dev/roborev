@@ -110,7 +110,9 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	case JobStatusCanceled:
 		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
 	default:
-		t.Fatalf("Unknown job status: %s", status)
+		require.Condition(t, func() bool {
+			return false
+		}, "Unknown job status: %s", status)
 	}
 	res, err := db.Exec(query, jobID)
 	require.NoError(t, err, "Failed to set job status to %s: %v", status)

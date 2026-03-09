@@ -3,15 +3,16 @@
 package daemon
 
 import (
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout time.Duration) Event {
@@ -23,14 +24,18 @@ func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout t
 		select {
 		case e, ok := <-ch:
 			if !ok {
-				t.Fatalf("channel closed waiting for event type: %s", eventType)
+				require.Condition(t, func() bool {
+					return false
+				}, "channel closed waiting for event type: %s", eventType)
 				return Event{}
 			}
 			if e.Type == eventType {
 				return e
 			}
 		case <-timer.C:
-			t.Fatalf("timed out waiting for event type: %s", eventType)
+			require.Condition(t, func() bool {
+				return false
+			}, "timed out waiting for event type: %s", eventType)
 			return Event{}
 		}
 	}
@@ -48,7 +53,9 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	server.handleStreamEvents(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status 405, got %d", rec.Code)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected status 405, got %d", rec.Code)
 	}
 }
 
@@ -67,7 +74,9 @@ func setupRepoAndJob(t *testing.T, db *storage.DB, tmpDir string) *storage.Revie
 
 	repo, err := db.GetOrCreateRepo(repoDir)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 	return testutil.CreateTestJobWithSHA(t, db, repo, sha, "test")
 }
@@ -88,19 +97,27 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	finalJob := testutil.WaitForJobStatus(t, db, job.ID, 10*time.Second, storage.JobStatusDone, storage.JobStatusFailed)
 
 	if finalJob.Status != storage.JobStatusDone {
-		t.Fatalf("Expected job to succeed, got status %s", finalJob.Status)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected job to succeed, got status %s", finalJob.Status)
 	}
 
 	// Drain events until we find the review.completed event (bounded to prevent misleading timeout errors)
 	event := waitForEventType(t, eventCh, "review.completed", 2*time.Second)
 
 	if event.JobID != job.ID {
-		t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected JobID %d, got %d", job.ID, event.JobID)
 	}
 	if event.Agent != "test" {
-		t.Errorf("Expected agent 'test', got %s", event.Agent)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected agent 'test', got %s", event.Agent)
 	}
 	if event.Verdict == "" {
-		t.Error("Expected verdict to be set")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected verdict to be set")
 	}
 }

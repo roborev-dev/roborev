@@ -4,6 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+
+	// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
+	"github.com/stretchr/testify/require"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
 )
 
-// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
 func quote(s string) string {
 	return shellEscape(s)
 }
@@ -42,7 +45,9 @@ func poll(t *testing.T, timeout time.Duration, condition func() bool) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("condition not met within %v", timeout)
+	require.Condition(t, func() bool {
+		return false
+	}, "condition not met within %v", timeout)
 }
 
 // waitForFile polls for the existence of a file until the timeout expires.
@@ -122,7 +127,9 @@ func TestMatchEvent(t *testing.T) {
 	for _, tt := range tests {
 		got := matchEvent(tt.pattern, tt.eventType)
 		if got != tt.want {
-			t.Errorf("matchEvent(%q, %q) = %v, want %v", tt.pattern, tt.eventType, got, tt.want)
+			assert.Condition(t, func() bool {
+				return false
+			}, "matchEvent(%q, %q) = %v, want %v", tt.pattern, tt.eventType, got, tt.want)
 		}
 	}
 }
@@ -168,7 +175,9 @@ func TestInterpolate(t *testing.T) {
 	for _, tt := range tests {
 		got := interpolate(tt.cmd, event)
 		if got != tt.want {
-			t.Errorf("interpolate(%q) = %q, want %q", tt.cmd, got, tt.want)
+			assert.Condition(t, func() bool {
+				return false
+			}, "interpolate(%q) = %q, want %q", tt.cmd, got, tt.want)
 		}
 	}
 }
@@ -195,15 +204,21 @@ func TestInterpolateShellInjection(t *testing.T) {
 		for _, result := range []string{got, gotFindings} {
 			prefix := "echo "
 			if !strings.HasPrefix(result, prefix) || len(result) <= len(prefix)+1 {
-				t.Fatalf("payload %q: unexpected format (too short or wrong prefix): %q", payload, result)
+				require.Condition(t, func() bool {
+					return false
+				}, "payload %q: unexpected format (too short or wrong prefix): %q", payload, result)
 			}
 			val := result[len(prefix):]
 			if val[0] != '\'' || val[len(val)-1] != '\'' {
-				t.Errorf("payload %q: not single-quoted: %q", payload, result)
+				assert.Condition(t, func() bool {
+					return false
+				}, "payload %q: not single-quoted: %q", payload, result)
 			}
 			substr := payload[:4]
 			if !strings.Contains(val, substr) {
-				t.Errorf("payload %q: escaped value doesn't contain expected substring %q: %q", payload, substr, val)
+				assert.Condition(t, func() bool {
+					return false
+				}, "payload %q: escaped value doesn't contain expected substring %q: %q", payload, substr, val)
 			}
 		}
 	}
@@ -224,20 +239,26 @@ func TestInterpolateQuotedPlaceholders(t *testing.T) {
 	// Unquoted placeholder (recommended) -- clean output
 	got := interpolate("echo {error}", event)
 	if want := "echo " + quote("simple error"); got != want {
-		t.Errorf("unquoted placeholder: got %q, want %q", got, want)
+		assert.Condition(t, func() bool {
+			return false
+		}, "unquoted placeholder: got %q, want %q", got, want)
 	}
 
 	// Double-quoted placeholder -- works but includes literal quotes around the value
 	got = interpolate(`echo "{error}"`, event)
 	if want := `echo "` + quote("simple error") + `"`; got != want {
-		t.Errorf("double-quoted placeholder: got %q, want %q", got, want)
+		assert.Condition(t, func() bool {
+			return false
+		}, "double-quoted placeholder: got %q, want %q", got, want)
 	}
 
 	// Empty value produces empty quoted string
 	event.Verdict = ""
 	got = interpolate("echo {verdict}", event)
 	if want := "echo " + quote(""); got != want {
-		t.Errorf("empty value: got %q, want %q", got, want)
+		assert.Condition(t, func() bool {
+			return false
+		}, "empty value: got %q, want %q", got, want)
 	}
 }
 
@@ -272,7 +293,9 @@ func TestShellEscape(t *testing.T) {
 	for _, tt := range tests {
 		got := shellEscape(tt.in)
 		if got != tt.want {
-			t.Errorf("shellEscape(%q) = %q, want %q", tt.in, got, tt.want)
+			assert.Condition(t, func() bool {
+				return false
+			}, "shellEscape(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 
@@ -286,10 +309,14 @@ func TestShellEscape(t *testing.T) {
 	for _, payload := range injections {
 		got := shellEscape(payload)
 		if len(got) < 2 {
-			t.Fatalf("shellEscape(%q) too short: %q", payload, got)
+			require.Condition(t, func() bool {
+				return false
+			}, "shellEscape(%q) too short: %q", payload, got)
 		}
 		if got[0] != '\'' || got[len(got)-1] != '\'' {
-			t.Errorf("shellEscape(%q) not single-quoted: %q", payload, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "shellEscape(%q) not single-quoted: %q", payload, got)
 		}
 	}
 }
@@ -307,13 +334,19 @@ func TestBeadsCommand(t *testing.T) {
 
 	cmd := beadsCommand(event)
 	if cmd == "" {
-		t.Fatal("expected non-empty command for review.failed")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected non-empty command for review.failed")
 	}
 	if !strings.Contains(cmd, "bd create") {
-		t.Errorf("expected bd create in command, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected bd create in command, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "roborev show 7") {
-		t.Errorf("expected 'roborev show 7' in command, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 'roborev show 7' in command, got %q", cmd)
 	}
 
 	// Completed with pass should return empty
@@ -321,20 +354,28 @@ func TestBeadsCommand(t *testing.T) {
 	event.Verdict = "P"
 	cmd = beadsCommand(event)
 	if cmd != "" {
-		t.Errorf("expected empty command for passing review, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected empty command for passing review, got %q", cmd)
 	}
 
 	// Completed with fail should return a command
 	event.Verdict = "F"
 	cmd = beadsCommand(event)
 	if cmd == "" {
-		t.Fatal("expected non-empty command for failing review")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected non-empty command for failing review")
 	}
 	if !strings.Contains(cmd, "-p 2") {
-		t.Errorf("expected priority 2 for failing review, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected priority 2 for failing review, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "roborev fix 7") {
-		t.Errorf("expected 'roborev fix' hint in failing review command, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected 'roborev fix' hint in failing review command, got %q", cmd)
 	}
 }
 
@@ -348,10 +389,14 @@ func TestBeadsCommandShortSHA(t *testing.T) {
 	}
 	cmd := beadsCommand(event)
 	if !strings.Contains(cmd, "abcdef1") {
-		t.Errorf("expected truncated SHA in command, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected truncated SHA in command, got %q", cmd)
 	}
 	if strings.Contains(cmd, "abcdef1234567890") {
-		t.Errorf("expected SHA to be truncated, got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected SHA to be truncated, got %q", cmd)
 	}
 }
 
@@ -366,10 +411,14 @@ func TestBeadsCommandShellEscape(t *testing.T) {
 	cmd := beadsCommand(event)
 	// Must use single quotes so the shell does not expand $()
 	if strings.Contains(cmd, `"$(curl`) {
-		t.Errorf("title must not be double-quoted; got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "title must not be double-quoted; got %q", cmd)
 	}
 	if !strings.Contains(cmd, "'") {
-		t.Errorf("title should be single-quoted; got %q", cmd)
+		assert.Condition(t, func() bool {
+			return false
+		}, "title should be single-quoted; got %q", cmd)
 	}
 }
 
@@ -388,8 +437,11 @@ func TestResolveCommand(t *testing.T) {
 		Command: "echo {job_id}",
 	}
 	cmd := resolveCommand(hook, event)
-	if cmd != "echo 5" { // job_id is numeric, not shell-escaped
-		t.Errorf("expected 'echo 5', got %q", cmd)
+	if cmd != "echo 5" {
+		assert. // job_id is numeric, not shell-escaped
+			Condition(t, func() bool {
+				return false
+			}, "expected 'echo 5', got %q", cmd)
 	}
 
 	// Beads type
@@ -399,7 +451,9 @@ func TestResolveCommand(t *testing.T) {
 	}
 	cmd = resolveCommand(hook, event)
 	if cmd == "" {
-		t.Error("expected non-empty beads command")
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected non-empty beads command")
 	}
 }
 
@@ -478,7 +532,9 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		equal = strings.EqualFold(got, want)
 	}
 	if !equal {
-		t.Errorf("hook ran in %q, want %q", got, want)
+		assert.Condition(t, func() bool {
+			return false
+		}, "hook ran in %q, want %q", got, want)
 	}
 }
 
@@ -512,7 +568,9 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 
 	hr.WaitUntilIdle()
 	if _, err := os.Stat(markerFile); err == nil {
-		t.Fatal("hook should not have fired for non-matching event")
+		require.Condition(t, func() bool {
+			return false
+		}, "hook should not have fired for non-matching event")
 	}
 }
 
@@ -528,7 +586,9 @@ func TestHookRunnerWebhookPostsEventJSON(t *testing.T) {
 
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Errorf("decode webhook payload: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "decode webhook payload: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -562,22 +622,34 @@ func TestHookRunnerWebhookPostsEventJSON(t *testing.T) {
 	select {
 	case req := <-reqCh:
 		if got := req.header.Get("Content-Type"); got != "application/json" {
-			t.Fatalf("content-type = %q, want application/json", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "content-type = %q, want application/json", got)
 		}
 		if got := req.event["type"]; got != "review.completed" {
-			t.Fatalf("type = %v, want review.completed", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "type = %v, want review.completed", got)
 		}
 		if got := req.event["ts"]; got != "2026-02-25T14:30:00Z" {
-			t.Fatalf("ts = %v, want 2026-02-25T14:30:00Z", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "ts = %v, want 2026-02-25T14:30:00Z", got)
 		}
 		if got := req.event["job_id"]; got != float64(42) {
-			t.Fatalf("job_id = %v, want 42", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "job_id = %v, want 42", got)
 		}
 		if got := req.event["findings"]; got != "Missing validation in handler" {
-			t.Fatalf("findings = %v, want webhook payload to include findings", got)
+			require.Condition(t, func() bool {
+				return false
+			}, "findings = %v, want webhook payload to include findings", got)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for webhook request")
+		require.Condition(t, func() bool {
+			return false
+		}, "timed out waiting for webhook request")
 	}
 }
 
@@ -592,7 +664,9 @@ func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
 
 	webhookURL, err := neturl.Parse(server.URL)
 	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "parse server URL: %v", err)
 	}
 	webhookURL.User = neturl.UserPassword("token", "secret")
 	webhookURL.Path = "/services/team/webhook"
@@ -617,22 +691,34 @@ func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
 
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "Webhook error") {
-		t.Fatalf("expected webhook error log, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected webhook error log, got %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "502 Bad Gateway") {
-		t.Fatalf("expected HTTP status in log, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected HTTP status in log, got %q", logOutput)
 	}
 	if strings.Contains(logOutput, "token") || strings.Contains(logOutput, "secret") {
-		t.Fatalf("expected credentials to be redacted from log, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected credentials to be redacted from log, got %q", logOutput)
 	}
 	if strings.Contains(logOutput, "api_key") || strings.Contains(logOutput, "12345") || strings.Contains(logOutput, "frag") {
-		t.Fatalf("expected query string and fragment to be redacted from log, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected query string and fragment to be redacted from log, got %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "/...") {
-		t.Fatalf("expected redacted path in log, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected redacted path in log, got %q", logOutput)
 	}
 	if strings.Contains(logOutput, "/services") {
-		t.Fatalf("expected path segments to be fully redacted, got %q", logOutput)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected path segments to be fully redacted, got %q", logOutput)
 	}
 }
 
@@ -667,7 +753,9 @@ func TestRedactWebhookURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := redactWebhookURL(tt.in); got != tt.want {
-				t.Fatalf("redactWebhookURL(%q) = %q, want %q", tt.in, got, tt.want)
+				require.Condition(t, func() bool {
+					return false
+				}, "redactWebhookURL(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -683,15 +771,21 @@ func TestRedactURLError(t *testing.T) {
 
 	got := redactURLError(urlErr)
 	if got != inner {
-		t.Fatalf("expected inner error, got %v", got)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected inner error, got %v", got)
 	}
 	if strings.Contains(got.Error(), "secret-token") {
-		t.Fatal("redacted error still contains secret")
+		require.Condition(t, func() bool {
+			return false
+		}, "redacted error still contains secret")
 	}
 
 	plain := fmt.Errorf("some other error")
 	if redactURLError(plain) != plain {
-		t.Fatal("non-url.Error should be returned as-is")
+		require.Condition(t, func() bool {
+			return false
+		}, "non-url.Error should be returned as-is")
 	}
 }
 
@@ -735,7 +829,9 @@ command = "`+touchCmd(markerRepo)+`"
 
 	// The global config's Hooks slice must still have exactly 1 element
 	if len(cfg.Hooks) != 1 {
-		t.Errorf("global Hooks slice was mutated: len=%d, want 1", len(cfg.Hooks))
+		assert.Condition(t, func() bool {
+			return false
+		}, "global Hooks slice was mutated: len=%d, want 1", len(cfg.Hooks))
 	}
 }
 
@@ -835,7 +931,9 @@ command = "`+touchCmd(markerFile)+`"
 
 	hr.WaitUntilIdle()
 	if _, err := os.Stat(markerFile); err == nil {
-		t.Fatal("repo hook fired for a different repo's event")
+		require.Condition(t, func() bool {
+			return false
+		}, "repo hook fired for a different repo's event")
 	}
 }
 
@@ -847,7 +945,9 @@ func TestHookRunnerStopUnsubscribes(t *testing.T) {
 	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster, log.Default())
 	afterSub := broadcaster.SubscriberCount()
 	if afterSub != before+1 {
-		t.Errorf("expected subscriber count %d after NewHookRunner, got %d", before+1, afterSub)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected subscriber count %d after NewHookRunner, got %d", before+1, afterSub)
 	}
 
 	hr.Stop()
@@ -856,7 +956,9 @@ func TestHookRunnerStopUnsubscribes(t *testing.T) {
 
 	afterStop := broadcaster.SubscriberCount()
 	if afterStop != before {
-		t.Errorf("expected subscriber count %d after Stop, got %d", before, afterStop)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected subscriber count %d after Stop, got %d", before, afterStop)
 	}
 }
 
@@ -864,7 +966,9 @@ func TestHookRunnerStopUnsubscribes(t *testing.T) {
 func writeRepoConfig(t *testing.T, repoDir, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write .roborev.toml: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to write .roborev.toml: %v", err)
 	}
 }
 
@@ -892,13 +996,19 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "fired 2 hook(s)") {
-		t.Errorf("expected log to contain 'fired 2 hook(s)', got %q", logOutput)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected log to contain 'fired 2 hook(s)', got %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "review.completed") {
-		t.Errorf("expected log to contain event type, got %q", logOutput)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected log to contain event type, got %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "job 42") {
-		t.Errorf("expected log to contain job ID, got %q", logOutput)
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected log to contain job ID, got %q", logOutput)
 	}
 }
 
@@ -921,7 +1031,9 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 	})
 
 	if strings.Contains(buf.String(), "fired") {
-		t.Errorf("expected no log output when no hooks match, got %q", buf.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "expected no log output when no hooks match, got %q", buf.String())
 	}
 }
 
@@ -971,7 +1083,9 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 		for j := range numEvents {
 			markerFile := filepath.Join(tmpDir, fmt.Sprintf("job-%d", i*100+j))
 			if _, err := os.Stat(markerFile); err != nil {
-				t.Fatalf("iteration %d: marker file for job %d was not created before WaitUntilIdle returned", i, i*100+j)
+				require.Condition(t, func() bool {
+					return false
+				}, "iteration %d: marker file for job %d was not created before WaitUntilIdle returned", i, i*100+j)
 			}
 		}
 	}
@@ -999,6 +1113,8 @@ func TestWaitUntilIdle_StopDoesNotDeadlock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("WaitUntilIdle deadlocked after Stop")
+		require.Condition(t, func() bool {
+			return false
+		}, "WaitUntilIdle deadlocked after Stop")
 	}
 }

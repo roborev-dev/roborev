@@ -4,6 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/stretchr/testify/assert"
+
+	// testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
+	// Tests that need actual HTTP should use httptest.NewServer and pass ts.URL.
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,15 +24,8 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/version"
 )
 
-// testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
-// Tests that need actual HTTP should use httptest.NewServer and pass ts.URL.
 const testServerAddr = "http://test.invalid:9999"
 
 // setupTuiTestEnv isolates the test from the production roborev environment
@@ -87,7 +90,9 @@ func updateModel(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
 	updated, cmd := m.Update(msg)
 	newModel, ok := updated.(model)
 	if !ok {
-		t.Fatalf("Model type assertion failed: got %T", updated)
+		require.Condition(t, func() bool {
+			return false
+		}, "Model type assertion failed: got %T", updated)
 	}
 	return newModel, cmd
 }
@@ -169,7 +174,9 @@ func withReviewAgent(agent string) func(*storage.Review) {
 func TestTUIFetchJobsSuccess(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" {
-			t.Errorf("Expected /api/jobs, got %s", r.URL.Path)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected /api/jobs, got %s", r.URL.Path)
 		}
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
 		json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
@@ -179,10 +186,14 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 
 	jobs, ok := msg.(jobsMsg)
 	if !ok {
-		t.Fatalf("Expected jobsMsg, got %T: %v", msg, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected jobsMsg, got %T: %v", msg, msg)
 	}
 	if len(jobs.jobs) != 1 || jobs.jobs[0].ID != 1 {
-		t.Errorf("Unexpected jobs: %+v", jobs.jobs)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Unexpected jobs: %+v", jobs.jobs)
 	}
 }
 
@@ -195,7 +206,9 @@ func TestTUIFetchJobsError(t *testing.T) {
 
 	_, ok := msg.(jobsErrMsg)
 	if !ok {
-		t.Fatalf("Expected jobsErrMsg for 500, got %T: %v", msg, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected jobsErrMsg for 500, got %T: %v", msg, msg)
 	}
 }
 
@@ -213,7 +226,9 @@ func TestTUIHTTPTimeout(t *testing.T) {
 
 	_, ok := msg.(jobsErrMsg)
 	if !ok {
-		t.Fatalf("Expected jobsErrMsg for timeout, got %T: %v", msg, msg)
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected jobsErrMsg for timeout, got %T: %v", msg, msg)
 	}
 }
 
@@ -229,24 +244,32 @@ func TestTUIGetVisibleJobs(t *testing.T) {
 	// No filter - all jobs visible
 	visible := m.getVisibleJobs()
 	if len(visible) != 3 {
-		t.Errorf("No filter: expected 3 visible, got %d", len(visible))
+		assert.Condition(t, func() bool {
+			return false
+		}, "No filter: expected 3 visible, got %d", len(visible))
 	}
 
 	// Filter to repo-a
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	visible = m.getVisibleJobs()
 	if len(visible) != 2 {
-		t.Errorf("Filter repo-a: expected 2 visible, got %d", len(visible))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Filter repo-a: expected 2 visible, got %d", len(visible))
 	}
 	if visible[0].ID != 1 || visible[1].ID != 3 {
-		t.Errorf("Expected IDs 1 and 3, got %d and %d", visible[0].ID, visible[1].ID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected IDs 1 and 3, got %d and %d", visible[0].ID, visible[1].ID)
 	}
 
 	// Filter to non-existent repo
 	m.activeRepoFilter = []string{"/path/to/repo-xyz"}
 	visible = m.getVisibleJobs()
 	if len(visible) != 0 {
-		t.Errorf("Filter repo-xyz: expected 0 visible, got %d", len(visible))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Filter repo-xyz: expected 0 visible, got %d", len(visible))
 	}
 }
 
@@ -281,7 +304,9 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 			}
 
 			if got := m.getVisibleSelectedIdx(); got != tt.want {
-				t.Errorf("getVisibleSelectedIdx() = %d, want %d", got, tt.want)
+				assert.Condition(t, func() bool {
+					return false
+				}, "getVisibleSelectedIdx() = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -299,7 +324,9 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 
 	// loadingJobs should still be true (not reset by tick)
 	if !m2.loadingJobs {
-		t.Error("loadingJobs should remain true when tick skips refresh")
+		assert.Condition(t, func() bool {
+			return false
+		}, "loadingJobs should remain true when tick skips refresh")
 	}
 }
 
@@ -350,7 +377,9 @@ func TestTUITickInterval(t *testing.T) {
 
 			got := m.tickInterval()
 			if got != tt.wantInterval {
-				t.Errorf("tickInterval() = %v, want %v", got, tt.wantInterval)
+				assert.Condition(t, func() bool {
+					return false
+				}, "tickInterval() = %v, want %v", got, tt.wantInterval)
 			}
 		})
 	}
@@ -371,7 +400,9 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 
 	// loadingJobs should be cleared
 	if m2.loadingJobs {
-		t.Error("loadingJobs should be false after non-append JobsMsg")
+		assert.Condition(t, func() bool {
+			return false
+		}, "loadingJobs should be false after non-append JobsMsg")
 	}
 }
 
@@ -391,7 +422,9 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 
 	// loadingJobs should NOT be cleared by append (it's for pagination, not full refresh)
 	if !m2.loadingJobs {
-		t.Error("loadingJobs should remain true after append JobsMsg")
+		assert.Condition(t, func() bool {
+			return false
+		}, "loadingJobs should remain true after append JobsMsg")
 	}
 }
 
@@ -399,7 +432,9 @@ func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 	// newModel should initialize loadingJobs to true since Init() calls fetchJobs
 	m := newModel(testServerAddr, withExternalIODisabled())
 	if !m.loadingJobs {
-		t.Error("loadingJobs should be true in new model")
+		assert.Condition(t, func() bool {
+			return false
+		}, "loadingJobs should be true in new model")
 	}
 }
 
@@ -411,10 +446,14 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 	m2, _ := updateModel(t, m, jobsErrMsg{err: fmt.Errorf("connection refused")})
 
 	if m2.loadingJobs {
-		t.Error("loadingJobs should be cleared on job fetch error")
+		assert.Condition(t, func() bool {
+			return false
+		}, "loadingJobs should be cleared on job fetch error")
 	}
 	if m2.err == nil {
-		t.Error("err should be set on job fetch error")
+		assert.Condition(t, func() bool {
+			return false
+		}, "err should be set on job fetch error")
 	}
 }
 
@@ -425,7 +464,9 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	malformed := []byte(`this is not valid toml {{{`)
 	configPath := filepath.Join(tmpDir, "config.toml")
 	if err := os.WriteFile(configPath, malformed, 0644); err != nil {
-		t.Fatalf("write malformed config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write malformed config: %v", err)
 	}
 
 	m := newModel(testServerAddr)
@@ -436,22 +477,30 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 
 	// In-session toggle should still work
 	if !m2.hideClosed {
-		t.Error("hideClosed should be true after pressing 'h'")
+		assert.Condition(t, func() bool {
+			return false
+		}, "hideClosed should be true after pressing 'h'")
 	}
 
 	// Malformed config file must not have been overwritten
 	got, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "read config: %v", err)
 	}
 	if string(got) != string(malformed) {
-		t.Errorf("malformed config was overwritten:\n  before: %q\n  after:  %q", malformed, got)
+		assert.Condition(t, func() bool {
+			return false
+		}, "malformed config was overwritten:\n  before: %q\n  after:  %q", malformed, got)
 	}
 
 	// Toggle back OFF — still works in-session
 	m3, _ := pressKey(m2, 'h')
 	if m3.hideClosed {
-		t.Error("hideClosed should be false after pressing 'h' again")
+		assert.Condition(t, func() bool {
+			return false
+		}, "hideClosed should be false after pressing 'h' again")
 	}
 }
 
@@ -466,7 +515,9 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 	m.pendingClosed[1] = pendingState{newState: true, seq: 1}
 
 	if m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with pendingClosed=true should be hidden when hideClosed is active")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job with pendingClosed=true should be hidden when hideClosed is active")
 	}
 
 	// Job with Closed=true but pendingClosed=false should be visible
@@ -476,7 +527,9 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 	m.pendingClosed[2] = pendingState{newState: false, seq: 1}
 
 	if !m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with pendingClosed=false should be visible even if job.Closed is true")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job with pendingClosed=false should be visible even if job.Closed is true")
 	}
 
 	// Job with no pendingClosed entry falls back to job.Closed
@@ -486,7 +539,9 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 	delete(m.pendingClosed, 3)
 
 	if m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with Closed=true and no pending entry should be hidden")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Job with Closed=true and no pending entry should be hidden")
 	}
 }
 
@@ -499,21 +554,29 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 
 	output := m.renderQueueView()
 	if !strings.Contains(output, "Update available: 1.2.3") {
-		t.Error("Expected update notification in queue view")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected update notification in queue view")
 	}
 	if !strings.Contains(output, "run 'roborev update'") {
-		t.Error("Expected update instructions in queue view")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected update instructions in queue view")
 	}
 
 	// Verify update notification appears on line 3 (index 2) - above the table
 	// Layout: line 0 = title, line 1 = status, line 2 = update notification
 	lines := strings.Split(output, "\n")
 	if len(lines) < 3 {
-		t.Fatalf("Expected at least 3 lines, got %d", len(lines))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected at least 3 lines, got %d", len(lines))
 	}
 	// Line 2 (third line) should contain the update notification
 	if !strings.Contains(lines[2], "Update available") {
-		t.Errorf("Expected update notification on line 3 (index 2), got: %q", lines[2])
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected update notification on line 3 (index 2), got: %q", lines[2])
 	}
 }
 
@@ -527,10 +590,14 @@ func TestTUIUpdateNotificationDevBuild(t *testing.T) {
 
 	output := m.renderQueueView()
 	if !strings.Contains(output, "Dev build") {
-		t.Error("Expected 'Dev build' in notification for dev builds")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected 'Dev build' in notification for dev builds")
 	}
 	if !strings.Contains(output, "roborev update --force") {
-		t.Error("Expected --force flag in update instructions for dev builds")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected --force flag in update instructions for dev builds")
 	}
 }
 
@@ -544,7 +611,9 @@ func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
 
 	output := m.renderReviewView()
 	if strings.Contains(output, "Update available") {
-		t.Error("Update notification should not appear in review view")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Update notification should not appear in review view")
 	}
 }
 
@@ -562,10 +631,14 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m2, _ := updateModel(t, m, status)
 
 		if !m2.versionMismatch {
-			t.Error("Expected versionMismatch=true when daemon version differs")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected versionMismatch=true when daemon version differs")
 		}
 		if m2.daemonVersion != "different-version" {
-			t.Errorf("Expected daemonVersion='different-version', got %q", m2.daemonVersion)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected daemonVersion='different-version', got %q", m2.daemonVersion)
 		}
 	})
 
@@ -580,7 +653,9 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m2, _ := updateModel(t, m, status)
 
 		if m2.versionMismatch {
-			t.Error("Expected versionMismatch=false when versions match")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected versionMismatch=false when versions match")
 		}
 	})
 
@@ -595,13 +670,19 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		output := m.View()
 
 		if !strings.Contains(output, "Daemon: old-version") {
-			t.Error("Expected queue view to show daemon version")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected queue view to show daemon version")
 		}
 		if !strings.Contains(output, "[MISMATCH]") {
-			t.Error("Expected queue view to show mismatch badge")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected queue view to show mismatch badge")
 		}
 		if strings.Contains(output, "VERSION MISMATCH") {
-			t.Error("Expected queue view to move mismatch warning out of footer")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected queue view to move mismatch warning out of footer")
 		}
 	})
 
@@ -626,10 +707,14 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		output := m.View()
 
 		if strings.Contains(output, "Daemon: old-version") {
-			t.Error("Expected review view to omit daemon status")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review view to omit daemon status")
 		}
 		if strings.Contains(output, "[MISMATCH]") {
-			t.Error("Expected review view to omit mismatch badge")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review view to omit mismatch badge")
 		}
 	})
 
@@ -655,13 +740,19 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		output := m.View()
 
 		if !strings.Contains(output, "Saved") {
-			t.Error("Expected review flash message to remain visible")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review flash message to remain visible")
 		}
 		if strings.Contains(output, "Daemon: old-version") {
-			t.Error("Expected review view to omit daemon status even when flash is present")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review view to omit daemon status even when flash is present")
 		}
 		if strings.Contains(output, "[MISMATCH]") {
-			t.Error("Expected review view to omit mismatch badge even when flash is present")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected review view to omit mismatch badge even when flash is present")
 		}
 	})
 }
@@ -680,13 +771,19 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m2, _ := updateModel(t, m, status1)
 
 		if m2.flashMessage != "" {
-			t.Errorf("Expected no flash on first fetch, got %q", m2.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no flash on first fetch, got %q", m2.flashMessage)
 		}
 		if !m2.statusFetchedOnce {
-			t.Error("Expected statusFetchedOnce to be true after first fetch")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected statusFetchedOnce to be true after first fetch")
 		}
 		if m2.lastConfigReloadCounter != 1 {
-			t.Errorf("Expected lastConfigReloadCounter to be 1, got %d", m2.lastConfigReloadCounter)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected lastConfigReloadCounter to be 1, got %d", m2.lastConfigReloadCounter)
 		}
 	})
 
@@ -705,10 +802,14 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m2, _ := updateModel(t, m, status2)
 
 		if m2.flashMessage != "Config reloaded" {
-			t.Errorf("Expected flash 'Config reloaded', got %q", m2.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected flash 'Config reloaded', got %q", m2.flashMessage)
 		}
 		if m2.lastConfigReloadCounter != 2 {
-			t.Errorf("Expected lastConfigReloadCounter updated to 2, got %d", m2.lastConfigReloadCounter)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected lastConfigReloadCounter updated to 2, got %d", m2.lastConfigReloadCounter)
 		}
 	})
 
@@ -727,7 +828,9 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m2, _ := updateModel(t, m, status)
 
 		if m2.flashMessage != "Config reloaded" {
-			t.Errorf("Expected flash when ConfigReloadCounter goes from 0 to 1, got %q", m2.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected flash when ConfigReloadCounter goes from 0 to 1, got %q", m2.flashMessage)
 		}
 	})
 
@@ -745,7 +848,9 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		m2, _ := updateModel(t, m, status)
 
 		if m2.flashMessage != "" {
-			t.Errorf("Expected no flash when counter unchanged, got %q", m2.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected no flash when counter unchanged, got %q", m2.flashMessage)
 		}
 	})
 }
@@ -884,22 +989,34 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			m2, cmd := updateModel(t, m, tt.msg)
 
 			if m2.consecutiveErrors != tt.wantErrors {
-				t.Errorf("consecutiveErrors = %d, want %d", m2.consecutiveErrors, tt.wantErrors)
+				assert.Condition(t, func() bool {
+					return false
+				}, "consecutiveErrors = %d, want %d", m2.consecutiveErrors, tt.wantErrors)
 			}
 			if m2.reconnecting != tt.wantReconnecting {
-				t.Errorf("reconnecting = %v, want %v", m2.reconnecting, tt.wantReconnecting)
+				assert.Condition(t, func() bool {
+					return false
+				}, "reconnecting = %v, want %v", m2.reconnecting, tt.wantReconnecting)
 			}
 			if (cmd != nil) != tt.wantCmd {
-				t.Errorf("cmd returned = %v, want %v", cmd != nil, tt.wantCmd)
+				assert.Condition(t, func() bool {
+					return false
+				}, "cmd returned = %v, want %v", cmd != nil, tt.wantCmd)
 			}
 			if tt.wantServerAddr != "" && m2.serverAddr != tt.wantServerAddr {
-				t.Errorf("serverAddr = %q, want %q", m2.serverAddr, tt.wantServerAddr)
+				assert.Condition(t, func() bool {
+					return false
+				}, "serverAddr = %q, want %q", m2.serverAddr, tt.wantServerAddr)
 			}
 			if tt.wantDaemonVersion != "" && m2.daemonVersion != tt.wantDaemonVersion {
-				t.Errorf("daemonVersion = %q, want %q", m2.daemonVersion, tt.wantDaemonVersion)
+				assert.Condition(t, func() bool {
+					return false
+				}, "daemonVersion = %q, want %q", m2.daemonVersion, tt.wantDaemonVersion)
 			}
 			if tt.wantErrNil && m2.err != nil {
-				t.Errorf("expected err to be nil, got %v", m2.err)
+				assert.Condition(t, func() bool {
+					return false
+				}, "expected err to be nil, got %v", m2.err)
 			}
 		})
 	}
@@ -923,13 +1040,17 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 
 	output := m.View()
 	if len(output) == 0 {
-		t.Error("Expected non-empty view output")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected non-empty view output")
 	}
 
 	// Verify all status strings appear in output
 	for _, status := range []string{"Running", "Queued", "Done", "Error", "Canceled"} {
 		if !strings.Contains(output, status) {
-			t.Errorf("Expected output to contain status '%s'", status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected output to contain status '%s'", status)
 		}
 	}
 }
@@ -951,19 +1072,23 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 	updated := result.(model)
 
 	if cmd != nil {
-		t.Error("Expected nil cmd for rejected fix-of-fix")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected nil cmd for rejected fix-of-fix")
 	}
 	if updated.flashMessage != "Cannot fix a fix job" {
-		t.Errorf(
-			"Expected flash 'Cannot fix a fix job', got %q",
-			updated.flashMessage,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected flash 'Cannot fix a fix job', got %q",
+			updated.flashMessage)
+
 	}
 	if updated.currentView != viewQueue {
-		t.Errorf(
-			"Expected view to stay on queue, got %d",
-			updated.currentView,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected view to stay on queue, got %d",
+			updated.currentView)
+
 	}
 }
 
@@ -983,13 +1108,19 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 		updated := result.(model)
 
 		if !strings.Contains(updated.flashMessage, "failed to mark") {
-			t.Errorf("expected warning in flash, got %q", updated.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected warning in flash, got %q", updated.flashMessage)
 		}
 		if updated.flashView != viewTasks {
-			t.Errorf("expected flash view tasks, got %v", updated.flashView)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected flash view tasks, got %v", updated.flashView)
 		}
 		if cmd == nil {
-			t.Error("expected refresh cmd, got nil")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected refresh cmd, got nil")
 		}
 	})
 
@@ -1007,10 +1138,14 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 		updated := result.(model)
 
 		if !strings.Contains(updated.flashMessage, "#99 enqueued") {
-			t.Errorf("expected enqueued flash, got %q", updated.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected enqueued flash, got %q", updated.flashMessage)
 		}
 		if cmd == nil {
-			t.Error("expected refresh cmd, got nil")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected refresh cmd, got nil")
 		}
 	})
 
@@ -1028,10 +1163,14 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 		updated := result.(model)
 
 		if !strings.Contains(updated.flashMessage, "Fix failed") {
-			t.Errorf("expected failure flash, got %q", updated.flashMessage)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected failure flash, got %q", updated.flashMessage)
 		}
 		if cmd != nil {
-			t.Error("expected no cmd on error, got non-nil")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected no cmd on error, got non-nil")
 		}
 	})
 }
@@ -1045,7 +1184,9 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	updated := result.(model)
 	if updated.currentView != viewColumnOptions {
-		t.Fatalf("expected column options view, got %v", updated.currentView)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected column options view, got %v", updated.currentView)
 	}
 
 	idx := -1
@@ -1056,36 +1197,50 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 		}
 	}
 	if idx < 0 {
-		t.Fatal("expected tasks workflow option in column options")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected tasks workflow option in column options")
 	}
 	updated.colOptionsIdx = idx
 
 	result, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	toggled := result.(model)
 	if !toggled.tasksEnabled {
-		t.Fatal("expected tasks workflow to be enabled after toggle")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected tasks workflow to be enabled after toggle")
 	}
 
 	result, cmd := toggled.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := result.(model)
 	if closed.currentView != viewQueue {
-		t.Fatalf("expected to return to queue view, got %v", closed.currentView)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected to return to queue view, got %v", closed.currentView)
 	}
 	if cmd == nil {
-		t.Fatal("expected save command after closing column options")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected save command after closing column options")
 	}
 	if msg := cmd(); msg != nil {
 		if errMsg, ok := msg.(configSaveErrMsg); ok {
-			t.Fatalf("save config failed: %v", errMsg.err)
+			require.Condition(t, func() bool {
+				return false
+			}, "save config failed: %v", errMsg.err)
 		}
 	}
 
 	cfg, err := config.LoadGlobal()
 	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "LoadGlobal failed: %v", err)
 	}
 	if !cfg.Advanced.TasksEnabled {
-		t.Fatal("expected advanced.tasks_enabled to persist as true")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected advanced.tasks_enabled to persist as true")
 	}
 }
 
@@ -1098,7 +1253,9 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	updated := result.(model)
 	if updated.currentView != viewColumnOptions {
-		t.Fatalf("expected column options view, got %v", updated.currentView)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected column options view, got %v", updated.currentView)
 	}
 
 	idx := -1
@@ -1109,46 +1266,64 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 		}
 	}
 	if idx < 0 {
-		t.Fatal("expected mouse option in column options")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse option in column options")
 	}
 	updated.colOptionsIdx = idx
 
 	result, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	toggled := result.(model)
 	if toggled.mouseEnabled {
-		t.Fatal("expected mouse to be disabled after toggle")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse to be disabled after toggle")
 	}
 	if cmd == nil {
-		t.Fatal("expected mouse toggle command after disabling mouse")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse toggle command after disabling mouse")
 	}
 	msgs := collectMsgs(cmd)
 	if !hasMsgType(msgs, "tea.disableMouseMsg") {
-		t.Fatalf("expected disableMouseMsg after disabling mouse, got %v", msgs)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected disableMouseMsg after disabling mouse, got %v", msgs)
 	}
 
 	result, cmd = toggled.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := result.(model)
 	if closed.currentView != viewQueue {
-		t.Fatalf("expected to return to queue view, got %v", closed.currentView)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected to return to queue view, got %v", closed.currentView)
 	}
 	if cmd == nil {
-		t.Fatal("expected save command after closing column options")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected save command after closing column options")
 	}
 	msgs = collectMsgs(cmd)
 	if len(msgs) > 0 {
 		if last := msgs[len(msgs)-1]; last != nil {
 			if errMsg, ok := last.(configSaveErrMsg); ok {
-				t.Fatalf("save config failed: %v", errMsg.err)
+				require.Condition(t, func() bool {
+					return false
+				}, "save config failed: %v", errMsg.err)
 			}
 		}
 	}
 
 	cfg, err := config.LoadGlobal()
 	if err != nil {
-		t.Fatalf("LoadGlobal failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "LoadGlobal failed: %v", err)
 	}
 	if cfg.MouseEnabled {
-		t.Fatal("expected mouse_enabled to persist as false")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse_enabled to persist as false")
 	}
 }
 
@@ -1178,38 +1353,52 @@ func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 		}
 	}
 	if idx < 0 {
-		t.Fatal("expected mouse option in column options")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse option in column options")
 	}
 	updated.colOptionsIdx = idx
 
 	result, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	disabled := result.(model)
 	if disabled.mouseEnabled {
-		t.Fatal("expected mouse to be disabled after first toggle")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse to be disabled after first toggle")
 	}
 
 	result, cmd := disabled.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	reenabled := result.(model)
 	if !reenabled.mouseEnabled {
-		t.Fatal("expected mouse to be enabled after second toggle")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse to be enabled after second toggle")
 	}
 	if cmd == nil {
-		t.Fatal("expected mouse toggle command after enabling mouse")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected mouse toggle command after enabling mouse")
 	}
 	msgs := collectMsgs(cmd)
 	if !hasMsgType(msgs, "tea.enableMouseCellMotionMsg") {
-		t.Fatalf("expected enableMouseCellMotionMsg after enabling mouse, got %v", msgs)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected enableMouseCellMotionMsg after enabling mouse, got %v", msgs)
 	}
 
 	result, _ = reenabled.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := result.(model)
 	if closed.currentView != viewQueue {
-		t.Fatalf("expected to return to queue view, got %v", closed.currentView)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected to return to queue view, got %v", closed.currentView)
 	}
 
 	m2, _ := updateModel(t, closed, mouseWheelDown())
 	if m2.selectedIdx != 1 || m2.selectedJobID != 2 {
-		t.Fatalf("expected wheel to work after re-enabling mouse, got idx=%d id=%d", m2.selectedIdx, m2.selectedJobID)
+		require.Condition(t, func() bool {
+			return false
+		}, "expected wheel to work after re-enabling mouse, got idx=%d id=%d", m2.selectedIdx, m2.selectedJobID)
 	}
 }
 
@@ -1218,15 +1407,21 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 
 	configPath := filepath.Join(tmpDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte("mouse_enabled = false\n"), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write config: %v", err)
 	}
 
 	m := newModel(testServerAddr)
 	if m.mouseEnabled {
-		t.Fatal("expected newModel to load mouse_enabled = false from config")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected newModel to load mouse_enabled = false from config")
 	}
 	if len(programOptionsForModel(m)) != 1 {
-		t.Fatalf("expected startup options without mouse capture when disabled, got %d options", len(programOptionsForModel(m)))
+		require.Condition(t, func() bool {
+			return false
+		}, "expected startup options without mouse capture when disabled, got %d options", len(programOptionsForModel(m)))
 	}
 }
 func TestTUISelection(t *testing.T) {
@@ -1336,12 +1531,16 @@ func TestTUIHideClosed(t *testing.T) {
 
 		configPath := filepath.Join(tmpDir, "config.toml")
 		if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
-			t.Fatalf("write config: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "write config: %v", err)
 		}
 
 		m := newModel(testServerAddr)
 		if !m.hideClosed {
-			t.Error("hideClosed should be true when config sets hide_addressed_by_default = true")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be true when config sets hide_addressed_by_default = true")
 		}
 
 	})
@@ -1351,21 +1550,27 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Initial state: hideClosed is false (TestMain isolates from real config)
 		if m.hideClosed {
-			t.Error("hideClosed should be false initially")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be false initially")
 		}
 
 		// Press 'h' to toggle
 		m2, _ := pressKey(m, 'h')
 
 		if !m2.hideClosed {
-			t.Error("hideClosed should be true after pressing 'h'")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be true after pressing 'h'")
 		}
 
 		// Press 'h' again to toggle back
 		m3, _ := pressKey(m2, 'h')
 
 		if m3.hideClosed {
-			t.Error("hideClosed should be false after pressing 'h' again")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be false after pressing 'h' again")
 		}
 
 	})
@@ -1384,28 +1589,42 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Check visibility
 		if m.isJobVisible(m.jobs[0]) {
-			t.Error("Closed job should be hidden")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Closed job should be hidden")
 		}
 		if !m.isJobVisible(m.jobs[1]) {
-			t.Error("Open job should be visible")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Open job should be visible")
 		}
 		if m.isJobVisible(m.jobs[2]) {
-			t.Error("Failed job should be hidden")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Failed job should be hidden")
 		}
 		if m.isJobVisible(m.jobs[3]) {
-			t.Error("Canceled job should be hidden")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Canceled job should be hidden")
 		}
 		if !m.isJobVisible(m.jobs[4]) {
-			t.Error("Open job should be visible")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Open job should be visible")
 		}
 
 		// getVisibleJobs should only return 2 jobs
 		visible := m.getVisibleJobs()
 		if len(visible) != 2 {
-			t.Errorf("Expected 2 visible jobs, got %d", len(visible))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 2 visible jobs, got %d", len(visible))
 		}
 		if visible[0].ID != 2 || visible[1].ID != 5 {
-			t.Errorf("Expected visible jobs 2 and 5, got %d and %d", visible[0].ID, visible[1].ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected visible jobs 2 and 5, got %d and %d", visible[0].ID, visible[1].ID)
 		}
 
 	})
@@ -1492,10 +1711,14 @@ func TestTUIHideClosed(t *testing.T) {
 		// Only job 1 should be visible
 		visible := m.getVisibleJobs()
 		if len(visible) != 1 {
-			t.Errorf("Expected 1 visible job, got %d", len(visible))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected 1 visible job, got %d", len(visible))
 		}
 		if visible[0].ID != 1 {
-			t.Errorf("Expected visible job ID=1, got %d", visible[0].ID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected visible job ID=1, got %d", visible[0].ID)
 		}
 
 	})
@@ -1520,32 +1743,44 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Repo filter should be cleared
 		if m2.activeRepoFilter != nil {
-			t.Errorf("Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
 		}
 
 		// hideClosed should still be true
 		if !m2.hideClosed {
-			t.Error("hideClosed should still be true after clearing repo filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should still be true after clearing repo filter")
 		}
 
 		// Filter stack should be empty
 		if len(m2.filterStack) != 0 {
-			t.Errorf("Expected empty filter stack, got %v", m2.filterStack)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected empty filter stack, got %v", m2.filterStack)
 		}
 
 		// jobs should be preserved (so fetchJobs limit stays large enough)
 		if len(m2.jobs) != 1 {
-			t.Errorf("Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
 		}
 
 		// A refetch command should be returned
 		if cmd == nil {
-			t.Error("Expected a refetch command when clearing repo filter with hide-closed active")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected a refetch command when clearing repo filter with hide-closed active")
 		}
 
 		// loadingJobs should be set
 		if !m2.loadingJobs {
-			t.Error("loadingJobs should be set when refetching after clearing repo filter")
+			assert.Condition(t, func() bool {
+				return false
+			}, "loadingJobs should be set when refetching after clearing repo filter")
 		}
 
 	})
@@ -1565,12 +1800,16 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// hideClosed should be enabled
 		if !m2.hideClosed {
-			t.Error("hideClosed should be true after pressing 'h'")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be true after pressing 'h'")
 		}
 
 		// A command should be returned to fetch all jobs
 		if cmd == nil {
-			t.Error("Command should be returned to fetch all jobs when enabling hideClosed")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Command should be returned to fetch all jobs when enabling hideClosed")
 		}
 
 	})
@@ -1590,12 +1829,16 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// hideClosed should be disabled
 		if m2.hideClosed {
-			t.Error("hideClosed should be false after pressing 'h' to disable")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be false after pressing 'h' to disable")
 		}
 
 		// Disabling triggers a refetch to get previously-filtered closed jobs
 		if cmd == nil {
-			t.Error("Expected a refetch command when disabling hideClosed")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected a refetch command when disabling hideClosed")
 		}
 
 	})
@@ -1606,7 +1849,9 @@ func TestTUIHideClosed(t *testing.T) {
 		validConfig := []byte("hide_addressed_by_default = true\n")
 		configPath := filepath.Join(tmpDir, "config.toml")
 		if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
-			t.Fatalf("write config: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "write config: %v", err)
 		}
 
 		m := newModel(testServerAddr)
@@ -1614,28 +1859,38 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Verify the default was loaded
 		if !m.hideClosed {
-			t.Fatal("hideClosed should be true from config")
+			require.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be true from config")
 		}
 
 		// Toggle hide closed OFF
 		m2, _ := pressKey(m, 'h')
 		if m2.hideClosed {
-			t.Error("hideClosed should be false after pressing 'h'")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be false after pressing 'h'")
 		}
 
 		// Toggle hide closed back ON
 		m3, _ := pressKey(m2, 'h')
 		if !m3.hideClosed {
-			t.Error("hideClosed should be true after pressing 'h' again")
+			assert.Condition(t, func() bool {
+				return false
+			}, "hideClosed should be true after pressing 'h' again")
 		}
 
 		// Valid config file must not have been mutated by either toggle
 		got, err := os.ReadFile(configPath)
 		if err != nil {
-			t.Fatalf("read config: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "read config: %v", err)
 		}
 		if string(got) != string(validConfig) {
-			t.Errorf("valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
+			assert.Condition(t, func() bool {
+				return false
+			}, "valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
 		}
 
 	})
@@ -1653,7 +1908,9 @@ func TestTUIFlashMessage(t *testing.T) {
 
 		output := m.renderQueueView()
 		if !strings.Contains(output, "Copied to clipboard") {
-			t.Error("Expected flash message to appear in queue view")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected flash message to appear in queue view")
 		}
 
 	})
@@ -1669,7 +1926,9 @@ func TestTUIFlashMessage(t *testing.T) {
 
 		output := m.renderReviewView()
 		if strings.Contains(output, "Copied to clipboard") {
-			t.Error("Flash message should not appear when viewing different view than where it was triggered")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Flash message should not appear when viewing different view than where it was triggered")
 		}
 
 	})
@@ -1763,22 +2022,34 @@ func TestNewTuiModelOptions(t *testing.T) {
 			m := newModel(testServerAddr, tc.opts...)
 
 			if !reflect.DeepEqual(m.activeRepoFilter, tc.expectedRepoFilter) {
-				t.Errorf("activeRepoFilter mismatch: got %v, want %v", m.activeRepoFilter, tc.expectedRepoFilter)
+				assert.Condition(t, func() bool {
+					return false
+				}, "activeRepoFilter mismatch: got %v, want %v", m.activeRepoFilter, tc.expectedRepoFilter)
 			}
 			if m.activeBranchFilter != tc.expectedBranchFilter {
-				t.Errorf("activeBranchFilter mismatch: got %q, want %q", m.activeBranchFilter, tc.expectedBranchFilter)
+				assert.Condition(t, func() bool {
+					return false
+				}, "activeBranchFilter mismatch: got %q, want %q", m.activeBranchFilter, tc.expectedBranchFilter)
 			}
 			if !reflect.DeepEqual(m.filterStack, tc.expectedFilterStack) {
-				t.Errorf("filterStack mismatch: got %v, want %v", m.filterStack, tc.expectedFilterStack)
+				assert.Condition(t, func() bool {
+					return false
+				}, "filterStack mismatch: got %v, want %v", m.filterStack, tc.expectedFilterStack)
 			}
 			if m.lockedRepoFilter != tc.expectedLockedRepo {
-				t.Errorf("lockedRepoFilter mismatch: got %v, want %v", m.lockedRepoFilter, tc.expectedLockedRepo)
+				assert.Condition(t, func() bool {
+					return false
+				}, "lockedRepoFilter mismatch: got %v, want %v", m.lockedRepoFilter, tc.expectedLockedRepo)
 			}
 			if m.lockedBranchFilter != tc.expectedLockedBranch {
-				t.Errorf("lockedBranchFilter mismatch: got %v, want %v", m.lockedBranchFilter, tc.expectedLockedBranch)
+				assert.Condition(t, func() bool {
+					return false
+				}, "lockedBranchFilter mismatch: got %v, want %v", m.lockedBranchFilter, tc.expectedLockedBranch)
 			}
 			if m.daemonVersion != tc.expectedDaemonVer {
-				t.Errorf("daemonVersion mismatch: got %q, want %q", m.daemonVersion, tc.expectedDaemonVer)
+				assert.Condition(t, func() bool {
+					return false
+				}, "daemonVersion mismatch: got %q, want %q", m.daemonVersion, tc.expectedDaemonVer)
 			}
 		})
 	}

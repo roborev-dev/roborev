@@ -105,14 +105,11 @@ func TestKiloReviewSessionFlag(t *testing.T) {
 	})
 
 	a := NewKiloAgent(mock.CmdPath).WithSessionID("ses_123").(*KiloAgent)
-	if _, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil); err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
+	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	require.NoError(t, err)
 
 	argsBytes, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("failed to read args file: %v", err)
-	}
+	require.NoError(t, err)
 	args := string(argsBytes)
 	assertContains(t, args, "--session")
 	assertContains(t, args, "ses_123")

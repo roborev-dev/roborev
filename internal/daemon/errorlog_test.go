@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,7 +22,9 @@ func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
 	path := filepath.Join(dir, "errors.log")
 	el, err := NewErrorLog(path)
 	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "NewErrorLog failed: %v", err)
 	}
 	t.Cleanup(func() { el.Close() })
 	return el, path
@@ -37,7 +41,9 @@ func TestNewErrorLog(t *testing.T) {
 
 	// Verify file was created
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		t.Error("Error log file was not created")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Error log file was not created")
 	}
 }
 
@@ -51,18 +57,24 @@ func TestErrorLogLog(t *testing.T) {
 	// Verify file content
 	content, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("Failed to read error log: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to read error log: %v", err)
 	}
 
 	var entry ErrorEntry
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	if err := decoder.Decode(&entry); err != nil {
-		t.Fatalf("Failed to parse error entry: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to parse error entry: %v", err)
 	}
 
 	// Verify no trailing data
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		t.Errorf("Expected EOF after first entry, got %v", err)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected EOF after first entry, got %v", err)
 	}
 
 	entry.Timestamp = time.Time{} // Clear timestamp for comparison
@@ -73,7 +85,9 @@ func TestErrorLogLog(t *testing.T) {
 		JobID:     123,
 	}
 	if entry != expected {
-		t.Errorf("Expected entry %+v, got %+v", expected, entry)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected entry %+v, got %+v", expected, entry)
 	}
 }
 
@@ -88,16 +102,22 @@ func TestErrorLogRecent(t *testing.T) {
 	// Get recent errors - should be in reverse order (newest first)
 	recent := el.Recent()
 	if len(recent) != 5 {
-		t.Fatalf("Expected 5 recent errors, got %d", len(recent))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected 5 recent errors, got %d", len(recent))
 	}
 
 	// First entry should be the most recent (error 5)
 	if !strings.Contains(recent[0].Message, "error 5") {
-		t.Errorf("Expected first error to be 'error 5', got %q", recent[0].Message)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected first error to be 'error 5', got %q", recent[0].Message)
 	}
 	// Last entry should be the oldest (error 1)
 	if !strings.Contains(recent[4].Message, "error 1") {
-		t.Errorf("Expected last error to be 'error 1', got %q", recent[4].Message)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected last error to be 'error 1', got %q", recent[4].Message)
 	}
 }
 
@@ -109,14 +129,18 @@ func TestErrorLogRecentN(t *testing.T) {
 	// Get only 3 recent errors
 	recent := el.RecentN(3)
 	if len(recent) != 3 {
-		t.Fatalf("Expected 3 recent errors, got %d", len(recent))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected 3 recent errors, got %d", len(recent))
 	}
 
 	// Should be 10, 9, 8
 	expectedIDs := []int64{10, 9, 8}
 	for i, entry := range recent {
 		if entry.JobID != expectedIDs[i] {
-			t.Errorf("Expected index %d to be JobID %d, got %d", i, expectedIDs[i], entry.JobID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected index %d to be JobID %d, got %d", i, expectedIDs[i], entry.JobID)
 		}
 	}
 }
@@ -128,7 +152,9 @@ func TestErrorLogCount24h(t *testing.T) {
 
 	count := el.Count24h()
 	if count != 5 {
-		t.Errorf("Expected count 5, got %d", count)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected count 5, got %d", count)
 	}
 }
 
@@ -141,12 +167,16 @@ func TestErrorLogRingBuffer(t *testing.T) {
 	// Should only have the last MaxErrorLogEntries errors
 	recent := el.Recent()
 	if len(recent) != MaxErrorLogEntries {
-		t.Errorf("Expected %d recent errors (ring buffer limit), got %d", MaxErrorLogEntries, len(recent))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected %d recent errors (ring buffer limit), got %d", MaxErrorLogEntries, len(recent))
 	}
 
 	// The oldest should be #51 (first 50 were evicted)
 	if recent[MaxErrorLogEntries-1].JobID != 51 {
-		t.Errorf("Expected oldest error to be #51, got #%d", recent[MaxErrorLogEntries-1].JobID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected oldest error to be #51, got #%d", recent[MaxErrorLogEntries-1].JobID)
 	}
 }
 
@@ -175,12 +205,16 @@ func TestErrorLogConcurrency(t *testing.T) {
 	case <-done:
 		// continued
 	case <-time.After(5 * time.Second):
-		t.Fatal("Timeout waiting for concurrent logging to finish")
+		require.Condition(t, func() bool {
+			return false
+		}, "Timeout waiting for concurrent logging to finish")
 	}
 
 	// Should have MaxErrorLogEntries entries
 	recent := el.Recent()
 	if len(recent) != MaxErrorLogEntries {
-		t.Errorf("Expected %d entries, got %d", MaxErrorLogEntries, len(recent))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected %d entries, got %d", MaxErrorLogEntries, len(recent))
 	}
 }

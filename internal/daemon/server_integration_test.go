@@ -3,14 +3,15 @@
 package daemon
 
 import (
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
@@ -51,12 +52,16 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 			server.handleEnqueue(w, req)
 
 			if w.Code != tt.wantCode {
-				t.Fatalf("status=%d, want %d; body=%s", w.Code, tt.wantCode, w.Body.String())
+				require.Condition(t, func() bool {
+					return false
+				}, "status=%d, want %d; body=%s", w.Code, tt.wantCode, w.Body.String())
 			}
 
 			if tt.wantErrorMsg != "" {
 				if !strings.Contains(w.Body.String(), tt.wantErrorMsg) {
-					t.Fatalf("expected error containing %q, got %s", tt.wantErrorMsg, w.Body.String())
+					require.Condition(t, func() bool {
+						return false
+					}, "expected error containing %q, got %s", tt.wantErrorMsg, w.Body.String())
 				}
 				return
 			}
@@ -65,7 +70,9 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 			var job storage.ReviewJob
 			testutil.DecodeJSON(t, w, &job)
 			if job.ReviewType != tt.wantStored {
-				t.Errorf("ReviewType=%q, want %q", job.ReviewType, tt.wantStored)
+				assert.Condition(t, func() bool {
+					return false
+				}, "ReviewType=%q, want %q", job.ReviewType, tt.wantStored)
 			}
 		})
 	}

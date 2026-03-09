@@ -6,14 +6,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/daemon"
 )
 
 func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
@@ -60,18 +62,24 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		_, err := os.Stat(dbPath)
 		return err == nil
 	}) {
-		t.Fatal("timed out waiting for database creation")
+		require.Condition(t, func() bool {
+			return false
+		}, "timed out waiting for database creation")
 	}
 
 	// Verify DB was created (redundant with waitFor success, but keeps original intent)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatal("expected database to be created")
+		require.Condition(t, func() bool {
+			return false
+		}, "expected database to be created")
 	}
 
 	// Check that daemon didn't exit early with an error
 	select {
 	case err := <-errCh:
-		t.Fatalf("daemon exited unexpectedly: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "daemon exited unexpectedly: %v", err)
 	case <-time.After(100 * time.Millisecond):
 		// Daemon is still running - good
 	}
@@ -83,7 +91,9 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	if !waitForDaemonReady(t, 10*time.Second, myPID) {
 		// Provide more context for debugging CI failures
 		runtimes, _ := daemon.ListAllRuntimes()
-		t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
+		require.Condition(t, func() bool {
+			return false
+		}, "daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
 	}
 
 	// Trigger shutdown via context cancellation instead of sending OS signal
@@ -94,10 +104,14 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	case <-errCh:
 		// Daemon exited - good
 		if !cleanupCalled {
-			t.Error("expected signal.Stop (cleanup) to be called")
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected signal.Stop (cleanup) to be called")
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not exit within 10 second timeout")
+		require.Condition(t, func() bool {
+			return false
+		}, "daemon did not exit within 10 second timeout")
 	}
 }
 
@@ -114,7 +128,9 @@ func setupTestDaemon(t *testing.T) (string, string) {
 
 	// Write minimal config
 	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "write config: %v", err)
 	}
 
 	return dbPath, configPath
@@ -160,7 +176,9 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	// Use "." since we are in cmd/roborev package
 	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("failed to build test binary: %v\n%s", err, out)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to build test binary: %v\n%s", err, out)
 	}
 
 	// 2. Start daemon in subprocess
@@ -179,7 +197,9 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	cmd.Stderr = outputBuffer
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start daemon: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to start daemon: %v", err)
 	}
 
 	// Ensure cleanup in case of failure
@@ -205,13 +225,18 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		_, err := os.Stat(daemonJSON)
 		return err == nil
 	}) {
-		// Cleanup handled by defer
-		t.Fatalf("timed out waiting for daemon to start (%s not found). Output:\n%s", daemonJSON, outputBuffer.String())
+		require.
+			// Cleanup handled by defer
+			Condition(t, func() bool {
+				return false
+			}, "timed out waiting for daemon to start (%s not found). Output:\n%s", daemonJSON, outputBuffer.String())
 	}
 
 	// 4. Send SIGINT
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("failed to send SIGINT: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "failed to send SIGINT: %v", err)
 	}
 
 	// 5. Wait for exit
@@ -221,12 +246,18 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		if err != nil {
 			// Check if it's an exit status error. Ideally exit code 0.
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				t.Fatalf("daemon exited with non-zero status: %v (code %d)", err, exitErr.ExitCode())
+				require.Condition(t, func() bool {
+					return false
+				}, "daemon exited with non-zero status: %v (code %d)", err, exitErr.ExitCode())
 			}
-			t.Fatalf("daemon wait returned error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "daemon wait returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for daemon to exit after SIGINT")
+		require.Condition(t, func() bool {
+			return false
+		}, "timed out waiting for daemon to exit after SIGINT")
 	}
 }
 
@@ -276,7 +307,9 @@ func TestDaemonSignalCleanup(t *testing.T) {
 	select {
 	case sigCh = <-sigReady:
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for signal handler setup")
+		require.Condition(t, func() bool {
+			return false
+		}, "timed out waiting for signal handler setup")
 	}
 
 	// Trigger shutdown via signal.
@@ -285,15 +318,20 @@ func TestDaemonSignalCleanup(t *testing.T) {
 	select {
 	case err := <-errCh:
 		if err != nil {
-			t.Fatalf("daemon exited with error: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "daemon exited with error: %v", err)
 		}
 		if !cleanupCalled {
-			t.Error(
-				"expected signal.Stop (cleanup) to be" +
-					" called after signal shutdown",
-			)
+			assert.Condition(t, func() bool {
+				return false
+			}, "expected signal.Stop (cleanup) to be"+
+				" called after signal shutdown")
+
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("daemon did not exit within timeout")
+		require.Condition(t, func() bool {
+			return false
+		}, "daemon did not exit within timeout")
 	}
 }

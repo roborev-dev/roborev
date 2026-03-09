@@ -411,9 +411,7 @@ func TestOpenCodeReviewSessionFlag(t *testing.T) {
 			Prompt:    "prompt",
 			SessionID: "ses_123",
 		})
-		if err != nil {
-			t.Fatalf("Review failed: %v", err)
-		}
+		require.NoError(t, err)
 		return out, argsStr, stdinStr
 	}()
 

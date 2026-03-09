@@ -57,9 +57,7 @@ func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
 		)
 		defer cancel()
 		_, err := e.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-		if err != nil {
-			e.t.Errorf("Failed to cleanup schema %s: %v", schema, err)
-		}
+		require.NoError(e.t, err, "Failed to cleanup schema %s", schema)
 	})
 }
 
@@ -71,9 +69,7 @@ func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
 		)
 		defer cancel()
 		_, err := e.pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
-		if err != nil {
-			e.t.Errorf("Failed to cleanup table %s.%s: %v", schema, table, err)
-		}
+		require.NoError(e.t, err, "Failed to cleanup table %s.%s", schema, table)
 	})
 }
 

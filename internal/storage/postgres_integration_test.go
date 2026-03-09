@@ -5,16 +5,19 @@ package storage
 import (
 	"context"
 	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+
+	// getIntegrationPostgresURL returns the postgres URL for integration tests.
+	// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
 )
 
-// getIntegrationPostgresURL returns the postgres URL for integration tests.
-// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
 func getIntegrationPostgresURL() string {
 	if url := os.Getenv("TEST_POSTGRES_URL"); url != "" {
 		return url
@@ -42,14 +45,18 @@ func newIntegrationEnv(t *testing.T, timeout time.Duration) *integrationEnv {
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
 	if err != nil {
 		cancel()
-		t.Fatalf("Failed to connect to postgres: %v (is docker-compose running?)", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to connect to postgres: %v (is docker-compose running?)", err)
 	}
 
 	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 	if err := pool.EnsureSchema(ctx); err != nil {
 		pool.Close()
 		cancel()
-		t.Fatalf("EnsureSchema failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnsureSchema failed: %v", err)
 	}
 
 	env := &integrationEnv{
@@ -217,7 +224,9 @@ func createCompletedReview(t *testing.T, db *DB, repoID int64, sha, author, subj
 	t.Helper()
 	job, review, err := tryCreateCompletedReview(db, repoID, sha, author, subject, prompt, output)
 	if err != nil {
-		t.Fatalf("createCompletedReview failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "createCompletedReview failed: %v", err)
 	}
 	return job, review
 }
@@ -238,12 +247,16 @@ func startSyncWorker(t *testing.T, db *DB, pgURL, machineName, interval string) 
 	}
 	worker := NewSyncWorker(db, cfg)
 	if err := worker.Start(); err != nil {
-		t.Fatalf("SyncWorker.Start failed for %s: %v", machineName, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "SyncWorker.Start failed for %s: %v", machineName, err)
 	}
 	t.Cleanup(func() { worker.Stop() })
 
 	if err := waitForSyncWorkerConnection(worker, 10*time.Second); err != nil {
-		t.Fatalf("Failed to connect for %s: %v", machineName, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to connect for %s: %v", machineName, err)
 	}
 	return worker
 }
@@ -288,13 +301,16 @@ func startSyncWorkerNoSync(
 	}
 	worker := NewSyncWorker(db, cfg)
 	if err := worker.SetSkipInitialSync(true); err != nil {
-		t.Fatalf("SetSkipInitialSync failed for %s: %v", machineName, err)
+		require.Condition(t, func() bool {
+			return false
+		}, "SetSkipInitialSync failed for %s: %v", machineName, err)
 	}
 	if err := worker.Start(); err != nil {
-		t.Fatalf(
-			"SyncWorker.Start failed for %s: %v",
-			machineName, err,
-		)
+		require.Condition(t, func() bool {
+			return false
+		}, "SyncWorker.Start failed for %s: %v",
+			machineName, err)
+
 	}
 	t.Cleanup(func() { worker.Stop() })
 
@@ -307,10 +323,11 @@ func startSyncWorkerNoSync(
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf(
-		"Timeout waiting for %s to connect via HealthCheck",
-		machineName,
-	)
+	require.Condition(t, func() bool {
+		return false
+	}, "Timeout waiting for %s to connect via HealthCheck",
+		machineName)
+
 	return nil
 }
 
@@ -343,9 +360,13 @@ func waitCondition(t *testing.T, timeout time.Duration, msg string, condition fu
 		time.Sleep(50 * time.Millisecond)
 	}
 	if lastErr != nil {
-		t.Fatalf("Timeout waiting for: %s (last error: %v)", msg, lastErr)
+		require.Condition(t, func() bool {
+			return false
+		}, "Timeout waiting for: %s (last error: %v)", msg, lastErr)
 	}
-	t.Fatalf("Timeout waiting for: %s", msg)
+	require.Condition(t, func() bool {
+		return false
+	}, "Timeout waiting for: %s", msg)
 }
 
 // TestIntegration_MigrationV6Idempotent verifies the v5→v6 migration
@@ -359,7 +380,9 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
 	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to connect: %v", err)
 	}
 	defer pool.Close()
 
@@ -369,7 +392,9 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 	// Create schema and run EnsureSchema to get fresh tables
 	// (with closed column, not addressed)
 	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("Initial EnsureSchema failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Initial EnsureSchema failed: %v", err)
 	}
 
 	// Simulate legacy state: downgrade version to 5 so the
@@ -377,16 +402,22 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 	// has closed (not addressed).
 	_, err = pool.pool.Exec(ctx, `DELETE FROM schema_version`)
 	if err != nil {
-		t.Fatalf("Failed to clear schema_version: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to clear schema_version: %v", err)
 	}
 	_, err = pool.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES (5)`)
 	if err != nil {
-		t.Fatalf("Failed to insert version 5: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert version 5: %v", err)
 	}
 
 	// This should succeed — the migration must be idempotent
 	if err := pool.EnsureSchema(ctx); err != nil {
-		t.Fatalf("EnsureSchema with v5→v6 on fresh table failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "EnsureSchema with v5→v6 on fresh table failed: %v", err)
 	}
 
 	// Verify the column is named closed
@@ -398,7 +429,9 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) {
 		AND column_name = 'closed'
 	`).Scan(&colName)
 	if err != nil {
-		t.Fatalf("closed column not found: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "closed column not found: %v", err)
 	}
 }
 
@@ -408,7 +441,9 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 
 	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/integration.git")
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	_, review := createCompletedReview(t, db, repo.ID, "abc123def456", "Test Author", "Test subject", "Test prompt", "Test review output")
@@ -422,7 +457,9 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 
 	pgReviewUUID := env.pgQueryString("SELECT uuid FROM roborev.reviews")
 	if pgReviewUUID != review.UUID {
-		t.Errorf("Review UUID mismatch: postgres=%s, local=%s", pgReviewUUID, review.UUID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Review UUID mismatch: postgres=%s, local=%s", pgReviewUUID, review.UUID)
 	}
 }
 
@@ -453,7 +490,9 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 		VALUES ($1, 'remote-test', NOW())
 	`, remoteMachineUUID)
 	if err != nil {
-		t.Fatalf("Failed to insert machine: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert machine: %v", err)
 	}
 
 	_, err = env.Pool.pool.Exec(env.Ctx, `
@@ -461,7 +500,9 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 		VALUES ('git@github.com:test/pull-test.git', NOW())
 	`)
 	if err != nil {
-		t.Fatalf("Failed to insert repo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert repo: %v", err)
 	}
 
 	var pgRepoID int64
@@ -473,25 +514,35 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 		VALUES ($1, $2, 'main', 'done', 'test', '', 'review', '', $3, NOW(), NOW(), NOW())
 	`, remoteJobUUID, pgRepoID, remoteMachineUUID)
 	if err != nil {
-		t.Fatalf("Failed to insert job: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to insert job: %v", err)
 	}
 
 	db := env.openDB("test.db")
 	worker := startSyncWorker(t, db, env.pgURL, "local-test", "1s")
 
 	if _, err := worker.SyncNow(); err != nil {
-		t.Fatalf("SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "SyncNow failed: %v", err)
 	}
 
 	jobs, err := db.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "ListJobs failed: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Errorf("Expected 1 job in local DB, got %d", len(jobs))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected 1 job in local DB, got %d", len(jobs))
 	}
 	if len(jobs) > 0 && jobs[0].UUID != remoteJobUUID {
-		t.Errorf("Expected job UUID '%s', got %s", remoteJobUUID, jobs[0].UUID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected job UUID '%s', got %s", remoteJobUUID, jobs[0].UUID)
 	}
 }
 
@@ -505,14 +556,18 @@ func TestIntegration_FinalPush(t *testing.T) {
 	// (replacing createBatchReviews which forces commits)
 	for i := 0; i < 150; i++ {
 		if _, err := tryCreateCompletedReviewWithoutCommit(db, repo.ID); err != nil {
-			t.Fatalf("tryCreateCompletedReviewWithoutCommit failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "tryCreateCompletedReviewWithoutCommit failed: %v", err)
 		}
 	}
 
 	worker := startSyncWorker(t, db, env.pgURL, "finalpush-test", "1h")
 
 	if err := worker.FinalPush(); err != nil {
-		t.Fatalf("FinalPush failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FinalPush failed: %v", err)
 	}
 
 	env.assertPgCount("review_jobs", 150)
@@ -529,19 +584,25 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 
 	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush-nocommit.git")
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	// Create a job without a commit (CommitID=0)
 	_, err = tryCreateCompletedReviewWithoutCommit(db, repo.ID)
 	if err != nil {
-		t.Fatalf("tryCreateCompletedReviewWithoutCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "tryCreateCompletedReviewWithoutCommit failed: %v", err)
 	}
 
 	worker := startSyncWorker(t, db, env.pgURL, "finalpush-nocommit-test", "1h")
 
 	if err := worker.FinalPush(); err != nil {
-		t.Fatalf("FinalPush failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "FinalPush failed: %v", err)
 	}
 
 	env.assertPgCount("review_jobs", 1)
@@ -564,10 +625,14 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 			)
 		`, table).Scan(&exists)
 		if err != nil {
-			t.Fatalf("Failed to check table %s: %v", table, err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Failed to check table %s: %v", table, err)
 		}
 		if !exists {
-			t.Errorf("Expected table roborev.%s to exist", table)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected table roborev.%s to exist", table)
 		}
 	}
 }
@@ -588,16 +653,24 @@ func TestIntegration_Multiplayer(t *testing.T) {
 
 	// Sync to push, then sync again to pull each other's data
 	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: SyncNow failed: %v", err)
 	}
 	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: SyncNow failed: %v", err)
 	}
 	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: Second SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: Second SyncNow failed: %v", err)
 	}
 	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: Second SyncNow failed: %v", err)
 	}
 
 	env.waitForLocalJobs(t, dbA, 2, 10*time.Second)
@@ -609,10 +682,14 @@ func TestIntegration_Multiplayer(t *testing.T) {
 	// Verify Machine A can see Machine B's review
 	jobsA, err := dbA.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("Machine A: ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: ListJobs failed: %v", err)
 	}
 	if len(jobsA) != 2 {
-		t.Errorf("Machine A should see 2 jobs (own + pulled), got %d", len(jobsA))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A should see 2 jobs (own + pulled), got %d", len(jobsA))
 	}
 
 	var foundBinA bool
@@ -623,16 +700,22 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		}
 	}
 	if !foundBinA {
-		t.Error("Machine A should have pulled Machine B's job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A should have pulled Machine B's job")
 	}
 
 	// Verify Machine B can see Machine A's review
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("Machine B: ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: ListJobs failed: %v", err)
 	}
 	if len(jobsB) != 2 {
-		t.Errorf("Machine B should see 2 jobs (own + pulled), got %d", len(jobsB))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B should see 2 jobs (own + pulled), got %d", len(jobsB))
 	}
 
 	var foundAinB bool
@@ -643,24 +726,34 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		}
 	}
 	if !foundAinB {
-		t.Error("Machine B should have pulled Machine A's job")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B should have pulled Machine A's job")
 	}
 
 	// Verify review content was pulled correctly
 	reviewBinA, err := dbA.GetReviewByCommitSHA("bbbb2222")
 	if err != nil {
-		t.Fatalf("Machine A: GetReviewByCommitSHA for B's commit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: GetReviewByCommitSHA for B's commit failed: %v", err)
 	}
 	if reviewBinA.UUID != reviewB.UUID {
-		t.Errorf("Machine A: pulled review UUID mismatch: got %s, want %s", reviewBinA.UUID, reviewB.UUID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A: pulled review UUID mismatch: got %s, want %s", reviewBinA.UUID, reviewB.UUID)
 	}
 
 	reviewAinB, err := dbB.GetReviewByCommitSHA("aaaa1111")
 	if err != nil {
-		t.Fatalf("Machine B: GetReviewByCommitSHA for A's commit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: GetReviewByCommitSHA for A's commit failed: %v", err)
 	}
 	if reviewAinB.UUID != reviewA.UUID {
-		t.Errorf("Machine B: pulled review UUID mismatch: got %s, want %s", reviewAinB.UUID, reviewA.UUID)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B: pulled review UUID mismatch: got %s, want %s", reviewAinB.UUID, reviewA.UUID)
 	}
 
 	t.Log("Multiplayer sync verified: both machines can see each other's reviews")
@@ -681,21 +774,31 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	jobB, reviewB := createCompletedReview(t, dbB, nodeB.Repo.ID, sharedCommitSHA, "Charlie", "Shared commit", "prompt", "Machine B's review of shared commit")
 
 	if jobA.UUID == jobB.UUID {
-		t.Fatal("Jobs from different machines should have different UUIDs")
+		require.Condition(t, func() bool {
+			return false
+		}, "Jobs from different machines should have different UUIDs")
 	}
 
 	// Sync both, then pull each other's data
 	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: SyncNow failed: %v", err)
 	}
 	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: SyncNow failed: %v", err)
 	}
 	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: Second SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: Second SyncNow failed: %v", err)
 	}
 	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: Second SyncNow failed: %v", err)
 	}
 
 	env.waitForLocalJobs(t, dbA, 2, 10*time.Second)
@@ -707,18 +810,26 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	// Both machines should now have both jobs
 	jobsA, err := dbA.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("Machine A: ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: ListJobs failed: %v", err)
 	}
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("Machine B: ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: ListJobs failed: %v", err)
 	}
 
 	if len(jobsA) != 2 {
-		t.Errorf("Machine A should have 2 jobs, got %d", len(jobsA))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A should have 2 jobs, got %d", len(jobsA))
 	}
 	if len(jobsB) != 2 {
-		t.Errorf("Machine B should have 2 jobs, got %d", len(jobsB))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B should have 2 jobs, got %d", len(jobsB))
 	}
 
 	// Verify both job UUIDs are present in each machine's database
@@ -727,7 +838,9 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		jobsAMap[j.UUID] = true
 	}
 	if !jobsAMap[jobA.UUID] || !jobsAMap[jobB.UUID] {
-		t.Errorf("Machine A missing expected job UUIDs: has A=%v, has B=%v", jobsAMap[jobA.UUID], jobsAMap[jobB.UUID])
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A missing expected job UUIDs: has A=%v, has B=%v", jobsAMap[jobA.UUID], jobsAMap[jobB.UUID])
 	}
 
 	jobsBMap := make(map[string]bool)
@@ -735,7 +848,9 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		jobsBMap[j.UUID] = true
 	}
 	if !jobsBMap[jobA.UUID] || !jobsBMap[jobB.UUID] {
-		t.Errorf("Machine B missing expected job UUIDs: has A=%v, has B=%v", jobsBMap[jobA.UUID], jobsBMap[jobB.UUID])
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B missing expected job UUIDs: has A=%v, has B=%v", jobsBMap[jobA.UUID], jobsBMap[jobB.UUID])
 	}
 
 	// Verify reviews are present on both machines
@@ -743,7 +858,9 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	if err != nil {
 		t.Logf("Machine A: local review A query by job ID: %v (expected for pulled jobs)", err)
 	} else if reviewAonA.UUID != reviewA.UUID {
-		t.Errorf("Machine A: review A UUID mismatch")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A: review A UUID mismatch")
 	}
 
 	var jobBIDonA int64
@@ -754,13 +871,19 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		}
 	}
 	if jobBIDonA == 0 {
-		t.Error("Machine A: could not find job B by UUID")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine A: could not find job B by UUID")
 	} else {
 		reviewBonA, err := dbA.GetReviewByJobID(jobBIDonA)
 		if err != nil {
-			t.Errorf("Machine A: failed to get review B: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine A: failed to get review B: %v", err)
 		} else if reviewBonA.UUID != reviewB.UUID {
-			t.Errorf("Machine A: review B UUID mismatch: got %s, want %s", reviewBonA.UUID, reviewB.UUID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine A: review B UUID mismatch: got %s, want %s", reviewBonA.UUID, reviewB.UUID)
 		}
 	}
 
@@ -772,13 +895,19 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		}
 	}
 	if jobAIDonB == 0 {
-		t.Error("Machine B: could not find job A by UUID")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B: could not find job A by UUID")
 	} else {
 		reviewAonB, err := dbB.GetReviewByJobID(jobAIDonB)
 		if err != nil {
-			t.Errorf("Machine B: failed to get review A: %v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine B: failed to get review A: %v", err)
 		} else if reviewAonB.UUID != reviewA.UUID {
-			t.Errorf("Machine B: review A UUID mismatch: got %s, want %s", reviewAonB.UUID, reviewA.UUID)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine B: review A UUID mismatch: got %s, want %s", reviewAonB.UUID, reviewA.UUID)
 		}
 	}
 
@@ -786,7 +915,9 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	if err != nil {
 		t.Logf("Machine B: local review B query by job ID: %v (expected for pulled jobs)", err)
 	} else if reviewBonB.UUID != reviewB.UUID {
-		t.Errorf("Machine B: review B UUID mismatch")
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B: review B UUID mismatch")
 	}
 
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
@@ -830,13 +961,19 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 	syncAll := func(t *testing.T) {
 		t.Helper()
 		if _, err := workerA.SyncNow(); err != nil {
-			t.Fatalf("Machine A sync failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine A sync failed: %v", err)
 		}
 		if _, err := workerB.SyncNow(); err != nil {
-			t.Fatalf("Machine B sync failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine B sync failed: %v", err)
 		}
 		if _, err := workerC.SyncNow(); err != nil {
-			t.Fatalf("Machine C sync failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine C sync failed: %v", err)
 		}
 	}
 
@@ -858,17 +995,23 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		t.Log("Round 2: Interleaved creation and syncing")
 		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 5, "a2", "Alice", "Alice round2")...)
 		if _, err := workerA.SyncNow(); err != nil {
-			t.Fatalf("Machine A round 2: SyncNow failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine A round 2: SyncNow failed: %v", err)
 		}
 
 		jobsCreatedByB = append(jobsCreatedByB, createBatchReviews(t, dbB, repoB.ID, 5, "b2", "Bob", "Bob round2")...)
 		if _, err := workerB.SyncNow(); err != nil {
-			t.Fatalf("Machine B round 2: SyncNow failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine B round 2: SyncNow failed: %v", err)
 		}
 
 		jobsCreatedByC = append(jobsCreatedByC, createBatchReviews(t, dbC, repoC.ID, 5, "c2", "Carol", "Carol round2")...)
 		if _, err := workerC.SyncNow(); err != nil {
-			t.Fatalf("Machine C round 2: SyncNow failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine C round 2: SyncNow failed: %v", err)
 		}
 
 		// All machines sync again
@@ -915,13 +1058,19 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		}
 
 		for err := range syncErrsA {
-			t.Errorf("%v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "%v", err)
 		}
 		for err := range syncErrsB {
-			t.Errorf("%v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "%v", err)
 		}
 		for err := range syncErrsC {
-			t.Errorf("%v", err)
+			assert.Condition(t, func() bool {
+				return false
+			}, "%v", err)
 		}
 
 		expectedTotal := 75
@@ -962,25 +1111,37 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		// Verify each machine can see all jobs
 		jobsA, err := dbA.ListJobs("", "", 1000, 0)
 		if err != nil {
-			t.Fatalf("Machine A: ListJobs failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine A: ListJobs failed: %v", err)
 		}
 		jobsB, err := dbB.ListJobs("", "", 1000, 0)
 		if err != nil {
-			t.Fatalf("Machine B: ListJobs failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine B: ListJobs failed: %v", err)
 		}
 		jobsC, err := dbC.ListJobs("", "", 1000, 0)
 		if err != nil {
-			t.Fatalf("Machine C: ListJobs failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "Machine C: ListJobs failed: %v", err)
 		}
 
 		if len(jobsA) != expectedTotal {
-			t.Errorf("Machine A should see %d jobs, got %d", expectedTotal, len(jobsA))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine A should see %d jobs, got %d", expectedTotal, len(jobsA))
 		}
 		if len(jobsB) != expectedTotal {
-			t.Errorf("Machine B should see %d jobs, got %d", expectedTotal, len(jobsB))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine B should see %d jobs, got %d", expectedTotal, len(jobsB))
 		}
 		if len(jobsC) != expectedTotal {
-			t.Errorf("Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
+			assert.Condition(t, func() bool {
+				return false
+			}, "Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
 		}
 
 		// Verify each machine has the others' specific jobs
@@ -999,32 +1160,44 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 		for _, uuid := range jobsCreatedByB {
 			if !jobsAMap[uuid] {
-				t.Errorf("Machine A missing job %s created by B", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine A missing job %s created by B", uuid)
 			}
 		}
 		for _, uuid := range jobsCreatedByC {
 			if !jobsAMap[uuid] {
-				t.Errorf("Machine A missing job %s created by C", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine A missing job %s created by C", uuid)
 			}
 		}
 		for _, uuid := range jobsCreatedByA {
 			if !jobsBMap[uuid] {
-				t.Errorf("Machine B missing job %s created by A", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine B missing job %s created by A", uuid)
 			}
 		}
 		for _, uuid := range jobsCreatedByC {
 			if !jobsBMap[uuid] {
-				t.Errorf("Machine B missing job %s created by C", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine B missing job %s created by C", uuid)
 			}
 		}
 		for _, uuid := range jobsCreatedByA {
 			if !jobsCMap[uuid] {
-				t.Errorf("Machine C missing job %s created by A", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine C missing job %s created by A", uuid)
 			}
 		}
 		for _, uuid := range jobsCreatedByB {
 			if !jobsCMap[uuid] {
-				t.Errorf("Machine C missing job %s created by B", uuid)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Machine C missing job %s created by B", uuid)
 			}
 		}
 	})
@@ -1041,7 +1214,9 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 
 	repoA, err := dbA.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_a"), "git@github.com:test/offline-repo.git")
 	if err != nil {
-		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: GetOrCreateRepo failed: %v", err)
 	}
 	createCompletedReview(t, dbA, repoA.ID, "dddd4444", "Dave", "Commit 1", "prompt", "Online review")
 
@@ -1055,15 +1230,21 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	}
 	workerA := NewSyncWorker(dbA, cfgA)
 	if err := workerA.Start(); err != nil {
-		t.Fatalf("Machine A: SyncWorker.Start failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: SyncWorker.Start failed: %v", err)
 	}
 	if err := waitForSyncWorkerConnection(workerA, 10*time.Second); err != nil {
 		workerA.Stop()
-		t.Fatalf("Machine A: Failed to connect: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: Failed to connect: %v", err)
 	}
 	if _, err := workerA.SyncNow(); err != nil {
 		workerA.Stop()
-		t.Fatalf("Machine A: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: SyncNow failed: %v", err)
 	}
 	workerA.Stop()
 
@@ -1076,7 +1257,9 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	// Machine A reconnects
 	workerA2 := startSyncWorker(t, dbA, env.pgURL, "machine-a", "100ms")
 	if _, err := workerA2.SyncNow(); err != nil {
-		t.Fatalf("Machine A reconnect: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A reconnect: SyncNow failed: %v", err)
 	}
 
 	env.assertPgCount("review_jobs", 3)
@@ -1085,17 +1268,23 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	dbB := env.openDB("machine_b.db")
 	workerB := startSyncWorker(t, dbB, env.pgURL, "machine-b", "100ms")
 	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: SyncNow failed: %v", err)
 	}
 
 	env.waitForLocalJobs(t, dbB, 3, 10*time.Second)
 
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
-		t.Fatalf("Machine B: ListJobs failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: ListJobs failed: %v", err)
 	}
 	if len(jobsB) != 3 {
-		t.Errorf("Machine B should see all 3 jobs from Machine A, got %d", len(jobsB))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Machine B should see all 3 jobs from Machine A, got %d", len(jobsB))
 	}
 
 	t.Log("Offline/reconnect verified: reviews created offline sync correctly after reconnect")
@@ -1110,7 +1299,9 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 
 	repo, err := db.GetOrCreateRepo("/test/batch-sync-repo", "batch-sync-test-identity")
 	if err != nil {
-		t.Fatalf("Failed to create repo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create repo: %v", err)
 	}
 
 	numJobs := 80
@@ -1119,55 +1310,79 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 
 	machineID, err := db.GetMachineID()
 	if err != nil {
-		t.Fatalf("Failed to get machine ID: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to get machine ID: %v", err)
 	}
 	pendingJobs, err := db.GetJobsToSync(machineID, 1000)
 	if err != nil {
-		t.Fatalf("Failed to get pending jobs: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to get pending jobs: %v", err)
 	}
 	t.Logf("Pending jobs before sync: %d", len(pendingJobs))
 	if len(pendingJobs) < numJobs {
-		t.Fatalf("Expected %d pending jobs, got %d", numJobs, len(pendingJobs))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected %d pending jobs, got %d", numJobs, len(pendingJobs))
 	}
 
 	t.Log("Calling SyncNow to push all batches")
 	stats, err := worker.SyncNow()
 	if err != nil {
-		t.Fatalf("SyncNow failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "SyncNow failed: %v", err)
 	}
 
 	t.Logf("SyncNow stats: pushed %d jobs, %d reviews, %d responses",
 		stats.PushedJobs, stats.PushedReviews, stats.PushedResponses)
 
 	if stats.PushedJobs < numJobs {
-		t.Errorf("Expected SyncNow to push %d jobs, only pushed %d", numJobs, stats.PushedJobs)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected SyncNow to push %d jobs, only pushed %d", numJobs, stats.PushedJobs)
 	}
 	if stats.PushedReviews < numJobs {
-		t.Errorf("Expected SyncNow to push %d reviews, only pushed %d", numJobs, stats.PushedReviews)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected SyncNow to push %d reviews, only pushed %d", numJobs, stats.PushedReviews)
 	}
 
 	var pgJobCount int
 	if err := env.Pool.pool.QueryRow(env.Ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount); err != nil {
-		t.Fatalf("Failed to count jobs in postgres: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to count jobs in postgres: %v", err)
 	}
 	if pgJobCount < numJobs {
-		t.Errorf("Expected %d jobs in postgres, got %d", numJobs, pgJobCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected %d jobs in postgres, got %d", numJobs, pgJobCount)
 	}
 
 	var pgReviewCount int
 	if err := env.Pool.pool.QueryRow(env.Ctx, "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount); err != nil {
-		t.Fatalf("Failed to count reviews in postgres: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to count reviews in postgres: %v", err)
 	}
 	if pgReviewCount < numJobs {
-		t.Errorf("Expected %d reviews in postgres, got %d", numJobs, pgReviewCount)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected %d reviews in postgres, got %d", numJobs, pgReviewCount)
 	}
 
 	pendingJobsAfter, err := db.GetJobsToSync(machineID, 1000)
 	if err != nil {
-		t.Fatalf("Failed to get pending jobs after sync: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to get pending jobs after sync: %v", err)
 	}
 	if len(pendingJobsAfter) > 0 {
-		t.Errorf("Expected 0 pending jobs after sync, got %d", len(pendingJobsAfter))
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected 0 pending jobs after sync, got %d", len(pendingJobsAfter))
 	}
 
 	t.Logf("Batch sync test passed: %d jobs and %d reviews pushed in batches of %d",
@@ -1184,7 +1399,9 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 		"/test/progress-abort-repo", "progress-abort-identity",
 	)
 	if err != nil {
-		t.Fatalf("Failed to create repo: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Failed to create repo: %v", err)
 	}
 
 	// Create enough jobs to require multiple push batches
@@ -1201,20 +1418,25 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("SyncNowWithProgress failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "SyncNowWithProgress failed: %v", err)
 	}
 
 	if calls != 1 {
-		t.Errorf("Expected progressFn called once, got %d", calls)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected progressFn called once, got %d", calls)
 	}
 
 	// Should have pushed only one batch worth, not all jobs
 	if stats.PushedJobs >= numJobs {
-		t.Errorf(
-			"Expected partial push (abort after 1 batch), "+
-				"but pushed %d/%d jobs",
-			stats.PushedJobs, numJobs,
-		)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected partial push (abort after 1 batch), "+
+			"but pushed %d/%d jobs",
+			stats.PushedJobs, numJobs)
+
 	}
 
 	t.Logf("Progress abort test passed: pushed %d/%d jobs "+
@@ -1234,14 +1456,18 @@ func TestIntegration_TickerSync(t *testing.T) {
 		filepath.Join(env.TmpDir, "repo_a"), identity,
 	)
 	if err != nil {
-		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine A: GetOrCreateRepo failed: %v", err)
 	}
 
 	_, err = dbB.GetOrCreateRepo(
 		filepath.Join(env.TmpDir, "repo_b"), identity,
 	)
 	if err != nil {
-		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "Machine B: GetOrCreateRepo failed: %v", err)
 	}
 
 	// Start both workers using startSyncWorkerNoSync, which

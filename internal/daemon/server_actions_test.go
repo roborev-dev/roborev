@@ -1,16 +1,17 @@
 package daemon
 
 import (
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestHandleStatus(t *testing.T) {
@@ -23,7 +24,9 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var status storage.DaemonStatus
@@ -31,7 +34,9 @@ func TestHandleStatus(t *testing.T) {
 
 		// Version should be set (non-empty)
 		if status.Version == "" {
-			t.Error("Expected Version to be set in status response")
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected Version to be set in status response")
 		}
 	})
 
@@ -42,7 +47,9 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for POST, got %d", w.Code)
 		}
 	})
 
@@ -58,7 +65,9 @@ func TestHandleStatus(t *testing.T) {
 		// MaxWorkers should match the pool size (config default), not a potentially reloaded config value
 		expectedWorkers := config.DefaultConfig().MaxWorkers
 		if status.MaxWorkers != expectedWorkers {
-			t.Errorf("Expected MaxWorkers %d from pool, got %d", expectedWorkers, status.MaxWorkers)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected MaxWorkers %d from pool, got %d", expectedWorkers, status.MaxWorkers)
 		}
 	})
 
@@ -73,7 +82,9 @@ func TestHandleStatus(t *testing.T) {
 
 		// ConfigReloadedAt should be empty when no reload has occurred
 		if status.ConfigReloadedAt != "" {
-			t.Errorf("Expected ConfigReloadedAt to be empty initially, got %q", status.ConfigReloadedAt)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected ConfigReloadedAt to be empty initially, got %q", status.ConfigReloadedAt)
 		}
 	})
 }
@@ -88,19 +99,27 @@ func TestHandlePing(t *testing.T) {
 		server.handlePing(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var ping PingInfo
 		testutil.DecodeJSON(t, w, &ping)
 		if ping.Service != daemonServiceName {
-			t.Fatalf("Expected service %q, got %q", daemonServiceName, ping.Service)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected service %q, got %q", daemonServiceName, ping.Service)
 		}
 		if ping.Version == "" {
-			t.Fatal("Expected ping version to be set")
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected ping version to be set")
 		}
 		if ping.PID == 0 {
-			t.Fatal("Expected ping PID to be set")
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected ping PID to be set")
 		}
 	})
 
@@ -111,7 +130,9 @@ func TestHandlePing(t *testing.T) {
 		server.handlePing(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("Expected status 405, got %d", w.Code)
+			require.Condition(t, func() bool {
+				return false
+			}, "Expected status 405, got %d", w.Code)
 		}
 	})
 }
@@ -129,15 +150,21 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		updated, err := db.GetJobByID(job.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID failed: %v", err)
 		}
 		if updated.Status != storage.JobStatusCanceled {
-			t.Errorf("Expected status 'canceled', got '%s'", updated.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'canceled', got '%s'", updated.Status)
 		}
 	})
 
@@ -149,7 +176,9 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for already canceled job, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 404 for already canceled job, got %d", w.Code)
 		}
 	})
 
@@ -160,7 +189,9 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for nonexistent job, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 404 for nonexistent job, got %d", w.Code)
 		}
 	})
 
@@ -171,7 +202,9 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing job_id, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 400 for missing job_id, got %d", w.Code)
 		}
 	})
 
@@ -182,7 +215,9 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for GET, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for GET, got %d", w.Code)
 		}
 	})
 
@@ -190,14 +225,20 @@ func TestHandleCancelJob(t *testing.T) {
 		// Create a new job and claim it
 		commit2, err := db.GetOrCreateCommit(job.RepoID, "cancelrunning", "Author", "Subject", time.Now())
 		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetOrCreateCommit failed: %v", err)
 		}
 		job2, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: job.RepoID, CommitID: commit2.ID, GitRef: "cancelrunning", Agent: "test"})
 		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "EnqueueJob failed: %v", err)
 		}
 		if _, err := db.ClaimJob("worker-1"); err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "ClaimJob failed: %v", err)
 		}
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job2.ID})
@@ -206,15 +247,21 @@ func TestHandleCancelJob(t *testing.T) {
 		server.handleCancelJob(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		updated, err := db.GetJobByID(job2.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID failed: %v", err)
 		}
 		if updated.Status != storage.JobStatusCanceled {
-			t.Errorf("Expected status 'canceled', got '%s'", updated.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'canceled', got '%s'", updated.Status)
 		}
 	})
 }
@@ -225,7 +272,9 @@ func TestHandleRerunJob(t *testing.T) {
 	// Create a repo
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 
 	t.Run("rerun failed job", func(t *testing.T) {
@@ -240,15 +289,21 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		updated, err := db.GetJobByID(job.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID failed: %v", err)
 		}
 		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'queued', got '%s'", updated.Status)
 		}
 	})
 
@@ -263,15 +318,21 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		updated, err := db.GetJobByID(job.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID failed: %v", err)
 		}
 		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'queued', got '%s'", updated.Status)
 		}
 	})
 
@@ -282,9 +343,7 @@ func TestHandleRerunJob(t *testing.T) {
 		var claimed *storage.ReviewJob
 		for {
 			claimed, _ = db.ClaimJob("worker-1")
-			if claimed == nil {
-				t.Fatal("No job to claim")
-			}
+			require.NotNil(t, claimed, "No job to claim")
 			if claimed.ID == job.ID {
 				break
 			}
@@ -298,15 +357,21 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		updated, err := db.GetJobByID(job.ID)
 		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
+			require.Condition(t, func() bool {
+				return false
+			}, "GetJobByID failed: %v", err)
 		}
 		if updated.Status != storage.JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 'queued', got '%s'", updated.Status)
 		}
 	})
 
@@ -320,7 +385,9 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for queued job, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 404 for queued job, got %d", w.Code)
 		}
 	})
 
@@ -331,7 +398,9 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404 for nonexistent job, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 404 for nonexistent job, got %d", w.Code)
 		}
 	})
 
@@ -342,7 +411,9 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for missing job_id, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 400 for missing job_id, got %d", w.Code)
 		}
 	})
 
@@ -353,7 +424,9 @@ func TestHandleRerunJob(t *testing.T) {
 		server.handleRerunJob(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405 for GET, got %d", w.Code)
+			assert.Condition(t, func() bool {
+				return false
+			}, "Expected status 405 for GET, got %d", w.Code)
 		}
 	})
 }
@@ -366,11 +439,15 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 	// Create repo and commit
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
 	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateRepo failed: %v", err)
 	}
 	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test commit", time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetOrCreateCommit failed: %v", err)
 	}
 
 	testCases := []struct {
@@ -389,7 +466,9 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 			// Create a job
 			job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 			if err != nil {
-				t.Fatalf("EnqueueJob failed: %v", err)
+				require.Condition(t, func() bool {
+					return false
+				}, "EnqueueJob failed: %v", err)
 			}
 
 			// Set job to desired state
@@ -409,14 +488,18 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 			server.handleAddComment(w, req)
 
 			if w.Code != http.StatusCreated {
-				t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected status 201, got %d: %s", w.Code, w.Body.String())
 			}
 
 			// Verify response contains the comment
 			var resp storage.Response
 			testutil.DecodeJSON(t, w, &resp)
 			if resp.Responder != "test-user" {
-				t.Errorf("Expected responder 'test-user', got %q", resp.Responder)
+				assert.Condition(t, func() bool {
+					return false
+				}, "Expected responder 'test-user', got %q", resp.Responder)
 			}
 		})
 	}
@@ -438,10 +521,14 @@ func TestHandleAddCommentToNonExistentJob(t *testing.T) {
 	server.handleAddComment(w, req)
 
 	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d: %s", w.Code, w.Body.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected status 404, got %d: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "job not found") {
-		t.Errorf("Expected 'job not found' error, got: %s", w.Body.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected 'job not found' error, got: %s", w.Body.String())
 	}
 }
 
@@ -458,7 +545,9 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 
 	// Verify no review exists
 	if _, err := db.GetReviewByJobID(job.ID); err == nil {
-		t.Fatal("Expected no review to exist for job")
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected no review to exist for job")
 	}
 
 	// Add comment - should succeed even without a review
@@ -473,19 +562,27 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	server.handleAddComment(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+		assert.Condition(t, func() bool {
+			return false
+		}, "Expected status 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Verify comment was stored
 	comments, err := db.GetCommentsForJob(job.ID)
 	if err != nil {
-		t.Fatalf("GetCommentsForJob failed: %v", err)
+		require.Condition(t, func() bool {
+			return false
+		}, "GetCommentsForJob failed: %v", err)
 	}
 	if len(comments) != 1 {
-		t.Fatalf("Expected 1 comment, got %d", len(comments))
+		require.Condition(t, func() bool {
+			return false
+		}, "Expected 1 comment, got %d", len(comments))
 	}
 	if comments[0].Response != "Comment on in-progress job without review" {
-		t.Errorf("Unexpected comment: %q", comments[0].Response)
+		assert.Condition(t, func() bool {
+			return false
+		}, "Unexpected comment: %q", comments[0].Response)
 	}
 }
 
