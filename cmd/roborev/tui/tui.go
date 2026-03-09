@@ -876,14 +876,12 @@ func Run(cfg Config) error {
 	// listening, so external tools don't discover a broken endpoint.
 	if controlEnabled {
 		rtInfo := TUIRuntimeInfo{
-			PID:        os.Getpid(),
-			SocketPath: socketPath,
-			ServerAddr: cfg.ServerAddr,
+			PID:          os.Getpid(),
+			SocketPath:   socketPath,
+			ServerAddr:   cfg.ServerAddr,
+			RepoFilter:   m.activeRepoFilter,
+			BranchFilter: m.activeBranchFilter,
 		}
-		if cfg.RepoFilter != "" {
-			rtInfo.RepoFilter = []string{cfg.RepoFilter}
-		}
-		rtInfo.BranchFilter = cfg.BranchFilter
 		if err := WriteTUIRuntime(rtInfo); err != nil {
 			log.Printf(
 				"warning: failed to write TUI runtime info: %v", err,

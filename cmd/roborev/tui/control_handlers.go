@@ -293,6 +293,14 @@ func (m model) handleCtrlSelectJob(
 
 	for i := range m.jobs {
 		if m.jobs[i].ID == params.JobID {
+			if !m.isJobVisible(m.jobs[i]) {
+				return m, controlResponse{
+					Error: fmt.Sprintf(
+						"job %d is hidden by current filters",
+						params.JobID,
+					),
+				}, nil
+			}
 			m.selectedIdx = i
 			m.selectedJobID = params.JobID
 			return m, controlResponse{OK: true}, nil
@@ -397,7 +405,8 @@ func (m model) handleCtrlCloseReview(
 	m.applyStatsDelta(newState)
 
 	restoreSelection := false
-	if m.hideClosed && newState {
+	if m.hideClosed && newState &&
+		m.selectedJobID == params.JobID {
 		idx := m.findPrevVisibleJob(m.selectedIdx)
 		if idx < 0 {
 			idx = m.findNextVisibleJob(m.selectedIdx)
@@ -464,7 +473,7 @@ func (m model) handleCtrlCancelJob(
 	now := time.Now()
 	job.FinishedAt = &now
 
-	if m.hideClosed {
+	if m.hideClosed && m.selectedJobID == params.JobID {
 		idx := m.findPrevVisibleJob(m.selectedIdx)
 		if idx < 0 {
 			idx = m.findNextVisibleJob(m.selectedIdx)

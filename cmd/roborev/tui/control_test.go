@@ -323,6 +323,36 @@ func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{
+		makeJob(10, withRepoPath("/visible")),
+		makeJob(20, withRepoPath("/hidden")),
+	}
+	m.activeRepoFilter = []string{"/visible"}
+
+	params, _ := json.Marshal(map[string]int64{"job_id": 20})
+	_, resp, _ := m.handleCtrlSelectJob(params)
+	if resp.OK {
+		t.Fatal("expected error for hidden job")
+	}
+}
+
+func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(10, withClosed(boolPtr(false))),
+		makeJob(20, withClosed(boolPtr(true))),
+	}
+
+	params, _ := json.Marshal(map[string]int64{"job_id": 20})
+	_, resp, _ := m.handleCtrlSelectJob(params)
+	if resp.OK {
+		t.Fatal("expected error for closed-hidden job")
+	}
+}
+
 func TestHandleCtrlSetView(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -380,6 +410,39 @@ func TestHandleCtrlCloseReview(t *testing.T) {
 	}
 }
 
+func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	closed := false
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(2, withClosed(&closed)),
+		makeJob(3, withClosed(boolPtr(false))),
+	}
+	// Select job 1 (index 0)
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Close job 2, which is not the selected job
+	params, _ := json.Marshal(map[string]any{
+		"job_id": int64(2),
+		"closed": true,
+	})
+	updated, resp, _ := m.handleCtrlCloseReview(params)
+	if !resp.OK {
+		t.Fatalf("expected OK, got error: %s", resp.Error)
+	}
+	// Selection should remain on job 1
+	if updated.selectedJobID != 1 {
+		t.Errorf("selectedJobID = %d, want 1 (unchanged)",
+			updated.selectedJobID)
+	}
+	if updated.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0 (unchanged)",
+			updated.selectedIdx)
+	}
+}
+
 func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
@@ -410,6 +473,35 @@ func TestHandleCtrlCancelJob(t *testing.T) {
 	if updated.jobs[0].Status != storage.JobStatusCanceled {
 		t.Errorf("status = %s, want canceled",
 			updated.jobs[0].Status)
+	}
+}
+
+func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusRunning)),
+		makeJob(3, withClosed(boolPtr(false))),
+	}
+	// Select job 1 (index 0)
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Cancel job 2, which is not the selected job
+	params, _ := json.Marshal(map[string]int64{"job_id": 2})
+	updated, resp, _ := m.handleCtrlCancelJob(params)
+	if !resp.OK {
+		t.Fatalf("expected OK, got error: %s", resp.Error)
+	}
+	// Selection should remain on job 1
+	if updated.selectedJobID != 1 {
+		t.Errorf("selectedJobID = %d, want 1 (unchanged)",
+			updated.selectedJobID)
+	}
+	if updated.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0 (unchanged)",
+			updated.selectedIdx)
 	}
 }
 
