@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +26,7 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 			h := newReviewHarness(t)
 			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			require.NoError(t, err, "Expected no error, got: %v")
-			
+
 			h.assertOutputContains(tc.expected)
 		})
 	}

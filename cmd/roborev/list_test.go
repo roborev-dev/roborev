@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -262,9 +261,6 @@ func TestListCommand(t *testing.T) {
 }
 
 func runListTest(t *testing.T, tc listTestCase) {
-	assert := assert.New(t)
-	require := require.New(t)
-
 	// Setup mock daemon to capture query and handle request
 	var capturedQuery string
 	wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,10 +298,10 @@ func runListTest(t *testing.T, tc listTestCase) {
 
 	// Verify error
 	if tc.wantError != "" {
-		assert.Equal(t, true, cmdErr != nil, "expected error but got none")
-		assert.Contains(cmdErr.Error(), tc.wantError)
+		require.Error(t, cmdErr, "expected error but got none")
+		assert.Contains(t, cmdErr.Error(), tc.wantError)
 	} else {
-		assert.Equal(t, false, cmdErr != nil, "unexpected error")
+		require.NoError(t, cmdErr)
 	}
 
 	// Verify string output

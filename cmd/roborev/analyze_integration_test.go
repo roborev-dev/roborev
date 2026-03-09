@@ -6,7 +6,6 @@ import (
 	"context"
 	"net/http"
 	"regexp"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,18 +98,14 @@ func TestWaitForAnalysisJob(t *testing.T) {
 			review, err := waitForAnalysisJob(ctx, ts.URL, testJobID)
 
 			if tt.wantErr {
-				require.NoError(t, err)
-
-				assert.Equal(t, false, !strings.Contains(err.Error(), tt.wantErrMsg), "unexpected condition")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrMsg)
 				return
 			}
 
 			require.NoError(t, err)
-
-			if review == nil {
-				require.NoError(t, err, "expected review, got nil")
-			}
-			assert.Equal(t, false, review.Output != tt.wantReview, "unexpected condition")
+			require.NotNil(t, review, "expected review, got nil")
+			assert.Equal(t, tt.wantReview, review.Output)
 		})
 	}
 }
@@ -141,12 +136,12 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	require.NoError(t, err, "runAnalyzeAndFix failed: %v")
 
 	// Verify the workflow was executed
-	assert.Equal(t, false, atomic.LoadInt32(&state.JobsCount) < 2, "unexpected condition")
-	assert.Equal(t, false, atomic.LoadInt32(&state.ReviewCount) == 0, "unexpected condition")
-	assert.Equal(t, false, atomic.LoadInt32(&state.CloseCount) == 0, "unexpected condition")
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&state.JobsCount), int32(2))
+	assert.NotZero(t, atomic.LoadInt32(&state.ReviewCount))
+	assert.NotZero(t, atomic.LoadInt32(&state.CloseCount))
 
 	// Verify output contains analysis result
 	outputStr := output.String()
-	assert.Equal(t, false, !strings.Contains(outputStr, "CODE SMELLS"), "unexpected condition")
-	assert.Equal(t, false, !regexp.MustCompile(`Analysis job \d+ closed`).MatchString(outputStr), "unexpected condition")
+	assert.Contains(t, outputStr, "CODE SMELLS")
+	assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), outputStr)
 }

@@ -43,23 +43,22 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	output := captureStdout(t, func() {
 		// With 2 iterations and a failing agent, should exhaust iterations
 		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
-		require.NoError(t, err)
-		
+		require.Error(t, err)
 	})
 
 	// Verify agent error message is printed (not shadowed by ResolveSHA)
-	assert.Equal(t, false, !strings.Contains(output, "Agent error: test agent failure"), "unexpected condition")
+	assert.Contains(t, output, "Agent error: test agent failure")
 
 	// Verify "Will retry in next iteration" message
-	assert.Equal(t, false, !strings.Contains(output, "Will retry in next iteration"), "unexpected condition")
+	assert.Contains(t, output, "Will retry in next iteration")
 
 	// Verify no commit was created (HEAD unchanged)
 	headAfter := gitRevParse(t, repoDir, "HEAD")
-	assert.Equal(t, false, headBefore != headAfter, "unexpected condition")
+	assert.Equal(t, headBefore, headAfter)
 
 	// Verify we attempted 2 iterations (both printed)
-	assert.Equal(t, false, !strings.Contains(output, "=== Refinement iteration 1/2 ==="), "unexpected condition")
-	assert.Equal(t, false, !strings.Contains(output, "=== Refinement iteration 2/2 ==="), "unexpected condition")
+	assert.Contains(t, output, "=== Refinement iteration 1/2 ===")
+	assert.Contains(t, output, "=== Refinement iteration 2/2 ===")
 }
 
 func handleMockRefineGetJobs(t *testing.T) func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
@@ -159,13 +158,10 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 
 	ctx := defaultTestRunContext(repoDir)
 
-	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true}); err == nil {
-		require.NoError(t, err)
-	}
+	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
+	require.Error(t, err)
 
 	for _, call := range md.State.respondCalled {
-		if call.jobID == 2 {
-			require.NoError(t, err, "expected to stay on failed fix chain; saw response for newer commit job 2")
-		}
+		assert.NotEqual(t, int64(2), call.jobID, "expected to stay on failed fix chain; saw response for newer commit job 2")
 	}
 }
