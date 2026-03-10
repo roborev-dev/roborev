@@ -1148,3 +1148,39 @@ func TestGetAvailableWithConfigPiCmd(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
 }
+
+func TestGetAvailableWithConfigEmptyPreferredBackupUsesConfigCmd(t *testing.T) {
+	// preferred="" with a backup agent whose default command isn't in
+	// PATH but whose configured command is. The backup should still
+	// be resolved via the config override.
+	fakeBin := t.TempDir()
+	wrapper := "claude-wrapper"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("", cfg, "claude-code")
+	require.NoError(t, err,
+		"backup agent should be available via config cmd even with empty preferred")
+	assert.Equal(t, "claude-code", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}

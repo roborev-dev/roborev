@@ -1609,8 +1609,13 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 			a, _ := Get(preferred)
 			return applyCommandOverrides(a, cfg), nil
 		}
-		// Preferred not available even with config. Try backups
-		// with config-aware availability before the fallback chain.
+	}
+
+	// Try backup agents with config-aware availability before the
+	// fallback chain. This runs regardless of whether preferred is
+	// set so that backup-only configurations (preferred="" with a
+	// backup_agent) still honor *_cmd overrides.
+	if cfg != nil {
 		for _, b := range backups {
 			b = resolveAlias(b)
 			if b == "" || b == preferred {
