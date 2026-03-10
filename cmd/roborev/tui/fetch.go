@@ -501,19 +501,28 @@ func (m model) fetchReview(jobID int64) tea.Cmd {
 
 		responses := m.loadResponses(jobID, review)
 
-		// Compute branch name: prefer the stored branch (set at
-		// enqueue time) over a dynamic git lookup, which can be
-		// misled by worktree branches reachable from the same SHA.
-		var branchName string
-		if review.Job != nil {
-			branchName = review.Job.Branch
-		}
-		if branchName == "" && review.Job != nil && review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
-			branchName = git.GetBranchName(review.Job.RepoPath, review.Job.GitRef)
-		}
+		branchName := reviewBranchName(review.Job)
 
 		return reviewMsg{review: review, responses: responses, jobID: jobID, branchName: branchName}
 	}
+}
+
+// reviewBranchName returns the branch to display on the review screen.
+// It prefers the stored job.Branch (set at enqueue time) over a dynamic
+// git name-rev lookup, which can be misled by worktree branches
+// reachable from the same SHA. Falls back to git lookup only for
+// single-commit reviews when the stored branch is empty.
+func reviewBranchName(job *storage.ReviewJob) string {
+	if job == nil {
+		return ""
+	}
+	if job.Branch != "" {
+		return job.Branch
+	}
+	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {
+		return git.GetBranchName(job.RepoPath, job.GitRef)
+	}
+	return ""
 }
 
 func (m model) fetchReviewForPrompt(jobID int64) tea.Cmd {
