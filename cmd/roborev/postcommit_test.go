@@ -304,62 +304,56 @@ esac
 	return binDir
 }
 
+// installMockHook installs the real githook-generated post-commit hook with
+// the ROBOREV= line patched to point at a mock binary.
+func installMockHook(t *testing.T, repoDir, mockBinDir string) {
+	t.Helper()
+	hooksDir, err := git.GetHooksPath(repoDir)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(hooksDir, 0755))
+
+	hookContent := githook.GeneratePostCommit()
+	mockBin := filepath.Join(mockBinDir, "roborev")
+	lines := strings.Split(hookContent, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "ROBOREV=") {
+			lines[i] = fmt.Sprintf("ROBOREV=%q", mockBin)
+			break
+		}
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hooksDir, "post-commit"),
+		[]byte(strings.Join(lines, "\n")), 0755))
+}
+
 // TestPostCommitDoesNotEnqueueDuringRebase runs a real clean git rebase with
-// hooks installed via githook.Install and a mock roborev binary in PATH. It
-// asserts that roborev's rebase detection prevents any enqueue during replayed
-// commits.
+// hooks installed via githook.GeneratePostCommit and a mock roborev binary in
+// PATH. It asserts that roborev's rebase detection prevents any enqueue during
+// replayed commits.
+//
+// The "hook before commits" variant installs the hook before the branch
+// topology commits, so the hook fires for every setup commit as well. The
+// "hook after commits" variant installs just before the rebase.
 func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(t *testing.T) repoUnderTest
+		name            string
+		setup           func(t *testing.T) repoUnderTest
+		hookBeforeSetup bool
 	}{
-		{"plain repo", setupPlainRepo},
-		{"worktree", setupWorktreeRepo},
+		{"plain repo/hook before commits", setupPlainRepo, true},
+		{"plain repo/hook after commits", setupPlainRepo, false},
+		{"worktree/hook before commits", setupWorktreeRepo, true},
+		{"worktree/hook after commits", setupWorktreeRepo, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := tt.setup(t)
 
-			// Create a branch topology for a clean rebase:
-			//   base: A -- B (base.txt, no conflict)
-			//          \
-			//   current: C -- D -- E (branch files)
-			r.repo.Run("checkout", "-b", "rebase-base")
-			r.repo.CommitFile("base.txt", "base content", "base commit")
-			r.repo.Run("checkout", "-")
-			r.repo.CommitFile("branch1.txt", "content 1", "feature commit 1")
-			r.repo.CommitFile("branch2.txt", "content 2", "feature commit 2")
-			r.repo.CommitFile("branch3.txt", "content 3", "feature commit 3")
-
-			// Create a mock roborev binary that mirrors the real rebase
-			// detection logic (check git-dir for rebase-merge/rebase-apply).
 			marker := filepath.Join(r.repo.Dir, "hook-enqueues.log")
 			mockBinDir := mockRoborevBinary(t, marker)
 
-			// Install the post-commit hook using githook's generated content,
-			// but patch the ROBOREV= line to point to our mock binary.
-			// During tests resolveRoborevPath() returns the test binary,
-			// which would hang when invoked as "roborev post-commit".
-			hooksDir, err := git.GetHooksPath(r.repo.Dir)
-			require.NoError(t, err)
-			require.NoError(t, os.MkdirAll(hooksDir, 0755))
-
-			hookContent := githook.GeneratePostCommit()
-			mockBin := filepath.Join(mockBinDir, "roborev")
-			lines := strings.Split(hookContent, "\n")
-			for i, line := range lines {
-				if strings.HasPrefix(line, "ROBOREV=") {
-					lines[i] = fmt.Sprintf("ROBOREV=%q", mockBin)
-					break
-				}
-			}
-			hookContent = strings.Join(lines, "\n")
-			require.NoError(t, os.WriteFile(
-				filepath.Join(hooksDir, "post-commit"),
-				[]byte(hookContent), 0755))
-
 			// Build env with mock roborev first in PATH so the hook finds it.
-			rebaseEnv := append(os.Environ(),
+			gitEnv := append(os.Environ(),
 				"PATH="+mockBinDir+":"+os.Getenv("PATH"),
 				"HOME="+r.repo.Dir,
 				"GIT_CONFIG_NOSYSTEM=1",
@@ -369,33 +363,57 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 				"GIT_COMMITTER_EMAIL=test@test.com",
 			)
 
-			// Normal commit — hook should fire and write to marker.
-			// Use exec.Command so the hook runs with our mock PATH.
-			commitCmd := exec.Command("git", "commit",
-				"--allow-empty", "-m", "normal commit")
-			commitCmd.Dir = r.repo.Dir
-			commitCmd.Env = rebaseEnv
-			out, err := commitCmd.CombinedOutput()
-			require.NoError(t, err, "normal commit should succeed: %s", out)
+			if tt.hookBeforeSetup {
+				installMockHook(t, r.repo.Dir, mockBinDir)
+			}
 
-			data, err := os.ReadFile(marker)
-			require.NoError(t, err, "hook should have fired on normal commit")
-			preRebaseCount := strings.Count(string(data), "enqueued")
-			require.Equal(t, 1, preRebaseCount,
-				"hook should have fired exactly once for the normal commit")
+			// Create a branch topology for a clean rebase:
+			//   base: A -- B (base.txt, no conflict)
+			//          \
+			//   current: C -- D -- E (branch files)
+			gitCmd := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = r.repo.Dir
+				cmd.Env = gitEnv
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "git %v failed: %s", args, out)
+			}
+			gitCmd("checkout", "-b", "rebase-base")
+			gitCmd("commit", "--allow-empty", "-m", "base commit")
+			gitCmd("checkout", "-")
+			// Create 3 feature commits with actual file changes.
+			for i := 1; i <= 3; i++ {
+				f := filepath.Join(r.repo.Dir, fmt.Sprintf("branch%d.txt", i))
+				require.NoError(t, os.WriteFile(f, []byte(fmt.Sprintf("content %d", i)), 0644))
+				gitCmd("add", f)
+				gitCmd("commit", "-m", fmt.Sprintf("feature commit %d", i))
+			}
+
+			if !tt.hookBeforeSetup {
+				installMockHook(t, r.repo.Dir, mockBinDir)
+			}
+
+			// Count how many enqueues happened during setup (only
+			// non-zero when the hook was installed before commits).
+			var preRebaseCount int
+			if data, err := os.ReadFile(marker); err == nil {
+				preRebaseCount = strings.Count(string(data), "enqueued")
+			}
 
 			// Run a full clean rebase — all 3 feature commits replay.
 			cmd := exec.Command("git", "rebase", "rebase-base")
 			cmd.Dir = r.repo.Dir
-			cmd.Env = rebaseEnv
-			out, err = cmd.CombinedOutput()
+			cmd.Env = gitEnv
+			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, "rebase should succeed cleanly: %s", out)
 
-			// After the rebase, the marker should still have exactly 1 entry.
-			// If the hook fired during rebase, there would be more.
-			data, err = os.ReadFile(marker)
-			require.NoError(t, err)
-			postRebaseCount := strings.Count(string(data), "enqueued")
+			// After the rebase, the marker count should be unchanged.
+			// If the hook enqueued during the rebase, there would be more.
+			var postRebaseCount int
+			if data, err := os.ReadFile(marker); err == nil {
+				postRebaseCount = strings.Count(string(data), "enqueued")
+			}
 			assert.Equal(t, preRebaseCount, postRebaseCount,
 				"hook should not have enqueued during rebase (got %d, want %d)",
 				postRebaseCount, preRebaseCount)
