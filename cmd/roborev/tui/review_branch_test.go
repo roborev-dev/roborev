@@ -57,6 +57,11 @@ func TestReviewBranchName(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "branchNone with repo path skips git lookup",
+			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123", RepoPath: "/tmp/repo"},
+			want: "",
+		},
+		{
 			name: "no stored branch and range skips git lookup",
 			job:  &storage.ReviewJob{GitRef: "abc123..def456", RepoPath: "/tmp/repo"},
 			want: "",
