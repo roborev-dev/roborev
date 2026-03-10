@@ -370,6 +370,55 @@ func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, outpu
 	return updatedJob
 }
 
+func TestGetReviewByJobIDIncludesBranch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+
+	tests := []struct {
+		name   string
+		branch string
+		want   string
+	}{
+		{"branch populated when set", "main", "main"},
+		{"branch empty when not set", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := createCompletedJobWithOptions(t, db, EnqueueOpts{
+				RepoID: repo.ID,
+				GitRef: "sha-" + tt.name,
+				Branch: tt.branch,
+			}, "output")
+
+			review, err := db.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			require.NotNil(t, review.Job)
+			assert.Equal(t, tt.want, review.Job.Branch)
+		})
+	}
+}
+
+func TestGetReviewByCommitSHAIncludesBranch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+
+	job := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "branch-sha-test",
+		Branch: "feature/x",
+	}, "output")
+
+	review, err := db.GetReviewByCommitSHA(job.GitRef)
+	require.NoError(t, err)
+	require.NotNil(t, review.Job)
+	assert.Equal(t, "feature/x", review.Job.Branch)
+}
+
 // verifyComment helper checks if a comment matches expected values.
 func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg string) {
 	t.Helper()

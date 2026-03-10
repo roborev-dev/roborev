@@ -21,9 +21,10 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var commitSubject sql.NullString
 
 	var verdictBool sql.NullInt64
+	var branch sql.NullString
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -32,7 +33,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -49,6 +50,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 	if commitSubject.Valid {
 		job.CommitSubject = commitSubject.String
+	}
+	if branch.Valid {
+		job.Branch = branch.String
 	}
 	if model.Valid {
 		job.Model = model.String
@@ -109,9 +113,10 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 
 	// Search by git_ref which contains the SHA for single commits
 	var verdictBool sql.NullInt64
+	var branch sql.NullString
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -122,7 +127,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		ORDER BY rv.created_at DESC
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -138,6 +143,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	}
 	if commitSubject.Valid {
 		job.CommitSubject = commitSubject.String
+	}
+	if branch.Valid {
+		job.Branch = branch.String
 	}
 	if model.Valid {
 		job.Model = model.String
