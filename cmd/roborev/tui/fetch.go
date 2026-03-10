@@ -516,7 +516,7 @@ func reviewBranchName(job *storage.ReviewJob) string {
 	if job == nil {
 		return ""
 	}
-	if job.Branch != "" {
+	if job.Branch != "" && job.Branch != branchNone {
 		return job.Branch
 	}
 	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {

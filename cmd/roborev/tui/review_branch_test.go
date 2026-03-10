@@ -52,6 +52,11 @@ func TestReviewBranchName(t *testing.T) {
 			want: "main",
 		},
 		{
+			name: "branchNone sentinel treated as empty",
+			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123"},
+			want: "",
+		},
+		{
 			name: "no stored branch and range skips git lookup",
 			job:  &storage.ReviewJob{GitRef: "abc123..def456", RepoPath: "/tmp/repo"},
 			want: "",
