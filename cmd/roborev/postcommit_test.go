@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/githook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -247,7 +249,6 @@ func mockEnqueueCapture(t *testing.T, mux *http.ServeMux) <-chan daemon.EnqueueR
 	return ch
 }
 
-
 // TestPostCommitSendsLocalRepoPath checks that the RepoPath in the enqueue
 // request is the local (worktree) path in both plain repos and linked
 // worktrees. The daemon canonicalizes to the main repo root itself.
@@ -277,13 +278,36 @@ func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 	}
 }
 
+// mockRoborevBinary creates a mock "roborev" shell script in a temp directory
+// and returns the directory (to prepend to PATH). The mock script handles
+// "post-commit" by using roborev's same rebase detection logic: it checks
+// for rebase-merge/rebase-apply in git-dir and writes to the marker file
+// only when NOT rebasing.
+func mockRoborevBinary(t *testing.T, marker string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+# Mock roborev binary for testing post-commit hook behavior.
+# Only handles the "post-commit" subcommand.
+case "$1" in
+  post-commit)
+    git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+    [ -d "$git_dir/rebase-merge" ] && exit 0
+    [ -d "$git_dir/rebase-apply" ] && exit 0
+    echo enqueued >> %q
+    ;;
+esac
+`, marker)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(binDir, "roborev"),
+		[]byte(script), 0755))
+	return binDir
+}
+
 // TestPostCommitDoesNotEnqueueDuringRebase runs a real clean git rebase with
-// a post-commit hook installed, and asserts that roborev's IsRebaseInProgress
-// check prevents any enqueue during the replayed commits.
-//
-// The hook is a shell script that mirrors roborev's rebase check: it looks
-// for rebase-merge/rebase-apply before touching a marker file. This tests
-// the real git rebase flow end-to-end.
+// hooks installed via githook.Install and a mock roborev binary in PATH. It
+// asserts that roborev's rebase detection prevents any enqueue during replayed
+// commits.
 func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -307,29 +331,53 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 			r.repo.CommitFile("branch2.txt", "content 2", "feature commit 2")
 			r.repo.CommitFile("branch3.txt", "content 3", "feature commit 3")
 
-			// Install a post-commit hook that checks for rebase state (the
-			// same check roborev post-commit does) and appends to a marker
-			// file only when NOT rebasing. Use git-common-dir for the hooks
-			// directory so this works in both plain repos and worktrees.
+			// Create a mock roborev binary that mirrors the real rebase
+			// detection logic (check git-dir for rebase-merge/rebase-apply).
 			marker := filepath.Join(r.repo.Dir, "hook-enqueues.log")
-			commonDir := r.repo.Run("rev-parse", "--git-common-dir")
-			if !filepath.IsAbs(commonDir) {
-				commonDir = filepath.Join(r.repo.Dir, commonDir)
-			}
-			hookScript := fmt.Sprintf(`#!/bin/sh
-git_dir=$(git rev-parse --git-dir 2>/dev/null)
-[ -d "$git_dir/rebase-merge" ] && exit 0
-[ -d "$git_dir/rebase-apply" ] && exit 0
-echo enqueued >> %q
-`, marker)
-			hooksDir := filepath.Join(commonDir, "hooks")
+			mockBinDir := mockRoborevBinary(t, marker)
+
+			// Install the post-commit hook using githook's generated content,
+			// but patch the ROBOREV= line to point to our mock binary.
+			// During tests resolveRoborevPath() returns the test binary,
+			// which would hang when invoked as "roborev post-commit".
+			hooksDir, err := git.GetHooksPath(r.repo.Dir)
+			require.NoError(t, err)
 			require.NoError(t, os.MkdirAll(hooksDir, 0755))
+
+			hookContent := githook.GeneratePostCommit()
+			mockBin := filepath.Join(mockBinDir, "roborev")
+			lines := strings.Split(hookContent, "\n")
+			for i, line := range lines {
+				if strings.HasPrefix(line, "ROBOREV=") {
+					lines[i] = fmt.Sprintf("ROBOREV=%q", mockBin)
+					break
+				}
+			}
+			hookContent = strings.Join(lines, "\n")
 			require.NoError(t, os.WriteFile(
 				filepath.Join(hooksDir, "post-commit"),
-				[]byte(hookScript), 0755))
+				[]byte(hookContent), 0755))
+
+			// Build env with mock roborev first in PATH so the hook finds it.
+			rebaseEnv := append(os.Environ(),
+				"PATH="+mockBinDir+":"+os.Getenv("PATH"),
+				"HOME="+r.repo.Dir,
+				"GIT_CONFIG_NOSYSTEM=1",
+				"GIT_AUTHOR_NAME=Test",
+				"GIT_AUTHOR_EMAIL=test@test.com",
+				"GIT_COMMITTER_NAME=Test",
+				"GIT_COMMITTER_EMAIL=test@test.com",
+			)
 
 			// Normal commit — hook should fire and write to marker.
-			r.repo.CommitFile("normal.txt", "normal", "normal commit")
+			// Use exec.Command so the hook runs with our mock PATH.
+			commitCmd := exec.Command("git", "commit",
+				"--allow-empty", "-m", "normal commit")
+			commitCmd.Dir = r.repo.Dir
+			commitCmd.Env = rebaseEnv
+			out, err := commitCmd.CombinedOutput()
+			require.NoError(t, err, "normal commit should succeed: %s", out)
+
 			data, err := os.ReadFile(marker)
 			require.NoError(t, err, "hook should have fired on normal commit")
 			preRebaseCount := strings.Count(string(data), "enqueued")
@@ -339,15 +387,8 @@ echo enqueued >> %q
 			// Run a full clean rebase — all 3 feature commits replay.
 			cmd := exec.Command("git", "rebase", "rebase-base")
 			cmd.Dir = r.repo.Dir
-			cmd.Env = append(os.Environ(),
-				"HOME="+r.repo.Dir,
-				"GIT_CONFIG_NOSYSTEM=1",
-				"GIT_AUTHOR_NAME=Test",
-				"GIT_AUTHOR_EMAIL=test@test.com",
-				"GIT_COMMITTER_NAME=Test",
-				"GIT_COMMITTER_EMAIL=test@test.com",
-			)
-			out, err := cmd.CombinedOutput()
+			cmd.Env = rebaseEnv
+			out, err = cmd.CombinedOutput()
 			require.NoError(t, err, "rebase should succeed cleanly: %s", out)
 
 			// After the rebase, the marker should still have exactly 1 entry.
