@@ -495,6 +495,9 @@ func TestControlSocketRoundtrip(t *testing.T) {
 		w.Close()
 		p.Kill()
 		<-runDone
+		// Bubbletea does not close custom readers passed via
+		// WithInput, so close the read end after Run exits.
+		r.Close()
 	})
 
 	// Give the program time to complete Init() and reach its
