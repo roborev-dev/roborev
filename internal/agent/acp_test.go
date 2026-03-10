@@ -1149,6 +1149,49 @@ func TestGetAvailableWithConfigPiCmd(t *testing.T) {
 	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
 }
 
+func TestGetAvailableWithConfigACPFallbackBackupUsesConfigCmd(t *testing.T) {
+	// Configured ACP alias is requested but ACP command is
+	// unavailable. The backup agent's default command is also
+	// unavailable, but its *_cmd override points to a real binary.
+	// The config-aware backup path should find it.
+	fakeBin := t.TempDir()
+	wrapper := "claude-wrapper"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "my-acp",
+			Command: "nonexistent-acp-binary",
+		},
+		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig(
+		"my-acp", cfg, "claude-code",
+	)
+	require.NoError(t, err,
+		"backup should resolve via config cmd when ACP is unavailable")
+	assert.Equal(t, "claude-code", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
 func TestGetAvailableWithConfigEmptyPreferredBackupUsesConfigCmd(t *testing.T) {
 	// preferred="" with a backup agent whose default command isn't in
 	// PATH but whose configured command is. The backup should still

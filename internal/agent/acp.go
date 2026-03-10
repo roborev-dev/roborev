@@ -1591,7 +1591,22 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 			}
 		}
 
-		// Finally fall back to normal auto-selection (with backups).
+		// ACP unavailable — try backup agents with config-aware
+		// availability so *_cmd overrides are honored.
+		if cfg != nil {
+			for _, b := range backups {
+				b = resolveAlias(b)
+				if b == "" {
+					continue
+				}
+				if _, ok := registry[b]; ok && isAvailableWithConfig(b, cfg) {
+					a, _ := Get(b)
+					return applyCommandOverrides(a, cfg), nil
+				}
+			}
+		}
+
+		// Finally fall back to normal auto-selection.
 		return GetAvailable("", backups...)
 	}
 
