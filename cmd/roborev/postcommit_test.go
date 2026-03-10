@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -245,16 +246,6 @@ func mockEnqueueCapture(t *testing.T, mux *http.ServeMux) <-chan daemon.EnqueueR
 	return ch
 }
 
-// simulateRebaseInProgress creates the rebase-merge directory inside the git
-// dir of the given repo, simulating an in-progress rebase.
-func simulateRebaseInProgress(t *testing.T, repo *TestGitRepo) {
-	t.Helper()
-	gitDir := repo.Run("rev-parse", "--git-dir")
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(repo.Dir, gitDir)
-	}
-	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "rebase-merge"), 0755))
-}
 
 // TestPostCommitSendsLocalRepoPath checks that the RepoPath in the enqueue
 // request is the local (worktree) path in both plain repos and linked
@@ -285,10 +276,12 @@ func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 	}
 }
 
-// TestPostCommitSkipsEnqueueDuringRebase checks that the post-commit hook does
-// not enqueue a review when a rebase is in progress, for both plain repos and
-// linked worktrees.
-func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
+// TestPostCommitDoesNotEnqueueDuringRebase performs a real git rebase and
+// asserts that roborev's post-commit logic does not enqueue reviews for
+// replayed commits. Git DOES fire the post-commit hook during rebase — the
+// protection is in roborev's IsRebaseInProgress check, which this test
+// verifies end-to-end.
+func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(t *testing.T) repoUnderTest
@@ -303,10 +296,39 @@ func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
 			daemonFromHandler(t, mux)
 			reqCh := mockEnqueueCapture(t, mux)
 
-			r.repo.CommitFile("change.txt", "content", "a commit")
-			simulateRebaseInProgress(t, r.repo)
+			// Create a branch topology for rebasing:
+			//   base: A -- B (base.txt, no conflict)
+			//          \
+			//   current: C -- D (branch1.txt, branch2.txt)
+			r.repo.Run("checkout", "-b", "rebase-base")
+			r.repo.CommitFile("base.txt", "base content", "base commit")
+			r.repo.Run("checkout", "-")
+			r.repo.CommitFile("branch1.txt", "content 1", "feature commit 1")
+			r.repo.CommitFile("branch2.txt", "content 2", "feature commit 2")
 
+			// First, prove post-commit enqueues normally.
 			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
+			require.NoError(t, err)
+			<-reqCh // drain the normal enqueue
+
+			// Start a rebase that pauses after the first replayed commit.
+			// --exec "exit 1" lets the cherry-pick succeed, then halts the
+			// rebase, leaving rebase-merge in place.
+			cmd := exec.Command("git", "rebase", "--exec", "exit 1", "rebase-base")
+			cmd.Dir = r.repo.Dir
+			cmd.Env = append(os.Environ(),
+				"HOME="+r.repo.Dir,
+				"GIT_CONFIG_NOSYSTEM=1",
+				"GIT_AUTHOR_NAME=Test",
+				"GIT_AUTHOR_EMAIL=test@test.com",
+				"GIT_COMMITTER_NAME=Test",
+				"GIT_COMMITTER_EMAIL=test@test.com",
+			)
+			_ = cmd.Run() // exits non-zero because exec failed
+
+			// Now invoke post-commit while the rebase is paused.
+			// roborev should detect the rebase and not enqueue.
+			_, _, err = executePostCommitCmd("--repo", r.repo.Dir)
 			require.NoError(t, err)
 
 			select {
