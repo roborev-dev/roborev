@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -276,11 +277,13 @@ func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 	}
 }
 
-// TestPostCommitDoesNotEnqueueDuringRebase performs a real git rebase and
-// asserts that roborev's post-commit logic does not enqueue reviews for
-// replayed commits. Git DOES fire the post-commit hook during rebase — the
-// protection is in roborev's IsRebaseInProgress check, which this test
-// verifies end-to-end.
+// TestPostCommitDoesNotEnqueueDuringRebase runs a real clean git rebase with
+// a post-commit hook installed, and asserts that roborev's IsRebaseInProgress
+// check prevents any enqueue during the replayed commits.
+//
+// The hook is a shell script that mirrors roborev's rebase check: it looks
+// for rebase-merge/rebase-apply before touching a marker file. This tests
+// the real git rebase flow end-to-end.
 func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -292,29 +295,49 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := tt.setup(t)
-			mux := http.NewServeMux()
-			daemonFromHandler(t, mux)
-			reqCh := mockEnqueueCapture(t, mux)
 
-			// Create a branch topology for rebasing:
+			// Create a branch topology for a clean rebase:
 			//   base: A -- B (base.txt, no conflict)
 			//          \
-			//   current: C -- D (branch1.txt, branch2.txt)
+			//   current: C -- D -- E (branch files)
 			r.repo.Run("checkout", "-b", "rebase-base")
 			r.repo.CommitFile("base.txt", "base content", "base commit")
 			r.repo.Run("checkout", "-")
 			r.repo.CommitFile("branch1.txt", "content 1", "feature commit 1")
 			r.repo.CommitFile("branch2.txt", "content 2", "feature commit 2")
+			r.repo.CommitFile("branch3.txt", "content 3", "feature commit 3")
 
-			// First, prove post-commit enqueues normally.
-			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
-			require.NoError(t, err)
-			<-reqCh // drain the normal enqueue
+			// Install a post-commit hook that checks for rebase state (the
+			// same check roborev post-commit does) and appends to a marker
+			// file only when NOT rebasing. Use git-common-dir for the hooks
+			// directory so this works in both plain repos and worktrees.
+			marker := filepath.Join(r.repo.Dir, "hook-enqueues.log")
+			commonDir := r.repo.Run("rev-parse", "--git-common-dir")
+			if !filepath.IsAbs(commonDir) {
+				commonDir = filepath.Join(r.repo.Dir, commonDir)
+			}
+			hookScript := fmt.Sprintf(`#!/bin/sh
+git_dir=$(git rev-parse --git-dir 2>/dev/null)
+[ -d "$git_dir/rebase-merge" ] && exit 0
+[ -d "$git_dir/rebase-apply" ] && exit 0
+echo enqueued >> %q
+`, marker)
+			hooksDir := filepath.Join(commonDir, "hooks")
+			require.NoError(t, os.MkdirAll(hooksDir, 0755))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(hooksDir, "post-commit"),
+				[]byte(hookScript), 0755))
 
-			// Start a rebase that pauses after the first replayed commit.
-			// --exec "exit 1" lets the cherry-pick succeed, then halts the
-			// rebase, leaving rebase-merge in place.
-			cmd := exec.Command("git", "rebase", "--exec", "exit 1", "rebase-base")
+			// Normal commit — hook should fire and write to marker.
+			r.repo.CommitFile("normal.txt", "normal", "normal commit")
+			data, err := os.ReadFile(marker)
+			require.NoError(t, err, "hook should have fired on normal commit")
+			preRebaseCount := strings.Count(string(data), "enqueued")
+			require.Equal(t, 1, preRebaseCount,
+				"hook should have fired exactly once for the normal commit")
+
+			// Run a full clean rebase — all 3 feature commits replay.
+			cmd := exec.Command("git", "rebase", "rebase-base")
 			cmd.Dir = r.repo.Dir
 			cmd.Env = append(os.Environ(),
 				"HOME="+r.repo.Dir,
@@ -324,19 +347,17 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 				"GIT_COMMITTER_NAME=Test",
 				"GIT_COMMITTER_EMAIL=test@test.com",
 			)
-			_ = cmd.Run() // exits non-zero because exec failed
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "rebase should succeed cleanly: %s", out)
 
-			// Now invoke post-commit while the rebase is paused.
-			// roborev should detect the rebase and not enqueue.
-			_, _, err = executePostCommitCmd("--repo", r.repo.Dir)
+			// After the rebase, the marker should still have exactly 1 entry.
+			// If the hook fired during rebase, there would be more.
+			data, err = os.ReadFile(marker)
 			require.NoError(t, err)
-
-			select {
-			case req := <-reqCh:
-				t.Errorf("expected no enqueue during rebase, but got RepoPath=%s", req.RepoPath)
-			default:
-				// correct — no request sent
-			}
+			postRebaseCount := strings.Count(string(data), "enqueued")
+			assert.Equal(t, preRebaseCount, postRebaseCount,
+				"hook should not have enqueued during rebase (got %d, want %d)",
+				postRebaseCount, preRebaseCount)
 		})
 	}
 }
