@@ -30,6 +30,29 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 	assert.Equal(t, "main", m2.currentBranch)
 }
 
+func TestTUIReviewMsgUsesStoredBranch(t *testing.T) {
+	// Regression test: the review screen should use the stored
+	// job.Branch rather than a dynamic git lookup, which can be
+	// misled by worktree branches reachable from the same SHA.
+	m := newModel("http://localhost", withExternalIODisabled())
+	job := makeJob(1, withBranch("main"), withRef("abc123"))
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = viewQueue
+
+	msg := reviewMsg{
+		review:     makeReview(10, &storage.ReviewJob{ID: 1, Branch: "main", GitRef: "abc123"}, withReviewOutput("Review text")),
+		jobID:      1,
+		branchName: "main",
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	// Must show the stored branch, not a worktree branch
+	assert.Equal(t, "main", m2.currentBranch)
+}
+
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{

@@ -501,9 +501,14 @@ func (m model) fetchReview(jobID int64) tea.Cmd {
 
 		responses := m.loadResponses(jobID, review)
 
-		// Compute branch name for single commits (not ranges)
+		// Compute branch name: prefer the stored branch (set at
+		// enqueue time) over a dynamic git lookup, which can be
+		// misled by worktree branches reachable from the same SHA.
 		var branchName string
-		if review.Job != nil && review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
+		if review.Job != nil {
+			branchName = review.Job.Branch
+		}
+		if branchName == "" && review.Job != nil && review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
 			branchName = git.GetBranchName(review.Job.RepoPath, review.Job.GitRef)
 		}
 
