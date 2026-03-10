@@ -30,6 +30,56 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 	assert.Equal(t, "main", m2.currentBranch)
 }
 
+func TestReviewBranchName(t *testing.T) {
+	tests := []struct {
+		name string
+		job  *storage.ReviewJob
+		want string
+	}{
+		{
+			name: "nil job",
+			job:  nil,
+			want: "",
+		},
+		{
+			name: "stored branch preferred over git lookup",
+			job:  &storage.ReviewJob{Branch: "main", GitRef: "abc123", RepoPath: "/tmp/repo"},
+			want: "main",
+		},
+		{
+			name: "stored branch for range review",
+			job:  &storage.ReviewJob{Branch: "main", GitRef: "abc123..def456"},
+			want: "main",
+		},
+		{
+			name: "branchNone sentinel treated as empty",
+			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123"},
+			want: "",
+		},
+		{
+			name: "branchNone with repo path skips git lookup",
+			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123", RepoPath: "/tmp/repo"},
+			want: "",
+		},
+		{
+			name: "no stored branch and range skips git lookup",
+			job:  &storage.ReviewJob{GitRef: "abc123..def456", RepoPath: "/tmp/repo"},
+			want: "",
+		},
+		{
+			name: "no stored branch and no repo path",
+			job:  &storage.ReviewJob{GitRef: "abc123"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reviewBranchName(tt.job)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
