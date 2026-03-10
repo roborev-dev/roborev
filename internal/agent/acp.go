@@ -1503,6 +1503,69 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 	return resolved
 }
 
+// applyCommandOverrides clones the agent and applies the configured
+// command override from cfg. Returns the original agent unchanged when
+// no override applies. Cloning avoids mutating global registry
+// singletons that concurrent callers share.
+func applyCommandOverrides(a Agent, cfg *config.Config) Agent {
+	if cfg == nil {
+		return a
+	}
+	switch agent := a.(type) {
+	case *CodexAgent:
+		if cfg.CodexCmd != "" {
+			clone := *agent
+			clone.Command = cfg.CodexCmd
+			return &clone
+		}
+	case *ClaudeAgent:
+		if cfg.ClaudeCodeCmd != "" {
+			clone := *agent
+			clone.Command = cfg.ClaudeCodeCmd
+			return &clone
+		}
+	case *CursorAgent:
+		if cfg.CursorCmd != "" {
+			clone := *agent
+			clone.Command = cfg.CursorCmd
+			return &clone
+		}
+	case *PiAgent:
+		if cfg.PiCmd != "" {
+			clone := *agent
+			clone.Command = cfg.PiCmd
+			return &clone
+		}
+	}
+	return a
+}
+
+// isAvailableWithConfig checks whether the named agent can be resolved
+// to an executable command, considering config command overrides. If a
+// config override points to an available binary, the agent is considered
+// available even when the default command isn't in PATH.
+func isAvailableWithConfig(name string, cfg *config.Config) bool {
+	name = resolveAlias(name)
+	a, ok := registry[name]
+	if !ok {
+		return false
+	}
+	ca, ok := a.(CommandAgent)
+	if !ok {
+		return true // non-command agents (e.g. test) are always available
+	}
+	// Check the configured command first — it takes priority.
+	overridden := applyCommandOverrides(a, cfg)
+	if oca, ok := overridden.(CommandAgent); ok {
+		if _, err := exec.LookPath(oca.CommandName()); err == nil {
+			return true
+		}
+	}
+	// Fall back to the default (hardcoded) command.
+	_, err := exec.LookPath(ca.CommandName())
+	return err == nil
+}
+
 // GetAvailableWithConfig resolves an available agent while honoring runtime ACP config.
 // It treats cfg.ACP.Name as an alias for "acp" and applies cfg.ACP command/mode/model
 // at resolution time instead of package-init time.
@@ -1532,6 +1595,34 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 		return GetAvailable("", backups...)
 	}
 
+	// Check the preferred agent using config command overrides before
+	// falling back. GetAvailable only checks the hardcoded default
+	// command via IsAvailable, so a configured command (e.g.
+	// claude_code_cmd = "/usr/local/bin/claude-wrapper") would be
+	// missed when the default binary isn't in PATH.
+	if preferred != "" && cfg != nil {
+		if _, ok := registry[preferred]; !ok {
+			// Unknown agent — let GetAvailable produce the error.
+			return GetAvailable(preferred, backups...)
+		}
+		if isAvailableWithConfig(preferred, cfg) {
+			a, _ := Get(preferred)
+			return applyCommandOverrides(a, cfg), nil
+		}
+		// Preferred not available even with config. Try backups
+		// with config-aware availability before the fallback chain.
+		for _, b := range backups {
+			b = resolveAlias(b)
+			if b == "" || b == preferred {
+				continue
+			}
+			if _, ok := registry[b]; ok && isAvailableWithConfig(b, cfg) {
+				a, _ := Get(b)
+				return applyCommandOverrides(a, cfg), nil
+			}
+		}
+	}
+
 	resolved, err := GetAvailable(preferred, backups...)
 	if err != nil {
 		return nil, err
@@ -1544,39 +1635,7 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 		return resolved, nil
 	}
 
-	// Apply command overrides from config.
-	// Clone agent instances before mutating to avoid contaminating the
-	// global registry — concurrent callers share those singletons.
-	if cfg != nil {
-		switch agent := resolved.(type) {
-		case *CodexAgent:
-			if cfg.CodexCmd != "" {
-				clone := *agent
-				clone.Command = cfg.CodexCmd
-				resolved = &clone
-			}
-		case *ClaudeAgent:
-			if cfg.ClaudeCodeCmd != "" {
-				clone := *agent
-				clone.Command = cfg.ClaudeCodeCmd
-				resolved = &clone
-			}
-		case *CursorAgent:
-			if cfg.CursorCmd != "" {
-				clone := *agent
-				clone.Command = cfg.CursorCmd
-				resolved = &clone
-			}
-		case *PiAgent:
-			if cfg.PiCmd != "" {
-				clone := *agent
-				clone.Command = cfg.PiCmd
-				resolved = &clone
-			}
-		}
-	}
-
-	return resolved, nil
+	return applyCommandOverrides(resolved, cfg), nil
 }
 
 func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {

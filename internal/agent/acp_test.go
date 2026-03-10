@@ -954,3 +954,197 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 	assert.NotEqual(t, "acp", resolved.Name(), "Request for 'claude-code' should not route to ACP when acp.name='claude'")
 	assert.Equal(t, "claude-code", resolved.Name(), "Expected claude-code agent, got %q", resolved.Name())
 }
+
+func TestGetAvailableWithConfigAppliesClaudeCodeCmd(t *testing.T) {
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, binName),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{ClaudeCodeCmd: "/custom/claude-wrapper"}
+
+	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	require.NoError(t, err)
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok, "resolved agent should implement CommandAgent")
+	assert.Equal(t, "claude-code", resolved.Name())
+	assert.Equal(t, "/custom/claude-wrapper", ca.CommandName(),
+		"configured claude_code_cmd should override the default command")
+}
+
+func TestGetAvailableWithConfigUsesConfigCmdForAvailability(t *testing.T) {
+	// Default "claude" is NOT in PATH, but the configured wrapper is.
+	// GetAvailableWithConfig should find the agent available via config.
+	fakeBin := t.TempDir()
+	wrapper := "claude-wrapper"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	require.NoError(t, err, "agent should be available via configured command")
+
+	assert.Equal(t, "claude-code", resolved.Name())
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
+func TestGetAvailableWithConfigBackupUsesConfigCmd(t *testing.T) {
+	// Neither default "codex" nor "claude" in PATH, but the configured
+	// claude_code_cmd is. Preferred=codex should fall back to the
+	// backup claude-code via its configured command.
+	fakeBin := t.TempDir()
+	wrapper := "my-claude"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent(""),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig(
+		"codex", cfg, "claude-code",
+	)
+	require.NoError(t, err,
+		"backup agent should be available via configured command")
+	assert.Equal(t, "claude-code", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
+func TestGetAvailableWithConfigCodexCmd(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := "custom-codex"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex": NewCodexAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		CodexCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("codex", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "codex", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
+func TestGetAvailableWithConfigCursorCmd(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := "custom-cursor"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"cursor": NewCursorAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		CursorCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("cursor", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "cursor", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
+func TestGetAvailableWithConfigPiCmd(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := "custom-pi"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"pi": NewPiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		PiCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("pi", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "pi", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
