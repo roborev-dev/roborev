@@ -33,13 +33,22 @@ func postCommitCmd() *cobra.Command {
 				repoPath = "."
 			}
 
-			root, err := git.GetRepoRoot(repoPath)
+			// Use the worktree-local path for rebase detection, since
+			// the rebase state dirs live in the worktree-specific git dir.
+			localRoot, err := git.GetRepoRoot(repoPath)
 			if err != nil {
 				return nil // Not a repo — silent exit for hooks
 			}
 
-			if git.IsRebaseInProgress(root) {
+			if git.IsRebaseInProgress(localRoot) {
 				return nil
+			}
+
+			// Resolve to the main repo root for storage/daemon registration,
+			// so worktree commits are attributed to the correct repo.
+			root, err := git.GetMainRepoRoot(repoPath)
+			if err != nil {
+				root = localRoot
 			}
 
 			if err := ensureDaemon(); err != nil {
@@ -47,13 +56,13 @@ func postCommitCmd() *cobra.Command {
 			}
 
 			var gitRef string
-			if ref, ok := tryBranchReview(root, baseBranch); ok {
+			if ref, ok := tryBranchReview(localRoot, baseBranch); ok {
 				gitRef = ref
 			} else {
 				gitRef = "HEAD"
 			}
 
-			branchName := git.GetCurrentBranch(root)
+			branchName := git.GetCurrentBranch(localRoot)
 
 			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 				RepoPath: root,

@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func executePostCommitCmd(
@@ -195,4 +200,127 @@ func TestEnqueueAliasIsHidden(t *testing.T) {
 	cmd := enqueueCmd()
 	assert.True(t, cmd.Hidden)
 	assert.Contains(t, cmd.Use, "enqueue")
+}
+
+// repoUnderTest holds a repo and the expected main repo root for assertions.
+type repoUnderTest struct {
+	// repo is the directory post-commit runs from (may be a worktree).
+	repo *TestGitRepo
+	// mainRoot is the main repo root we expect to see in the enqueue request.
+	mainRoot string
+}
+
+// setupPlainRepo returns a repoUnderTest backed by a plain (non-worktree) repo.
+func setupPlainRepo(t *testing.T) repoUnderTest {
+	t.Helper()
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+	return repoUnderTest{repo: repo, mainRoot: repo.Dir}
+}
+
+// setupWorktreeRepo returns a repoUnderTest backed by a linked worktree, with
+// mainRoot pointing at the main repo.
+func setupWorktreeRepo(t *testing.T) repoUnderTest {
+	t.Helper()
+	mainRepo := newTestGitRepo(t)
+	mainRepo.CommitFile("file.txt", "content", "initial commit")
+
+	wtDir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(wtDir)
+	require.NoError(t, err)
+	mainRepo.Run("worktree", "add", resolved, "-b", "worktree-branch")
+
+	return repoUnderTest{
+		repo:     &TestGitRepo{Dir: resolved, t: t},
+		mainRoot: mainRepo.Dir,
+	}
+}
+
+// mockEnqueueCapture registers a handler on mux that captures full enqueue
+// requests. The returned channel receives at most one request.
+func mockEnqueueCapture(t *testing.T, mux *http.ServeMux) <-chan daemon.EnqueueRequest {
+	t.Helper()
+	ch := make(chan daemon.EnqueueRequest, 1)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		ch <- req
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	})
+	return ch
+}
+
+// simulateRebaseInProgress creates the rebase-merge directory inside the git
+// dir of the given repo, simulating an in-progress rebase.
+func simulateRebaseInProgress(t *testing.T, repo *TestGitRepo) {
+	t.Helper()
+	gitDir := repo.Run("rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repo.Dir, gitDir)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "rebase-merge"), 0755))
+}
+
+// TestPostCommitSendsMainRepoRoot checks that the RepoPath in the enqueue
+// request always points to the main repo root, for both plain repos and
+// linked worktrees.
+func TestPostCommitSendsMainRepoRoot(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) repoUnderTest
+	}{
+		{"plain repo", setupPlainRepo},
+		{"worktree", setupWorktreeRepo},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := tt.setup(t)
+			mux := http.NewServeMux()
+			daemonFromHandler(t, mux)
+			reqCh := mockEnqueueCapture(t, mux)
+
+			r.repo.CommitFile("change.txt", "content", "a commit")
+
+			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
+			require.NoError(t, err)
+
+			req := <-reqCh
+			assert.Equal(t, r.mainRoot, req.RepoPath)
+		})
+	}
+}
+
+// TestPostCommitSkipsEnqueueDuringRebase checks that the post-commit hook does
+// not enqueue a review when a rebase is in progress, for both plain repos and
+// linked worktrees.
+func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) repoUnderTest
+	}{
+		{"plain repo", setupPlainRepo},
+		{"worktree", setupWorktreeRepo},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := tt.setup(t)
+			mux := http.NewServeMux()
+			daemonFromHandler(t, mux)
+			reqCh := mockEnqueueCapture(t, mux)
+
+			r.repo.CommitFile("change.txt", "content", "a commit")
+			simulateRebaseInProgress(t, r.repo)
+
+			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
+			require.NoError(t, err)
+
+			select {
+			case req := <-reqCh:
+				t.Errorf("expected no enqueue during rebase, but got RepoPath=%s", req.RepoPath)
+			default:
+				// correct — no request sent
+			}
+		})
+	}
 }
