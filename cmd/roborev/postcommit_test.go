@@ -331,6 +331,12 @@ func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 // PATH. It asserts that roborev's rebase detection prevents any enqueue during
 // replayed commits.
 //
+// The mock binary reimplements the rebase guard in shell using the same
+// git rev-parse --git-dir + rebase-merge/rebase-apply check that
+// git.IsRebaseInProgress uses. TestPostCommitSkipsEnqueueDuringRebase tests
+// the real Go code path (postCommitCmd); this test validates the end-to-end
+// hook installation and invocation flow during an actual git rebase.
+//
 // The "hook before commits" variant installs the hook before the branch
 // topology commits, so the hook fires for every setup commit as well. The
 // "hook after commits" variant installs just before the rebase.
@@ -394,12 +400,15 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 				installMockHook(t, r.repo.Dir, mockBinDir)
 			}
 
-			// Count how many enqueues happened during setup (only
-			// non-zero when the hook was installed before commits).
-			var preRebaseCount int
-			if data, err := os.ReadFile(marker); err == nil {
-				preRebaseCount = strings.Count(string(data), "enqueued")
-			}
+			// Positive control: make a normal commit to prove the hook
+			// fires outside of a rebase. Without this, a broken hook
+			// install would silently pass (0 == 0).
+			gitCmd("commit", "--allow-empty", "-m", "positive control commit")
+			data, err := os.ReadFile(marker)
+			require.NoError(t, err, "hook should have fired on normal commit")
+			preRebaseCount := strings.Count(string(data), "enqueued")
+			require.GreaterOrEqual(t, preRebaseCount, 1,
+				"hook must fire at least once before rebase to prove it works")
 
 			// Run a full clean rebase — all 3 feature commits replay.
 			cmd := exec.Command("git", "rebase", "rebase-base")
@@ -410,10 +419,9 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 
 			// After the rebase, the marker count should be unchanged.
 			// If the hook enqueued during the rebase, there would be more.
-			var postRebaseCount int
-			if data, err := os.ReadFile(marker); err == nil {
-				postRebaseCount = strings.Count(string(data), "enqueued")
-			}
+			data, err = os.ReadFile(marker)
+			require.NoError(t, err)
+			postRebaseCount := strings.Count(string(data), "enqueued")
 			assert.Equal(t, preRebaseCount, postRebaseCount,
 				"hook should not have enqueued during rebase (got %d, want %d)",
 				postRebaseCount, preRebaseCount)
