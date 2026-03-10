@@ -202,12 +202,10 @@ func TestEnqueueAliasIsHidden(t *testing.T) {
 	assert.Contains(t, cmd.Use, "enqueue")
 }
 
-// repoUnderTest holds a repo and the expected main repo root for assertions.
+// repoUnderTest holds a repo for post-commit hook tests.
 type repoUnderTest struct {
 	// repo is the directory post-commit runs from (may be a worktree).
 	repo *TestGitRepo
-	// mainRoot is the main repo root we expect to see in the enqueue request.
-	mainRoot string
 }
 
 // setupPlainRepo returns a repoUnderTest backed by a plain (non-worktree) repo.
@@ -215,11 +213,10 @@ func setupPlainRepo(t *testing.T) repoUnderTest {
 	t.Helper()
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
-	return repoUnderTest{repo: repo, mainRoot: repo.Dir}
+	return repoUnderTest{repo: repo}
 }
 
-// setupWorktreeRepo returns a repoUnderTest backed by a linked worktree, with
-// mainRoot pointing at the main repo.
+// setupWorktreeRepo returns a repoUnderTest backed by a linked worktree.
 func setupWorktreeRepo(t *testing.T) repoUnderTest {
 	t.Helper()
 	mainRepo := newTestGitRepo(t)
@@ -230,10 +227,7 @@ func setupWorktreeRepo(t *testing.T) repoUnderTest {
 	require.NoError(t, err)
 	mainRepo.Run("worktree", "add", resolved, "-b", "worktree-branch")
 
-	return repoUnderTest{
-		repo:     &TestGitRepo{Dir: resolved, t: t},
-		mainRoot: mainRepo.Dir,
-	}
+	return repoUnderTest{repo: &TestGitRepo{Dir: resolved, t: t}}
 }
 
 // mockEnqueueCapture registers a handler on mux that captures full enqueue
@@ -262,10 +256,10 @@ func simulateRebaseInProgress(t *testing.T, repo *TestGitRepo) {
 	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "rebase-merge"), 0755))
 }
 
-// TestPostCommitSendsMainRepoRoot checks that the RepoPath in the enqueue
-// request always points to the main repo root, for both plain repos and
-// linked worktrees.
-func TestPostCommitSendsMainRepoRoot(t *testing.T) {
+// TestPostCommitSendsLocalRepoPath checks that the RepoPath in the enqueue
+// request is the local (worktree) path in both plain repos and linked
+// worktrees. The daemon canonicalizes to the main repo root itself.
+func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(t *testing.T) repoUnderTest
@@ -286,7 +280,7 @@ func TestPostCommitSendsMainRepoRoot(t *testing.T) {
 			require.NoError(t, err)
 
 			req := <-reqCh
-			assert.Equal(t, r.mainRoot, req.RepoPath)
+			assert.Equal(t, r.repo.Dir, req.RepoPath)
 		})
 	}
 }
