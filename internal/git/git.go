@@ -727,6 +727,38 @@ func WorktreePathForBranch(repoPath, branch string) (string, bool, error) {
 	return repoPath, false, nil
 }
 
+// EnsureAbsoluteHooksPath checks whether core.hooksPath is set
+// to a relative value and, if so, resolves it to an absolute
+// path and updates the git config. Relative hooks paths break
+// linked worktrees because git resolves them from the worktree
+// root, not the main repo root.
+func EnsureAbsoluteHooksPath(repoPath string) error {
+	cmd := exec.Command(
+		"git", "config", "--local", "core.hooksPath",
+	)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		// Not set — nothing to fix.
+		return nil
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" || filepath.IsAbs(raw) {
+		return nil
+	}
+	abs := filepath.Join(repoPath, raw)
+	set := exec.Command(
+		"git", "config", "--local", "core.hooksPath", abs,
+	)
+	set.Dir = repoPath
+	if err := set.Run(); err != nil {
+		return fmt.Errorf(
+			"update core.hooksPath to absolute: %w", err,
+		)
+	}
+	return nil
+}
+
 // GetHooksPath returns the path to the hooks directory, respecting core.hooksPath
 func GetHooksPath(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")

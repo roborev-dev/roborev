@@ -22,6 +22,9 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("not a git repository: %w", err)
 			}
 
+			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
+				fmt.Printf("Warning: %v\n", err)
+			}
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)

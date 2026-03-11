@@ -213,6 +213,46 @@ func TestGetHooksPath(t *testing.T) {
 	})
 }
 
+func TestEnsureAbsoluteHooksPath(t *testing.T) {
+	t.Run("noop when not set", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		// Verify core.hooksPath is still unset.
+		cmd := exec.Command(
+			"git", "config", "--local", "core.hooksPath",
+		)
+		cmd.Dir = repo.Dir
+		assert.Error(t, cmd.Run(), "core.hooksPath should remain unset")
+	})
+
+	t.Run("noop when already absolute", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		absPath := filepath.Join(repo.Dir, "my-hooks")
+		repo.Run("config", "core.hooksPath", absPath)
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, absPath, got)
+	})
+
+	t.Run("converts relative to absolute", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", ".githooks")
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.True(t, filepath.IsAbs(got),
+			"expected absolute path, got: %s", got)
+		assert.Equal(t, filepath.Join(repo.Dir, ".githooks"), got)
+	})
+}
+
 func TestIsRebaseInProgress(t *testing.T) {
 	t.Run("no rebase", func(t *testing.T) {
 		repo := NewTestRepo(t)

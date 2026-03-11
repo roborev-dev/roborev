@@ -137,6 +137,89 @@ func TestEnqueueRejectsPositionalArgs(t *testing.T) {
 
 }
 
+func TestPostCommitLogsSuccess(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	mockEnqueue(t, mux)
+
+	logFile := filepath.Join(t.TempDir(), "post-commit.log")
+	old := hookLogPath
+	hookLogPath = logFile
+	t.Cleanup(func() { hookLogPath = old })
+
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"outcome":"ok"`)
+	assert.Contains(t, string(data), `"repo"`)
+}
+
+func TestPostCommitLogsSkipNotARepo(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "post-commit.log")
+	old := hookLogPath
+	hookLogPath = logFile
+	t.Cleanup(func() { hookLogPath = old })
+
+	dir := t.TempDir()
+	_, _, err := executePostCommitCmd("--repo", dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"outcome":"skip"`)
+	assert.Contains(t, string(data), "not a git repo")
+}
+
+func TestPostCommitLogsSkipRebase(t *testing.T) {
+	repo, _ := setupTestEnvironment(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	logFile := filepath.Join(t.TempDir(), "post-commit.log")
+	old := hookLogPath
+	hookLogPath = logFile
+	t.Cleanup(func() { hookLogPath = old })
+
+	// Simulate rebase in progress.
+	gitDir := strings.TrimSpace(repo.Run("rev-parse", "--git-dir"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repo.Dir, gitDir)
+	}
+	require.NoError(t, os.MkdirAll(
+		filepath.Join(gitDir, "rebase-merge"), 0755))
+
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"outcome":"skip"`)
+	assert.Contains(t, string(data), "rebase in progress")
+}
+
+func TestPostCommitLogsDaemonFailure(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "post-commit.log")
+	old := hookLogPath
+	hookLogPath = logFile
+	t.Cleanup(func() { hookLogPath = old })
+
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+
+	// Point serverAddr at nothing so ensureDaemon fails.
+	patchServerAddr(t, "http://127.0.0.1:1")
+
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"outcome":"fail"`)
+	assert.Contains(t, string(data), "daemon")
+}
+
 // stallingRoundTripper blocks until the request context is
 // cancelled, then returns an error. This simulates a daemon
 // that accepts connections but never responds, without needing
