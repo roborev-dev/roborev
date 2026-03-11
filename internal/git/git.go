@@ -743,7 +743,8 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		return nil
 	}
 	raw := strings.TrimSpace(string(out))
-	if raw == "" || filepath.IsAbs(raw) {
+	if raw == "" || filepath.IsAbs(raw) ||
+		strings.HasPrefix(raw, "~") {
 		return nil
 	}
 	// Resolve against the main repo root, not the worktree

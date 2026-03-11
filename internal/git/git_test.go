@@ -242,6 +242,18 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 		assert.Equal(t, absPath, got)
 	})
 
+	t.Run("noop for tilde-prefixed path", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("config", "core.hooksPath", "~/my-hooks")
+
+		err := EnsureAbsoluteHooksPath(repo.Dir)
+		require.NoError(t, err)
+
+		got := repo.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, "~/my-hooks", got,
+			"tilde paths should be left for git to expand")
+	})
+
 	t.Run("converts relative to absolute", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		repo.Run("config", "core.hooksPath", ".githooks")
