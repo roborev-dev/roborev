@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -452,5 +453,67 @@ func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {
 				return false
 			}, "repo config missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestUninstallHookFromLinkedWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix worktree semantics")
+	}
+
+	// Set up a main repo with a relative core.hooksPath and
+	// installed hooks.
+	repo := testutil.NewTestRepoWithCommit(t)
+	customHooks := filepath.Join(repo.Root, ".githooks")
+	require.NoError(t, os.MkdirAll(customHooks, 0755))
+
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	// Set relative core.hooksPath, install hooks.
+	runGit(repo.Root, "config", "core.hooksPath", ".githooks")
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		var content string
+		if name == "post-commit" {
+			content = githook.GeneratePostCommit()
+		} else {
+			content = githook.GeneratePostRewrite()
+		}
+		require.NoError(t, os.WriteFile(
+			filepath.Join(customHooks, name),
+			[]byte(content), 0755))
+	}
+
+	// Create a linked worktree.
+	wtDir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(wtDir)
+	require.NoError(t, err)
+	runGit(repo.Root, "worktree", "add", resolved, "-b", "wt")
+
+	// Run uninstall-hook from the worktree.
+	origDir, _ := os.Getwd()
+	require.NoError(t, os.Chdir(resolved))
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cmd := uninstallHookCmd()
+	require.NoError(t, cmd.Execute())
+
+	// The hooks in the main repo's .githooks should be removed.
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		_, err := os.Stat(filepath.Join(customHooks, name))
+		assert.ErrorIs(t, err, fs.ErrNotExist,
+			"%s should be removed from shared hooks dir", name)
 	}
 }

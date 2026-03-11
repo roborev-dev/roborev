@@ -743,8 +743,7 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		return nil
 	}
 	raw := strings.TrimSpace(string(out))
-	if raw == "" || filepath.IsAbs(raw) ||
-		strings.HasPrefix(raw, "~") {
+	if raw == "" || filepath.IsAbs(raw) || isGitTildePath(raw) {
 		return nil
 	}
 	// Resolve against the main repo root, not the worktree
@@ -767,6 +766,27 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		)
 	}
 	return nil
+}
+
+// isGitTildePath returns true for paths that git expands via
+// tilde expansion: "~", "~/path", "~user", "~user/path".
+// These must not be joined to a repo root. Git calls
+// getpwnam on the text between ~ and the first slash, so
+// ~user must start with a valid POSIX username character
+// (letter or underscore).
+func isGitTildePath(s string) bool {
+	if s == "" || s[0] != '~' {
+		return false
+	}
+	if len(s) == 1 {
+		return true
+	}
+	c := s[1]
+	if c == '/' || c == filepath.Separator {
+		return true
+	}
+	return (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') || c == '_'
 }
 
 // GetHooksPath returns the path to the hooks directory, respecting core.hooksPath
