@@ -288,6 +288,42 @@ func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 	}
 }
 
+// TestPostCommitSkipsEnqueueDuringRebase exercises the real Go code path
+// (postCommitCmd → git.IsRebaseInProgress) by simulating a rebase state
+// with a synthetic rebase-merge directory. This is the unit-level
+// complement to TestPostCommitDoesNotEnqueueDuringRebase which tests the
+// end-to-end shell hook flow.
+func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
+	tests := []struct {
+		name string
+		dir  string // directory to create inside .git/
+	}{
+		{"rebase-merge", "rebase-merge"},
+		{"rebase-apply", "rebase-apply"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mux := setupTestEnvironment(t)
+			repo.CommitFile("file.txt", "content", "initial")
+
+			mux.HandleFunc("/api/enqueue", func(
+				w http.ResponseWriter, r *http.Request,
+			) {
+				t.Error("enqueue should not be called during rebase")
+				http.Error(w, "unexpected", http.StatusConflict)
+			})
+
+			// Simulate rebase state by creating the sentinel directory.
+			gitDir := filepath.Join(repo.Dir, ".git")
+			require.NoError(t, os.MkdirAll(
+				filepath.Join(gitDir, tt.dir), 0755))
+
+			_, _, err := executePostCommitCmd("--repo", repo.Dir)
+			require.NoError(t, err)
+		})
+	}
+}
+
 // mockRoborevBinary creates a mock "roborev" shell script in a temp directory
 // and returns the directory (to prepend to PATH). The mock script handles
 // "post-commit" by using roborev's same rebase detection logic: it checks
@@ -343,9 +379,10 @@ func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 //
 // The mock binary reimplements the rebase guard in shell using the same
 // git rev-parse --git-dir + rebase-merge/rebase-apply check that
-// git.IsRebaseInProgress uses. TestPostCommitSkipsEnqueueDuringRebase tests
-// the real Go code path (postCommitCmd); this test validates the end-to-end
-// hook installation and invocation flow during an actual git rebase.
+// git.IsRebaseInProgress uses. TestPostCommitSkipsEnqueueDuringRebase (above)
+// tests the real Go code path (postCommitCmd) via simulated rebase state; this
+// test validates the end-to-end hook installation and invocation flow during
+// an actual git rebase.
 //
 // The "hook before commits" variant installs the hook before the branch
 // topology commits, so the hook fires for every setup commit as well. The
