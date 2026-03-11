@@ -789,21 +789,33 @@ func isGitTildePath(s string) bool {
 		(c >= 'A' && c <= 'Z') || c == '_'
 }
 
-// GetHooksPath returns the path to the hooks directory, respecting core.hooksPath
+// GetHooksPath returns the path to the hooks directory,
+// respecting core.hooksPath. Relative paths are resolved
+// against the main repository root (not the worktree root)
+// so that linked worktrees share the same hooks directory.
 func GetHooksPath(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git rev-parse --git-path hooks: %w", err)
+		return "", fmt.Errorf(
+			"git rev-parse --git-path hooks: %w", err,
+		)
 	}
 
 	hooksPath := strings.TrimSpace(string(out))
 
-	// If the path is relative, make it absolute relative to repoPath
 	if !filepath.IsAbs(hooksPath) {
-		hooksPath = filepath.Join(repoPath, hooksPath)
+		// Resolve against the main repo root so linked
+		// worktrees get the same hooks directory.
+		root, err := GetMainRepoRoot(repoPath)
+		if err != nil {
+			// Fall back to repoPath if we can't determine
+			// the main root (e.g. bare repos).
+			root = repoPath
+		}
+		hooksPath = filepath.Join(root, hooksPath)
 	}
 
 	return hooksPath, nil
