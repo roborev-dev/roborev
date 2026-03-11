@@ -456,6 +456,57 @@ func TestInitNoDaemonWithAgentCreatesCommentedRepoConfig(t *testing.T) {
 	}
 }
 
+func TestInstallHookFromLinkedWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix worktree semantics")
+	}
+
+	// Set up a main repo with a relative core.hooksPath but
+	// no hooks installed yet.
+	repo := testutil.NewTestRepoWithCommit(t)
+	customHooks := filepath.Join(repo.Root, ".githooks")
+	require.NoError(t, os.MkdirAll(customHooks, 0755))
+
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	runGit(repo.Root, "config", "core.hooksPath", ".githooks")
+
+	// Create a linked worktree.
+	wtDir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(wtDir)
+	require.NoError(t, err)
+	runGit(repo.Root, "worktree", "add", resolved, "-b", "wt")
+
+	// Run install-hook from the worktree.
+	origDir, _ := os.Getwd()
+	require.NoError(t, os.Chdir(resolved))
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	installCmd := installHookCmd()
+	installCmd.SetArgs([]string{})
+	require.NoError(t, installCmd.Execute())
+
+	// The hooks should be installed in the main repo's .githooks.
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		_, err := os.Stat(filepath.Join(customHooks, name))
+		assert.NoError(t, err,
+			"%s should exist in shared hooks dir", name)
+	}
+}
+
 func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix worktree semantics")

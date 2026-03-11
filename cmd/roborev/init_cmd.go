@@ -66,7 +66,7 @@ func initCmd() *cobra.Command {
 
 			// 4. Install hooks (post-commit + post-rewrite)
 			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
-				return fmt.Errorf("normalize hooks path: %w", err)
+				fmt.Printf("  Warning: could not normalize hooks path: %v\n", err)
 			}
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {

@@ -242,6 +242,29 @@ func TestGetHooksPath(t *testing.T) {
 				"should resolve against main repo, not worktree",
 			)
 		})
+
+	t.Run("default hooksPath resolves to main repo from worktree",
+		func(t *testing.T) {
+			repo := NewTestRepo(t)
+			repo.Run("commit", "--allow-empty", "-m", "init")
+
+			wtDir := t.TempDir()
+			resolved, err := filepath.EvalSymlinks(wtDir)
+			require.NoError(t, err)
+			repo.Run("worktree", "add", resolved, "-b", "wt")
+
+			hooksPath, err := GetHooksPath(resolved)
+			require.NoError(t, err)
+
+			resolvedMain, err := filepath.EvalSymlinks(repo.Dir)
+			require.NoError(t, err)
+			assert.Equal(t,
+				filepath.Join(resolvedMain, ".git", "hooks"),
+				hooksPath,
+				"default hooks path from worktree should point "+
+					"at main repo .git/hooks",
+			)
+		})
 }
 
 func TestEnsureAbsoluteHooksPath(t *testing.T) {
