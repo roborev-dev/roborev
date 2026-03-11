@@ -249,7 +249,36 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 		got := repo.Run("config", "--local", "core.hooksPath")
 		assert.True(t, filepath.IsAbs(got),
 			"expected absolute path, got: %s", got)
-		assert.Equal(t, filepath.Join(repo.Dir, ".githooks"), got)
+		// GetMainRepoRoot resolves symlinks (e.g. macOS
+		// /var → /private/var), so compare against the
+		// resolved repo dir.
+		resolvedDir, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(resolvedDir, ".githooks"), got)
+	})
+
+	t.Run("resolves against main repo root from worktree", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("commit", "--allow-empty", "-m", "init")
+		repo.Run("config", "core.hooksPath", ".githooks")
+
+		wtDir := t.TempDir()
+		resolved, err := filepath.EvalSymlinks(wtDir)
+		require.NoError(t, err)
+		repo.Run("worktree", "add", resolved, "-b", "wt-branch")
+
+		// Run from the linked worktree, not the main repo.
+		err = EnsureAbsoluteHooksPath(resolved)
+		require.NoError(t, err)
+
+		// The rewritten path must point at the main repo's
+		// .githooks, not the worktree's.
+		resolvedMain, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		wt := &TestRepo{T: t, Dir: resolved}
+		got := wt.Run("config", "--local", "core.hooksPath")
+		assert.Equal(t, filepath.Join(resolvedMain, ".githooks"), got,
+			"should resolve against main repo root, not worktree")
 	})
 }
 

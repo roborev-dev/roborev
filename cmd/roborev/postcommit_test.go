@@ -220,6 +220,23 @@ func TestPostCommitLogsDaemonFailure(t *testing.T) {
 	assert.Contains(t, string(data), "daemon")
 }
 
+func TestPostCommitLogsCreatesParentDir(t *testing.T) {
+	// Log path under a directory that doesn't exist yet,
+	// simulating a fresh install where ~/.roborev is absent.
+	logFile := filepath.Join(t.TempDir(), "subdir", "post-commit.log")
+	old := hookLogPath
+	hookLogPath = logFile
+	t.Cleanup(func() { hookLogPath = old })
+
+	dir := t.TempDir()
+	_, _, err := executePostCommitCmd("--repo", dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(logFile)
+	require.NoError(t, err, "log file should be created even when parent dir is absent")
+	assert.Contains(t, string(data), `"outcome":"skip"`)
+}
+
 // stallingRoundTripper blocks until the request context is
 // cancelled, then returns an error. This simulates a daemon
 // that accepts connections but never responds, without needing

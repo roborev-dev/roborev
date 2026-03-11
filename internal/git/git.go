@@ -746,7 +746,16 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 	if raw == "" || filepath.IsAbs(raw) {
 		return nil
 	}
-	abs := filepath.Join(repoPath, raw)
+	// Resolve against the main repo root, not the worktree
+	// root, so the shared config value stays valid after a
+	// linked worktree is removed.
+	mainRoot, err := GetMainRepoRoot(repoPath)
+	if err != nil {
+		return fmt.Errorf(
+			"resolve main repo root: %w", err,
+		)
+	}
+	abs := filepath.Join(mainRoot, raw)
 	set := exec.Command(
 		"git", "config", "--local", "core.hooksPath", abs,
 	)
