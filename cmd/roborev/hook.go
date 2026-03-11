@@ -23,8 +23,7 @@ func installHookCmd() *cobra.Command {
 			}
 
 			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: could not normalize hooks path: %v\n", err)
+				return fmt.Errorf("normalize hooks path: %w", err)
 			}
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {
@@ -55,8 +54,7 @@ func uninstallHookCmd() *cobra.Command {
 			}
 
 			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: could not normalize hooks path: %v\n", err)
+				return fmt.Errorf("normalize hooks path: %w", err)
 			}
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {

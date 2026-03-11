@@ -804,16 +804,19 @@ func GetHooksPath(repoPath string) (string, error) {
 		)
 	}
 
-	hooksPath := strings.TrimSpace(string(out))
+	hooksPath := filepath.FromSlash(
+		strings.TrimSpace(string(out)),
+	)
 
 	if !filepath.IsAbs(hooksPath) {
 		// Resolve against the main repo root so linked
 		// worktrees get the same hooks directory.
 		root, err := GetMainRepoRoot(repoPath)
 		if err != nil {
-			// Fall back to repoPath if we can't determine
-			// the main root (e.g. bare repos).
-			root = repoPath
+			return "", fmt.Errorf(
+				"resolve main repo root for hooks path: %w",
+				err,
+			)
 		}
 		hooksPath = filepath.Join(root, hooksPath)
 	}
