@@ -1,7 +1,6 @@
 package git
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +30,13 @@ func NewTestRepoWithAuthor(t *testing.T, author string) *TestRepo {
 	r.Run("config", "user.email", "test@test.com")
 	r.Run("config", "user.name", author)
 	return r
+}
+
+func NewTestRepoWithCommit(t *testing.T) *TestRepo {
+	t.Helper()
+	repo := NewTestRepo(t)
+	repo.CommitFile("initial.txt", "initial content", "initial commit")
+	return repo
 }
 
 func NewBareTestRepo(t *testing.T) *TestRepo {
@@ -115,8 +121,7 @@ func TestIsUnbornHead(t *testing.T) {
 	})
 
 	t.Run("false after first commit", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "x", "init")
+		repo := NewTestRepoWithCommit(t)
 		assert.False(t, IsUnbornHead(repo.Dir), "expected IsUnbornHead=false after commit")
 	})
 
@@ -126,9 +131,7 @@ func TestIsUnbornHead(t *testing.T) {
 	})
 
 	t.Run("false for corrupt ref", func(t *testing.T) {
-
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "x", "init")
+		repo := NewTestRepoWithCommit(t)
 
 		headRef := strings.TrimSpace(repo.Run("symbolic-ref", "HEAD"))
 		repo.WriteFile(filepath.Join(".git", headRef), "0000000000000000000000000000000000000000\n")
@@ -310,8 +313,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 
 	t.Run("worktree with rebase", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		wt := repo.AddWorktree("test-branch")
 
@@ -347,9 +349,7 @@ func TestGetCommitInfo(t *testing.T) {
 		require.NoError(t, err, "GetCommitInfo failed: %v", err)
 		assert.Equal(t, "Simple subject", info.Subject, "expected subject 'Simple subject', got '%s'", info.Subject)
 
-		if info.Body != "" {
-			assert.Empty(t, info.Body, "expected empty body, got '%s'", info.Body)
-		}
+		assert.Empty(t, info.Body, "expected empty body, got '%s'", info.Body)
 		assert.Equal(t, "Test Author", info.Author, "expected author 'Test Author', got '%s'", info.Author)
 
 	})
@@ -368,12 +368,8 @@ func TestGetCommitInfo(t *testing.T) {
 		require.NoError(t, err, "GetCommitInfo failed: %v", err)
 		assert.Equal(t, "Subject line", info.Subject, "expected subject 'Subject line', got '%s'", info.Subject)
 
-		if !strings.Contains(info.Body, "This is the body") {
-			assert.Contains(t, info.Body, "This is the body", "expected body to contain 'This is the body', got '%s'", info.Body)
-		}
-		if !strings.Contains(info.Body, "multiple lines") {
-			assert.Contains(t, info.Body, "multiple lines", "expected body to contain 'multiple lines', got '%s'", info.Body)
-		}
+		assert.Contains(t, info.Body, "This is the body", "expected body to contain 'This is the body', got '%s'", info.Body)
+		assert.Contains(t, info.Body, "multiple lines", "expected body to contain 'multiple lines', got '%s'", info.Body)
 	})
 
 	t.Run("commit with pipe in message", func(t *testing.T) {
@@ -389,19 +385,14 @@ func TestGetCommitInfo(t *testing.T) {
 		info, err := GetCommitInfo(repo.Dir, commitSHA)
 		require.NoError(t, err, "GetCommitInfo failed: %v", err)
 
-		if !strings.Contains(info.Subject, "|") {
-			assert.Contains(t, info.Subject, "|", "expected subject to contain pipe, got '%s'", info.Subject)
-		}
-		if !strings.Contains(info.Body, "foo | bar") {
-			assert.Contains(t, info.Body, "foo | bar", "expected body to contain 'foo | bar', got '%s'", info.Body)
-		}
+		assert.Contains(t, info.Subject, "|", "expected subject to contain pipe, got '%s'", info.Subject)
+		assert.Contains(t, info.Body, "foo | bar", "expected body to contain 'foo | bar', got '%s'", info.Body)
 	})
 }
 
 func TestGetBranchName(t *testing.T) {
 	t.Run("valid commit on branch", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		commitSHA := repo.HeadSHA()
 		expectedBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
@@ -411,8 +402,7 @@ func TestGetBranchName(t *testing.T) {
 	})
 
 	t.Run("commit behind branch head", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		commitSHA := repo.HeadSHA()
 		expectedBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
@@ -424,8 +414,7 @@ func TestGetBranchName(t *testing.T) {
 	})
 
 	t.Run("non-existent repo returns empty", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 		commitSHA := repo.HeadSHA()
 
 		nonRepo := t.TempDir()
@@ -434,8 +423,7 @@ func TestGetBranchName(t *testing.T) {
 	})
 
 	t.Run("invalid SHA returns empty", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		branch := GetBranchName(repo.Dir, "0000000000000000000000000000000000000000")
 		assert.Empty(t, branch, "expected empty string, got %s", branch)
@@ -444,8 +432,7 @@ func TestGetBranchName(t *testing.T) {
 
 func TestGetCurrentBranch(t *testing.T) {
 	t.Run("returns current branch", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		expectedBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
 
@@ -454,8 +441,7 @@ func TestGetCurrentBranch(t *testing.T) {
 	})
 
 	t.Run("returns branch after checkout", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.Run("checkout", "-b", "feature-branch")
 
@@ -464,8 +450,7 @@ func TestGetCurrentBranch(t *testing.T) {
 	})
 
 	t.Run("returns empty for detached HEAD", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		sha := repo.HeadSHA()
 		repo.Run("checkout", sha)
@@ -483,8 +468,7 @@ func TestGetCurrentBranch(t *testing.T) {
 
 func TestHasUncommittedChanges(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
 		require.NoError(t, err, "HasUncommittedChanges failed: %v", err)
@@ -492,10 +476,9 @@ func TestHasUncommittedChanges(t *testing.T) {
 	})
 
 	t.Run("staged changes", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial", "initial")
+		repo := NewTestRepoWithCommit(t)
 
-		repo.WriteFile("file.txt", "modified")
+		repo.WriteFile("initial.txt", "modified")
 		repo.Run("add", ".")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
@@ -504,10 +487,9 @@ func TestHasUncommittedChanges(t *testing.T) {
 	})
 
 	t.Run("unstaged changes", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial", "initial")
+		repo := NewTestRepoWithCommit(t)
 
-		repo.WriteFile("file.txt", "unstaged")
+		repo.WriteFile("initial.txt", "unstaged")
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
 		require.NoError(t, err, "HasUncommittedChanges failed: %v", err)
@@ -515,8 +497,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 	})
 
 	t.Run("untracked file", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("untracked.txt", "new")
 
@@ -528,22 +509,18 @@ func TestHasUncommittedChanges(t *testing.T) {
 
 func TestGetDirtyDiff(t *testing.T) {
 	t.Run("includes tracked file changes", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial\n", "initial")
+		repo := NewTestRepoWithCommit(t)
 
-		repo.WriteFile("file.txt", "modified\n")
+		repo.WriteFile("initial.txt", "modified\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
 		require.NoError(t, err, "GetDirtyDiff failed: %v", err)
-		assert.Contains(t, diff, "file.txt", "expected dirty diff to include file.txt")
-		if !strings.Contains(diff, "+modified") {
-			assert.Contains(t, diff, "+modified", "expected diff to contain +modified")
-		}
+		assert.Contains(t, diff, "initial.txt", "expected dirty diff to include initial.txt")
+		assert.Contains(t, diff, "+modified", "expected diff to contain +modified")
 	})
 
 	t.Run("includes untracked files", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial\n", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("newfile.txt", "new content\n")
 
@@ -555,21 +532,19 @@ func TestGetDirtyDiff(t *testing.T) {
 	})
 
 	t.Run("includes both tracked and untracked", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial\n", "initial")
+		repo := NewTestRepoWithCommit(t)
 
-		repo.WriteFile("file.txt", "changed\n")
+		repo.WriteFile("initial.txt", "changed\n")
 		repo.WriteFile("another.txt", "another\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
 		require.NoError(t, err, "GetDirtyDiff failed: %v", err)
-		assert.Contains(t, diff, "file.txt", "expected dirty diff to include file.txt")
+		assert.Contains(t, diff, "initial.txt", "expected dirty diff to include initial.txt")
 		assert.Contains(t, diff, "another.txt", "expected dirty diff to include another.txt")
 	})
 
 	t.Run("handles binary files", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("file.txt", "initial\n", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("binary.bin", "hello\x00world")
 
@@ -600,9 +575,8 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 	repo.WriteFile("staged.txt", "staged content\n")
 	repo.Run("add", "staged.txt")
 
-	if err := os.Remove(filepath.Join(repo.Dir, "staged.txt")); err != nil {
-		require.NoError(t, err)
-	}
+	err := os.Remove(filepath.Join(repo.Dir, "staged.txt"))
+	require.NoError(t, err, "failed to remove staged.txt")
 
 	diff, err := GetDirtyDiff(repo.Dir)
 	require.NoError(t, err, "GetDirtyDiff failed: %v", err)
@@ -655,8 +629,7 @@ func TestIsExcludedFile(t *testing.T) {
 
 func setupDiffExcludesGeneratedFilesTest(t *testing.T) (*TestRepo, string) {
 	t.Helper()
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial content", "initial")
+	repo := NewTestRepoWithCommit(t)
 
 	repo.WriteFile(".beads/notes.md", "beads\n")
 	repo.WriteFile("uv.lock", "lock\n")
@@ -695,15 +668,13 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 
 func TestIsWorkingTreeClean(t *testing.T) {
 	t.Run("clean tree returns true", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		require.True(t, IsWorkingTreeClean(repo.Dir), "expected clean tree for clean tree case")
 	})
 
 	t.Run("dirty tree with modified file returns false", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("initial.txt", "modified")
 
@@ -711,8 +682,7 @@ func TestIsWorkingTreeClean(t *testing.T) {
 	})
 
 	t.Run("dirty tree with untracked file returns false", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("untracked.txt", "untracked")
 
@@ -722,8 +692,7 @@ func TestIsWorkingTreeClean(t *testing.T) {
 
 func TestResetWorkingTree(t *testing.T) {
 	t.Run("resets modified files", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("initial.txt", "modified")
 		assert.False(t, IsWorkingTreeClean(repo.Dir), "expected tree to be dirty before reset")
@@ -738,8 +707,7 @@ func TestResetWorkingTree(t *testing.T) {
 	})
 
 	t.Run("removes untracked files", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		untrackedFile := filepath.Join(repo.Dir, "untracked.txt")
 		repo.WriteFile("untracked.txt", "untracked")
@@ -755,8 +723,7 @@ func TestResetWorkingTree(t *testing.T) {
 	})
 
 	t.Run("resets staged changes", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("initial.txt", "initial content", "initial")
+		repo := NewTestRepoWithCommit(t)
 
 		repo.WriteFile("initial.txt", "staged changes")
 		repo.Run("add", ".")
@@ -832,8 +799,7 @@ func TestGetRangeFilesChanged(t *testing.T) {
 }
 
 func TestCreateCommitPreCommitHookOutput(t *testing.T) {
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 
 	repo.InstallHook("pre-commit",
 		"#!/bin/sh\necho 'error: trailing whitespace on line 42' >&2\nexit 1\n")
@@ -848,16 +814,12 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 		Contains(t, err.Error(), "trailing whitespace on line 42", "expected error to contain hook output, got: %v", err)
 
 	var commitErr *CommitError
-	if !errors.As(err, &commitErr) {
-		require.Error(t, err, "expected CommitError type")
-	}
+	require.ErrorAs(t, err, &commitErr, "expected CommitError type")
 	assert.True(t, commitErr.HookFailed, "expected HookFailed=true for pre-commit hook rejection")
-
 }
 
 func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 
 	repo.InstallHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
@@ -865,17 +827,12 @@ func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 	require.Error(t, err, "expected CreateCommit to fail")
 
 	var commitErr *CommitError
-	if !errors.As(err, &commitErr) {
-		require.Error(t, err, "expected CommitError type")
-	}
-	assert.
-		False(t, commitErr.HookFailed, "expected HookFailed=false for dry-run")
-
+	require.ErrorAs(t, err, &commitErr, "expected CommitError type")
+	assert.False(t, commitErr.HookFailed, "expected HookFailed=false for dry-run")
 }
 
 func TestCommitErrorHookFailedCommitMsgHook(t *testing.T) {
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 
 	repo.InstallHook("commit-msg",
 		"#!/bin/sh\necho 'bad commit message format' >&2\nexit 1\n")
@@ -892,9 +849,7 @@ func TestCommitErrorHookFailedCommitMsgHook(t *testing.T) {
 }
 
 func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
-
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 
 	repo.Run("config", "commit.gpgsign", "true")
 
@@ -904,9 +859,8 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 		repo.WriteFile("fail-gpg.bat", "@echo off\nexit /b 1\n")
 	} else {
 		repo.WriteFile("fail-gpg", "#!/bin/sh\nexit 1\n")
-		if err := os.Chmod(dummyGPG, 0755); err != nil {
-			require.NoError(t, err)
-		}
+		err := os.Chmod(dummyGPG, 0755)
+		require.NoError(t, err, "failed to chmod fail-gpg")
 	}
 
 	repo.Run("config", "gpg.program", dummyGPG)
@@ -919,15 +873,12 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 	require.Error(t, err, "expected commit to fail due to gpg.program=false")
 
 	var commitErr *CommitError
-	if !errors.As(err, &commitErr) {
-		require.Failf(t, "expected CommitError type", "got: %T", err)
-	}
+	require.ErrorAs(t, err, &commitErr, "expected CommitError type, got: %T", err)
 	assert.False(t, commitErr.HookFailed, "HookFailed should be false for GPG signing failure (no hooks installed)")
 }
 
 func TestHasCommitHooksDetectsInstalledHooks(t *testing.T) {
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 	require.False(t, hasCommitHooks(repo.Dir), "expected pre-commit hook to be detected after install")
 
 	repo.InstallHook("pre-commit", "#!/bin/sh\nexit 0\n")
@@ -935,14 +886,12 @@ func TestHasCommitHooksDetectsInstalledHooks(t *testing.T) {
 }
 
 func TestHasCommitHooksIgnoresDirectories(t *testing.T) {
-	repo := NewTestRepo(t)
-	repo.CommitFile("initial.txt", "initial", "initial commit")
+	repo := NewTestRepoWithCommit(t)
 
 	hooksDir, err := GetHooksPath(repo.Dir)
 	require.NoError(t, err)
-	if err := os.MkdirAll(filepath.Join(hooksDir, "pre-commit"), 0o755); err != nil {
-		require.NoError(t, err)
-	}
+	err = os.MkdirAll(filepath.Join(hooksDir, "pre-commit"), 0o755)
+	require.NoError(t, err, "failed to create pre-commit directory")
 	require.False(t, hasCommitHooks(repo.Dir), "expected directory named pre-commit not to be treated as hook file")
 
 }
@@ -1022,9 +971,7 @@ func TestGetPatchID(t *testing.T) {
 		sha1 := repo.HeadSHA()
 		patchID1 := GetPatchID(repo.Dir, sha1)
 
-		if patchID1 == "" {
-			assert.NotEmpty(t, patchID1, "expected non-empty patch-id")
-		}
+		assert.NotEmpty(t, patchID1, "expected non-empty patch-id")
 
 		repo.Run("checkout", "main")
 		repo.CommitFile("other.txt", "other", "another commit")
@@ -1033,9 +980,7 @@ func TestGetPatchID(t *testing.T) {
 		sha2 := repo.HeadSHA()
 		patchID2 := GetPatchID(repo.Dir, sha2)
 
-		if sha1 == sha2 {
-			assert.NotEqual(t, sha1, sha2, "SHAs should differ after rebase")
-		}
+		assert.NotEqual(t, sha1, sha2, "SHAs should differ after rebase")
 		assert.Equal(t, patchID1, patchID2, "patch-ids should match: %s != %s", patchID1, patchID2)
 
 	})
@@ -1051,13 +996,9 @@ func TestGetPatchID(t *testing.T) {
 		pid1 := GetPatchID(repo.Dir, sha1)
 		pid2 := GetPatchID(repo.Dir, sha2)
 
-		if pid1 == "" || pid2 == "" {
-			assert.NotEmpty(t, pid1, "expected non-empty patch-ids")
-			assert.NotEmpty(t, pid2, "expected non-empty patch-ids")
-		}
-		if pid1 == pid2 {
-			assert.NotEqual(t, pid1, pid2, "expected distinct patch-ids for different commits")
-		}
+		assert.NotEmpty(t, pid1, "expected non-empty patch-id")
+		assert.NotEmpty(t, pid2, "expected non-empty patch-id")
+		assert.NotEqual(t, pid1, pid2, "expected distinct patch-ids for different commits")
 	})
 
 	t.Run("empty for empty commit", func(t *testing.T) {
@@ -1129,8 +1070,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 	}
 
 	t.Run("returns worktree dir for branch checked out in worktree", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 		wt := repo.AddWorktree("feature-x")
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "feature-x")
@@ -1142,8 +1082,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 	})
 
 	t.Run("returns repoPath and false when branch has no worktree", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 		repo.Run("branch", "other-branch")
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "other-branch")
@@ -1153,8 +1092,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 	})
 
 	t.Run("returns repoPath and true for empty branch", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "")
 		require.NoError(t, err, "unexpected error: %v", err)
@@ -1163,8 +1101,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 	})
 
 	t.Run("returns main repo dir for branch checked out in main worktree", func(t *testing.T) {
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 		branch := GetCurrentBranch(repo.Dir)
 
 		got, checkedOut, err := WorktreePathForBranch(repo.Dir, branch)
@@ -1182,9 +1119,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 	})
 
 	t.Run("git worktree add succeeds on pre-existing empty directory", func(t *testing.T) {
-
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 		repo.Run("branch", "wt-preexist")
 
 		wtDir := t.TempDir()
@@ -1194,15 +1129,12 @@ func TestWorktreePathForBranch(t *testing.T) {
 			_ = rmCmd.Run()
 		})
 
-		if _, statErr := os.Stat(filepath.Join(wtDir, "f.txt")); statErr != nil {
-			require.NoError(t, statErr, "expected f.txt in worktree, got: %v", statErr)
-		}
+		_, statErr := os.Stat(filepath.Join(wtDir, "initial.txt"))
+		require.NoError(t, statErr, "expected initial.txt in worktree")
 	})
 
 	t.Run("skips stale worktree whose directory was deleted", func(t *testing.T) {
-
-		repo := NewTestRepo(t)
-		repo.CommitFile("f.txt", "init", "init")
+		repo := NewTestRepoWithCommit(t)
 		wt := repo.AddWorktree("stale-branch")
 		wtDir := wt.Dir
 
