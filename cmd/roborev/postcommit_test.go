@@ -295,16 +295,20 @@ func TestPostCommitSendsLocalRepoPath(t *testing.T) {
 // end-to-end shell hook flow.
 func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
 	tests := []struct {
-		name string
-		dir  string // directory to create inside .git/
+		name     string
+		setup    func(t *testing.T) repoUnderTest
+		sentinel string // directory to create inside git dir
 	}{
-		{"rebase-merge", "rebase-merge"},
-		{"rebase-apply", "rebase-apply"},
+		{"plain repo/rebase-merge", setupPlainRepo, "rebase-merge"},
+		{"plain repo/rebase-apply", setupPlainRepo, "rebase-apply"},
+		{"worktree/rebase-merge", setupWorktreeRepo, "rebase-merge"},
+		{"worktree/rebase-apply", setupWorktreeRepo, "rebase-apply"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo, mux := setupTestEnvironment(t)
-			repo.CommitFile("file.txt", "content", "initial")
+			r := tt.setup(t)
+			mux := http.NewServeMux()
+			daemonFromHandler(t, mux)
 
 			mux.HandleFunc("/api/enqueue", func(
 				w http.ResponseWriter, r *http.Request,
@@ -313,12 +317,17 @@ func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
 				http.Error(w, "unexpected", http.StatusConflict)
 			})
 
-			// Simulate rebase state by creating the sentinel directory.
-			gitDir := filepath.Join(repo.Dir, ".git")
+			// Resolve the actual git dir (may differ from .git/ in
+			// linked worktrees where .git is a file).
+			gitDir := strings.TrimSpace(r.repo.Run(
+				"rev-parse", "--git-dir"))
+			if !filepath.IsAbs(gitDir) {
+				gitDir = filepath.Join(r.repo.Dir, gitDir)
+			}
 			require.NoError(t, os.MkdirAll(
-				filepath.Join(gitDir, tt.dir), 0755))
+				filepath.Join(gitDir, tt.sentinel), 0755))
 
-			_, _, err := executePostCommitCmd("--repo", repo.Dir)
+			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
 			require.NoError(t, err)
 		})
 	}
