@@ -241,7 +241,10 @@ func mockEnqueueCapture(t *testing.T, mux *http.ServeMux) <-chan daemon.EnqueueR
 	ch := make(chan daemon.EnqueueRequest, 1)
 	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 		var req daemon.EnqueueRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		ch <- req
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{"id": 1})
@@ -391,7 +394,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 			// Create 3 feature commits with actual file changes.
 			for i := 1; i <= 3; i++ {
 				f := filepath.Join(r.repo.Dir, fmt.Sprintf("branch%d.txt", i))
-				require.NoError(t, os.WriteFile(f, []byte(fmt.Sprintf("content %d", i)), 0644))
+				require.NoError(t, os.WriteFile(f, fmt.Appendf(nil, "content %d", i), 0644))
 				gitCmd("add", f)
 				gitCmd("commit", "-m", fmt.Sprintf("feature commit %d", i))
 			}
