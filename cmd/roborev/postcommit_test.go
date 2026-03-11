@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -245,7 +246,13 @@ func mockEnqueueCapture(t *testing.T, mux *http.ServeMux) <-chan daemon.EnqueueR
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ch <- req
+		select {
+		case ch <- req:
+		default:
+			assert.Fail(t, "mockEnqueueCapture: unexpected extra request")
+			http.Error(w, "duplicate request", http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{"id": 1})
 	})
@@ -344,6 +351,9 @@ func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 // topology commits, so the hook fires for every setup commit as well. The
 // "hook after commits" variant installs just before the rebase.
 func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell hooks and Unix PATH semantics")
+	}
 	tests := []struct {
 		name            string
 		setup           func(t *testing.T) repoUnderTest
@@ -363,7 +373,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 
 			// Build env with mock roborev first in PATH so the hook finds it.
 			gitEnv := append(os.Environ(),
-				"PATH="+mockBinDir+":"+os.Getenv("PATH"),
+				"PATH="+mockBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"HOME="+r.repo.Dir,
 				"GIT_CONFIG_NOSYSTEM=1",
 				"GIT_AUTHOR_NAME=Test",
