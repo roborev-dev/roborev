@@ -14,10 +14,10 @@ Skills are updated automatically when you run `roborev update`.
 
 | Skill | Description |
 |-------|-------------|
-| `/roborev:fix [job_id...]` | Fix all open review findings (or specific jobs) in one pass |
-| `/roborev:design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
-| `/roborev:respond <job_id> [message]` | Add a response to a review |
-| ~`/roborev:address <job_id>`~ | Deprecated: use `/roborev:fix` |
+| `/roborev-fix [job_id...]` | Fix all open review findings (or specific jobs) in one pass |
+| `/roborev-design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
+| `/roborev-respond <job_id> [message]` | Add a response to a review |
+| ~`/roborev-address <job_id>`~ | Deprecated: use `/roborev-fix` |
 
 ## Example Workflow
 
@@ -32,7 +32,7 @@ Review #1019: Fail
 Ask your agent to fix it:
 
 ```
-/roborev:fix 1019
+/roborev-fix 1019
 ```
 
 The agent will:
@@ -45,12 +45,12 @@ The agent will:
 After fixing, document what was done:
 
 ```
-/roborev:respond 1019 Fixed null check and improved error handling
+/roborev-respond 1019 Fixed null check and improved error handling
 ```
 
 ## Supported Agents
 
 | Agent | Invocation |
 |-------|------------|
-| Claude Code | `/roborev:fix`, `/roborev:design-review`, `/roborev:respond` |
-| Codex | `$roborev:fix`, `$roborev:design-review`, `$roborev:respond` |
+| Claude Code | `/roborev-fix`, `/roborev-design-review`, `/roborev-respond` |
+| Codex | `$roborev-fix`, `$roborev-design-review`, `$roborev-respond` |

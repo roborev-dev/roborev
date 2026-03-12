@@ -1,11 +1,11 @@
-# /roborev:fix
+# /roborev-fix
 
 Fix all open review findings in one pass.
 
 ## Usage
 
 ```
-/roborev:fix [job_id...]
+/roborev-fix [job_id...]
 ```
 
 ## Description
@@ -16,7 +16,7 @@ If job IDs are provided, only those reviews are fixed. Otherwise, the skill chec
 
 ## Instructions
 
-When the user invokes `/roborev:fix [job_id...]`:
+When the user invokes `/roborev-fix [job_id...]`:
 
 1. **Discover reviews** to address:
    - If job IDs given, use those
@@ -43,7 +43,7 @@ When the user invokes `/roborev:fix [job_id...]`:
 
 ## Example
 
-User: `/roborev:fix`
+User: `/roborev-fix`
 
 Agent:
 1. Runs `roborev show HEAD` and `roborev show HEAD~1`

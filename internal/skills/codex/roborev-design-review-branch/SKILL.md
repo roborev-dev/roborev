@@ -1,16 +1,16 @@
 ---
-name: roborev:design-review-branch
+name: roborev-design-review-branch
 description: Request a design review for all commits on the current branch and present the results
 ---
 
-# roborev:design-review-branch
+# roborev-design-review-branch
 
 Request a design review for all commits on the current branch and present the results.
 
 ## Usage
 
 ```
-$roborev:design-review-branch [--base <branch>]
+$roborev-design-review-branch [--base <branch>]
 ```
 
 ## When NOT to invoke this skill
@@ -29,7 +29,7 @@ CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `$roborev:design-review-branch [--base <branch>]`:
+When the user invokes `$roborev-design-review-branch [--base <branch>]`:
 
 ### 1. Validate inputs
 
@@ -66,36 +66,36 @@ Otherwise, present the review to the user:
 
 If the review has findings (verdict is Fail), offer to address them:
 
-- "Would you like me to fix these findings? You can run `$roborev:fix <job_id>`"
+- "Would you like me to fix these findings? You can run `$roborev-fix <job_id>`"
 
 Extract the job ID from the review output to include in the suggestion. Look for it in the `Enqueued job <id> for ...` line or in the review header.
 
-If the review passed, confirm the result and do not offer `$roborev:fix`.
+If the review passed, confirm the result and do not offer `$roborev-fix`.
 
 ## Examples
 
 **Default branch design review:**
 
-User: `$roborev:design-review-branch`
+User: `$roborev-design-review-branch`
 
 Agent:
 1. Executes `roborev review --branch --wait --type design`
 2. Presents the verdict and findings grouped by severity
-3. If findings exist: "Would you like me to address these findings? Run `$roborev:fix 1042`"
+3. If findings exist: "Would you like me to address these findings? Run `$roborev-fix 1042`"
 4. If passed: "Branch design review passed with no findings."
 
 **Design review against a specific base:**
 
-User: `$roborev:design-review-branch --base develop`
+User: `$roborev-design-review-branch --base develop`
 
 Agent:
 1. Validates: `git rev-parse --verify -- develop`
 2. Executes `roborev review --branch --wait --type design --base develop`
 3. Presents the verdict and findings
-4. If findings exist: "Would you like me to address these findings? Run `$roborev:fix 1043`"
+4. If findings exist: "Would you like me to address these findings? Run `$roborev-fix 1043`"
 
 ## See also
 
-- `$roborev:review-branch --type design` — equivalent, with additional `--type` flexibility
-- `$roborev:design-review` — design review a single commit
-- `$roborev:fix` — fix a review's findings in code
+- `$roborev-review-branch --type design` — equivalent, with additional `--type` flexibility
+- `$roborev-design-review` — design review a single commit
+- `$roborev-fix` — fix a review's findings in code

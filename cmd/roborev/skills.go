@@ -116,8 +116,7 @@ This command is idempotent - running it multiple times is safe.`,
 			}
 
 			// formatSkills formats skill names with the correct invocation prefix per agent
-			// Claude uses /skill:name, Codex uses $skill:name
-			// Directory names use hyphens (roborev-address) but invocation uses colons (roborev:address)
+			// Claude uses /skill-name, Codex uses $skill-name
 			formatSkills := func(agent skills.Agent, skillNames []string) string {
 				prefix := "/"
 				if agent == skills.AgentCodex {
@@ -125,8 +124,7 @@ This command is idempotent - running it multiple times is safe.`,
 				}
 				formatted := make([]string, len(skillNames))
 				for i, name := range skillNames {
-					// Convert roborev-address to roborev:address
-					formatted[i] = prefix + strings.Replace(name, "roborev-", "roborev:", 1)
+					formatted[i] = prefix + name
 				}
 				return strings.Join(formatted, ", ")
 			}
@@ -160,9 +158,9 @@ This command is idempotent - running it multiple times is safe.`,
 				for _, agent := range installedAgents {
 					switch agent {
 					case skills.AgentClaude:
-						fmt.Println("  Claude Code: /roborev:review, /roborev:review-branch, /roborev:design-review, /roborev:design-review-branch, /roborev:fix, /roborev:respond")
+						fmt.Println("  Claude Code: /roborev-review, /roborev-review-branch, /roborev-design-review, /roborev-design-review-branch, /roborev-fix, /roborev-respond")
 					case skills.AgentCodex:
-						fmt.Println("  Codex: $roborev:review, $roborev:review-branch, $roborev:design-review, $roborev:design-review-branch, $roborev:fix, $roborev:respond")
+						fmt.Println("  Codex: $roborev-review, $roborev-review-branch, $roborev-design-review, $roborev-design-review-branch, $roborev-fix, $roborev-respond")
 					}
 				}
 			}

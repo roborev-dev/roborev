@@ -1,22 +1,22 @@
-# /roborev:design-review
+# /roborev-design-review
 
 Review a design proposal for completeness, feasibility, and technical soundness.
 
 ## Usage
 
 ```
-/roborev:design-review <path-or-job-id>
+/roborev-design-review <path-or-job-id>
 ```
 
 ## Description
 
-Reviews design proposals (PRDs and task lists) for completeness, feasibility, and technical soundness. Unlike `/roborev:address` which fixes code review findings, this skill evaluates design documents before implementation begins.
+Reviews design proposals (PRDs and task lists) for completeness, feasibility, and technical soundness. Unlike `/roborev-address` which fixes code review findings, this skill evaluates design documents before implementation begins.
 
 If a file path is given, that file is reviewed directly. If a job ID is given, the design output is fetched from roborev. If no argument is given, the skill looks for design docs in `docs/design/`.
 
 ## Instructions
 
-When the user invokes `/roborev:design-review <path-or-job-id>`:
+When the user invokes `/roborev-design-review <path-or-job-id>`:
 
 1. **Locate design documents**:
    - File path: read the file directly
@@ -39,7 +39,7 @@ When the user invokes `/roborev:design-review <path-or-job-id>`:
 
 ## Example
 
-User: `/roborev:design-review docs/design/auth-redesign.md`
+User: `/roborev-design-review docs/design/auth-redesign.md`
 
 Agent:
 1. Reads `docs/design/auth-redesign.md`

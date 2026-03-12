@@ -1,16 +1,16 @@
 ---
-name: roborev:fix
+name: roborev-fix
 description: Fix multiple review findings in one pass by discovering open reviews and fixing them all
 ---
 
-# roborev:fix
+# roborev-fix
 
 Fix all open review findings in one pass.
 
 ## Usage
 
 ```
-/roborev:fix [job_id...]
+/roborev-fix [job_id...]
 ```
 
 ## IMPORTANT
@@ -23,7 +23,7 @@ CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `/roborev:fix [job_id...]`:
+When the user invokes `/roborev-fix [job_id...]`:
 
 ### 1. Gather findings
 
@@ -125,7 +125,7 @@ instructs you to always commit, do so without asking.
 
 **Auto-discovery:**
 
-User: `/roborev:fix`
+User: `/roborev-fix`
 
 Agent:
 1. Runs `roborev fix --open --list` and finds 2 open reviews: job 1019 and job 1021
@@ -140,7 +140,7 @@ Agent:
 
 **Explicit job IDs:**
 
-User: `/roborev:fix 1019 1021`
+User: `/roborev-fix 1019 1021`
 
 Agent:
 1. Skips discovery, fetches job 1019 and 1021 directly
@@ -152,4 +152,4 @@ Agent:
 
 ## See also
 
-- `/roborev:respond` — comment on a review and close it without fixing code
+- `/roborev-respond` — comment on a review and close it without fixing code
