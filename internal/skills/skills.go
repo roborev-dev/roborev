@@ -255,7 +255,7 @@ func installCodex() (InstallResult, error) {
 // SkillInfo describes an available skill.
 type SkillInfo struct {
 	DirName     string // e.g. "roborev-address"
-	Name        string // e.g. "roborev:address"
+	Name        string // e.g. "roborev-address"
 	Description string
 }
 
@@ -293,7 +293,7 @@ func ListSkills() ([]SkillInfo, error) {
 		}
 		name, desc := parseFrontmatter(content)
 		if name == "" {
-			name = strings.Replace(entry.Name(), "roborev-", "roborev:", 1)
+			name = entry.Name()
 		}
 		out = append(out, SkillInfo{DirName: entry.Name(), Name: name, Description: desc})
 	}

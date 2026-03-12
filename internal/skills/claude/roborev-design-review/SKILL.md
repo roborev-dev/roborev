@@ -1,16 +1,16 @@
 ---
-name: roborev:design-review
+name: roborev-design-review
 description: Request a design review for a commit and present the results
 ---
 
-# roborev:design-review
+# roborev-design-review
 
 Request a design review for a commit and present the results.
 
 ## Usage
 
 ```
-/roborev:design-review [commit]
+/roborev-design-review [commit]
 ```
 
 ## When NOT to invoke this skill
@@ -29,7 +29,7 @@ CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `/roborev:design-review [commit]`:
+When the user invokes `/roborev-design-review [commit]`:
 
 ### 1. Validate inputs
 
@@ -78,38 +78,38 @@ Otherwise, present the review to the user:
 
 If the review has findings (verdict is Fail), offer to address them:
 
-- "Would you like me to fix these findings? You can run `/roborev:fix <job_id>`"
+- "Would you like me to fix these findings? You can run `/roborev-fix <job_id>`"
 
 Extract the job ID from the review output to include in the suggestion. Look for it in the `Enqueued job <id> for ...` line or in the review header.
 
-If the review passed, confirm the result and do not offer `/roborev:fix`.
+If the review passed, confirm the result and do not offer `/roborev-fix`.
 
 ## Examples
 
 **Default design review of HEAD:**
 
-User: `/roborev:design-review`
+User: `/roborev-design-review`
 
 Agent:
 1. Launches background task: `roborev review --wait --type design`
 2. Tells user: "Design review submitted for HEAD. I'll present the results when it completes."
 3. When complete, presents the verdict and findings grouped by severity
-4. If findings exist: "Would you like me to address these findings? Run `/roborev:fix 1042`"
+4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1042`"
 5. If passed: "Design review passed with no findings."
 
 **Design review of a specific commit:**
 
-User: `/roborev:design-review abc123`
+User: `/roborev-design-review abc123`
 
 Agent:
 1. Validates `abc123` resolves to a valid commit
 2. Launches background task: `roborev review abc123 --wait --type design`
 3. Tells user: "Design review submitted for abc123. I'll present the results when it completes."
 4. When complete, presents the verdict and findings
-5. If findings exist: "Would you like me to address these findings? Run `/roborev:fix 1043`"
+5. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 
 ## See also
 
-- `/roborev:review --type design` — equivalent, with additional `--type` flexibility
-- `/roborev:design-review-branch` — design review all commits on the current branch
-- `/roborev:fix` — fix a review's findings in code
+- `/roborev-review --type design` — equivalent, with additional `--type` flexibility
+- `/roborev-design-review-branch` — design review all commits on the current branch
+- `/roborev-fix` — fix a review's findings in code

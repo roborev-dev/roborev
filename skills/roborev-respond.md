@@ -1,11 +1,11 @@
-# /roborev:respond
+# /roborev-respond
 
 Add a response to a roborev code review.
 
 ## Usage
 
 ```
-/roborev:respond <job_id> [message]
+/roborev-respond <job_id> [message]
 ```
 
 ## Description
@@ -17,7 +17,7 @@ Adds a response or note to a code review and closes it. Common use cases:
 
 ## Instructions
 
-When the user invokes `/roborev:respond <job_id> [message]`:
+When the user invokes `/roborev-respond <job_id> [message]`:
 
 1. **If a message is provided**, run:
    ```bash
@@ -31,13 +31,13 @@ When the user invokes `/roborev:respond <job_id> [message]`:
 
 ## Examples
 
-User: `/roborev:respond 1019 Fixed all findings in commit abc123`
+User: `/roborev-respond 1019 Fixed all findings in commit abc123`
 
 Agent: Runs `roborev respond --job 1019 "Fixed all findings in commit abc123"` and confirms the response was added.
 
 ---
 
-User: `/roborev:respond 1019`
+User: `/roborev-respond 1019`
 
 Agent: "What would you like to say in response to review #1019?"
 
