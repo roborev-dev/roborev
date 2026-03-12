@@ -667,8 +667,12 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	sb.WriteString("\n\n")
 
 	// Include the original diff for context if we have job info.
-	// Don't apply current exclude patterns — the diff should match
+	// Don't apply user exclude patterns — the diff should match
 	// what the original review saw so findings stay relevant.
+	// Built-in lockfile excludes still apply (hardcoded in GetDiff).
+	// Tradeoff: without user excludes the diff may be larger and
+	// trip the MaxPromptSize/2 guard, but that's a soft degradation
+	// vs hiding the exact file the findings reference.
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
 		diff, err := git.GetDiff(repoPath, review.Job.GitRef)
 		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {

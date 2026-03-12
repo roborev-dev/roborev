@@ -551,6 +551,37 @@ func TestResolveExcludePatterns(t *testing.T) {
 	})
 }
 
+func TestResolveExcludePatternsLocal(t *testing.T) {
+	t.Run("reads working-tree config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"),
+			[]byte(`exclude_patterns = ["local.dat"]`), 0o644)
+		require.NoError(t, err)
+		got := ResolveExcludePatternsLocal(tmpDir, nil, "")
+		assert.Equal(t, []string{"local.dat"}, got)
+	})
+
+	t.Run("merges with global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"),
+			[]byte(`exclude_patterns = ["local.dat"]`), 0o644)
+		require.NoError(t, err)
+		cfg := &Config{ExcludePatterns: []string{"global.lock"}}
+		got := ResolveExcludePatternsLocal(tmpDir, cfg, "")
+		assert.Equal(t, []string{"local.dat", "global.lock"}, got)
+	})
+
+	t.Run("security skips repo patterns", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"),
+			[]byte(`exclude_patterns = ["local.dat"]`), 0o644)
+		require.NoError(t, err)
+		cfg := &Config{ExcludePatterns: []string{"global.lock"}}
+		got := ResolveExcludePatternsLocal(tmpDir, cfg, "security")
+		assert.Equal(t, []string{"global.lock"}, got)
+	})
+}
+
 func TestIsCommitMessageExcluded(t *testing.T) {
 	tests := []struct {
 		name       string

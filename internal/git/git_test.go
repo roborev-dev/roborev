@@ -1066,6 +1066,34 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 	})
 }
 
+func TestGetDiffExcludesSlashedDirectory(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("keep.txt", "keep\n")
+	repo.WriteFile("vendor/dist/bundle.js", "bundled\n")
+	repo.WriteFile("vendor/dist/deep/util.js", "util\n")
+	repo.CommitAll("add vendor/dist files")
+
+	sha := repo.HeadSHA()
+
+	t.Run("GetDiff", func(t *testing.T) {
+		diff, err := GetDiff(repo.Dir, sha, "vendor/dist")
+		require.NoError(t, err)
+		assert.Contains(t, diff, "keep.txt")
+		assert.NotContains(t, diff, "bundle.js",
+			"slashed exclude should filter tracked dir contents")
+		assert.NotContains(t, diff, "util.js",
+			"slashed exclude should filter nested tracked files")
+	})
+
+	t.Run("GetRangeDiff", func(t *testing.T) {
+		diff, err := GetRangeDiff(repo.Dir, "HEAD~1..HEAD", "vendor/dist")
+		require.NoError(t, err)
+		assert.Contains(t, diff, "keep.txt")
+		assert.NotContains(t, diff, "bundle.js",
+			"slashed exclude should filter tracked dir contents")
+	})
+}
+
 func TestIsWorkingTreeClean(t *testing.T) {
 	t.Run("clean tree returns true", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
