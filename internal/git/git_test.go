@@ -880,30 +880,67 @@ func TestGetDiffExcludesSlashedDirectory(t *testing.T) {
 		assert.Contains(t, diff, "keep.txt")
 		assert.NotContains(t, diff, "bundle.js",
 			"slashed exclude should filter tracked dir contents")
+		assert.NotContains(t, diff, "util.js",
+			"slashed exclude should filter nested tracked files")
 	})
 }
 
 func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
-	repo := NewTestRepoWithCommit(t)
+	t.Run("plain directory exclude", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile("new.go", "package main\n")
+		repo.WriteFile("vendor/dep.go", "vendored\n")
+		repo.WriteFile("vendor/sub/util.go", "util\n")
 
-	// Create untracked files: one to keep, one builtin lockfile,
-	// one matching a user exclude pattern.
-	repo.WriteFile("new.go", "package main\n")
-	repo.WriteFile("sub/uv.lock", "lockdata\n")
-	repo.WriteFile("vendor/dep.go", "vendored\n")
-	repo.WriteFile("vendor/sub/util.go", "util\n")
+		diff, err := GetDirtyDiff(repo.Dir, "vendor")
+		require.NoError(t, err)
+		assert.Contains(t, diff, "new.go")
+		assert.NotContains(t, diff, "vendor/dep.go")
+		assert.NotContains(t, diff, "vendor/sub/util.go")
+	})
 
-	diff, err := GetDirtyDiff(repo.Dir, "vendor")
-	require.NoError(t, err)
+	t.Run("builtin lockfiles", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile("keep.go", "package main\n")
+		repo.WriteFile("sub/uv.lock", "lock\n")
+		repo.WriteFile("package-lock.json", "lock\n")
+		repo.WriteFile("deep/Cargo.lock", "lock\n")
+		repo.WriteFile("go.sum", "sum\n")
 
-	assert.Contains(t, diff, "new.go",
-		"untracked non-excluded file should appear")
-	assert.NotContains(t, diff, "uv.lock",
-		"builtin lockfile should be excluded from untracked")
-	assert.NotContains(t, diff, "vendor/dep.go",
-		"user exclude should filter untracked dir contents")
-	assert.NotContains(t, diff, "vendor/sub/util.go",
-		"user exclude should filter nested untracked files")
+		diff, err := GetDirtyDiff(repo.Dir)
+		require.NoError(t, err)
+		assert.Contains(t, diff, "keep.go")
+		assert.NotContains(t, diff, "uv.lock")
+		assert.NotContains(t, diff, "package-lock.json")
+		assert.NotContains(t, diff, "Cargo.lock")
+		assert.NotContains(t, diff, "go.sum")
+	})
+
+	t.Run("basename glob pattern", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile("keep.js", "ok\n")
+		repo.WriteFile("app.min.js", "minified\n")
+		repo.WriteFile("sub/lib.min.js", "nested\n")
+
+		diff, err := GetDirtyDiff(repo.Dir, "*.min.js")
+		require.NoError(t, err)
+		assert.Contains(t, diff, "keep.js")
+		assert.NotContains(t, diff, "app.min.js")
+		assert.NotContains(t, diff, "lib.min.js")
+	})
+
+	t.Run("slashed rooted pattern", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile("keep.txt", "ok\n")
+		repo.WriteFile("vendor/dist/bundle.js", "bundled\n")
+		repo.WriteFile("vendor/dist/deep/util.js", "util\n")
+
+		diff, err := GetDirtyDiff(repo.Dir, "vendor/dist")
+		require.NoError(t, err)
+		assert.Contains(t, diff, "keep.txt")
+		assert.NotContains(t, diff, "bundle.js")
+		assert.NotContains(t, diff, "util.js")
+	})
 }
 
 func TestIsWorkingTreeClean(t *testing.T) {
