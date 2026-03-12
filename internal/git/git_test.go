@@ -582,28 +582,41 @@ func TestGetCurrentBranch(t *testing.T) {
 		assert.Empty(t, branch)
 	})
 
-	t.Run("no heads prefix with ambiguous branch names", func(t *testing.T) {
+	t.Run("no heads prefix with ambiguous remote ref", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 
-		// Create two branches that share a suffix, which causes
-		// git rev-parse --abbrev-ref to return "heads/user/feat"
-		// to disambiguate from "feat".
-		repo.Run("checkout", "-b", "feat")
+		// Create a branch and a remote-tracking ref that share
+		// the same suffix. rev-parse --abbrev-ref and symbolic-ref
+		// --short both add "heads/" to disambiguate.
 		repo.Run("checkout", "-b", "user/feat")
+		sha := repo.HeadSHA()
+		repo.Run("update-ref", "refs/remotes/user/feat", sha)
 
 		branch := GetCurrentBranch(repo.Dir)
 		assert.Equal(t, "user/feat", branch,
-			"should return clean branch name even when ambiguous")
+			"should return clean branch name with ambiguous remote ref")
+	})
+
+	t.Run("no heads prefix with ambiguous tag", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+
+		// A tag with the same name as the branch causes
+		// symbolic-ref --short to return "heads/user/feat".
+		repo.Run("checkout", "-b", "user/feat")
+		repo.Run("tag", "user/feat")
+
+		branch := GetCurrentBranch(repo.Dir)
+		assert.Equal(t, "user/feat", branch,
+			"should return clean branch name with ambiguous tag")
 	})
 
 	t.Run("no heads prefix in linked worktree with ambiguous refs", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 
 		// Create a worktree on "user/feat/view", then add a remote
-		// ref "refs/remotes/user/feat/view" that shares the suffix.
-		// This makes rev-parse --abbrev-ref return
-		// "heads/user/feat/view" in the linked worktree to
-		// disambiguate from the remote ref.
+		// ref that shares the suffix. Both rev-parse --abbrev-ref
+		// and symbolic-ref --short return "heads/user/feat/view"
+		// in linked worktrees to disambiguate.
 		wt := repo.AddWorktree("user/feat/view")
 		sha := repo.HeadSHA()
 		repo.Run(
