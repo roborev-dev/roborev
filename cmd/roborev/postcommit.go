@@ -162,11 +162,9 @@ func hookLog(repo, outcome, message string) {
 	}
 	data = append(data, '\n')
 
-	dir := filepath.Dir(logPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
 		return
 	}
-	_ = os.Chmod(dir, 0700)
 	f, err := os.OpenFile(
 		logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600,
 	)
