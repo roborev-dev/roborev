@@ -861,6 +861,14 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"directory pattern no false positive",
 			"vendoring.go", []string{"vendor"}, false,
 		},
+		{
+			"trailing slash directory",
+			"vendor/dep.go", []string{"vendor/"}, true,
+		},
+		{
+			"leading slash stripped",
+			"dist/bundle.js", []string{"/dist"}, true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -873,13 +881,25 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, formatExcludeArgs(nil))
 	assert.Nil(t, formatExcludeArgs([]string{}))
+
+	// Plain names get **/name for recursive matching
 	assert.Equal(t,
-		[]string{":(exclude)foo.lock", ":(exclude)*.min.js"},
+		[]string{
+			":(exclude,glob)**/foo.lock",
+			":(exclude,glob)*.min.js",
+		},
 		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
 	)
+
+	// Patterns with path separators are used as-is
+	assert.Equal(t,
+		[]string{":(exclude,glob)vendor/dist"},
+		formatExcludeArgs([]string{"vendor/dist"}),
+	)
+
 	// Whitespace-only patterns are skipped
 	assert.Equal(t,
-		[]string{":(exclude)keep"},
+		[]string{":(exclude,glob)**/keep"},
 		formatExcludeArgs([]string{" ", "keep", "  "}),
 	)
 }
@@ -896,6 +916,25 @@ func TestGetDiffExtraExcludes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, diff, "keep.txt")
 	assert.NotContains(t, diff, "custom.lock")
+}
+
+func TestGetDiffExcludesNestedFiles(t *testing.T) {
+	// Verify that built-in and extra excludes work at any depth
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("keep.txt", "keep\n")
+	repo.WriteFile("sub/uv.lock", "nested builtin\n")
+	repo.WriteFile("sub/deep/custom.lock", "nested custom\n")
+	repo.CommitAll("add nested files")
+
+	sha := repo.HeadSHA()
+
+	diff, err := GetDiff(repo.Dir, sha, "custom.lock")
+	require.NoError(t, err)
+	assert.Contains(t, diff, "keep.txt")
+	assert.NotContains(t, diff, "uv.lock",
+		"built-in exclude should match nested uv.lock")
+	assert.NotContains(t, diff, "custom.lock",
+		"extra exclude should match nested custom.lock")
 }
 
 func setupDiffExcludesGeneratedFilesTest(t *testing.T) (*TestRepo, string) {

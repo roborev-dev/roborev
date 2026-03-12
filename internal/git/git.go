@@ -529,44 +529,45 @@ func GetDirtyDiff(
 
 // excludedPathPatterns contains pathspec patterns for files that should be excluded from diffs.
 // These are typically generated files that add noise to code reviews.
-// Uses :(exclude) long form since :! shorthand doesn't work reliably with git show/diff.
+// Uses :(exclude,glob)**/ form so patterns match at any directory depth.
+// Directory patterns use :(exclude) without glob since git recognizes them as trees.
 var excludedPathPatterns = []string{
 	// JavaScript / Node
-	":(exclude)package-lock.json",
-	":(exclude)yarn.lock",
-	":(exclude)pnpm-lock.yaml",
-	":(exclude)bun.lockb",
-	":(exclude)bun.lock",
+	":(exclude,glob)**/package-lock.json",
+	":(exclude,glob)**/yarn.lock",
+	":(exclude,glob)**/pnpm-lock.yaml",
+	":(exclude,glob)**/bun.lockb",
+	":(exclude,glob)**/bun.lock",
 	// Python
-	":(exclude)uv.lock",
-	":(exclude)poetry.lock",
-	":(exclude)Pipfile.lock",
-	":(exclude)pdm.lock",
+	":(exclude,glob)**/uv.lock",
+	":(exclude,glob)**/poetry.lock",
+	":(exclude,glob)**/Pipfile.lock",
+	":(exclude,glob)**/pdm.lock",
 	// Go
-	":(exclude)go.sum",
+	":(exclude,glob)**/go.sum",
 	// Rust
-	":(exclude)Cargo.lock",
-	":(exclude)cargo.lock", // lowercase for case-insensitive filesystems
+	":(exclude,glob)**/Cargo.lock",
+	":(exclude,glob)**/cargo.lock", // lowercase for case-insensitive filesystems
 	// Ruby
-	":(exclude)Gemfile.lock",
+	":(exclude,glob)**/Gemfile.lock",
 	// PHP
-	":(exclude)composer.lock",
+	":(exclude,glob)**/composer.lock",
 	// .NET
-	":(exclude)packages.lock.json",
+	":(exclude,glob)**/packages.lock.json",
 	// Dart / Flutter
-	":(exclude)pubspec.lock",
+	":(exclude,glob)**/pubspec.lock",
 	// Elixir
-	":(exclude)mix.lock",
+	":(exclude,glob)**/mix.lock",
 	// Swift
-	":(exclude)Package.resolved",
+	":(exclude,glob)**/Package.resolved",
 	// iOS / macOS
-	":(exclude)Podfile.lock",
+	":(exclude,glob)**/Podfile.lock",
 	// Nix
-	":(exclude)flake.lock",
-	// Directories
-	":(exclude).beads",   // Excludes entire directory tree
-	":(exclude).gocache", // Go build cache (sometimes created by agents)
-	":(exclude).cache",   // Generic cache directory (pip, pre-commit, etc.)
+	":(exclude,glob)**/flake.lock",
+	// Directories (git recognizes these as trees, no glob needed)
+	":(exclude).beads",
+	":(exclude).gocache",
+	":(exclude).cache",
 }
 
 var excludedDirPatterns = map[string]struct{}{
@@ -576,7 +577,10 @@ var excludedDirPatterns = map[string]struct{}{
 }
 
 // formatExcludeArgs converts user-provided exclude patterns (filenames
-// or globs) into git pathspec arguments.
+// or globs) into git pathspec arguments. Plain names are wrapped with
+// :(exclude,glob)**/name so they match at any directory depth.
+// Patterns already containing path separators or glob characters are
+// passed through with a simple :(exclude) prefix.
 func formatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
@@ -587,7 +591,13 @@ func formatExcludeArgs(patterns []string) []string {
 		if p == "" {
 			continue
 		}
-		args = append(args, ":(exclude)"+p)
+		// Patterns with path separators, leading globs, or
+		// already containing ** are used as-is.
+		if strings.Contains(p, "/") || strings.HasPrefix(p, "*") {
+			args = append(args, ":(exclude,glob)"+p)
+		} else {
+			args = append(args, ":(exclude,glob)**/"+p)
+		}
 	}
 	return args
 }
@@ -616,7 +626,18 @@ func isExcludedFile(filePath string, extraExcludes []string) bool {
 // exact basename matching.
 func matchesBuiltinExclusion(filePath string) bool {
 	for _, pattern := range excludedPathPatterns {
-		p := strings.TrimPrefix(pattern, ":(exclude)")
+		// Strip pathspec magic to get the plain name.
+		// File patterns: ":(exclude,glob)**/name" -> "name"
+		// Dir patterns:  ":(exclude)name"         -> "name"
+		p := pattern
+		for _, prefix := range []string{
+			":(exclude,glob)**/", ":(exclude)",
+		} {
+			if after, ok := strings.CutPrefix(p, prefix); ok {
+				p = after
+				break
+			}
+		}
 
 		if _, ok := excludedDirPatterns[p]; ok {
 			if filePath == p ||
@@ -639,6 +660,13 @@ func matchesBuiltinExclusion(filePath string) bool {
 // exclude pattern. Supports globs (*, ?, [) and plain names that
 // match as either filenames or directory prefixes.
 func matchesUserPattern(filePath, p string) bool {
+	// Normalize: strip leading/trailing slashes
+	p = strings.TrimRight(p, "/")
+	p = strings.TrimLeft(p, "/")
+	if p == "" {
+		return false
+	}
+
 	// Glob patterns
 	if strings.ContainsAny(p, "*?[") {
 		base := path.Base(filePath)
