@@ -154,7 +154,7 @@ func runSingle(
 	result.Agent = resolvedAgent.Name()
 
 	// Build prompt (nil DB = no previous review context)
-	builder := prompt.NewBuilder(nil)
+	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType

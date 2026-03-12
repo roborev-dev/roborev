@@ -416,12 +416,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Build prompt
+	pb := prompt.NewBuilderWithConfig(nil, cfg)
 	var reviewPrompt string
 	if diffContent != "" {
 		// Dirty review
-		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType)
+		reviewPrompt, err = pb.BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType)
 	} else {
-		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType)
+		reviewPrompt, err = pb.Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType)
 	}
 	if err != nil {
 		return fmt.Errorf("build prompt: %w", err)
