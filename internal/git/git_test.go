@@ -869,6 +869,23 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"leading slash stripped",
 			"dist/bundle.js", []string{"/dist"}, true,
 		},
+		{
+			"glob pattern matches nested file",
+			"sub/app.min.js", []string{"*.min.js"}, true,
+		},
+		{
+			"glob pattern matches root file",
+			"app.min.js", []string{"*.min.js"}, true,
+		},
+		{
+			"glob pattern no false positive",
+			"app.js", []string{"*.min.js"}, false,
+		},
+		{
+			"double-star glob pattern",
+			"deep/nested/file.gen.go",
+			[]string{"**/*.gen.go"}, true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -882,11 +899,11 @@ func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, formatExcludeArgs(nil))
 	assert.Nil(t, formatExcludeArgs([]string{}))
 
-	// Plain names get **/name for recursive matching
+	// Plain names and globs get **/name for recursive matching
 	assert.Equal(t,
 		[]string{
 			":(exclude,glob)**/foo.lock",
-			":(exclude,glob)*.min.js",
+			":(exclude,glob)**/*.min.js",
 		},
 		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
 	)

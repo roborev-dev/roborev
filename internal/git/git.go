@@ -564,36 +564,40 @@ var excludedPathPatterns = []string{
 	":(exclude,glob)**/Podfile.lock",
 	// Nix
 	":(exclude,glob)**/flake.lock",
-	// Directories (git recognizes these as trees, no glob needed)
-	":(exclude).beads",
-	":(exclude).gocache",
-	":(exclude).cache",
+	// Directories — trailing /** matches all files inside at any depth
+	":(exclude,glob)**/.beads/**",
+	":(exclude,glob)**/.gocache/**",
+	":(exclude,glob)**/.cache/**",
 }
 
-var excludedDirPatterns = map[string]struct{}{
-	".beads":   {},
-	".gocache": {},
-	".cache":   {},
+// normalizePattern strips whitespace and leading/trailing slashes
+// from a user-provided exclude pattern. Returns "" for empty input.
+func normalizePattern(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimRight(p, "/")
+	p = strings.TrimLeft(p, "/")
+	return p
 }
 
 // formatExcludeArgs converts user-provided exclude patterns (filenames
-// or globs) into git pathspec arguments. Plain names are wrapped with
-// :(exclude,glob)**/name so they match at any directory depth.
-// Patterns already containing path separators or glob characters are
-// passed through with a simple :(exclude) prefix.
+// or globs) into git pathspec arguments. Plain names and globs without
+// path separators are wrapped with :(exclude,glob)**/name so they
+// match at any directory depth. Patterns containing "/" are passed
+// through with :(exclude,glob) as-is.
 func formatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
 	}
 	args := make([]string, 0, len(patterns))
-	for _, p := range patterns {
-		p = strings.TrimSpace(p)
+	for _, raw := range patterns {
+		p := normalizePattern(raw)
 		if p == "" {
 			continue
 		}
-		// Patterns with path separators, leading globs, or
-		// already containing ** are used as-is.
-		if strings.Contains(p, "/") || strings.HasPrefix(p, "*") {
+		// Patterns with path separators are used as-is (already
+		// rooted or explicitly recursive). Everything else gets
+		// a **/ prefix so it matches at any directory depth.
+		if strings.Contains(p, "/") {
 			args = append(args, ":(exclude,glob)"+p)
 		} else {
 			args = append(args, ":(exclude,glob)**/"+p)
@@ -627,21 +631,15 @@ func isExcludedFile(filePath string, extraExcludes []string) bool {
 func matchesBuiltinExclusion(filePath string) bool {
 	for _, pattern := range excludedPathPatterns {
 		// Strip pathspec magic to get the plain name.
-		// File patterns: ":(exclude,glob)**/name" -> "name"
-		// Dir patterns:  ":(exclude)name"         -> "name"
-		p := pattern
-		for _, prefix := range []string{
-			":(exclude,glob)**/", ":(exclude)",
-		} {
-			if after, ok := strings.CutPrefix(p, prefix); ok {
-				p = after
-				break
-			}
-		}
+		// File patterns:  ":(exclude,glob)**/name"     -> "name"
+		// Dir patterns:   ":(exclude,glob)**/name/**"  -> "name/**"
+		p := strings.TrimPrefix(pattern, ":(exclude,glob)**/")
 
-		if _, ok := excludedDirPatterns[p]; ok {
-			if filePath == p ||
-				strings.HasPrefix(filePath, p+"/") {
+		// Directory pattern — strip trailing /** and match as dir
+		if dir, ok := strings.CutSuffix(p, "/**"); ok {
+			if filePath == dir ||
+				strings.HasPrefix(filePath, dir+"/") ||
+				strings.Contains(filePath, "/"+dir+"/") {
 				return true
 			}
 			continue
@@ -669,6 +667,15 @@ func matchesUserPattern(filePath, p string) bool {
 
 	// Glob patterns
 	if strings.ContainsAny(p, "*?[") {
+		// path.Match doesn't support **, so handle it manually.
+		// "**/<suffix>" means match <suffix> against the basename.
+		if after, ok := strings.CutPrefix(p, "**/"); ok {
+			base := path.Base(filePath)
+			if matched, _ := path.Match(after, base); matched {
+				return true
+			}
+			return false
+		}
 		base := path.Base(filePath)
 		if matched, _ := path.Match(p, base); matched {
 			return true
