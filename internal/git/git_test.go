@@ -786,10 +786,96 @@ func TestIsExcludedFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isExcludedFile(tt.file)
+			got := isExcludedFile(tt.file, nil)
 			assert.Equal(t, tt.excluded, got, "isExcludedFile(%q) = %v, want %v", tt.file, got, tt.excluded)
 		})
 	}
+}
+
+func TestIsExcludedFileNewLockfiles(t *testing.T) {
+	// Verify newly added lockfiles are excluded by default
+	newLockfiles := []string{
+		"bun.lockb", "bun.lock",
+		"Pipfile.lock", "pdm.lock",
+		"packages.lock.json", "pubspec.lock",
+		"mix.lock", "Package.resolved",
+		"Podfile.lock", "flake.lock",
+	}
+	for _, f := range newLockfiles {
+		assert.True(t, isExcludedFile(f, nil),
+			"expected %q to be excluded by default", f)
+		// Also in subdirectory
+		assert.True(t, isExcludedFile("sub/"+f, nil),
+			"expected sub/%s to be excluded by default", f)
+	}
+}
+
+func TestIsExcludedFileExtraPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     string
+		extra    []string
+		excluded bool
+	}{
+		{
+			"extra exact match",
+			"custom.lock", []string{"custom.lock"}, true,
+		},
+		{
+			"extra exact match in subdir",
+			"vendor/custom.lock", []string{"custom.lock"}, true,
+		},
+		{
+			"extra glob pattern",
+			"dist/bundle.min.js", []string{"*.min.js"}, true,
+		},
+		{
+			"extra glob no match",
+			"src/app.js", []string{"*.min.js"}, false,
+		},
+		{
+			"extra pattern does not match unrelated",
+			"main.go", []string{"custom.lock"}, false,
+		},
+		{
+			"builtin still works with extras",
+			"uv.lock", []string{"custom.lock"}, true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExcludedFile(tt.file, tt.extra)
+			assert.Equal(t, tt.excluded, got)
+		})
+	}
+}
+
+func TestFormatExcludeArgs(t *testing.T) {
+	assert.Nil(t, formatExcludeArgs(nil))
+	assert.Nil(t, formatExcludeArgs([]string{}))
+	assert.Equal(t,
+		[]string{":(exclude)foo.lock", ":(exclude)*.min.js"},
+		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
+	)
+	// Whitespace-only patterns are skipped
+	assert.Equal(t,
+		[]string{":(exclude)keep"},
+		formatExcludeArgs([]string{" ", "keep", "  "}),
+	)
+}
+
+func TestGetDiffExtraExcludes(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("keep.txt", "keep\n")
+	repo.WriteFile("custom.lock", "lockdata\n")
+	repo.CommitAll("add files")
+
+	sha := repo.HeadSHA()
+
+	diff, err := GetDiff(repo.Dir, sha, "custom.lock")
+	require.NoError(t, err)
+	assert.Contains(t, diff, "keep.txt")
+	assert.NotContains(t, diff, "custom.lock")
 }
 
 func setupDiffExcludesGeneratedFilesTest(t *testing.T) (*TestRepo, string) {

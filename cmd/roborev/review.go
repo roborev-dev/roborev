@@ -227,8 +227,11 @@ Examples:
 					return fmt.Errorf("no uncommitted changes to review")
 				}
 
-				// Generate dirty diff (includes untracked files)
-				diffContent, err = git.GetDirtyDiff(root)
+				// Generate dirty diff (includes untracked files).
+				// Apply configured exclude patterns so lockfiles etc. are filtered.
+				globalCfg, _ := config.LoadGlobal()
+				excludes := config.ResolveExcludePatterns(root, globalCfg)
+				diffContent, err = git.GetDirtyDiff(root, excludes...)
 				if err != nil {
 					return fmt.Errorf("get dirty diff: %w", err)
 				}

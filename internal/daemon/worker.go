@@ -22,12 +22,11 @@ import (
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
-	db            *storage.DB
-	cfgGetter     ConfigGetter
-	promptBuilder *prompt.Builder
-	broadcaster   Broadcaster
-	errorLog      *ErrorLog
-	activityLog   *ActivityLog
+	db          *storage.DB
+	cfgGetter   ConfigGetter
+	broadcaster Broadcaster
+	errorLog    *ErrorLog
+	activityLog *ActivityLog
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -59,7 +58,6 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 	return &WorkerPool{
 		db:             db,
 		cfgGetter:      cfgGetter,
-		promptBuilder:  prompt.NewBuilder(db),
 		broadcaster:    broadcaster,
 		errorLog:       errorLog,
 		activityLog:    activityLog,
@@ -352,7 +350,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Build the prompt (or use pre-stored prompt for task/compact jobs)
+	// Build the prompt (or use pre-stored prompt for task/compact jobs).
+	// Create a per-job builder with the snapshotted config so exclude
+	// patterns are resolved consistently.
+	pb := prompt.NewBuilderWithConfig(wp.db, cfg)
 	var reviewPrompt string
 	var err error
 	if job.UsesStoredPrompt() && job.Prompt != "" {
@@ -370,10 +371,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		reviewPrompt, err = pb.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
 		// Normal job - build prompt from git ref
-		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		reviewPrompt, err = pb.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)

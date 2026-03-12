@@ -494,6 +494,50 @@ func TestIsBranchExcluded(t *testing.T) {
 	}
 }
 
+func TestResolveExcludePatterns(t *testing.T) {
+	t.Run("no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		got := ResolveExcludePatterns(tmpDir, nil)
+		assert.Nil(t, got)
+	})
+
+	t.Run("repo only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"),
+			[]byte(`exclude_patterns = ["custom.lock", "*.min.js"]`), 0o644)
+		require.NoError(t, err)
+		got := ResolveExcludePatterns(tmpDir, nil)
+		assert.Equal(t, []string{"custom.lock", "*.min.js"}, got)
+	})
+
+	t.Run("global only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{ExcludePatterns: []string{"global.lock"}}
+		got := ResolveExcludePatterns(tmpDir, cfg)
+		assert.Equal(t, []string{"global.lock"}, got)
+	})
+
+	t.Run("repo and global merged", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"),
+			[]byte(`exclude_patterns = ["repo.lock"]`), 0o644)
+		require.NoError(t, err)
+		cfg := &Config{
+			ExcludePatterns: []string{"global.lock", "repo.lock"},
+		}
+		got := ResolveExcludePatterns(tmpDir, cfg)
+		// repo.lock appears only once; repo patterns listed first
+		assert.Equal(t, []string{"repo.lock", "global.lock"}, got)
+	})
+
+	t.Run("whitespace-only patterns skipped", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{ExcludePatterns: []string{" ", "keep"}}
+		got := ResolveExcludePatterns(tmpDir, cfg)
+		assert.Equal(t, []string{"keep"}, got)
+	})
+}
+
 func TestIsCommitMessageExcluded(t *testing.T) {
 	tests := []struct {
 		name       string

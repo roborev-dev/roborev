@@ -138,6 +138,9 @@ type Config struct {
 	// CI poller configuration
 	CI CIConfig `toml:"ci"`
 
+	// Diff exclusion patterns (filenames or glob patterns to exclude from review diffs)
+	ExcludePatterns []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs globally."`
+
 	// Analysis settings
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 
@@ -565,7 +568,8 @@ type RepoConfig struct {
 	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, or thorough."`           // Reasoning level for fix: thorough, standard, fast
 	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
 	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
-	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."`      // "commit" (default) or "branch"
+	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
+	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 
@@ -859,6 +863,53 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.JobTimeoutMinutes)
 	}
 	return resolve(30, repoVal, globalVal)
+}
+
+// ResolveExcludePatterns returns the merged exclude patterns from
+// repo config and global config. Repo patterns take priority and
+// are listed first, followed by any global patterns not already
+// present.
+func ResolveExcludePatterns(
+	repoPath string, globalCfg *Config,
+) []string {
+	var repo []string
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
+		repoCfg != nil {
+		repo = repoCfg.ExcludePatterns
+	}
+	var global []string
+	if globalCfg != nil {
+		global = globalCfg.ExcludePatterns
+	}
+	if len(repo) == 0 && len(global) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(repo))
+	merged := make([]string, 0, len(repo)+len(global))
+	for _, p := range repo {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		merged = append(merged, p)
+	}
+	for _, p := range global {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		merged = append(merged, p)
+	}
+	return merged
 }
 
 // IsBranchExcluded checks if a branch should be excluded from reviews

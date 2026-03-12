@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -98,11 +99,16 @@ func LocalBranchName(branch string) string {
 	return strings.TrimPrefix(branch, "origin/")
 }
 
-// GetDiff returns the full diff for a commit, excluding generated files like lock files
-func GetDiff(repoPath, sha string) (string, error) {
+// GetDiff returns the full diff for a commit, excluding generated
+// files like lock files. Extra exclude patterns (filenames or globs)
+// are appended to the built-in exclusion list.
+func GetDiff(
+	repoPath, sha string, extraExcludes ...string,
+) (string, error) {
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ".")
 	args = append(args, excludedPathPatterns...)
+	args = append(args, formatExcludeArgs(extraExcludes)...)
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
@@ -356,11 +362,16 @@ func GetRangeCommits(repoPath, rangeRef string) ([]string, error) {
 	return commits, nil
 }
 
-// GetRangeDiff returns the combined diff for a range, excluding generated files like lock files
-func GetRangeDiff(repoPath, rangeRef string) (string, error) {
+// GetRangeDiff returns the combined diff for a range, excluding
+// generated files like lock files. Extra exclude patterns (filenames
+// or globs) are appended to the built-in exclusion list.
+func GetRangeDiff(
+	repoPath, rangeRef string, extraExcludes ...string,
+) (string, error) {
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ".")
 	args = append(args, excludedPathPatterns...)
+	args = append(args, formatExcludeArgs(extraExcludes)...)
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
@@ -391,17 +402,24 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 // the root commit or repos with no commits.
 const EmptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// GetDirtyDiff returns a diff of all uncommitted changes including untracked files.
-// The diff includes both tracked file changes (via git diff HEAD) and untracked files
-// formatted as new-file diff entries. Excludes generated files like lock files.
-func GetDirtyDiff(repoPath string) (string, error) {
+// GetDirtyDiff returns a diff of all uncommitted changes including
+// untracked files. The diff includes both tracked file changes (via
+// git diff HEAD) and untracked files formatted as new-file diff
+// entries. Excludes generated files like lock files. Extra exclude
+// patterns (filenames or globs) are appended to the built-in list.
+func GetDirtyDiff(
+	repoPath string, extraExcludes ...string,
+) (string, error) {
 	var result strings.Builder
+
+	extra := formatExcludeArgs(extraExcludes)
 
 	// Build diff args with exclusions
 	diffArgs := func(baseArgs ...string) []string {
 		args := append(baseArgs, "--")
 		args = append(args, ".")
 		args = append(args, excludedPathPatterns...)
+		args = append(args, extra...)
 		return args
 	}
 
@@ -460,7 +478,7 @@ func GetDirtyDiff(repoPath string) (string, error) {
 		}
 
 		// Skip excluded files
-		if isExcludedFile(file) {
+		if isExcludedFile(file, extraExcludes) {
 			continue
 		}
 
@@ -513,16 +531,39 @@ func GetDirtyDiff(repoPath string) (string, error) {
 // These are typically generated files that add noise to code reviews.
 // Uses :(exclude) long form since :! shorthand doesn't work reliably with git show/diff.
 var excludedPathPatterns = []string{
-	":(exclude)uv.lock",
+	// JavaScript / Node
 	":(exclude)package-lock.json",
 	":(exclude)yarn.lock",
 	":(exclude)pnpm-lock.yaml",
-	":(exclude)Cargo.lock", // Rust uses capital C
-	":(exclude)cargo.lock", // Include lowercase for case-insensitive filesystems
-	":(exclude)Gemfile.lock",
+	":(exclude)bun.lockb",
+	":(exclude)bun.lock",
+	// Python
+	":(exclude)uv.lock",
 	":(exclude)poetry.lock",
-	":(exclude)composer.lock",
+	":(exclude)Pipfile.lock",
+	":(exclude)pdm.lock",
+	// Go
 	":(exclude)go.sum",
+	// Rust
+	":(exclude)Cargo.lock",
+	":(exclude)cargo.lock", // lowercase for case-insensitive filesystems
+	// Ruby
+	":(exclude)Gemfile.lock",
+	// PHP
+	":(exclude)composer.lock",
+	// .NET
+	":(exclude)packages.lock.json",
+	// Dart / Flutter
+	":(exclude)pubspec.lock",
+	// Elixir
+	":(exclude)mix.lock",
+	// Swift
+	":(exclude)Package.resolved",
+	// iOS / macOS
+	":(exclude)Podfile.lock",
+	// Nix
+	":(exclude)flake.lock",
+	// Directories
 	":(exclude).beads",   // Excludes entire directory tree
 	":(exclude).gocache", // Go build cache (sometimes created by agents)
 	":(exclude).cache",   // Generic cache directory (pip, pre-commit, etc.)
@@ -534,23 +575,67 @@ var excludedDirPatterns = map[string]struct{}{
 	".cache":   {},
 }
 
-// isExcludedFile checks if a file path matches any of the excluded patterns.
-// Used for filtering untracked files in GetDirtyDiff.
-func isExcludedFile(filePath string) bool {
-	// Check each exclusion pattern
-	for _, pattern := range excludedPathPatterns {
-		// Remove the ":(exclude)" prefix to get the actual pattern
+// formatExcludeArgs converts user-provided exclude patterns (filenames
+// or globs) into git pathspec arguments.
+func formatExcludeArgs(patterns []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		args = append(args, ":(exclude)"+p)
+	}
+	return args
+}
+
+// isExcludedFile checks if a file path matches any of the excluded
+// patterns. Used for filtering untracked files in GetDirtyDiff.
+// extraExcludes are user-configured patterns (filenames or globs).
+func isExcludedFile(filePath string, extraExcludes []string) bool {
+	if matchesExcludePattern(filePath, excludedPathPatterns) {
+		return true
+	}
+	if len(extraExcludes) > 0 {
+		return matchesExcludePattern(
+			filePath, formatExcludeArgs(extraExcludes),
+		)
+	}
+	return false
+}
+
+// matchesExcludePattern checks filePath against a list of
+// :(exclude)-prefixed pathspec patterns.
+func matchesExcludePattern(
+	filePath string, patterns []string,
+) bool {
+	for _, pattern := range patterns {
 		p := strings.TrimPrefix(pattern, ":(exclude)")
 
 		if _, ok := excludedDirPatterns[p]; ok {
-			// Directory patterns match any file within that directory
-			if filePath == p || strings.HasPrefix(filePath, p+"/") {
+			if filePath == p ||
+				strings.HasPrefix(filePath, p+"/") {
 				return true
 			}
 			continue
 		}
 
-		// Exact filename match (like uv.lock) - matches at root or in subdirs
+		// Try glob match first (handles *, ?, etc.)
+		base := path.Base(filePath)
+		if strings.ContainsAny(p, "*?[") {
+			if matched, _ := path.Match(p, base); matched {
+				return true
+			}
+			if matched, _ := path.Match(p, filePath); matched {
+				return true
+			}
+			continue
+		}
+
+		// Exact filename match - matches at root or in subdirs
 		if filePath == p || strings.HasSuffix(filePath, "/"+p) {
 			return true
 		}
