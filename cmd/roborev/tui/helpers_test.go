@@ -818,3 +818,55 @@ func TestDirtyPatchFilesError(t *testing.T) {
 
 	assert.Contains(t, err.Error(), "git diff")
 }
+
+func TestWrapLine(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		width int
+		want  []string
+	}{
+		{
+			name:  "short line unchanged",
+			line:  "hello world",
+			width: 20,
+			want:  []string{"hello world"},
+		},
+		{
+			name:  "empty line",
+			line:  "",
+			width: 20,
+			want:  []string{""},
+		},
+		{
+			name:  "breaks at word boundary",
+			line:  "hello world foo bar",
+			width: 11,
+			want:  []string{"hello", "world foo", "bar"},
+		},
+		{
+			name:  "long word forced break",
+			line:  "abcdefghijklmnop",
+			width: 10,
+			want:  []string{"abcdefghij", "klmnop"},
+		},
+		{
+			name:  "wide characters",
+			line:  "あいうえおかきくけこ",
+			width: 10,
+			want:  []string{"あいうえお", "かきくけこ"},
+		},
+		{
+			name:  "multiple wraps",
+			line:  "one two three four five six",
+			width: 10,
+			want:  []string{"one two", "three", "four five", "six"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapLine(tt.line, tt.width)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

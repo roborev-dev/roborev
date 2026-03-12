@@ -223,6 +223,56 @@ func wrapText(text string, width int) []string {
 	return result
 }
 
+// wrapLine wraps a single line (no embedded newlines) to the given
+// display width, breaking at word boundaries when possible. Returns
+// at least one element even for empty input.
+func wrapLine(line string, width int) []string {
+	if width <= 0 {
+		width = 100
+	}
+	if runewidth.StringWidth(line) <= width {
+		return []string{line}
+	}
+	var result []string
+	for runewidth.StringWidth(line) > width {
+		runes := []rune(line)
+		breakPoint := 0
+		currentWidth := 0
+		for i, r := range runes {
+			rw := runewidth.RuneWidth(r)
+			if currentWidth+rw > width {
+				break
+			}
+			currentWidth += rw
+			breakPoint = i + 1
+		}
+		if breakPoint == 0 {
+			breakPoint = 1
+		}
+		bestBreak := breakPoint
+		scanWidth := 0
+		for i := breakPoint - 1; i >= 0; i-- {
+			if runes[i] == ' ' {
+				bestBreak = i
+				break
+			}
+			scanWidth += runewidth.RuneWidth(runes[i])
+			if scanWidth > width/2 {
+				break
+			}
+		}
+		result = append(result, string(runes[:bestBreak]))
+		line = strings.TrimLeft(string(runes[bestBreak:]), " ")
+	}
+	if len(line) > 0 {
+		result = append(result, line)
+	}
+	if len(result) == 0 {
+		return []string{""}
+	}
+	return result
+}
+
 // markdownCache caches glamour-rendered lines for review and prompt views.
 // Stored as a pointer in model so that View() (value receiver) can update
 // the cache and have it persist across bubbletea's model copies.
