@@ -319,8 +319,13 @@ func (m model) handleColumnOptionsMouseClick(y int) (tea.Model, tea.Cmd) {
 	}
 
 	// Adjust for the separator line.
-	if separatorAt >= 0 && row >= separatorAt {
-		row-- // skip the separator blank line
+	if separatorAt >= 0 {
+		if row == separatorAt {
+			return m, nil // clicked the blank separator line
+		}
+		if row > separatorAt {
+			row-- // account for the separator blank line
+		}
 	}
 
 	if row < 0 || row >= len(m.colOptionsList) {

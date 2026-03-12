@@ -1792,6 +1792,16 @@ func TestColumnOptionsMouseClickSentinel(t *testing.T) {
 	bordersRow := 2 + bordersIdx + 1
 	initialBorders := m.colBordersOn
 
+	// Click the separator line (row just before borders) — should be a no-op.
+	separatorRow := 2 + bordersIdx
+	prevIdx := m.colOptionsIdx
+	prevLastEnabled := m.colOptionsList[bordersIdx-1].enabled
+	m, _ = updateModel(t, m, mouseLeftClick(5, separatorRow))
+	assert.Equal(t, prevIdx, m.colOptionsIdx, "separator click should not move cursor")
+	assert.Equal(t, prevLastEnabled, m.colOptionsList[bordersIdx-1].enabled,
+		"separator click should not toggle adjacent option")
+
+	// Click the actual borders row.
 	m, _ = updateModel(t, m, mouseLeftClick(5, bordersRow))
 	assert.Equal(t, bordersIdx, m.colOptionsIdx)
 	assert.NotEqual(t, initialBorders, m.colBordersOn, "expected borders toggled")
