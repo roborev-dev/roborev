@@ -371,12 +371,16 @@ func (m model) renderRespondView() string {
 			}
 			// Expand tabs to spaces (4-space tabs) for consistent width calculation
 			line = strings.ReplaceAll(line, "\t", "    ")
-			// Truncate lines that are too long (use visual width for wide characters)
-			line = runewidth.Truncate(line, boxWidth-2, "")
-			// Pad based on visual width, not rune count
-			padding := max(boxWidth-2-runewidth.StringWidth(line), 0)
-			fmt.Fprintf(&b, "│ %s%s │\x1b[K\n", line, strings.Repeat(" ", padding))
-			textLinesWritten++
+			// Word-wrap long lines to fit within the box
+			wrapped := wrapLine(line, boxWidth-2)
+			for _, wl := range wrapped {
+				if textLinesWritten >= maxTextLines {
+					break
+				}
+				padding := max(boxWidth-2-runewidth.StringWidth(wl), 0)
+				fmt.Fprintf(&b, "│ %s%s │\x1b[K\n", wl, strings.Repeat(" ", padding))
+				textLinesWritten++
+			}
 		}
 	}
 

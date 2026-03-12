@@ -818,3 +818,97 @@ func TestDirtyPatchFilesError(t *testing.T) {
 
 	assert.Contains(t, err.Error(), "git diff")
 }
+
+func TestWrapLine(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		width int
+		want  []string
+	}{
+		{
+			name:  "short line unchanged",
+			line:  "hello world",
+			width: 20,
+			want:  []string{"hello world"},
+		},
+		{
+			name:  "empty line",
+			line:  "",
+			width: 20,
+			want:  []string{""},
+		},
+		{
+			name:  "breaks at word boundary",
+			line:  "hello world foo bar",
+			width: 11,
+			want:  []string{"hello", "world foo", "bar"},
+		},
+		{
+			name:  "long word forced break",
+			line:  "abcdefghijklmnop",
+			width: 10,
+			want:  []string{"abcdefghij", "klmnop"},
+		},
+		{
+			name:  "wide characters",
+			line:  "あいうえおかきくけこ",
+			width: 10,
+			want:  []string{"あいうえお", "かきくけこ"},
+		},
+		{
+			name:  "multiple wraps",
+			line:  "one two three four five six",
+			width: 10,
+			want:  []string{"one two", "three", "four five", "six"},
+		},
+		{
+			name:  "preserves leading spaces in remainder",
+			line:  "if err != nil {   return err }",
+			width: 15,
+			want:  []string{"if err != nil", "{   return err", "}"},
+		},
+		{
+			name:  "indented continuation preserved",
+			line:  "func foo()     bar baz",
+			width: 12,
+			want:  []string{"func foo() ", "    bar baz"},
+		},
+		{
+			name:  "leading spaces preserved after wrap",
+			line:  "aaaaaaaaaa   bbb",
+			width: 10,
+			want:  []string{"aaaaaaaaaa", "   bbb"},
+		},
+		{
+			name:  "whitespace-only line preserves all spaces",
+			line:  "            ",
+			width: 10,
+			want:  []string{"         ", "   "},
+		},
+		{
+			name:  "indentation-only prefix preserved",
+			line:  "    x",
+			width: 3,
+			want:  []string{"  ", "  x"},
+		},
+		{
+			name:  "very narrow width no infinite loop",
+			line:  " ab cd",
+			width: 2,
+			want:  []string{" a", "b", "cd"},
+		},
+		{
+			name:  "width 1 terminates",
+			line:  "abc",
+			width: 1,
+			want:  []string{"a", "b", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapLine(tt.line, tt.width)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
