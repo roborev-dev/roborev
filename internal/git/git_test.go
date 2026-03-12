@@ -781,6 +781,15 @@ func TestFormatExcludeArgs(t *testing.T) {
 		},
 		formatExcludeArgs([]string{" ", "keep", "  "}),
 	)
+
+	// Leading slash = root-anchored (no **/ prefix)
+	assert.Equal(t,
+		[]string{
+			":(exclude,glob)vendor",
+			":(exclude,glob)vendor/**",
+		},
+		formatExcludeArgs([]string{"/vendor"}),
+	)
 }
 
 func TestGetDiffExtraExcludes(t *testing.T) {

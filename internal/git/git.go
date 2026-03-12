@@ -569,42 +569,38 @@ var excludedPathPatterns = []string{
 	":(exclude,glob)**/.cache/**",
 }
 
-// normalizePattern strips whitespace and leading/trailing slashes
-// from a user-provided exclude pattern. Returns "" for empty input.
-func normalizePattern(p string) string {
-	p = strings.TrimSpace(p)
-	p = strings.TrimRight(p, "/")
-	p = strings.TrimLeft(p, "/")
-	return p
-}
-
 // formatExcludeArgs converts user-provided exclude patterns (filenames
 // or globs) into git pathspec arguments. Plain names without path
 // separators get both **/name (file match) and **/name/** (directory
 // subtree) so they work whether the name is a file or directory.
-// Patterns containing "/" are passed through with :(exclude,glob).
+// Leading-slash patterns (/vendor) are root-anchored — no **/
+// prefix. Patterns containing "/" are passed through as-is.
 func formatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
 	}
 	args := make([]string, 0, len(patterns))
 	for _, raw := range patterns {
-		p := normalizePattern(raw)
+		p := strings.TrimSpace(raw)
+		p = strings.TrimRight(p, "/")
 		if p == "" {
 			continue
 		}
-		if strings.Contains(p, "/") {
-			// Emit both exact and subtree forms so
-			// "vendor/dist" excludes both the entry and
-			// any files inside the directory.
+
+		// Leading slash = root-anchored. Strip the slash for
+		// pathspec but don't add **/ prefix.
+		rooted := strings.HasPrefix(p, "/")
+		p = strings.TrimLeft(p, "/")
+		if p == "" {
+			continue
+		}
+
+		if rooted || strings.Contains(p, "/") {
 			args = append(args,
 				":(exclude,glob)"+p,
 				":(exclude,glob)"+p+"/**",
 			)
 		} else {
-			// Emit both file and directory forms so "vendor"
-			// excludes both a file named vendor and the
-			// contents of any vendor/ directory.
 			args = append(args,
 				":(exclude,glob)**/"+p,
 				":(exclude,glob)**/"+p+"/**",
