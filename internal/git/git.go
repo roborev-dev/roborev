@@ -595,7 +595,13 @@ func formatExcludeArgs(patterns []string) []string {
 			continue
 		}
 		if strings.Contains(p, "/") {
-			args = append(args, ":(exclude,glob)"+p)
+			// Emit both exact and subtree forms so
+			// "vendor/dist" excludes both the entry and
+			// any files inside the directory.
+			args = append(args,
+				":(exclude,glob)"+p,
+				":(exclude,glob)"+p+"/**",
+			)
 		} else {
 			// Emit both file and directory forms so "vendor"
 			// excludes both a file named vendor and the

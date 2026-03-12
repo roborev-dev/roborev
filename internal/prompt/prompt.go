@@ -666,9 +666,11 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	sb.WriteString(review.Output)
 	sb.WriteString("\n\n")
 
-	// Include the original diff for context if we have job info
+	// Include the original diff for context if we have job info.
+	// Don't apply current exclude patterns — the diff should match
+	// what the original review saw so findings stay relevant.
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
-		diff, err := git.GetDiff(repoPath, review.Job.GitRef, b.resolveExcludes(repoPath, "")...)
+		diff, err := git.GetDiff(repoPath, review.Job.GitRef)
 		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {
 			sb.WriteString("## Original Commit Diff (for context)\n\n")
 			sb.WriteString("```diff\n")

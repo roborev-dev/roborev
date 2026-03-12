@@ -891,6 +891,29 @@ func ResolveExcludePatterns(
 	return mergePatterns(repo, global)
 }
 
+// ResolveExcludePatternsLocal is like ResolveExcludePatterns but
+// reads repo config from the working tree instead of the default
+// branch. Use this for dirty reviews where the user is reviewing
+// local changes and expects local config to apply.
+func ResolveExcludePatternsLocal(
+	repoPath string, globalCfg *Config, reviewType string,
+) []string {
+	var repo []string
+	if reviewType != "security" {
+		if fsCfg, err := LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+			repo = fsCfg.ExcludePatterns
+		}
+	}
+	var global []string
+	if globalCfg != nil {
+		global = globalCfg.ExcludePatterns
+	}
+	if len(repo) == 0 && len(global) == 0 {
+		return nil
+	}
+	return mergePatterns(repo, global)
+}
+
 // loadRepoExcludePatterns reads exclude_patterns from the default
 // branch's .roborev.toml, falling back to the filesystem config
 // when no default branch config exists (e.g., no remote, or

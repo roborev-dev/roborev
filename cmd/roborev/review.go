@@ -228,9 +228,12 @@ Examples:
 				}
 
 				// Generate dirty diff (includes untracked files).
-				// Apply configured exclude patterns so lockfiles etc. are filtered.
+				// Use working-tree repo config (not default branch) for
+				// dirty reviews so local exclude_patterns changes apply.
 				globalCfg, _ := config.LoadGlobal()
-				excludes := config.ResolveExcludePatterns(root, globalCfg, reviewType)
+				excludes := config.ResolveExcludePatternsLocal(
+					root, globalCfg, reviewType,
+				)
 				diffContent, err = git.GetDirtyDiff(root, excludes...)
 				if err != nil {
 					return fmt.Errorf("get dirty diff: %w", err)

@@ -975,9 +975,12 @@ func TestFormatExcludeArgs(t *testing.T) {
 		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
 	)
 
-	// Patterns with path separators are used as-is
+	// Patterns with path separators get both exact and subtree forms
 	assert.Equal(t,
-		[]string{":(exclude,glob)vendor/dist"},
+		[]string{
+			":(exclude,glob)vendor/dist",
+			":(exclude,glob)vendor/dist/**",
+		},
 		formatExcludeArgs([]string{"vendor/dist"}),
 	)
 

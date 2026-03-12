@@ -645,7 +645,7 @@ func TestBuildDirtyExcludesGlobalPatterns(t *testing.T) {
 	assertNotContains(t, p, "custom.dat", "excluded file should not be in dirty prompt")
 }
 
-func TestBuildAddressPromptExcludesGlobalPatterns(t *testing.T) {
+func TestBuildAddressPromptShowsFullDiff(t *testing.T) {
 	repoPath, sha := setupExcludePatternRepo(t)
 
 	cfg := &config.Config{
@@ -663,12 +663,11 @@ func TestBuildAddressPromptExcludesGlobalPatterns(t *testing.T) {
 	p, err := b.BuildAddressPrompt(repoPath, review, nil, "")
 	require.NoError(t, err)
 
-	// The original diff section should exclude the pattern
-	assertContains(t, p, "keep.go", "retained file should be in address prompt diff")
-	// custom.dat should not appear in the diff (it will still
-	// appear in the review output which is opaque text)
+	// Address prompts should NOT apply current excludes — the diff
+	// must match what the original review saw so findings stay valid.
 	diffIdx := strings.Index(p, "## Original Commit Diff")
 	require.NotEqual(t, -1, diffIdx, "address prompt should have original diff section")
 	diffSection := p[diffIdx:]
-	assertNotContains(t, diffSection, "custom.dat", "excluded file should not be in address prompt diff")
+	assertContains(t, diffSection, "keep.go", "retained file should be in address prompt diff")
+	assertContains(t, diffSection, "custom.dat", "excluded file should still be in address prompt diff")
 }
