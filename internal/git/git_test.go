@@ -906,6 +906,31 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"pkg/.cache/sub/deep/data.bin",
 			[]string{"**/.cache/**"}, true,
 		},
+		{
+			"glob metachar before double-star",
+			"pkg/.cache-v2/data.bin",
+			[]string{"**/.cache-*/**"}, true,
+		},
+		{
+			"glob metachar before double-star no match",
+			"pkg/.other/data.bin",
+			[]string{"**/.cache-*/**"}, false,
+		},
+		{
+			"bracket pattern before double-star",
+			"x/a/file.txt",
+			[]string{"**/[ab]/**"}, true,
+		},
+		{
+			"bracket pattern before double-star no match",
+			"x/c/file.txt",
+			[]string{"**/[ab]/**"}, false,
+		},
+		{
+			"wildcard segment in multi-star pattern",
+			"lib/vendor-v2/dist/app.min.js",
+			[]string{"**/vendor-*/**/*.min.js"}, true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

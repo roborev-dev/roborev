@@ -726,12 +726,20 @@ func globMatch(pattern, name string) bool {
 	before, after, _ := strings.Cut(pattern, "**")
 
 	// before must match a prefix of name (segment-aligned).
+	// Use path.Match per segment so glob chars in before work.
 	if before != "" {
-		// before always ends with "/" (e.g. ".cache/**" → ".cache/")
-		if !strings.HasPrefix(name, before) {
-			return false
+		before = strings.TrimSuffix(before, "/")
+		for seg := range strings.SplitSeq(before, "/") {
+			i := strings.IndexByte(name, '/')
+			if i < 0 {
+				return false
+			}
+			m, _ := path.Match(seg, name[:i])
+			if !m {
+				return false
+			}
+			name = name[i+1:]
 		}
-		name = name[len(before):]
 	}
 
 	// after may start with "/" — strip it since ** consumed
