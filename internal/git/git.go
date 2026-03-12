@@ -745,7 +745,7 @@ func EnsureAbsoluteHooksPath(repoPath string) error {
 		// Not set at any level — nothing to fix.
 		return nil
 	}
-	raw := strings.TrimSpace(string(out))
+	raw := normalizeMSYSPath(string(out))
 	if raw == "" || filepath.IsAbs(raw) || isGitTildePath(raw) {
 		return nil
 	}
@@ -807,9 +807,7 @@ func GetHooksPath(repoPath string) (string, error) {
 		)
 	}
 
-	hooksPath := filepath.FromSlash(
-		strings.TrimSpace(string(out)),
-	)
+	hooksPath := normalizeMSYSPath(string(out))
 
 	if !filepath.IsAbs(hooksPath) {
 		// Resolve against the main repo root so linked
