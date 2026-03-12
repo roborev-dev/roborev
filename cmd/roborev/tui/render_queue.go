@@ -97,18 +97,19 @@ func (m model) getVisibleSelectedIdx() int {
 
 // Queue table column indices.
 const (
-	colSel     = iota // "> " selection indicator
-	colJobID          // Job ID
-	colRef            // Git ref (short SHA or range)
-	colBranch         // Branch name
-	colRepo           // Repository display name
-	colAgent          // Agent name
-	colQueued         // Enqueue timestamp
-	colElapsed        // Elapsed time
-	colStatus         // Job status
-	colPF             // Pass/Fail verdict
-	colHandled        // Done status
-	colCount          // total number of columns
+	colSel       = iota // "> " selection indicator
+	colJobID            // Job ID
+	colRef              // Git ref (short SHA or range)
+	colBranch           // Branch name
+	colRepo             // Repository display name
+	colAgent            // Agent name
+	colQueued           // Enqueue timestamp
+	colElapsed          // Elapsed time
+	colStatus           // Job status
+	colPF               // Pass/Fail verdict
+	colHandled          // Done status
+	colSessionID        // Session ID
+	colCount            // total number of columns
 )
 
 func (m model) renderQueueView() string {
@@ -257,7 +258,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -305,14 +306,15 @@ func (m model) renderQueueView() string {
 
 		// Fixed-width columns: exact sizes (content + padding, not counting inter-column spacing)
 		fixedWidth := map[int]int{
-			colSel:     2,
-			colJobID:   idWidth,
-			colStatus:  max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
-			colQueued:  12,
-			colElapsed: 8,
-			colPF:      3,                                       // "P/F" header = 3
-			colHandled: max(contentWidth[colHandled], 6),        // "Closed" header = 6
-			colAgent:   min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
+			colSel:       2,
+			colJobID:     idWidth,
+			colStatus:    max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
+			colQueued:    12,
+			colElapsed:   8,
+			colPF:        3,                                       // "P/F" header = 3
+			colHandled:   max(contentWidth[colHandled], 6),        // "Closed" header = 6
+			colAgent:     min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
+			colSessionID: max(contentWidth[colSessionID], 7),      // "Session" header = 7
 		}
 
 		// Flexible columns absorb excess space
@@ -635,7 +637,9 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled}
+	sessionID := job.SessionID
+
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID}
 }
 
 // statusLabel returns a capitalized display label for the job status.
@@ -739,6 +743,16 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		cfg.HiddenColumns = nil
 		dirty = true
 	}
+	// Add default-hidden columns to existing configs that don't mention them.
+	if len(cfg.HiddenColumns) > 0 {
+		for col := range defaultHiddenColumns {
+			name := columnConfigNames[col]
+			if !slices.Contains(cfg.HiddenColumns, name) {
+				cfg.HiddenColumns = append(cfg.HiddenColumns, name)
+				dirty = true
+			}
+		}
+	}
 	// Old default orders → reset
 	oldDefaults := [][]string{
 		// status before queued (pre-rename)
@@ -760,32 +774,34 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colSessionID}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
-	colRef:     "Ref",
-	colBranch:  "Branch",
-	colRepo:    "Repo",
-	colAgent:   "Agent",
-	colStatus:  "Status",
-	colQueued:  "Queued",
-	colElapsed: "Elapsed",
-	colPF:      "P/F",
-	colHandled: "Closed",
+	colRef:       "Ref",
+	colBranch:    "Branch",
+	colRepo:      "Repo",
+	colAgent:     "Agent",
+	colStatus:    "Status",
+	colQueued:    "Queued",
+	colElapsed:   "Elapsed",
+	colPF:        "P/F",
+	colHandled:   "Closed",
+	colSessionID: "Session",
 }
 
 // columnConfigNames maps column constants to config file names (lowercase).
 var columnConfigNames = map[int]string{
-	colRef:     "ref",
-	colBranch:  "branch",
-	colRepo:    "repo",
-	colAgent:   "agent",
-	colStatus:  "status",
-	colQueued:  "queued",
-	colElapsed: "elapsed",
-	colPF:      "pf",
-	colHandled: "closed",
+	colRef:       "ref",
+	colBranch:    "branch",
+	colRepo:      "repo",
+	colAgent:     "agent",
+	colStatus:    "status",
+	colQueued:    "queued",
+	colElapsed:   "elapsed",
+	colPF:        "pf",
+	colHandled:   "closed",
+	colSessionID: "session_id",
 }
 
 // drainFlexOverflow reduces flex column widths to absorb overflow,
@@ -823,9 +839,21 @@ func columnDisplayName(col int) string {
 	return lookupDisplayName(col, columnNames)
 }
 
+// defaultHiddenColumns lists columns that are hidden by default.
+// Users can enable them via the column options modal.
+var defaultHiddenColumns = map[int]bool{
+	colSessionID: true,
+}
+
 // parseHiddenColumns converts config hidden_columns strings to column ID set.
+// When names is empty (no user config), defaultHiddenColumns are applied.
+// When names is non-empty, only the explicitly listed columns are hidden.
 func parseHiddenColumns(names []string) map[int]bool {
 	result := map[int]bool{}
+	if len(names) == 0 {
+		maps.Copy(result, defaultHiddenColumns)
+		return result
+	}
 	lookup := map[string]int{}
 	for id, name := range columnConfigNames {
 		lookup[name] = id
