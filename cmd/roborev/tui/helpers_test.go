@@ -862,6 +862,24 @@ func TestWrapLine(t *testing.T) {
 			width: 10,
 			want:  []string{"one two", "three", "four five", "six"},
 		},
+		{
+			name:  "preserves leading spaces in remainder",
+			line:  "if err != nil {   return err }",
+			width: 15,
+			want:  []string{"if err != nil", "{   return err", "}"},
+		},
+		{
+			name:  "indented continuation preserved",
+			line:  "func foo()     bar baz",
+			width: 12,
+			want:  []string{"func foo() ", "   bar baz"},
+		},
+		{
+			name:  "leading spaces preserved after wrap",
+			line:  "aaaaaaaaaa   bbb",
+			width: 10,
+			want:  []string{"aaaaaaaaaa", "  bbb"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

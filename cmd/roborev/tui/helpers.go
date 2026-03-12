@@ -262,7 +262,13 @@ func wrapLine(line string, width int) []string {
 			}
 		}
 		result = append(result, string(runes[:bestBreak]))
-		line = strings.TrimLeft(string(runes[bestBreak:]), " ")
+		// Skip only the single space at the break point when we
+		// broke at a word boundary; preserve all other leading spaces.
+		if bestBreak < len(runes) && runes[bestBreak] == ' ' {
+			line = string(runes[bestBreak+1:])
+		} else {
+			line = string(runes[bestBreak:])
+		}
 	}
 	if len(line) > 0 {
 		result = append(result, line)
