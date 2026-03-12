@@ -234,7 +234,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-dir: %w", err)
 	}
-	gitDir := strings.TrimSpace(string(gitDirOut))
+	gitDir := normalizeMSYSPath(string(gitDirOut))
 
 	commonDirCmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	commonDirCmd.Dir = path
@@ -242,7 +242,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
-	commonDir := strings.TrimSpace(string(commonDirOut))
+	commonDir := normalizeMSYSPath(string(commonDirOut))
 
 	// Make paths absolute for comparison
 	if !filepath.IsAbs(gitDir) {
@@ -271,7 +271,7 @@ func GetMainRepoRoot(path string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("git config core.worktree for submodule worktree: %w", err)
 		}
-		worktree := strings.TrimSpace(string(out))
+		worktree := normalizeMSYSPath(string(out))
 		if !filepath.IsAbs(worktree) {
 			worktree = filepath.Join(commonDir, worktree)
 		}
