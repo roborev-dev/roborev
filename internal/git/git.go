@@ -580,10 +580,10 @@ func normalizePattern(p string) string {
 }
 
 // formatExcludeArgs converts user-provided exclude patterns (filenames
-// or globs) into git pathspec arguments. Plain names and globs without
-// path separators are wrapped with :(exclude,glob)**/name so they
-// match at any directory depth. Patterns containing "/" are passed
-// through with :(exclude,glob) as-is.
+// or globs) into git pathspec arguments. Plain names without path
+// separators get both **/name (file match) and **/name/** (directory
+// subtree) so they work whether the name is a file or directory.
+// Patterns containing "/" are passed through with :(exclude,glob).
 func formatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
@@ -594,13 +594,16 @@ func formatExcludeArgs(patterns []string) []string {
 		if p == "" {
 			continue
 		}
-		// Patterns with path separators are used as-is (already
-		// rooted or explicitly recursive). Everything else gets
-		// a **/ prefix so it matches at any directory depth.
 		if strings.Contains(p, "/") {
 			args = append(args, ":(exclude,glob)"+p)
 		} else {
-			args = append(args, ":(exclude,glob)**/"+p)
+			// Emit both file and directory forms so "vendor"
+			// excludes both a file named vendor and the
+			// contents of any vendor/ directory.
+			args = append(args,
+				":(exclude,glob)**/"+p,
+				":(exclude,glob)**/"+p+"/**",
+			)
 		}
 	}
 	return args
@@ -667,11 +670,13 @@ func matchesUserPattern(filePath, p string) bool {
 
 	// Glob patterns
 	if strings.ContainsAny(p, "*?[") {
-		// path.Match doesn't support **, so handle it manually.
-		// "**/<suffix>" means match <suffix> against every suffix
-		// of the path (each possible starting directory depth).
-		if after, ok := strings.CutPrefix(p, "**/"); ok {
-			return matchGlobSuffix(filePath, after)
+		// Any pattern with ** must go through globMatch since
+		// path.Match doesn't support ** across directories.
+		if strings.Contains(p, "**") {
+			if after, ok := strings.CutPrefix(p, "**/"); ok {
+				return matchGlobSuffix(filePath, after)
+			}
+			return globMatch(p, filePath)
 		}
 		base := path.Base(filePath)
 		if matched, _ := path.Match(p, base); matched {
@@ -683,16 +688,21 @@ func matchesUserPattern(filePath, p string) bool {
 		return false
 	}
 
+	// Patterns with "/" are root-anchored, matching git behavior.
+	// "vendor/dist" matches vendor/dist and vendor/dist/foo.js
+	// but NOT pkg/vendor/dist.
+	if strings.Contains(p, "/") {
+		return filePath == p ||
+			strings.HasPrefix(filePath, p+"/")
+	}
+
 	// Plain name — match as filename or directory at any depth.
 	// "vendor" matches vendor/, vendor/foo.go, pkg/vendor/foo.go.
 	// "custom.lock" matches custom.lock, sub/custom.lock.
-	if filePath == p ||
+	return filePath == p ||
 		strings.HasSuffix(filePath, "/"+p) ||
 		strings.HasPrefix(filePath, p+"/") ||
-		strings.Contains(filePath, "/"+p+"/") {
-		return true
-	}
-	return false
+		strings.Contains(filePath, "/"+p+"/")
 }
 
 // matchGlobSuffix tries to match glob against filePath and every

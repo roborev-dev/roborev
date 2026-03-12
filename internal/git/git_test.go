@@ -931,6 +931,26 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"lib/vendor-v2/dist/app.min.js",
 			[]string{"**/vendor-*/**/*.min.js"}, true,
 		},
+		{
+			"slashed pattern anchored to root",
+			"vendor/dist/bundle.js",
+			[]string{"vendor/dist"}, true,
+		},
+		{
+			"slashed pattern not matching nested",
+			"pkg/vendor/dist/bundle.js",
+			[]string{"vendor/dist"}, false,
+		},
+		{
+			"internal double-star without leading **",
+			"src/deep/nested/app.js",
+			[]string{"src/**/*.js"}, true,
+		},
+		{
+			"internal double-star no match",
+			"other/deep/app.js",
+			[]string{"src/**/*.js"}, false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -944,11 +964,13 @@ func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, formatExcludeArgs(nil))
 	assert.Nil(t, formatExcludeArgs([]string{}))
 
-	// Plain names and globs get **/name for recursive matching
+	// Plain names get both file and directory forms
 	assert.Equal(t,
 		[]string{
 			":(exclude,glob)**/foo.lock",
+			":(exclude,glob)**/foo.lock/**",
 			":(exclude,glob)**/*.min.js",
+			":(exclude,glob)**/*.min.js/**",
 		},
 		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
 	)
@@ -961,7 +983,10 @@ func TestFormatExcludeArgs(t *testing.T) {
 
 	// Whitespace-only patterns are skipped
 	assert.Equal(t,
-		[]string{":(exclude,glob)**/keep"},
+		[]string{
+			":(exclude,glob)**/keep",
+			":(exclude,glob)**/keep/**",
+		},
 		formatExcludeArgs([]string{" ", "keep", "  "}),
 	)
 }
