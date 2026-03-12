@@ -230,7 +230,7 @@ Examples:
 				// Generate dirty diff (includes untracked files).
 				// Apply configured exclude patterns so lockfiles etc. are filtered.
 				globalCfg, _ := config.LoadGlobal()
-				excludes := config.ResolveExcludePatterns(root, globalCfg)
+				excludes := config.ResolveExcludePatterns(root, globalCfg, reviewType)
 				diffContent, err = git.GetDirtyDiff(root, excludes...)
 				if err != nil {
 					return fmt.Errorf("get dirty diff: %w", err)

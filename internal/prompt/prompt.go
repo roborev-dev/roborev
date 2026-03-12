@@ -145,8 +145,14 @@ func NewBuilderWithConfig(
 }
 
 // resolveExcludes returns the merged exclude patterns for a repo.
-func (b *Builder) resolveExcludes(repoPath string) []string {
-	return config.ResolveExcludePatterns(repoPath, b.globalCfg)
+// Security reviews skip repo-level patterns to prevent a compromised
+// default branch from hiding files from review.
+func (b *Builder) resolveExcludes(
+	repoPath, reviewType string,
+) []string {
+	return config.ResolveExcludePatterns(
+		repoPath, b.globalCfg, reviewType,
+	)
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
@@ -277,7 +283,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	sb.WriteString("\n")
 
 	// Get and include the diff
-	diff, err := git.GetDiff(repoPath, sha, b.resolveExcludes(repoPath)...)
+	diff, err := git.GetDiff(repoPath, sha, b.resolveExcludes(repoPath, reviewType)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
 	}
@@ -359,7 +365,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	sb.WriteString("\n")
 
 	// Get and include the combined diff for the range
-	diff, err := git.GetRangeDiff(repoPath, rangeRef, b.resolveExcludes(repoPath)...)
+	diff, err := git.GetRangeDiff(repoPath, rangeRef, b.resolveExcludes(repoPath, reviewType)...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
@@ -662,7 +668,7 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 
 	// Include the original diff for context if we have job info
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
-		diff, err := git.GetDiff(repoPath, review.Job.GitRef, b.resolveExcludes(repoPath)...)
+		diff, err := git.GetDiff(repoPath, review.Job.GitRef, b.resolveExcludes(repoPath, "")...)
 		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {
 			sb.WriteString("## Original Commit Diff (for context)\n\n")
 			sb.WriteString("```diff\n")

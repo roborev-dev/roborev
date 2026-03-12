@@ -871,10 +871,16 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 // branches from suppressing files in reviews. Falls back to the
 // filesystem config only when no default branch config exists.
 // Global patterns are appended after repo patterns (deduplicated).
+//
+// Security reviews skip repo-level patterns entirely so a
+// compromised default branch cannot suppress files from review.
 func ResolveExcludePatterns(
-	repoPath string, globalCfg *Config,
+	repoPath string, globalCfg *Config, reviewType string,
 ) []string {
-	repo := loadRepoExcludePatterns(repoPath)
+	var repo []string
+	if reviewType != "security" {
+		repo = loadRepoExcludePatterns(repoPath)
+	}
 	var global []string
 	if globalCfg != nil {
 		global = globalCfg.ExcludePatterns
