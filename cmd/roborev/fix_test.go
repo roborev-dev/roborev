@@ -2533,3 +2533,374 @@ func TestBuildBatchFixPromptMinSeverity(t *testing.T) {
 		}
 	})
 }
+
+func TestFilterReachableJobs(t *testing.T) {
+	repo := newTestGitRepo(t)
+	mainSHA := repo.CommitFile("a.txt", "a", "commit on main")
+
+	// Detect the default branch name (may be "main" or "master")
+	defaultBranch := strings.TrimSpace(repo.Run("rev-parse", "--abbrev-ref", "HEAD"))
+
+	// Create a divergent branch with its own commit
+	repo.Run("checkout", "-b", "other-branch")
+	otherSHA := repo.CommitFile("b.txt", "b", "commit on other")
+	repo.Run("checkout", defaultBranch)
+
+	tests := []struct {
+		name           string
+		branchOverride string // non-empty for --list with --branch
+		jobs           []storage.ReviewJob
+		wantIDs        []int64
+	}{
+		{
+			name: "reachable commit included",
+			jobs: []storage.ReviewJob{
+				{ID: 1, GitRef: mainSHA},
+			},
+			wantIDs: []int64{1},
+		},
+		{
+			name: "unreachable commit excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 2, GitRef: otherSHA},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "mixed reachable and unreachable",
+			jobs: []storage.ReviewJob{
+				{ID: 1, GitRef: mainSHA},
+				{ID: 2, GitRef: otherSHA},
+			},
+			wantIDs: []int64{1},
+		},
+		{
+			name: "empty GitRef matching branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 3, GitRef: "", Branch: defaultBranch},
+			},
+			wantIDs: []int64{3},
+		},
+		{
+			name: "empty GitRef different branch excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 3, GitRef: "", Branch: "other-branch"},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "empty GitRef no branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 3, GitRef: ""},
+			},
+			wantIDs: []int64{3},
+		},
+		{
+			name: "dirty ref matching branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 4, GitRef: "dirty", Branch: defaultBranch},
+			},
+			wantIDs: []int64{4},
+		},
+		{
+			name: "dirty ref different branch excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 4, GitRef: "dirty", Branch: "other-branch"},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "dirty ref no branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 4, GitRef: "dirty"},
+			},
+			wantIDs: []int64{4},
+		},
+		{
+			name: "range ref with reachable end included",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: otherSHA + ".." + mainSHA},
+			},
+			wantIDs: []int64{5},
+		},
+		{
+			name: "range ref with unreachable end excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: mainSHA + ".." + otherSHA},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "range ref with bad end fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: "abc123..def456"},
+			},
+			wantIDs: []int64{5},
+		},
+		{
+			name: "unknown SHA fails open (included)",
+			jobs: []storage.ReviewJob{
+				{ID: 6, GitRef: "0000000000000000000000000000000000000000"},
+			},
+			wantIDs: []int64{6},
+		},
+		{
+			name: "task ref matching branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 7, GitRef: "run", Branch: defaultBranch,
+					JobType: storage.JobTypeTask},
+			},
+			wantIDs: []int64{7},
+		},
+		{
+			name: "task ref different branch excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 8, GitRef: "analyze", Branch: "other-branch",
+					JobType: storage.JobTypeTask},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "task ref no branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 9, GitRef: "custom-label",
+					JobType: storage.JobTypeTask},
+			},
+			wantIDs: []int64{9},
+		},
+		{
+			name:           "branch override includes matching dirty ref",
+			branchOverride: "other-branch",
+			jobs: []storage.ReviewJob{
+				{ID: 10, GitRef: "dirty", Branch: "other-branch"},
+			},
+			wantIDs: []int64{10},
+		},
+		{
+			name:           "branch override excludes non-matching dirty ref",
+			branchOverride: "other-branch",
+			jobs: []storage.ReviewJob{
+				{ID: 11, GitRef: "dirty", Branch: defaultBranch},
+			},
+			wantIDs: nil,
+		},
+		{
+			name:           "branch override includes matching SHA ref",
+			branchOverride: "other-branch",
+			jobs: []storage.ReviewJob{
+				{ID: 12, GitRef: otherSHA, Branch: "other-branch"},
+			},
+			wantIDs: []int64{12},
+		},
+		{
+			name:           "branch override excludes non-matching SHA ref",
+			branchOverride: "other-branch",
+			jobs: []storage.ReviewJob{
+				{ID: 13, GitRef: mainSHA, Branch: defaultBranch},
+			},
+			wantIDs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterReachableJobs(
+				repo.Dir, tt.branchOverride, tt.jobs,
+			)
+			var gotIDs []int64
+			for _, j := range got {
+				gotIDs = append(gotIDs, j.ID)
+			}
+			assert.Equal(t, tt.wantIDs, gotIDs)
+		})
+	}
+}
+
+func TestFilterReachableJobsDetachedHead(t *testing.T) {
+	repo := newTestGitRepo(t)
+	sha := repo.CommitFile("a.txt", "a", "initial")
+
+	// Detach HEAD
+	repo.Run("checkout", "--detach", sha)
+
+	tests := []struct {
+		name    string
+		jobs    []storage.ReviewJob
+		wantIDs []int64
+	}{
+		{
+			name: "SHA ref still uses commit graph",
+			jobs: []storage.ReviewJob{
+				{ID: 1, GitRef: sha},
+			},
+			wantIDs: []int64{1},
+		},
+		{
+			name: "dirty ref with branch excluded (no match possible)",
+			jobs: []storage.ReviewJob{
+				{ID: 2, GitRef: "dirty", Branch: "some-branch"},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "dirty ref without branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 3, GitRef: "dirty"},
+			},
+			wantIDs: []int64{3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterReachableJobs(repo.Dir, "", tt.jobs)
+			var gotIDs []int64
+			for _, j := range got {
+				gotIDs = append(gotIDs, j.ID)
+			}
+			assert.Equal(t, tt.wantIDs, gotIDs)
+		})
+	}
+}
+
+func TestLooksLikeSHA(t *testing.T) {
+	tests := []struct {
+		s    string
+		want bool
+	}{
+		{"abc1234", true},
+		{"0000000000000000000000000000000000000000", true},
+		{"abcdef1234567890abcdef1234567890abcdef12", true},
+		{"abc123", false},         // too short (6 chars)
+		{"", false},               // empty
+		{"dirty", false},          // non-hex
+		{"run", false},            // task label
+		{"ABCDEF1", false},        // uppercase not valid
+		{"abc123..def456", false}, // range
+	}
+	for _, tt := range tests {
+		t.Run(tt.s, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeSHA(tt.s))
+		})
+	}
+}
+
+func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
+	repo, worktreeDir := setupWorktree(t)
+
+	// Detect the default branch name
+	defaultBranch := strings.TrimSpace(
+		repo.Run("rev-parse", "--abbrev-ref", "HEAD"),
+	)
+
+	// Create a commit only on the main branch (not reachable from worktree)
+	repo.Run("checkout", defaultBranch)
+	mainOnlySHA := repo.CommitFile(
+		"main-only.txt", "content", "main-only commit",
+	)
+
+	// Create a commit on the worktree branch
+	cmd := exec.Command("git", "checkout", "wt-branch")
+	cmd.Dir = worktreeDir
+	require.NoError(t, cmd.Run(), "checkout wt-branch in worktree")
+
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = worktreeDir
+	_ = cmd.Run()
+	wtFile := filepath.Join(worktreeDir, "wt-file.txt")
+	require.NoError(t, os.WriteFile(wtFile, []byte("wt"), 0644))
+	cmd = exec.Command("git", "add", "wt-file.txt")
+	cmd.Dir = worktreeDir
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "commit", "-m", "worktree commit")
+	cmd.Dir = worktreeDir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "commit in worktree: %s", out)
+	cmd = exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = worktreeDir
+	shaOut, err := cmd.Output()
+	require.NoError(t, err)
+	wtSHA := strings.TrimSpace(string(shaOut))
+
+	var reviewCalls, closeCalls atomic.Int32
+	var processedJobIDs []int64
+	var mu sync.Mutex
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
+				// Return jobs for both branches
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{
+						{
+							ID:     100,
+							Status: storage.JobStatusDone,
+							Agent:  "test",
+							GitRef: mainOnlySHA,
+							Branch: "main",
+						},
+						{
+							ID:     200,
+							Status: storage.JobStatusDone,
+							Agent:  "test",
+							GitRef: wtSHA,
+							Branch: "wt-branch",
+						},
+					},
+					"has_more": false,
+				})
+			} else {
+				// Individual job fetches
+				idStr := q.Get("id")
+				var id int64
+				fmt.Sscanf(idStr, "%d", &id)
+				mu.Lock()
+				processedJobIDs = append(processedJobIDs, id)
+				mu.Unlock()
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{
+						{
+							ID:     id,
+							Status: storage.JobStatusDone,
+							Agent:  "test",
+						},
+					},
+					"has_more": false,
+				})
+			}
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			reviewCalls.Add(1)
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			closeCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	_, runErr := runWithOutput(t, worktreeDir, func(cmd *cobra.Command) error {
+		return runFixOpen(
+			cmd, "", false,
+			fixOptions{agentName: "test", reasoning: "fast"},
+		)
+	})
+	require.NoError(t, runErr, "runFixOpen")
+
+	// Only the worktree-reachable job (200) should be processed
+	mu.Lock()
+	ids := processedJobIDs
+	mu.Unlock()
+
+	assert.Contains(t, ids, int64(200),
+		"worktree-reachable job should be processed")
+	assert.NotContains(t, ids, int64(100),
+		"main-only job should be filtered out")
+}

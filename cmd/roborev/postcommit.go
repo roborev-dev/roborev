@@ -51,6 +51,10 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
+			// Migrate stale relative core.hooksPath to absolute
+			// so linked worktrees resolve hooks correctly.
+			_ = git.EnsureAbsoluteHooksPath(root)
+
 			if err := ensureDaemon(); err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
 					"daemon unavailable: %v", err,

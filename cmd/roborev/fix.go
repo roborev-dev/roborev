@@ -82,6 +82,15 @@ Examples:
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Migrate stale relative core.hooksPath to absolute
+			// so linked worktrees resolve hooks correctly. Best-
+			// effort: runs from a CLI path the user invokes
+			// directly, unlike the post-commit hook which can't
+			// self-heal when hooks are already misresolved.
+			if root, err := git.GetRepoRoot("."); err == nil {
+				_ = git.EnsureAbsoluteHooksPath(root)
+			}
+
 			// Support deprecated --unaddressed as alias for --open
 			if unaddressed {
 				open = true
@@ -433,24 +442,29 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 		return fmt.Errorf("get working directory: %w", err)
 	}
 
-	repoRoot := workDir
+	worktreeRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		worktreeRoot = root
+	}
+	apiRepoRoot := worktreeRoot
 	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		repoRoot = root
+		apiRepoRoot = root
 	}
 
 	seen := make(map[int64]bool)
 
 	for {
-		jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
+		jobs, err := queryOpenJobs(ctx, apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}
+		jobs = filterReachableJobs(worktreeRoot, "", jobs)
 
 		// Filter out jobs we've already processed
 		var newIDs []int64
-		for _, id := range jobIDs {
-			if !seen[id] {
-				newIDs = append(newIDs, id)
+		for _, j := range jobs {
+			if !seen[j.ID] {
+				newIDs = append(newIDs, j.ID)
 			}
 		}
 
@@ -480,6 +494,99 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 			return err
 		}
 	}
+}
+
+// filterReachableJobs returns only those jobs relevant to the
+// current worktree. SHA and range refs are checked via the commit
+// graph; non-SHA refs (dirty, empty, task labels) fall back to
+// branch matching. branchOverride is the explicit --branch value
+// for non-mutating flows (e.g. --list); when set, all job types
+// use branch matching, so cross-branch listing works for SHA/range
+// jobs too. Mutating flows (--open, --batch) must pass "" so that
+// fixes are never applied to the wrong checkout. On git errors the
+// job is kept (fail open) to avoid silently dropping work.
+func filterReachableJobs(
+	worktreeRoot, branchOverride string,
+	jobs []storage.ReviewJob,
+) []storage.ReviewJob {
+	matchBranch := branchOverride
+	if matchBranch == "" {
+		matchBranch = git.GetCurrentBranch(worktreeRoot)
+	}
+	var filtered []storage.ReviewJob
+	for _, j := range jobs {
+		if jobReachable(
+			worktreeRoot, matchBranch, branchOverride != "", j,
+		) {
+			filtered = append(filtered, j)
+		}
+	}
+	return filtered
+}
+
+// jobReachable decides whether a single job belongs to the current
+// worktree. When branchOnly is true (explicit --branch in a
+// non-mutating flow), all job types match by Branch field so
+// cross-branch listing works. Otherwise SHA and range refs are
+// checked via the commit graph, and non-SHA refs fall back to
+// branch matching.
+func jobReachable(
+	worktreeRoot, matchBranch string,
+	branchOnly bool, j storage.ReviewJob,
+) bool {
+	ref := j.GitRef
+
+	// When an explicit branch was requested (non-mutating listing),
+	// match all job types by their stored Branch field.
+	if branchOnly {
+		return branchMatch(matchBranch, j.Branch)
+	}
+
+	// Range ref: check whether the end commit is reachable.
+	if _, end, ok := git.ParseRange(ref); ok {
+		reachable, err := git.IsAncestor(worktreeRoot, end, "HEAD")
+		return err != nil || reachable
+	}
+
+	// SHA ref: check commit graph reachability.
+	if looksLikeSHA(ref) {
+		reachable, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
+		return err != nil || reachable
+	}
+
+	// Non-SHA ref (empty, "dirty", task labels like "run"/"analyze"):
+	// match by branch when possible.
+	return branchMatch(matchBranch, j.Branch)
+}
+
+// branchMatch returns true when a job's branch is compatible with
+// the match branch. When both are known they must be equal. When
+// the job has no branch, fail open (include it). When the match
+// branch is unknown (detached HEAD), exclude jobs that do have a
+// branch to avoid cross-worktree leaks in mutating flows.
+func branchMatch(matchBranch, jobBranch string) bool {
+	if matchBranch == "" {
+		return jobBranch == ""
+	}
+	if jobBranch == "" {
+		return true
+	}
+	return jobBranch == matchBranch
+}
+
+// looksLikeSHA returns true if s looks like a hex commit SHA (7-40
+// hex characters). This avoids calling git merge-base on task labels
+// and other non-commit refs.
+func looksLikeSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func queryOpenJobs(
@@ -553,14 +660,29 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-	repoRoot := workDir
+	worktreeRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		worktreeRoot = root
+	}
+	apiRepoRoot := worktreeRoot
 	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		repoRoot = root
+		apiRepoRoot = root
 	}
 
-	jobIDs, err := queryOpenJobIDs(ctx, repoRoot, branch)
+	jobs, err := queryOpenJobs(ctx, apiRepoRoot, branch)
 	if err != nil {
 		return err
+	}
+	// When listing a specific branch, filter by reachability/branch.
+	// When listing all branches (branch==""), skip filtering — the
+	// user explicitly asked for everything in this repo.
+	if branch != "" {
+		jobs = filterReachableJobs(worktreeRoot, branch, jobs)
+	}
+
+	jobIDs := make([]int64, len(jobs))
+	for i, j := range jobs {
+		jobIDs[i] = j.ID
 	}
 
 	if !newestFirst {
@@ -837,9 +959,14 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryOpenJobIDs(ctx, apiRepoRoot, branch)
-		if err != nil {
-			return err
+		jobs, queryErr := queryOpenJobs(ctx, apiRepoRoot, branch)
+		if queryErr != nil {
+			return queryErr
+		}
+		jobs = filterReachableJobs(repoRoot, "", jobs)
+		jobIDs = make([]int64, len(jobs))
+		for i, j := range jobs {
+			jobIDs[i] = j.ID
 		}
 		if !newestFirst {
 			for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
