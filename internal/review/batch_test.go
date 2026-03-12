@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
@@ -260,6 +262,74 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 	// Default review should have no model override.
 	assert.NotContains(defOut, "model=", "default output should have no model, got %q", defOut)
 }
+
+func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
+	require := require.New(t)
+
+	t.Parallel()
+	repo := testutil.NewTestRepoWithCommit(t)
+
+	// Add both files in one commit so both appear in the diff
+	require.NoError(os.WriteFile(
+		filepath.Join(repo.Root, "keep.go"),
+		[]byte("package main\n"), 0o644))
+	require.NoError(os.WriteFile(
+		filepath.Join(repo.Root, "generated.dat"),
+		[]byte("generated\n"), 0o644))
+	repo.RunGit("add", "-A")
+	repo.RunGit("commit", "-m", "add files")
+	sha := repo.RevParse("HEAD")
+
+	// The mock agent captures the prompt it receives via output
+	captureAgent := &promptCapture{name: "capture"}
+
+	cfg := BatchConfig{
+		RepoPath:    repo.Root,
+		GitRef:      sha,
+		Agents:      []string{"capture"},
+		ReviewTypes: []string{"review"},
+		GlobalConfig: &config.Config{
+			ExcludePatterns: []string{"generated.dat"},
+		},
+		AgentRegistry: map[string]agent.Agent{
+			"capture": captureAgent,
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(results, 1)
+	require.Equal(ResultDone, results[0].Status,
+		"status=%q err=%q", results[0].Status, results[0].Error)
+
+	// The prompt passed to the agent should include keep.go
+	// but not the excluded generated.dat
+	assert.Contains(t, captureAgent.lastPrompt, "keep.go",
+		"prompt should contain retained file")
+	assert.NotContains(t, captureAgent.lastPrompt, "generated.dat",
+		"prompt should not contain excluded file")
+}
+
+// promptCapture is a mock agent that records the prompt it receives.
+type promptCapture struct {
+	name       string
+	lastPrompt string
+}
+
+func (p *promptCapture) Name() string { return p.name }
+func (p *promptCapture) Review(
+	_ context.Context, _, _, prompt string, _ io.Writer,
+) (string, error) {
+	p.lastPrompt = prompt
+	return "ok", nil
+}
+func (p *promptCapture) WithReasoning(
+	_ agent.ReasoningLevel,
+) agent.Agent {
+	return p
+}
+func (p *promptCapture) WithAgentic(_ bool) agent.Agent { return p }
+func (p *promptCapture) WithModel(_ string) agent.Agent { return p }
+func (p *promptCapture) CommandLine() string            { return p.name }
 
 func TestRunBatch_BackupKeepsOwnModelWhenBackupModelUnset(t *testing.T) {
 	assert := assert.New(t)

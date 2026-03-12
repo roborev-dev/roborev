@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -551,4 +554,121 @@ func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	section := extractGuidelinesSection(prompt)
 	assertContains(t, section, "Base guideline.", "expected default branch guidelines in range prompt")
 	assertNotContains(t, section, "Branch-only rule.", "branch guidelines should not appear in guidelines section")
+}
+
+// setupExcludePatternRepo creates a repo with a "custom.dat" file
+// (to be excluded) and a "keep.go" file (to be retained). Returns
+// the repo directory and the commit SHA containing both files.
+func setupExcludePatternRepo(t *testing.T) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	// Initial commit
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base"), 0o644))
+	r.git("add", "-A")
+	r.git("commit", "-m", "initial")
+
+	// Commit with excluded and retained files
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "keep.go"),
+		[]byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "custom.dat"),
+		[]byte("generated\n"), 0o644))
+	r.git("add", "-A")
+	r.git("commit", "-m", "add files")
+
+	sha := r.git("rev-parse", "HEAD")
+	return r.dir, sha
+}
+
+func TestBuildSingleExcludesGlobalPatterns(t *testing.T) {
+	repoPath, sha := setupExcludePatternRepo(t)
+
+	cfg := &config.Config{
+		ExcludePatterns: []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+	p, err := b.Build(repoPath, sha, 0, 0, "test", "")
+	require.NoError(t, err)
+
+	assertContains(t, p, "keep.go", "retained file should be in prompt")
+	assertNotContains(t, p, "custom.dat", "excluded file should not be in prompt")
+}
+
+func TestBuildRangeExcludesGlobalPatterns(t *testing.T) {
+	repoPath, sha := setupExcludePatternRepo(t)
+
+	cfg := &config.Config{
+		ExcludePatterns: []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+	rangeRef := sha + "~1.." + sha
+	p, err := b.Build(repoPath, rangeRef, 0, 0, "test", "")
+	require.NoError(t, err)
+
+	assertContains(t, p, "keep.go", "retained file should be in range prompt")
+	assertNotContains(t, p, "custom.dat", "excluded file should not be in range prompt")
+}
+
+func TestBuildDirtyExcludesGlobalPatterns(t *testing.T) {
+	r := newTestRepo(t)
+
+	// Commit a base file so HEAD exists
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"), []byte("base"), 0o644))
+	r.git("add", "-A")
+	r.git("commit", "-m", "initial")
+
+	// Create dirty changes: one to keep, one to exclude
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "keep.go"),
+		[]byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "custom.dat"),
+		[]byte("generated\n"), 0o644))
+
+	// Capture dirty diff with exclude patterns applied
+	diff, err := gitpkg.GetDirtyDiff(r.dir, "custom.dat")
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		ExcludePatterns: []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+	p, err := b.BuildDirty(r.dir, diff, 0, 0, "test", "")
+	require.NoError(t, err)
+
+	assertContains(t, p, "keep.go", "retained file should be in dirty prompt")
+	assertNotContains(t, p, "custom.dat", "excluded file should not be in dirty prompt")
+}
+
+func TestBuildAddressPromptExcludesGlobalPatterns(t *testing.T) {
+	repoPath, sha := setupExcludePatternRepo(t)
+
+	cfg := &config.Config{
+		ExcludePatterns: []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	review := &storage.Review{
+		Agent:  "test",
+		Output: "Found issue: check custom.dat",
+		Job: &storage.ReviewJob{
+			GitRef: sha,
+		},
+	}
+	p, err := b.BuildAddressPrompt(repoPath, review, nil, "")
+	require.NoError(t, err)
+
+	// The original diff section should exclude the pattern
+	assertContains(t, p, "keep.go", "retained file should be in address prompt diff")
+	// custom.dat should not appear in the diff (it will still
+	// appear in the review output which is opaque text)
+	diffIdx := strings.Index(p, "## Original Commit Diff")
+	require.NotEqual(t, -1, diffIdx, "address prompt should have original diff section")
+	diffSection := p[diffIdx:]
+	assertNotContains(t, diffSection, "custom.dat", "excluded file should not be in address prompt diff")
 }
