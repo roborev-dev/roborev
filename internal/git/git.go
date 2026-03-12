@@ -668,13 +668,10 @@ func matchesUserPattern(filePath, p string) bool {
 	// Glob patterns
 	if strings.ContainsAny(p, "*?[") {
 		// path.Match doesn't support **, so handle it manually.
-		// "**/<suffix>" means match <suffix> against the basename.
+		// "**/<suffix>" means match <suffix> against every suffix
+		// of the path (each possible starting directory depth).
 		if after, ok := strings.CutPrefix(p, "**/"); ok {
-			base := path.Base(filePath)
-			if matched, _ := path.Match(after, base); matched {
-				return true
-			}
-			return false
+			return matchGlobSuffix(filePath, after)
 		}
 		base := path.Base(filePath)
 		if matched, _ := path.Match(p, base); matched {
@@ -696,6 +693,68 @@ func matchesUserPattern(filePath, p string) bool {
 		return true
 	}
 	return false
+}
+
+// matchGlobSuffix tries to match glob against filePath and every
+// sub-path suffix (stripping one leading directory at a time).
+// Handles ** within glob by expanding it to match zero or more
+// path segments via globMatch.
+func matchGlobSuffix(filePath, glob string) bool {
+	candidate := filePath
+	for {
+		if globMatch(glob, candidate) {
+			return true
+		}
+		i := strings.IndexByte(candidate, '/')
+		if i < 0 {
+			return false
+		}
+		candidate = candidate[i+1:]
+	}
+}
+
+// globMatch is like path.Match but supports ** to match zero or
+// more path segments (including the separating slashes).
+func globMatch(pattern, name string) bool {
+	// Fast path: no ** in pattern, use stdlib.
+	if !strings.Contains(pattern, "**") {
+		m, _ := path.Match(pattern, name)
+		return m
+	}
+
+	// Split on the first ** and try every possible span.
+	before, after, _ := strings.Cut(pattern, "**")
+
+	// before must match a prefix of name (segment-aligned).
+	if before != "" {
+		// before always ends with "/" (e.g. ".cache/**" → ".cache/")
+		if !strings.HasPrefix(name, before) {
+			return false
+		}
+		name = name[len(before):]
+	}
+
+	// after may start with "/" — strip it since ** consumed
+	// the separator.
+	after = strings.TrimPrefix(after, "/")
+
+	// If nothing left to match, any remainder is accepted.
+	if after == "" {
+		return true
+	}
+
+	// Try matching after against every possible suffix.
+	candidate := name
+	for {
+		if globMatch(after, candidate) {
+			return true
+		}
+		j := strings.IndexByte(candidate, '/')
+		if j < 0 {
+			return false
+		}
+		candidate = candidate[j+1:]
+	}
 }
 
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)

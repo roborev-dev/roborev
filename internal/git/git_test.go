@@ -886,6 +886,26 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"deep/nested/file.gen.go",
 			[]string{"**/*.gen.go"}, true,
 		},
+		{
+			"double-star with nested path segments",
+			"a/vendor/app.min.js",
+			[]string{"**/vendor/*.min.js"}, true,
+		},
+		{
+			"double-star nested no false positive",
+			"a/other/app.min.js",
+			[]string{"**/vendor/*.min.js"}, false,
+		},
+		{
+			"double-star directory wildcard",
+			"pkg/.cache/data.bin",
+			[]string{"**/.cache/**"}, true,
+		},
+		{
+			"double-star directory deeply nested",
+			"pkg/.cache/sub/deep/data.bin",
+			[]string{"**/.cache/**"}, true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
