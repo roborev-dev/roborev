@@ -1739,6 +1739,86 @@ func TestColumnOptionsToggle(t *testing.T) {
 	assert.False(t, m.hiddenColumns[colRef], "expected colRef removed from hiddenColumns")
 }
 
+func TestColumnOptionsMouseClick(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+	m.mouseEnabled = true
+
+	// Open column options modal.
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	require.Equal(t, viewColumnOptions, m.currentView)
+
+	// First option is at row 2 (title=0, blank=1, first option=2).
+	firstOpt := m.colOptionsList[0]
+	assert.True(t, firstOpt.enabled, "expected first column enabled initially")
+
+	// Click on the first option row to toggle it off.
+	m, _ = updateModel(t, m, mouseLeftClick(5, 2))
+	assert.False(t, m.colOptionsList[0].enabled, "expected first column disabled after click")
+	assert.Equal(t, 0, m.colOptionsIdx, "expected cursor on clicked row")
+
+	// Click again to toggle it back on.
+	m, _ = updateModel(t, m, mouseLeftClick(5, 2))
+	assert.True(t, m.colOptionsList[0].enabled, "expected first column re-enabled after second click")
+
+	// Click on the second option.
+	m, _ = updateModel(t, m, mouseLeftClick(5, 3))
+	assert.Equal(t, 1, m.colOptionsIdx, "expected cursor moved to second row")
+}
+
+func TestColumnOptionsMouseClickSentinel(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+	m.mouseEnabled = true
+
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	require.Equal(t, viewColumnOptions, m.currentView)
+
+	// Find the borders option (first sentinel, has a separator line before it).
+	bordersIdx := -1
+	for i, opt := range m.colOptionsList {
+		if opt.id == colOptionBorders {
+			bordersIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, bordersIdx)
+
+	// Borders is at row = 2 + bordersIdx + 1 (separator line).
+	bordersRow := 2 + bordersIdx + 1
+	initialBorders := m.colBordersOn
+
+	m, _ = updateModel(t, m, mouseLeftClick(5, bordersRow))
+	assert.Equal(t, bordersIdx, m.colOptionsIdx)
+	assert.NotEqual(t, initialBorders, m.colBordersOn, "expected borders toggled")
+}
+
+func TestColumnOptionsMouseWheel(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+	m.mouseEnabled = true
+
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	require.Equal(t, viewColumnOptions, m.currentView)
+	assert.Equal(t, 0, m.colOptionsIdx)
+
+	m, _ = updateModel(t, m, mouseWheelDown())
+	assert.Equal(t, 1, m.colOptionsIdx)
+
+	m, _ = updateModel(t, m, mouseWheelUp())
+	assert.Equal(t, 0, m.colOptionsIdx)
+
+	// Wheel up at top should stay at 0.
+	m, _ = updateModel(t, m, mouseWheelUp())
+	assert.Equal(t, 0, m.colOptionsIdx)
+}
+
 func TestMouseDisabledIgnoresQueueMouseInput(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue

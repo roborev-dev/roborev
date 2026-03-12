@@ -254,43 +254,81 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case " ", "enter":
-		if m.colOptionsIdx >= 0 && m.colOptionsIdx < len(m.colOptionsList) {
-			opt := &m.colOptionsList[m.colOptionsIdx]
-			if opt.id == colOptionBorders {
-				opt.enabled = !opt.enabled
-				m.colBordersOn = opt.enabled
-				m.colOptionsDirty = true
-				m.queueColGen++
-				m.taskColGen++
-			} else if opt.id == colOptionMouse {
-				opt.enabled = !opt.enabled
-				m.mouseEnabled = opt.enabled
-				m.colOptionsDirty = true
-				return m, mouseCaptureCmd(m.currentView, m.mouseEnabled)
-			} else if opt.id == colOptionTasksWorkflow {
-				opt.enabled = !opt.enabled
-				m.tasksEnabled = opt.enabled
-				m.colOptionsDirty = true
-			} else if m.colOptionsReturnView == viewTasks {
-				// Tasks view: no visibility toggle (all columns always shown)
-				return m, nil
-			} else {
-				opt.enabled = !opt.enabled
-				if opt.enabled {
-					delete(m.hiddenColumns, opt.id)
-				} else {
-					if m.hiddenColumns == nil {
-						m.hiddenColumns = map[int]bool{}
-					}
-					m.hiddenColumns[opt.id] = true
-				}
-				m.colOptionsDirty = true
-				m.queueColGen++
-			}
-		}
-		return m, nil
+		return m.toggleColumnOption(m.colOptionsIdx)
 	}
 	return m, nil
+}
+
+// toggleColumnOption toggles the option at the given index.
+func (m model) toggleColumnOption(idx int) (tea.Model, tea.Cmd) {
+	if idx < 0 || idx >= len(m.colOptionsList) {
+		return m, nil
+	}
+	opt := &m.colOptionsList[idx]
+	if opt.id == colOptionBorders {
+		opt.enabled = !opt.enabled
+		m.colBordersOn = opt.enabled
+		m.colOptionsDirty = true
+		m.queueColGen++
+		m.taskColGen++
+	} else if opt.id == colOptionMouse {
+		opt.enabled = !opt.enabled
+		m.mouseEnabled = opt.enabled
+		m.colOptionsDirty = true
+		return m, mouseCaptureCmd(m.currentView, m.mouseEnabled)
+	} else if opt.id == colOptionTasksWorkflow {
+		opt.enabled = !opt.enabled
+		m.tasksEnabled = opt.enabled
+		m.colOptionsDirty = true
+	} else if m.colOptionsReturnView == viewTasks {
+		// Tasks view: no visibility toggle (all columns always shown)
+		return m, nil
+	} else {
+		opt.enabled = !opt.enabled
+		if opt.enabled {
+			delete(m.hiddenColumns, opt.id)
+		} else {
+			if m.hiddenColumns == nil {
+				m.hiddenColumns = map[int]bool{}
+			}
+			m.hiddenColumns[opt.id] = true
+		}
+		m.colOptionsDirty = true
+		m.queueColGen++
+	}
+	return m, nil
+}
+
+// handleColumnOptionsMouseClick handles mouse clicks in the column options modal.
+// The layout is: title (line 0), blank (line 1), then one line per option,
+// with a separator blank line inserted before the first sentinel option (borders).
+func (m model) handleColumnOptionsMouseClick(y int) (tea.Model, tea.Cmd) {
+	// Find the index of the separator (blank line before borders toggle).
+	separatorAt := -1
+	for i, opt := range m.colOptionsList {
+		if opt.id == colOptionBorders && i > 0 {
+			separatorAt = i
+			break
+		}
+	}
+
+	// Options start at row 2 (after title + blank line).
+	row := y - 2
+	if row < 0 {
+		return m, nil
+	}
+
+	// Adjust for the separator line.
+	if separatorAt >= 0 && row >= separatorAt {
+		row-- // skip the separator blank line
+	}
+
+	if row < 0 || row >= len(m.colOptionsList) {
+		return m, nil
+	}
+
+	m.colOptionsIdx = row
+	return m.toggleColumnOption(row)
 }
 
 // syncColumnOrderFromOptions updates m.columnOrder or m.taskColumnOrder

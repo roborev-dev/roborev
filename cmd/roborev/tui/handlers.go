@@ -44,6 +44,12 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
+		if m.currentView == viewColumnOptions {
+			if m.colOptionsIdx > 0 {
+				m.colOptionsIdx--
+			}
+			return m, nil
+		}
 		if m.currentView == viewTasks {
 			if m.fixSelectedIdx > 0 {
 				m.fixSelectedIdx--
@@ -52,6 +58,12 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleUpKey()
 	case tea.MouseButtonWheelDown:
+		if m.currentView == viewColumnOptions {
+			if m.colOptionsIdx < len(m.colOptionsList)-1 {
+				m.colOptionsIdx++
+			}
+			return m, nil
+		}
 		if m.currentView == viewTasks {
 			if m.fixSelectedIdx < len(m.fixJobs)-1 {
 				m.fixSelectedIdx++
@@ -65,6 +77,8 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.handleQueueMouseClick(msg.X, msg.Y)
 		case viewTasks:
 			m.handleTasksMouseClick(msg.Y)
+		case viewColumnOptions:
+			return m.handleColumnOptionsMouseClick(msg.Y)
 		}
 		return m, nil
 	default:
