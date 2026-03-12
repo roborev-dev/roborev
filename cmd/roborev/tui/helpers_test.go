@@ -892,6 +892,18 @@ func TestWrapLine(t *testing.T) {
 			width: 3,
 			want:  []string{"  ", "  x"},
 		},
+		{
+			name:  "very narrow width no infinite loop",
+			line:  " ab cd",
+			width: 2,
+			want:  []string{" a", "b", "cd"},
+		},
+		{
+			name:  "width 1 terminates",
+			line:  "abc",
+			width: 1,
+			want:  []string{"a", "b", "c"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

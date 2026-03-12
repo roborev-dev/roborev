@@ -261,6 +261,12 @@ func wrapLine(line string, width int) []string {
 				break
 			}
 		}
+		// Guarantee forward progress: if the backward scan landed
+		// at index 0 (e.g. space at position 0, very narrow width),
+		// fall back to breakPoint which is always >= 1.
+		if bestBreak == 0 {
+			bestBreak = breakPoint
+		}
 		result = append(result, string(runes[:bestBreak]))
 		// Skip the break-point space only when it is a true
 		// word separator (non-space on both sides). This preserves
