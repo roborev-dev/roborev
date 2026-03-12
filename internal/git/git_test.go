@@ -905,6 +905,7 @@ func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
 		repo.WriteFile("sub/uv.lock", "lock\n")
 		repo.WriteFile("package-lock.json", "lock\n")
 		repo.WriteFile("deep/Cargo.lock", "lock\n")
+		repo.WriteFile("sub/cargo.lock", "lock\n")
 		repo.WriteFile("go.sum", "sum\n")
 
 		diff, err := GetDirtyDiff(repo.Dir)
@@ -913,6 +914,7 @@ func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
 		assert.NotContains(t, diff, "uv.lock")
 		assert.NotContains(t, diff, "package-lock.json")
 		assert.NotContains(t, diff, "Cargo.lock")
+		assert.NotContains(t, diff, "cargo.lock")
 		assert.NotContains(t, diff, "go.sum")
 	})
 
