@@ -311,10 +311,10 @@ func (m model) renderQueueView() string {
 			colStatus:    max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
 			colQueued:    12,
 			colElapsed:   8,
-			colPF:        3,                                       // "P/F" header = 3
-			colHandled:   max(contentWidth[colHandled], 6),        // "Closed" header = 6
-			colAgent:     min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
-			colSessionID: max(contentWidth[colSessionID], 7),      // "Session" header = 7
+			colPF:        3,                                           // "P/F" header = 3
+			colHandled:   max(contentWidth[colHandled], 6),            // "Closed" header = 6
+			colAgent:     min(max(contentWidth[colAgent], 5), 12),     // "Agent" header = 5, cap at 12
+			colSessionID: min(max(contentWidth[colSessionID], 7), 12), // "Session" header = 7, cap at 12
 		}
 
 		// Flexible columns absorb excess space
@@ -638,6 +638,9 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	}
 
 	sessionID := job.SessionID
+	if len(sessionID) > 12 {
+		sessionID = sessionID[:12]
+	}
 
 	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID}
 }
@@ -744,7 +747,9 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		dirty = true
 	}
 	// Add default-hidden columns to existing configs that don't mention them.
-	if len(cfg.HiddenColumns) > 0 {
+	// Skip if the user explicitly configured no hidden columns (sentinel).
+	hasSentinel := len(cfg.HiddenColumns) == 1 && cfg.HiddenColumns[0] == hiddenColumnsNoneSentinel
+	if len(cfg.HiddenColumns) > 0 && !hasSentinel {
 		for col := range defaultHiddenColumns {
 			name := columnConfigNames[col]
 			if !slices.Contains(cfg.HiddenColumns, name) {
@@ -845,13 +850,24 @@ var defaultHiddenColumns = map[int]bool{
 	colSessionID: true,
 }
 
+// hiddenColumnsNoneSentinel is saved to hidden_columns when the user has
+// explicitly configured all columns to be visible. This distinguishes
+// "user wants nothing hidden" from "user has never configured columns"
+// (which would be a nil/empty slice), allowing defaultHiddenColumns to
+// apply only for unconfigured users.
+const hiddenColumnsNoneSentinel = "_"
+
 // parseHiddenColumns converts config hidden_columns strings to column ID set.
 // When names is empty (no user config), defaultHiddenColumns are applied.
-// When names is non-empty, only the explicitly listed columns are hidden.
+// When names contains only the sentinel "_", the user explicitly has nothing hidden.
+// Otherwise, only the listed columns are hidden.
 func parseHiddenColumns(names []string) map[int]bool {
 	result := map[int]bool{}
 	if len(names) == 0 {
 		maps.Copy(result, defaultHiddenColumns)
+		return result
+	}
+	if len(names) == 1 && names[0] == hiddenColumnsNoneSentinel {
 		return result
 	}
 	lookup := map[string]int{}
@@ -867,6 +883,8 @@ func parseHiddenColumns(names []string) map[int]bool {
 }
 
 // hiddenColumnsToNames converts a hidden column ID set to config names.
+// When nothing is hidden, returns the sentinel ["_"] to distinguish
+// from an unconfigured (nil) slice.
 func hiddenColumnsToNames(hidden map[int]bool) []string {
 	var names []string
 	// Maintain stable order
@@ -874,6 +892,9 @@ func hiddenColumnsToNames(hidden map[int]bool) []string {
 		if hidden[col] {
 			names = append(names, columnConfigNames[col])
 		}
+	}
+	if len(names) == 0 {
+		return []string{hiddenColumnsNoneSentinel}
 	}
 	return names
 }
