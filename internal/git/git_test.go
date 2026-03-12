@@ -841,6 +841,26 @@ func TestIsExcludedFileExtraPatterns(t *testing.T) {
 			"builtin still works with extras",
 			"uv.lock", []string{"custom.lock"}, true,
 		},
+		{
+			"directory pattern matches file inside",
+			"vendor/dep.go", []string{"vendor"}, true,
+		},
+		{
+			"directory pattern matches nested file",
+			"vendor/sub/dep.go", []string{"vendor"}, true,
+		},
+		{
+			"directory in subdir matches",
+			"pkg/vendor/dep.go", []string{"vendor"}, true,
+		},
+		{
+			"directory pattern matches dir itself",
+			"vendor", []string{"vendor"}, true,
+		},
+		{
+			"directory pattern no false positive",
+			"vendoring.go", []string{"vendor"}, false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -866,17 +866,15 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 }
 
 // ResolveExcludePatterns returns the merged exclude patterns from
-// repo config and global config. Repo patterns take priority and
-// are listed first, followed by any global patterns not already
-// present.
+// repo config and global config. Repo patterns are read from the
+// default branch (like review guidelines) to prevent untrusted
+// branches from suppressing files in reviews. Falls back to the
+// filesystem config only when no default branch config exists.
+// Global patterns are appended after repo patterns (deduplicated).
 func ResolveExcludePatterns(
 	repoPath string, globalCfg *Config,
 ) []string {
-	var repo []string
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
-		repoCfg != nil {
-		repo = repoCfg.ExcludePatterns
-	}
+	repo := loadRepoExcludePatterns(repoPath)
 	var global []string
 	if globalCfg != nil {
 		global = globalCfg.ExcludePatterns
@@ -884,30 +882,47 @@ func ResolveExcludePatterns(
 	if len(repo) == 0 && len(global) == 0 {
 		return nil
 	}
+	return mergePatterns(repo, global)
+}
 
-	seen := make(map[string]struct{}, len(repo))
-	merged := make([]string, 0, len(repo)+len(global))
-	for _, p := range repo {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+// loadRepoExcludePatterns reads exclude_patterns from the default
+// branch's .roborev.toml, falling back to the filesystem config
+// when no default branch config exists (e.g., no remote, or
+// .roborev.toml not yet committed). This mirrors loadGuidelines
+// to prevent untrusted branches from controlling review scope.
+func loadRepoExcludePatterns(repoPath string) []string {
+	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
+		cfg, err := LoadRepoConfigFromRef(repoPath, defaultBranch)
+		if err != nil {
+			if IsConfigParseError(err) {
+				return nil
+			}
+			// Fall through to filesystem
+		} else if cfg != nil {
+			return cfg.ExcludePatterns
 		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		merged = append(merged, p)
 	}
-	for _, p := range global {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+	if fsCfg, err := LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+		return fsCfg.ExcludePatterns
+	}
+	return nil
+}
+
+func mergePatterns(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, list := range [2][]string{a, b} {
+		for _, p := range list {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			merged = append(merged, p)
 		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		merged = append(merged, p)
 	}
 	return merged
 }

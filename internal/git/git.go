@@ -596,23 +596,26 @@ func formatExcludeArgs(patterns []string) []string {
 // patterns. Used for filtering untracked files in GetDirtyDiff.
 // extraExcludes are user-configured patterns (filenames or globs).
 func isExcludedFile(filePath string, extraExcludes []string) bool {
-	if matchesExcludePattern(filePath, excludedPathPatterns) {
+	if matchesBuiltinExclusion(filePath) {
 		return true
 	}
-	if len(extraExcludes) > 0 {
-		return matchesExcludePattern(
-			filePath, formatExcludeArgs(extraExcludes),
-		)
+	for _, p := range extraExcludes {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if matchesUserPattern(filePath, p) {
+			return true
+		}
 	}
 	return false
 }
 
-// matchesExcludePattern checks filePath against a list of
-// :(exclude)-prefixed pathspec patterns.
-func matchesExcludePattern(
-	filePath string, patterns []string,
-) bool {
-	for _, pattern := range patterns {
+// matchesBuiltinExclusion checks filePath against the hardcoded
+// exclusion lists. Directories use prefix matching; filenames use
+// exact basename matching.
+func matchesBuiltinExclusion(filePath string) bool {
+	for _, pattern := range excludedPathPatterns {
 		p := strings.TrimPrefix(pattern, ":(exclude)")
 
 		if _, ok := excludedDirPatterns[p]; ok {
@@ -623,22 +626,39 @@ func matchesExcludePattern(
 			continue
 		}
 
-		// Try glob match first (handles *, ?, etc.)
-		base := path.Base(filePath)
-		if strings.ContainsAny(p, "*?[") {
-			if matched, _ := path.Match(p, base); matched {
-				return true
-			}
-			if matched, _ := path.Match(p, filePath); matched {
-				return true
-			}
-			continue
-		}
-
-		// Exact filename match - matches at root or in subdirs
-		if filePath == p || strings.HasSuffix(filePath, "/"+p) {
+		// Exact filename match at root or in subdirs
+		if filePath == p ||
+			strings.HasSuffix(filePath, "/"+p) {
 			return true
 		}
+	}
+	return false
+}
+
+// matchesUserPattern checks filePath against a single user-provided
+// exclude pattern. Supports globs (*, ?, [) and plain names that
+// match as either filenames or directory prefixes.
+func matchesUserPattern(filePath, p string) bool {
+	// Glob patterns
+	if strings.ContainsAny(p, "*?[") {
+		base := path.Base(filePath)
+		if matched, _ := path.Match(p, base); matched {
+			return true
+		}
+		if matched, _ := path.Match(p, filePath); matched {
+			return true
+		}
+		return false
+	}
+
+	// Plain name — match as filename or directory at any depth.
+	// "vendor" matches vendor/, vendor/foo.go, pkg/vendor/foo.go.
+	// "custom.lock" matches custom.lock, sub/custom.lock.
+	if filePath == p ||
+		strings.HasSuffix(filePath, "/"+p) ||
+		strings.HasPrefix(filePath, p+"/") ||
+		strings.Contains(filePath, "/"+p+"/") {
+		return true
 	}
 	return false
 }
