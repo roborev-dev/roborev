@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -461,8 +460,13 @@ func GetDirtyDiff(
 		}
 	}
 
-	// 2. Get list of untracked files
-	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	// 2. Get list of untracked files, applying the same pathspec
+	// excludes so filtering is consistent with the tracked diff.
+	lsArgs := []string{"ls-files", "--others", "--exclude-standard", "--"}
+	lsArgs = append(lsArgs, ".")
+	lsArgs = append(lsArgs, excludedPathPatterns...)
+	lsArgs = append(lsArgs, extra...)
+	cmd = exec.Command("git", lsArgs...)
 	cmd.Dir = repoPath
 
 	untrackedOut, err := cmd.Output()
@@ -474,11 +478,6 @@ func GetDirtyDiff(
 	untrackedFiles := strings.SplitSeq(strings.TrimSpace(string(untrackedOut)), "\n")
 	for file := range untrackedFiles {
 		if file == "" {
-			continue
-		}
-
-		// Skip excluded files
-		if isExcludedFile(file, extraExcludes) {
 			continue
 		}
 
@@ -613,172 +612,6 @@ func formatExcludeArgs(patterns []string) []string {
 		}
 	}
 	return args
-}
-
-// isExcludedFile checks if a file path matches any of the excluded
-// patterns. Used for filtering untracked files in GetDirtyDiff.
-// extraExcludes are user-configured patterns (filenames or globs).
-func isExcludedFile(filePath string, extraExcludes []string) bool {
-	if matchesBuiltinExclusion(filePath) {
-		return true
-	}
-	for _, p := range extraExcludes {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if matchesUserPattern(filePath, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesBuiltinExclusion checks filePath against the hardcoded
-// exclusion lists. Directories use prefix matching; filenames use
-// exact basename matching.
-func matchesBuiltinExclusion(filePath string) bool {
-	for _, pattern := range excludedPathPatterns {
-		// Strip pathspec magic to get the plain name.
-		// File patterns:  ":(exclude,glob)**/name"     -> "name"
-		// Dir patterns:   ":(exclude,glob)**/name/**"  -> "name/**"
-		p := strings.TrimPrefix(pattern, ":(exclude,glob)**/")
-
-		// Directory pattern — strip trailing /** and match as dir
-		if dir, ok := strings.CutSuffix(p, "/**"); ok {
-			if filePath == dir ||
-				strings.HasPrefix(filePath, dir+"/") ||
-				strings.Contains(filePath, "/"+dir+"/") {
-				return true
-			}
-			continue
-		}
-
-		// Exact filename match at root or in subdirs
-		if filePath == p ||
-			strings.HasSuffix(filePath, "/"+p) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesUserPattern checks filePath against a single user-provided
-// exclude pattern. Supports globs (*, ?, [) and plain names that
-// match as either filenames or directory prefixes.
-func matchesUserPattern(filePath, p string) bool {
-	// Normalize: strip leading/trailing slashes
-	p = strings.TrimRight(p, "/")
-	p = strings.TrimLeft(p, "/")
-	if p == "" {
-		return false
-	}
-
-	// Glob patterns
-	if strings.ContainsAny(p, "*?[") {
-		// Any pattern with ** must go through globMatch since
-		// path.Match doesn't support ** across directories.
-		if strings.Contains(p, "**") {
-			if after, ok := strings.CutPrefix(p, "**/"); ok {
-				return matchGlobSuffix(filePath, after)
-			}
-			return globMatch(p, filePath)
-		}
-		base := path.Base(filePath)
-		if matched, _ := path.Match(p, base); matched {
-			return true
-		}
-		if matched, _ := path.Match(p, filePath); matched {
-			return true
-		}
-		return false
-	}
-
-	// Patterns with "/" are root-anchored, matching git behavior.
-	// "vendor/dist" matches vendor/dist and vendor/dist/foo.js
-	// but NOT pkg/vendor/dist.
-	if strings.Contains(p, "/") {
-		return filePath == p ||
-			strings.HasPrefix(filePath, p+"/")
-	}
-
-	// Plain name — match as filename or directory at any depth.
-	// "vendor" matches vendor/, vendor/foo.go, pkg/vendor/foo.go.
-	// "custom.lock" matches custom.lock, sub/custom.lock.
-	return filePath == p ||
-		strings.HasSuffix(filePath, "/"+p) ||
-		strings.HasPrefix(filePath, p+"/") ||
-		strings.Contains(filePath, "/"+p+"/")
-}
-
-// matchGlobSuffix tries to match glob against filePath and every
-// sub-path suffix (stripping one leading directory at a time).
-// Handles ** within glob by expanding it to match zero or more
-// path segments via globMatch.
-func matchGlobSuffix(filePath, glob string) bool {
-	candidate := filePath
-	for {
-		if globMatch(glob, candidate) {
-			return true
-		}
-		i := strings.IndexByte(candidate, '/')
-		if i < 0 {
-			return false
-		}
-		candidate = candidate[i+1:]
-	}
-}
-
-// globMatch is like path.Match but supports ** to match zero or
-// more path segments (including the separating slashes).
-func globMatch(pattern, name string) bool {
-	// Fast path: no ** in pattern, use stdlib.
-	if !strings.Contains(pattern, "**") {
-		m, _ := path.Match(pattern, name)
-		return m
-	}
-
-	// Split on the first ** and try every possible span.
-	before, after, _ := strings.Cut(pattern, "**")
-
-	// before must match a prefix of name (segment-aligned).
-	// Use path.Match per segment so glob chars in before work.
-	if before != "" {
-		before = strings.TrimSuffix(before, "/")
-		for seg := range strings.SplitSeq(before, "/") {
-			i := strings.IndexByte(name, '/')
-			if i < 0 {
-				return false
-			}
-			m, _ := path.Match(seg, name[:i])
-			if !m {
-				return false
-			}
-			name = name[i+1:]
-		}
-	}
-
-	// after may start with "/" — strip it since ** consumed
-	// the separator.
-	after = strings.TrimPrefix(after, "/")
-
-	// If nothing left to match, any remainder is accepted.
-	if after == "" {
-		return true
-	}
-
-	// Try matching after against every possible suffix.
-	candidate := name
-	for {
-		if globMatch(after, candidate) {
-			return true
-		}
-		j := strings.IndexByte(candidate, '/')
-		if j < 0 {
-			return false
-		}
-		candidate = candidate[j+1:]
-	}
 }
 
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)

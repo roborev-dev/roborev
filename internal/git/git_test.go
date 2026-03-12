@@ -749,217 +749,6 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 	assert.Contains(t, diff, "staged content", "expected staged diff to include content")
 }
 
-func TestIsExcludedFile(t *testing.T) {
-	tests := []struct {
-		name     string
-		file     string
-		excluded bool
-	}{
-
-		{"uv.lock at root", "uv.lock", true},
-		{"package-lock.json at root", "package-lock.json", true},
-		{"yarn.lock at root", "yarn.lock", true},
-		{"cargo.lock lowercase", "cargo.lock", true},
-		{"Cargo.lock uppercase", "Cargo.lock", true},
-		{"go.sum at root", "go.sum", true},
-
-		{".beads file", ".beads/issues.md", true},
-		{".beads nested", ".beads/foo/bar.md", true},
-		{".beads deeply nested", ".beads/a/b/c/d.md", true},
-
-		{"uv.lock in subdir", "vendor/uv.lock", true},
-		{"nested cargo.lock", "subdir/cargo.lock", true},
-		{"nested Cargo.lock uppercase", "rust-crate/Cargo.lock", true},
-
-		{"go source file", "main.go", false},
-		{"nested source file", "internal/git/git.go", false},
-		{"readme", "README.md", false},
-		{"similar but not lock", "package.json", false},
-		{"lock in name but not exact", "mylock.lock", false},
-
-		{"uv.lock directory contents", "uv.lock/readme.md", false},
-		{"go.sum directory contents", "go.sum/checksums.txt", false},
-
-		{".beadsnotes.md", ".beadsnotes.md", false},
-		{".beads-backup", ".beads-backup", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isExcludedFile(tt.file, nil)
-			assert.Equal(t, tt.excluded, got, "isExcludedFile(%q) = %v, want %v", tt.file, got, tt.excluded)
-		})
-	}
-}
-
-func TestIsExcludedFileNewLockfiles(t *testing.T) {
-	// Verify newly added lockfiles are excluded by default
-	newLockfiles := []string{
-		"bun.lockb", "bun.lock",
-		"Pipfile.lock", "pdm.lock",
-		"packages.lock.json", "pubspec.lock",
-		"mix.lock", "Package.resolved",
-		"Podfile.lock", "flake.lock",
-	}
-	for _, f := range newLockfiles {
-		assert.True(t, isExcludedFile(f, nil),
-			"expected %q to be excluded by default", f)
-		// Also in subdirectory
-		assert.True(t, isExcludedFile("sub/"+f, nil),
-			"expected sub/%s to be excluded by default", f)
-	}
-}
-
-func TestIsExcludedFileExtraPatterns(t *testing.T) {
-	tests := []struct {
-		name     string
-		file     string
-		extra    []string
-		excluded bool
-	}{
-		{
-			"extra exact match",
-			"custom.lock", []string{"custom.lock"}, true,
-		},
-		{
-			"extra exact match in subdir",
-			"vendor/custom.lock", []string{"custom.lock"}, true,
-		},
-		{
-			"extra glob pattern",
-			"dist/bundle.min.js", []string{"*.min.js"}, true,
-		},
-		{
-			"extra glob no match",
-			"src/app.js", []string{"*.min.js"}, false,
-		},
-		{
-			"extra pattern does not match unrelated",
-			"main.go", []string{"custom.lock"}, false,
-		},
-		{
-			"builtin still works with extras",
-			"uv.lock", []string{"custom.lock"}, true,
-		},
-		{
-			"directory pattern matches file inside",
-			"vendor/dep.go", []string{"vendor"}, true,
-		},
-		{
-			"directory pattern matches nested file",
-			"vendor/sub/dep.go", []string{"vendor"}, true,
-		},
-		{
-			"directory in subdir matches",
-			"pkg/vendor/dep.go", []string{"vendor"}, true,
-		},
-		{
-			"directory pattern matches dir itself",
-			"vendor", []string{"vendor"}, true,
-		},
-		{
-			"directory pattern no false positive",
-			"vendoring.go", []string{"vendor"}, false,
-		},
-		{
-			"trailing slash directory",
-			"vendor/dep.go", []string{"vendor/"}, true,
-		},
-		{
-			"leading slash stripped",
-			"dist/bundle.js", []string{"/dist"}, true,
-		},
-		{
-			"glob pattern matches nested file",
-			"sub/app.min.js", []string{"*.min.js"}, true,
-		},
-		{
-			"glob pattern matches root file",
-			"app.min.js", []string{"*.min.js"}, true,
-		},
-		{
-			"glob pattern no false positive",
-			"app.js", []string{"*.min.js"}, false,
-		},
-		{
-			"double-star glob pattern",
-			"deep/nested/file.gen.go",
-			[]string{"**/*.gen.go"}, true,
-		},
-		{
-			"double-star with nested path segments",
-			"a/vendor/app.min.js",
-			[]string{"**/vendor/*.min.js"}, true,
-		},
-		{
-			"double-star nested no false positive",
-			"a/other/app.min.js",
-			[]string{"**/vendor/*.min.js"}, false,
-		},
-		{
-			"double-star directory wildcard",
-			"pkg/.cache/data.bin",
-			[]string{"**/.cache/**"}, true,
-		},
-		{
-			"double-star directory deeply nested",
-			"pkg/.cache/sub/deep/data.bin",
-			[]string{"**/.cache/**"}, true,
-		},
-		{
-			"glob metachar before double-star",
-			"pkg/.cache-v2/data.bin",
-			[]string{"**/.cache-*/**"}, true,
-		},
-		{
-			"glob metachar before double-star no match",
-			"pkg/.other/data.bin",
-			[]string{"**/.cache-*/**"}, false,
-		},
-		{
-			"bracket pattern before double-star",
-			"x/a/file.txt",
-			[]string{"**/[ab]/**"}, true,
-		},
-		{
-			"bracket pattern before double-star no match",
-			"x/c/file.txt",
-			[]string{"**/[ab]/**"}, false,
-		},
-		{
-			"wildcard segment in multi-star pattern",
-			"lib/vendor-v2/dist/app.min.js",
-			[]string{"**/vendor-*/**/*.min.js"}, true,
-		},
-		{
-			"slashed pattern anchored to root",
-			"vendor/dist/bundle.js",
-			[]string{"vendor/dist"}, true,
-		},
-		{
-			"slashed pattern not matching nested",
-			"pkg/vendor/dist/bundle.js",
-			[]string{"vendor/dist"}, false,
-		},
-		{
-			"internal double-star without leading **",
-			"src/deep/nested/app.js",
-			[]string{"src/**/*.js"}, true,
-		},
-		{
-			"internal double-star no match",
-			"other/deep/app.js",
-			[]string{"src/**/*.js"}, false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isExcludedFile(tt.file, tt.extra)
-			assert.Equal(t, tt.excluded, got)
-		})
-	}
-}
-
 func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, formatExcludeArgs(nil))
 	assert.Nil(t, formatExcludeArgs([]string{}))
@@ -1092,6 +881,29 @@ func TestGetDiffExcludesSlashedDirectory(t *testing.T) {
 		assert.NotContains(t, diff, "bundle.js",
 			"slashed exclude should filter tracked dir contents")
 	})
+}
+
+func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	// Create untracked files: one to keep, one builtin lockfile,
+	// one matching a user exclude pattern.
+	repo.WriteFile("new.go", "package main\n")
+	repo.WriteFile("sub/uv.lock", "lockdata\n")
+	repo.WriteFile("vendor/dep.go", "vendored\n")
+	repo.WriteFile("vendor/sub/util.go", "util\n")
+
+	diff, err := GetDirtyDiff(repo.Dir, "vendor")
+	require.NoError(t, err)
+
+	assert.Contains(t, diff, "new.go",
+		"untracked non-excluded file should appear")
+	assert.NotContains(t, diff, "uv.lock",
+		"builtin lockfile should be excluded from untracked")
+	assert.NotContains(t, diff, "vendor/dep.go",
+		"user exclude should filter untracked dir contents")
+	assert.NotContains(t, diff, "vendor/sub/util.go",
+		"user exclude should filter nested untracked files")
 }
 
 func TestIsWorkingTreeClean(t *testing.T) {
