@@ -872,13 +872,25 @@ func TestWrapLine(t *testing.T) {
 			name:  "indented continuation preserved",
 			line:  "func foo()     bar baz",
 			width: 12,
-			want:  []string{"func foo() ", "   bar baz"},
+			want:  []string{"func foo() ", "    bar baz"},
 		},
 		{
 			name:  "leading spaces preserved after wrap",
 			line:  "aaaaaaaaaa   bbb",
 			width: 10,
-			want:  []string{"aaaaaaaaaa", "  bbb"},
+			want:  []string{"aaaaaaaaaa", "   bbb"},
+		},
+		{
+			name:  "whitespace-only line preserves all spaces",
+			line:  "            ",
+			width: 10,
+			want:  []string{"         ", "   "},
+		},
+		{
+			name:  "indentation-only prefix preserved",
+			line:  "    x",
+			width: 3,
+			want:  []string{"  ", "  x"},
 		},
 	}
 	for _, tt := range tests {

@@ -262,9 +262,14 @@ func wrapLine(line string, width int) []string {
 			}
 		}
 		result = append(result, string(runes[:bestBreak]))
-		// Skip only the single space at the break point when we
-		// broke at a word boundary; preserve all other leading spaces.
-		if bestBreak < len(runes) && runes[bestBreak] == ' ' {
+		// Skip the break-point space only when it is a true
+		// word separator (non-space on both sides). This preserves
+		// whitespace-only lines and indentation runs verbatim.
+		isWordSep := bestBreak < len(runes) &&
+			runes[bestBreak] == ' ' &&
+			bestBreak > 0 && runes[bestBreak-1] != ' ' &&
+			bestBreak+1 < len(runes) && runes[bestBreak+1] != ' '
+		if isWordSep {
 			line = string(runes[bestBreak+1:])
 		} else {
 			line = string(runes[bestBreak:])
