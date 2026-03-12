@@ -733,13 +733,16 @@ func WorktreePathForBranch(repoPath, branch string) (string, bool, error) {
 // linked worktrees because git resolves them from the worktree
 // root, not the main repo root.
 func EnsureAbsoluteHooksPath(repoPath string) error {
+	// Read the effective value from any config level
+	// (local, global, system) so we catch relative paths
+	// from ~/.gitconfig too.
 	cmd := exec.Command(
-		"git", "config", "--local", "core.hooksPath",
+		"git", "config", "core.hooksPath",
 	)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		// Not set — nothing to fix.
+		// Not set at any level — nothing to fix.
 		return nil
 	}
 	raw := strings.TrimSpace(string(out))

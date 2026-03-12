@@ -358,6 +358,48 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 		assert.Equal(t, filepath.Join(resolvedMain, ".githooks"), got,
 			"should resolve against main repo root, not worktree")
 	})
+
+	t.Run("overrides relative global config with local absolute",
+		func(t *testing.T) {
+			// Simulate a global ~/.gitconfig with relative
+			// core.hooksPath (no local config set).
+			fakeHome := t.TempDir()
+			t.Setenv("HOME", fakeHome)
+			t.Setenv("USERPROFILE", fakeHome)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(
+				fakeHome, ".config",
+			))
+			globalCfg := filepath.Join(fakeHome, ".gitconfig")
+			err := os.WriteFile(globalCfg, []byte(
+				"[core]\n\thooksPath = .githooks\n",
+			), 0644)
+			require.NoError(t, err)
+
+			repo := NewTestRepo(t)
+
+			// Verify no local override exists yet.
+			check := exec.Command(
+				"git", "config", "--local", "core.hooksPath",
+			)
+			check.Dir = repo.Dir
+			require.Error(t, check.Run(),
+				"should have no local core.hooksPath")
+
+			err = EnsureAbsoluteHooksPath(repo.Dir)
+			require.NoError(t, err)
+
+			// Should now have a local absolute override.
+			got := repo.Run(
+				"config", "--local", "core.hooksPath",
+			)
+			assert.True(t, filepath.IsAbs(got),
+				"expected absolute path, got: %s", got)
+			resolvedDir, err := filepath.EvalSymlinks(repo.Dir)
+			require.NoError(t, err)
+			assert.Equal(t,
+				filepath.Join(resolvedDir, ".githooks"), got,
+			)
+		})
 }
 
 func TestIsRebaseInProgress(t *testing.T) {
