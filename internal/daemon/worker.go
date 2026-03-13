@@ -17,6 +17,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/tokens"
 	"github.com/roborev-dev/roborev/internal/worktree"
 )
 
@@ -575,6 +576,43 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			return
 		} else if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
 			log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
+		}
+	}
+
+	// Fetch token usage from agentsview (best-effort, non-blocking).
+	// Use the captured session ID from this run, falling back to the
+	// job's pre-existing session ID (for resumed sessions).
+	capturedSession := ""
+	if sessionWriter != nil {
+		capturedSession = sessionWriter.SessionID()
+	}
+	if capturedSession == "" {
+		capturedSession = job.SessionID
+	}
+	if capturedSession != "" {
+		// If the job had a pre-existing session ID, this is a resumed
+		// session — request only the last turn's token usage.
+		wasResumed := job.SessionID != "" && job.SessionID == capturedSession
+		var usage *tokens.Usage
+		var tokenErr error
+		if wasResumed {
+			usage, tokenErr = tokens.FetchForSessionTurn(
+				context.Background(), agentName, capturedSession,
+			)
+		} else {
+			usage, tokenErr = tokens.FetchForSession(
+				context.Background(), agentName, capturedSession,
+			)
+		}
+		if tokenErr != nil {
+			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
+				workerID, job.ID, tokenErr)
+		} else if usage != nil {
+			j := tokens.ToJSON(usage)
+			if err := wp.db.SaveJobTokenUsage(job.ID, j); err != nil {
+				log.Printf("[%s] Warning: save token usage for job %d: %v",
+					workerID, job.ID, err)
+			}
 		}
 	}
 

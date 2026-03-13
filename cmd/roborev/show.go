@@ -10,6 +10,7 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/tokens"
 	"github.com/spf13/cobra"
 )
 
@@ -124,6 +125,11 @@ Examples:
 				fmt.Printf("Review for %s (by %s)\n", displayRef, review.Agent)
 			} else {
 				fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
+			}
+			if review.Job != nil {
+				if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
+					fmt.Printf("Tokens: %s\n", tu.FormatSummary())
+				}
 			}
 			fmt.Println(strings.Repeat("-", 60))
 			if showPrompt {

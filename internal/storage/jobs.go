@@ -570,6 +570,19 @@ func (db *DB) SaveJobPatch(jobID int64, patch string) error {
 	return err
 }
 
+// SaveJobTokenUsage stores a JSON blob of token consumption data.
+func (db *DB) SaveJobTokenUsage(jobID int64, tokenUsageJSON string) error {
+	if tokenUsageJSON == "" {
+		return nil
+	}
+	now := time.Now().Format(time.RFC3339)
+	_, err := db.Exec(
+		`UPDATE review_jobs SET token_usage = ?, updated_at = ? WHERE id = ?`,
+		tokenUsageJSON, now, jobID,
+	)
+	return err
+}
+
 // CompleteFixJob atomically marks a fix job as done, stores the review,
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
@@ -1238,11 +1251,12 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var patch sql.NullString
 
 	var model, provider, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+	var tokenUsage sql.NullString
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.patch
+		       j.parent_job_id, j.patch, j.token_usage
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -1250,7 +1264,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
 		&j.RepoPath, &j.RepoName, &commitSubject, &model, &provider, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&parentJobID, &patch)
+		&parentJobID, &patch, &tokenUsage)
 	if err != nil {
 		return nil, err
 	}
@@ -1306,6 +1320,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if patch.Valid {
 		j.Patch = &patch.String
+	}
+	if tokenUsage.Valid {
+		j.TokenUsage = tokenUsage.String
 	}
 
 	return &j, nil

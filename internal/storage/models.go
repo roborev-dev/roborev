@@ -72,6 +72,7 @@ type ReviewJob struct {
 	OutputPrefix string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 	ParentJobID  *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
 	Patch        *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
+	TokenUsage   string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
 	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this job

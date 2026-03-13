@@ -53,6 +53,7 @@ func main() {
 	rootCmd.AddCommand(summaryCmd())
 	rootCmd.AddCommand(backfillVerdictsCmd())
 	rootCmd.AddCommand(configCmd())
+	rootCmd.AddCommand(backfillTokensCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 

@@ -695,6 +695,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add token_usage column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'token_usage'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check token_usage column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN token_usage TEXT`)
+		if err != nil {
+			return fmt.Errorf("add token_usage column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

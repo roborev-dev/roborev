@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+	"github.com/roborev-dev/roborev/internal/tokens"
 )
 
 func (m model) renderReviewView() string {
@@ -56,9 +57,13 @@ func (m model) renderReviewView() string {
 		b.WriteString(statusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict and closed status on next line (skip verdict for fix jobs)
+		// Show verdict, closed status, and token usage on next line (skip verdict for fix jobs)
 		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
-		if hasVerdict || review.Closed {
+		tokenSummary := ""
+		if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
+			tokenSummary = tu.FormatSummary()
+		}
+		if hasVerdict || review.Closed || tokenSummary != "" {
 			b.WriteString("\n")
 			if hasVerdict {
 				v := *review.Job.Verdict
@@ -74,6 +79,12 @@ func (m model) renderReviewView() string {
 					b.WriteString(" ")
 				}
 				b.WriteString(closedStyle.Render("[CLOSED]"))
+			}
+			if tokenSummary != "" {
+				if hasVerdict || review.Closed {
+					b.WriteString(" ")
+				}
+				b.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
 			}
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
@@ -140,8 +151,9 @@ func (m model) renderReviewView() string {
 	// Reserve title, location, footer status, help, and optional verdict.
 	headerHeight := titleLines + locationLines + 1 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
-	if hasVerdict || review.Closed {
-		headerHeight++ // Add 1 for verdict/closed line
+	hasTokens := review.Job != nil && tokens.ParseJSON(review.Job.TokenUsage) != nil
+	if hasVerdict || review.Closed || hasTokens {
+		headerHeight++ // Add 1 for verdict/closed/tokens line
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {

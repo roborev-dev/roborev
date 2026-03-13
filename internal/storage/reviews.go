@@ -19,6 +19,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
+	var tokenUsage sql.NullString
 
 	var verdictBool sql.NullInt64
 	var branch sql.NullString
@@ -26,7 +27,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
-		       rp.root_path, rp.name, c.subject
+		       rp.root_path, rp.name, c.subject, j.token_usage
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos rp ON rp.id = j.repo_id
@@ -35,7 +36,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&job.RepoPath, &job.RepoName, &commitSubject)
+		&job.RepoPath, &job.RepoName, &commitSubject, &tokenUsage)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +84,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 	if errMsg.Valid {
 		job.Error = errMsg.String
+	}
+	if tokenUsage.Valid {
+		job.TokenUsage = tokenUsage.String
 	}
 
 	// Use stored verdict_bool if available, otherwise fall back to ParseVerdict
@@ -110,6 +114,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
+	var tokenUsage sql.NullString
 
 	// Search by git_ref which contains the SHA for single commits
 	var verdictBool sql.NullInt64
@@ -118,7 +123,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
-		       rp.root_path, rp.name, c.subject
+		       rp.root_path, rp.name, c.subject, j.token_usage
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos rp ON rp.id = j.repo_id
@@ -129,7 +134,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&job.RepoPath, &job.RepoName, &commitSubject)
+		&job.RepoPath, &job.RepoName, &commitSubject, &tokenUsage)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +183,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	}
 	if errMsg.Valid {
 		job.Error = errMsg.String
+	}
+	if tokenUsage.Valid {
+		job.TokenUsage = tokenUsage.String
 	}
 
 	// Use stored verdict_bool if available, otherwise fall back to ParseVerdict
