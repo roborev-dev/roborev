@@ -134,7 +134,7 @@ func (a *PiAgent) buildArgs(repoPath string) []string {
 
 func (a *PiAgent) thinkingLevel() string {
 	switch a.Reasoning {
-	case ReasoningThorough:
+	case ReasoningMaximum, ReasoningThorough:
 		return "high"
 	case ReasoningFast:
 		return "low"

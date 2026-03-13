@@ -132,7 +132,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 
 	cmd.Flags().StringVar(&opts.agentName, "agent", "", "agent to use for addressing findings (default: from config)")
 	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
-	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
+	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: fast, standard (default), thorough, or maximum")
 	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().IntVar(&opts.maxIterations, "max-iterations", 10, "maximum refinement iterations")

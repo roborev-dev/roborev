@@ -18,6 +18,7 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 		{name: "Fast", reasoning: string(agent.ReasoningFast), expected: "reasoning: " + string(agent.ReasoningFast)},
 		{name: "Standard", reasoning: string(agent.ReasoningStandard), expected: "reasoning: " + string(agent.ReasoningStandard)},
 		{name: "Thorough", reasoning: string(agent.ReasoningThorough), expected: "reasoning: " + string(agent.ReasoningThorough)},
+		{name: "Maximum", reasoning: string(agent.ReasoningMaximum), expected: "reasoning: " + string(agent.ReasoningMaximum)},
 		{name: "Default", reasoning: "", expected: "reasoning: " + string(agent.ReasoningThorough)}, // default (agent defaults)
 	}
 

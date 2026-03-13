@@ -135,6 +135,9 @@ func TestParseReasoningLevel(t *testing.T) {
 		input string
 		want  ReasoningLevel
 	}{
+		{"maximum", ReasoningMaximum},
+		{"max", ReasoningMaximum},
+		{"xhigh", ReasoningMaximum},
 		{"thorough", ReasoningThorough},
 		{"high", ReasoningThorough},
 		{"fast", ReasoningFast},
@@ -155,6 +158,7 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 		level ReasoningLevel
 		want  string
 	}{
+		{ReasoningMaximum, "xhigh"},
 		{ReasoningThorough, "high"},
 		{ReasoningFast, "low"},
 		{ReasoningStandard, ""},

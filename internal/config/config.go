@@ -540,8 +540,8 @@ type RepoCIConfig struct {
 	// the ReviewTypes x Agents cross-product for this repo.
 	Reviews map[string][]string `toml:"reviews" comment:"Explicit CI review matrix for this repo: agent name to review types."`
 
-	// Reasoning overrides the reasoning level for CI reviews (thorough, standard, fast).
-	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, or thorough."`
+	// Reasoning overrides the reasoning level for CI reviews (maximum, thorough, standard, fast).
+	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, thorough, or maximum."`
 
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
@@ -563,11 +563,11 @@ type RepoConfig struct {
 	ExcludedBranches           []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
 	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
 	DisplayName                string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
-	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, or thorough."`    // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, or thorough."`     // Reasoning level for refine: thorough, standard, fast
-	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, or thorough."`           // Reasoning level for fix: thorough, standard, fast
-	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
+	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, thorough, or maximum."` // Reasoning level for reviews: maximum, thorough, standard, fast
+	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, thorough, or maximum."`  // Reasoning level for refine: maximum, thorough, standard, fast
+	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, thorough, or maximum."`        // Reasoning level for fix: maximum, thorough, standard, fast
+	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`          // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`       // Minimum severity for refine: critical, high, medium, low
 	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
@@ -1074,7 +1074,7 @@ func ValidateReviewTypes(types []string) ([]string, error) {
 }
 
 // NormalizeReasoning validates and normalizes a reasoning level string.
-// Returns the canonical form (thorough, standard, fast) or an error if invalid.
+// Returns the canonical form (maximum, thorough, standard, fast) or an error if invalid.
 // Returns empty string (no error) for empty input.
 func NormalizeReasoning(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
@@ -1083,6 +1083,8 @@ func NormalizeReasoning(value string) (string, error) {
 	}
 
 	switch normalized {
+	case "maximum", "max", "xhigh":
+		return "maximum", nil
 	case "thorough", "high":
 		return "thorough", nil
 	case "standard", "medium":
