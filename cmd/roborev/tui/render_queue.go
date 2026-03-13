@@ -638,8 +638,8 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	}
 
 	sessionID := stripControlChars(job.SessionID)
-	if len(sessionID) > 12 {
-		sessionID = sessionID[:12]
+	if runes := []rune(sessionID); len(runes) > 12 {
+		sessionID = string(runes[:12])
 	}
 
 	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID}
@@ -748,7 +748,7 @@ func migrateColumnConfig(cfg *config.Config) bool {
 	}
 	// Add default-hidden columns to existing configs that don't mention them.
 	// Skip if the user explicitly configured no hidden columns (sentinel).
-	hasSentinel := len(cfg.HiddenColumns) == 1 && cfg.HiddenColumns[0] == hiddenColumnsNoneSentinel
+	hasSentinel := len(cfg.HiddenColumns) == 1 && cfg.HiddenColumns[0] == config.HiddenColumnsNoneSentinel
 	if len(cfg.HiddenColumns) > 0 && !hasSentinel {
 		for col := range defaultHiddenColumns {
 			name := columnConfigNames[col]
@@ -850,13 +850,6 @@ var defaultHiddenColumns = map[int]bool{
 	colSessionID: true,
 }
 
-// hiddenColumnsNoneSentinel is saved to hidden_columns when the user has
-// explicitly configured all columns to be visible. This distinguishes
-// "user wants nothing hidden" from "user has never configured columns"
-// (which would be a nil/empty slice), allowing defaultHiddenColumns to
-// apply only for unconfigured users.
-const hiddenColumnsNoneSentinel = "_"
-
 // parseHiddenColumns converts config hidden_columns strings to column ID set.
 // When names is empty (no user config), defaultHiddenColumns are applied.
 // When names contains only the sentinel "_", the user explicitly has nothing hidden.
@@ -867,7 +860,7 @@ func parseHiddenColumns(names []string) map[int]bool {
 		maps.Copy(result, defaultHiddenColumns)
 		return result
 	}
-	if len(names) == 1 && names[0] == hiddenColumnsNoneSentinel {
+	if len(names) == 1 && names[0] == config.HiddenColumnsNoneSentinel {
 		return result
 	}
 	lookup := map[string]int{}
@@ -894,7 +887,7 @@ func hiddenColumnsToNames(hidden map[int]bool) []string {
 		}
 	}
 	if len(names) == 0 {
-		return []string{hiddenColumnsNoneSentinel}
+		return []string{config.HiddenColumnsNoneSentinel}
 	}
 	return names
 }
