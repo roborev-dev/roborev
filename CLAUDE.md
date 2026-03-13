@@ -351,11 +351,7 @@ roborev tui                          # Terminal UI
 
 ## Terminal Safety
 
-When rendering potentially untrusted strings in the TUI (fields that originate from agent output, external APIs, synced databases, or shared git metadata like branch names and commit messages), always sanitize before display to prevent ANSI escape injection or control character manipulation. Use the appropriate sanitization helper:
-
-- **TUI table cells / single-line values**: `stripControlChars(s)` (in `cmd/roborev/tui/render_queue.go`) — strips C0 and C1 control characters
-- **TUI multi-line content**: `sanitizeForDisplay(s)` (in `cmd/roborev/tui/tui.go`) — strips full ANSI escape sequences and control characters, preserving newlines and tabs
-- **Streaming output lines**: `sanitizeEscapes(line)` (in `cmd/roborev/tui/helpers.go`) — strips ANSI escapes from individual output lines
+Sanitize untrusted strings before TUI display: `stripControlChars()` for table cells, `sanitizeForDisplay()` for multi-line content, `sanitizeEscapes()` for streaming lines.
 
 ## Design Constraints
 
