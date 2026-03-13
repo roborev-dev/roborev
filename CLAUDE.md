@@ -349,6 +349,14 @@ roborev tui                          # Terminal UI
 - **Test agent**: Use `agent = "test"` for testing without calling real AI
 - **Isolated tests**: All tests use `t.TempDir()` for temp directories
 
+## Terminal Safety
+
+When rendering potentially untrusted strings in the TUI (fields that originate from agent output, external APIs, synced databases, or shared git metadata like branch names and commit messages), always sanitize before display to prevent ANSI escape injection or control character manipulation. Use the appropriate sanitization helper:
+
+- **TUI table cells / single-line values**: `stripControlChars(s)` (in `cmd/roborev/tui/render_queue.go`) — strips C0 and C1 control characters
+- **TUI multi-line content**: `sanitizeForDisplay(s)` (in `cmd/roborev/tui/tui.go`) — strips full ANSI escape sequences and control characters, preserving newlines and tabs
+- **Streaming output lines**: `sanitizeEscapes(line)` (in `cmd/roborev/tui/helpers.go`) — strips ANSI escapes from individual output lines
+
 ## Design Constraints
 
 - **Daemon tasks must not modify the git working tree.** Background jobs (reviews, CI polling, synthesis) are read-only with respect to the user's repo checkout. They read source files and write results to the database only. CLI commands like `roborev fix` run synchronously in the foreground and may modify files. Background `fix` jobs run agents in isolated git worktrees (via `internal/worktree`) and store resulting patches in the database — patches are only applied to the working tree when the user explicitly confirms in the TUI.

@@ -637,7 +637,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	sessionID := job.SessionID
+	sessionID := stripControlChars(job.SessionID)
 	if len(sessionID) > 12 {
 		sessionID = sessionID[:12]
 	}
