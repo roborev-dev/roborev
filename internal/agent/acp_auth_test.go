@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coder/acp-go-sdk"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,254 +50,106 @@ func authTestPermissionOptions() []acp.PermissionOption {
 	}
 }
 
+// setupTestClient creates an acpClient with common defaults for auth tests.
+// mode is the agent's Mode field. If repoRoot is non-empty, it is set on the
+// agent and the client's terminals map is initialized.
+func setupTestClient(mode string, repoRoot string) *acpClient {
+	agent := &ACPAgent{
+		agentName:       "test-acp",
+		Command:         "test-command",
+		ReadOnlyMode:    "plan",
+		AutoApproveMode: "auto-approve",
+		Mode:            mode,
+		Model:           "test-model",
+		Timeout:         30 * time.Second,
+	}
+	client := &acpClient{agent: agent}
+	if repoRoot != "" {
+		agent.repoRoot = repoRoot
+		client.terminals = make(map[string]*acpTerminal)
+	}
+	return client
+}
+
+// assertPermissionOutcome calls RequestPermission with the given tool kind and
+// asserts the selected outcome matches expectedOptionID. Pass nil for toolKind
+// to test the nil-Kind path.
+func assertPermissionOutcome(t *testing.T, client *acpClient, toolKind *acp.ToolKind, expectedOptionID acp.PermissionOptionId) {
+	t.Helper()
+	response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+		Options: authTestPermissionOptions(),
+		ToolCall: acp.RequestPermissionToolCall{
+			Kind: toolKind,
+		},
+	})
+	require.NoError(t, err, "RequestPermission should not error")
+	require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option")
+	require.Equal(t, expectedOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option")
+}
+
+// toolKindPtr returns a pointer to the given ToolKind string.
+func toolKindPtr(kind string) *acp.ToolKind {
+	k := acp.ToolKind(kind)
+	return &k
+}
+
 // TestACPAuthPermissionModes tests RequestPermission behavior and mode switching
 // This provides context for the H2 authorization bypass fix
 func TestACPAuthPermissionModes(t *testing.T) {
 	t.Parallel()
 
 	t.Run("RequestPermission: ReadOnlyMode denies destructive operations", func(t *testing.T) {
-		// Create agent in read-only mode (non-agentic)
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "plan", // Start in read-only mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test destructive operation (edit)
-		editKind := acp.ToolKind("edit")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &editKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		// Should be denied for destructive operations in read-only mode
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for destructive operation in read-only mode")
+		client := setupTestClient("plan", "")
+		assertPermissionOutcome(t, client, toolKindPtr("edit"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: ReadOnlyMode allows non-destructive operations", func(t *testing.T) {
-		// Create agent in read-only mode (non-agentic)
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "plan", // Start in read-only mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test non-destructive operation (read)
-		readKind := acp.ToolKind("read")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &readKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		// Should be allowed for non-destructive operations in read-only mode
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
-		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for non-destructive operation in read-only mode")
+		client := setupTestClient("plan", "")
+		assertPermissionOutcome(t, client, toolKindPtr("read"), authAllowAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: Empty mode defaults to read-only behavior for permissions", func(t *testing.T) {
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "",
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		client := &acpClient{
-			agent: agent,
-		}
-
-		readKind := acp.ToolKind("read")
-		readResponse, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &readKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed for read kind: %v", err)
-		require.NotNil(t, readResponse.Outcome.Selected, "Expected a selected permission option when mode is disabled")
-		assert.Equal(t, authAllowAlwaysOptionID, readResponse.Outcome.Selected.OptionId, "Unexpected permission option for non-destructive operation when mode is disabled")
-
-		editKind := acp.ToolKind("edit")
-		editResponse, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &editKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed for edit kind: %v", err)
-		require.NotNil(t, editResponse.Outcome.Selected, "Expected a selected permission option when mode is disabled")
-		assert.Equal(t, authRejectAlwaysOptionID, editResponse.Outcome.Selected.OptionId, "Unexpected permission option for destructive operation when mode is disabled")
+		client := setupTestClient("", "")
+		assertPermissionOutcome(t, client, toolKindPtr("read"), authAllowAlwaysOptionID)
+		assertPermissionOutcome(t, client, toolKindPtr("edit"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: AutoApproveMode allows all known operations", func(t *testing.T) {
-		// Create agent in auto-approve mode (agentic)
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "auto-approve", // Start in auto-approve mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test destructive operation (should be allowed in auto-approve mode)
-		editKind := acp.ToolKind("edit")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &editKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		// Should be allowed for known operations in auto-approve mode
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in auto-approve mode")
-		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for known operation in auto-approve mode")
+		client := setupTestClient("auto-approve", "")
+		assertPermissionOutcome(t, client, toolKindPtr("edit"), authAllowAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: Unknown tool kinds are always denied", func(t *testing.T) {
-		// Create agent in auto-approve mode (agentic)
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "auto-approve", // Start in auto-approve mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test unknown operation
-		unknownKind := acp.ToolKind("unknown-operation")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &unknownKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		// Unknown tool kinds should always be denied for safety
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for unknown operation")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for unknown operation")
+		client := setupTestClient("auto-approve", "")
+		assertPermissionOutcome(t, client, toolKindPtr("unknown-operation"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: Known destructive operations are denied outside explicit auto-approve mode", func(t *testing.T) {
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "custom-mode",
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		client := &acpClient{
-			agent: agent,
-		}
-
-		editKind := acp.ToolKind("edit")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &editKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option outside explicit auto-approve mode")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option outside explicit auto-approve mode")
+		client := setupTestClient("custom-mode", "")
+		assertPermissionOutcome(t, client, toolKindPtr("edit"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("RequestPermission: Nil ToolCall.Kind is denied", func(t *testing.T) {
-		// Create agent in auto-approve mode (agentic)
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "auto-approve", // Start in auto-approve mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
-
-		// Create client
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test nil ToolCall.Kind
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: nil, // Explicitly nil
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		// Nil ToolCall.Kind should always be denied
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for nil ToolCall.Kind")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Unexpected permission option for nil ToolCall.Kind")
+		client := setupTestClient("auto-approve", "")
+		assertPermissionOutcome(t, client, nil, authRejectAlwaysOptionID)
 	})
 
 	t.Run("Mode switching: WithAgentic sets correct mode", func(t *testing.T) {
-		// Create base agent
 		baseAgent := &ACPAgent{
 			agentName:       "test-acp",
 			Command:         "test-command",
 			ReadOnlyMode:    "plan",
 			AutoApproveMode: "auto-approve",
-			Mode:            "plan", // Start in read-only mode
+			Mode:            "plan",
 			Model:           "test-model",
 			Timeout:         30 * time.Second,
 		}
 
-		// Test non-agentic mode (should use read-only mode)
 		nonAgenticAgent := baseAgent.WithAgentic(false).(*ACPAgent)
-		assert.Equal(t, "plan", nonAgenticAgent.Mode, "Non-agentic mode should be read-only mode")
+		require.Equal(t, "plan", nonAgenticAgent.Mode, "Non-agentic mode should be read-only mode")
 
-		// Test agentic mode (should use auto-approve mode)
 		agenticAgent := baseAgent.WithAgentic(true).(*ACPAgent)
-		assert.Equal(t, "auto-approve", agenticAgent.Mode, "Agentic mode should be auto-approve mode")
+		require.Equal(t, "auto-approve", agenticAgent.Mode, "Agentic mode should be auto-approve mode")
 	})
 }
 
@@ -307,50 +158,30 @@ func TestACPAuthPermissionModes(t *testing.T) {
 func TestACPAuthDirectEnforcement(t *testing.T) {
 	t.Parallel()
 
-	// Create a temporary directory for testing
 	tempDir := t.TempDir()
 
-	// Create agent with temp directory as repo root
-	agent := &ACPAgent{
-		agentName:       "test-acp",
-		Command:         "test-command",
-		ReadOnlyMode:    "plan",
-		AutoApproveMode: "auto-approve",
-		Mode:            "plan", // Start in read-only mode
-		Model:           "test-model",
-		Timeout:         30,
-		repoRoot:        tempDir,
-	}
-
-	client := &acpClient{
-		agent:     agent,
-		terminals: make(map[string]*acpTerminal),
-	}
+	client := setupTestClient("plan", tempDir)
 
 	t.Run("H2: WriteTextFile authorization in read-only mode", func(t *testing.T) {
-		// Test that WriteTextFile is blocked in read-only mode
 		_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
 			Path:    "test.txt",
 			Content: "test content",
 		})
 		require.Error(t, err, "Expected authorization error in read-only mode")
-		assert.Contains(t, err.Error(), "write operation not permitted in read-only mode")
+		require.Contains(t, err.Error(), "write operation not permitted in read-only mode")
 	})
 
 	t.Run("H2: CreateTerminal authorization in read-only mode", func(t *testing.T) {
-		// Test that CreateTerminal is blocked in read-only mode
 		cmd, args := acpTestEchoCommand("test")
 		_, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 			Command: cmd,
 			Args:    args,
 		})
 		require.Error(t, err, "Expected authorization error in read-only mode")
-		assert.Contains(t, err.Error(), "terminal creation not permitted in read-only mode")
+		require.Contains(t, err.Error(), "terminal creation not permitted in read-only mode")
 	})
 
 	t.Run("H2: Authorization bypass prevention - direct method calls", func(t *testing.T) {
-		// Test that authorization is enforced even when calling methods directly
-		// This simulates a compromised agent trying to bypass RequestPermission
 		testCases := []struct {
 			name string
 			exec func() error
@@ -381,28 +212,13 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				err := tc.exec()
 				require.Error(t, err, "Expected authorization error for %s", tc.name)
-				assert.Contains(t, err.Error(), "not permitted in read-only mode")
+				require.Contains(t, err.Error(), "not permitted in read-only mode")
 			})
 		}
 	})
 
 	t.Run("H2: Auto-approve mode allows mutating operations", func(t *testing.T) {
-		// Create agent in auto-approve mode
-		autoApproveAgent := &ACPAgent{
-			agentName:       "test-acp-auto",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "auto-approve", // Auto-approve mode
-			Model:           "test-model",
-			Timeout:         30,
-			repoRoot:        tempDir,
-		}
-
-		autoApproveClient := &acpClient{
-			agent:     autoApproveAgent,
-			terminals: make(map[string]*acpTerminal), // Initialize terminals map
-		}
+		autoApproveClient := setupTestClient("auto-approve", tempDir)
 
 		// Test that WriteTextFile is allowed in auto-approve mode
 		tempFile := filepath.Join(tempDir, "auto-approve-test.txt")
@@ -440,7 +256,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 			info, err := os.Stat(targetPath)
 			require.NoError(t, err, "Failed to stat updated file: %v", err)
-			assert.Equal(t, originalMode, info.Mode().Perm(), "Expected mode to be preserved")
+			require.Equal(t, originalMode, info.Mode().Perm(), "Expected mode to be preserved")
 		})
 
 		t.Run("WriteTextFile respects existing read-only file permissions", func(t *testing.T) {
@@ -483,22 +299,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 	})
 
 	t.Run("H2: Mode switching validation", func(t *testing.T) {
-		// Test that switching from read-only to auto-approve works correctly
-		switchableAgent := &ACPAgent{
-			agentName:       "test-acp-switch",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "plan", // Start in read-only
-			Model:           "test-model",
-			Timeout:         30,
-			repoRoot:        tempDir,
-		}
-
-		switchableClient := &acpClient{
-			agent:     switchableAgent,
-			terminals: make(map[string]*acpTerminal), // Initialize terminals map
-		}
+		switchableClient := setupTestClient("plan", tempDir)
 
 		// Should be blocked in read-only mode
 		_, err := switchableClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
@@ -508,7 +309,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 		require.Error(t, err, "Expected authorization error in read-only mode")
 
 		// Switch to auto-approve mode
-		switchableAgent.Mode = "auto-approve"
+		switchableClient.agent.Mode = "auto-approve"
 
 		// Should now be allowed
 		tempFile := filepath.Join(tempDir, "switch-test.txt")
@@ -521,28 +322,14 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 	})
 
 	t.Run("H2: Non-read-only custom mode still blocks mutating operations", func(t *testing.T) {
-		customModeAgent := &ACPAgent{
-			agentName:       "test-acp-custom",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "custom-mode",
-			Model:           "test-model",
-			Timeout:         30,
-			repoRoot:        tempDir,
-		}
-
-		customModeClient := &acpClient{
-			agent:     customModeAgent,
-			terminals: make(map[string]*acpTerminal),
-		}
+		customModeClient := setupTestClient("custom-mode", tempDir)
 
 		_, err := customModeClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
 			Path:    "custom-mode.txt",
 			Content: "test",
 		})
 		require.Error(t, err, "Expected write to be blocked outside explicit auto-approve mode")
-		assert.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
+		require.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
 
 		cmd, args := acpTestEchoCommand("test")
 		_, err = customModeClient.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
@@ -550,7 +337,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			Args:    args,
 		})
 		require.Error(t, err, "Expected terminal creation to be blocked outside explicit auto-approve mode")
-		assert.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
+		require.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
 	})
 }
 
@@ -566,40 +353,23 @@ func TestACPAuthEdgeCases(t *testing.T) {
 		tempDir = resolved
 	}
 
-	agent := &ACPAgent{
-		agentName:       "test-acp",
-		Command:         "test-command",
-		ReadOnlyMode:    "plan",
-		AutoApproveMode: "auto-approve",
-		Mode:            "plan", // Start in read-only mode
-		Model:           "test-model",
-		Timeout:         30,
-		repoRoot:        tempDir,
-	}
-
-	client := &acpClient{
-		agent:     agent,
-		terminals: make(map[string]*acpTerminal),
-	}
+	client := setupTestClient("plan", tempDir)
 
 	t.Run("Path validation prevents directory traversal", func(t *testing.T) {
-		// Test path traversal attempt
-		_, err := client.validateAndResolvePath("../../../etc/passwd", false) // false = read operation
+		_, err := client.validateAndResolvePath("../../../etc/passwd", false)
 		require.Error(t, err, "Expected error for path traversal, got nil")
 	})
 
 	t.Run("Path validation prevents symlink traversal", func(t *testing.T) {
-		// Create a symlink outside the repo
 		symlinkPath := filepath.Join(tempDir, "symlink")
-		targetPath := "/etc/passwd" // This should be blocked
+		targetPath := "/etc/passwd"
 		err := os.Symlink(targetPath, symlinkPath)
 		if err != nil {
 			t.Skip("Could not create symlink for test")
 		}
 		defer os.Remove(symlinkPath)
 
-		// Test symlink traversal attempt
-		_, err = client.validateAndResolvePath("symlink", false) // false = read operation
+		_, err = client.validateAndResolvePath("symlink", false)
 		require.Error(t, err, "Expected error for symlink traversal, got nil")
 	})
 
@@ -616,7 +386,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 		}
 		defer os.Remove(symlinkPath)
 
-		_, err := client.validateAndResolvePath("write-link-outside", true) // true = write operation
+		_, err := client.validateAndResolvePath("write-link-outside", true)
 		require.Error(t, err, "Expected error for write symlink traversal, got nil")
 	})
 
@@ -633,56 +403,47 @@ func TestACPAuthEdgeCases(t *testing.T) {
 		}
 		defer os.Remove(symlinkPath)
 
-		resolvedPath, err := client.validateAndResolvePath("write-link-inside", true) // true = write operation
+		resolvedPath, err := client.validateAndResolvePath("write-link-inside", true)
 		require.NoError(t, err, "Unexpected error for in-repo symlink write target: %v", err)
-		assert.True(t, strings.HasSuffix(resolvedPath, "inside.txt"), "Expected resolved path to use resolved target path")
+		require.True(t, strings.HasSuffix(resolvedPath, "inside.txt"), "Expected resolved path to use resolved target path")
 	})
 
 	t.Run("Path validation allows valid paths", func(t *testing.T) {
-		// Create a valid file
 		validFile := filepath.Join(tempDir, "valid.txt")
 		err := os.WriteFile(validFile, []byte("test"), 0644)
 		require.NoError(t, err, "Failed to create test file: %v", err)
 		defer os.Remove(validFile)
 
-		// Test valid path
-		resolvedPath, err := client.validateAndResolvePath("valid.txt", false) // false = read operation
+		resolvedPath, err := client.validateAndResolvePath("valid.txt", false)
 		require.NoError(t, err, "Unexpected error for valid path: %v", err)
-		assert.
-			// Check that the resolved path is within the temp directory
-			True(t, strings.HasSuffix(resolvedPath, "valid.txt"), "Expected resolved path to end with 'valid.txt'")
-		assert.Contains(t, resolvedPath, tempDir, "Expected resolved path to contain temp dir")
+		require.True(t, strings.HasSuffix(resolvedPath, "valid.txt"), "Expected resolved path to end with 'valid.txt'")
+		require.Contains(t, resolvedPath, tempDir, "Expected resolved path to contain temp dir")
 	})
 
 	t.Run("Numeric parameter validation", func(t *testing.T) {
-		// Test negative line number
 		_, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "test.txt",
 			Line: authTestIntPtr(-1),
 		})
 		require.Error(t, err, "Expected error for negative line number, got nil")
 
-		// Test negative limit
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
 			Limit: authTestIntPtr(-1),
 		})
 		require.Error(t, err, "Expected error for negative limit, got nil")
 
-		// Test empty path
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "",
 		})
 		require.Error(t, err, "Expected error for empty path, got nil")
 
-		// Test excessively large line number
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "test.txt",
 			Line: authTestIntPtr(2000000),
 		})
 		require.Error(t, err, "Expected error for excessively large line number, got nil")
 
-		// Test excessively large limit
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
 			Limit: authTestIntPtr(2000000),
@@ -691,31 +452,16 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	})
 
 	t.Run("WriteTextFile input validation", func(t *testing.T) {
-		// Create agent and client
-		agent := &ACPAgent{
-			agentName:       "test-acp",
-			Command:         "test-command",
-			ReadOnlyMode:    "plan",
-			AutoApproveMode: "auto-approve",
-			Mode:            "auto-approve", // Start in auto-approve mode
-			Model:           "test-model",
-			Timeout:         30 * time.Second,
-		}
+		validationClient := setupTestClient("auto-approve", "")
 
-		client := &acpClient{
-			agent: agent,
-		}
-
-		// Test empty path
-		_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := validationClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
 			Path:    "",
 			Content: "test content",
 		})
 		require.Error(t, err, "Expected error for empty path, got nil")
 
-		// Test excessively large content
 		largeContent := string(make([]byte, 11000000)) // 11MB > 10MB limit
-		_, err = client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err = validationClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
 			Path:    "test.txt",
 			Content: largeContent,
 		})
@@ -723,47 +469,14 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	})
 
 	t.Run("Permission logic defaults to deny", func(t *testing.T) {
-		// Test unknown tool kind
-		unknownKind := acp.ToolKind("unknown")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &unknownKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option for unknown operation")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected reject-always option for unknown operation")
+		assertPermissionOutcome(t, client, toolKindPtr("unknown"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("Read-only mode denies destructive operations", func(t *testing.T) {
-		// Test destructive operation in read-only mode
-		editKind := acp.ToolKind("edit")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &editKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
-		assert.Equal(t, authRejectAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected reject-always option for destructive operation in read-only mode")
+		assertPermissionOutcome(t, client, toolKindPtr("edit"), authRejectAlwaysOptionID)
 	})
 
 	t.Run("Read-only mode allows non-destructive operations", func(t *testing.T) {
-		// Test non-destructive operation in read-only mode
-		readKind := acp.ToolKind("read")
-		response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
-			Options: authTestPermissionOptions(),
-			ToolCall: acp.RequestPermissionToolCall{
-				Kind: &readKind,
-			},
-		})
-		require.NoError(t, err, "RequestPermission failed: %v", err)
-
-		require.NotNil(t, response.Outcome.Selected, "Expected a selected permission option in read-only mode")
-		assert.Equal(t, authAllowAlwaysOptionID, response.Outcome.Selected.OptionId, "Expected allow-always option for non-destructive operation in read-only mode")
+		assertPermissionOutcome(t, client, toolKindPtr("read"), authAllowAlwaysOptionID)
 	})
 }
