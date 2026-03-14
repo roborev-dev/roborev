@@ -16,176 +16,99 @@ import (
 	"testing"
 )
 
-// TestHandleJobOutput_InvalidJobID tests that invalid job_id returns 400.
-func TestHandleJobOutput_InvalidJobID(t *testing.T) {
-	server, _, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
-	w := httptest.NewRecorder()
-
-	server.handleJobOutput(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 400, got %d: %s", w.Code, w.Body.String())
-	}
+// jobOutputResponse covers the union of fields returned by handleJobOutput
+// in both polling and streaming modes.
+type jobOutputResponse struct {
+	JobID   int64  `json:"job_id"`
+	Status  string `json:"status"`
+	Type    string `json:"type"`
+	HasMore bool   `json:"has_more"`
+	Lines   []struct {
+		TS       string `json:"ts"`
+		Text     string `json:"text"`
+		LineType string `json:"line_type"`
+	} `json:"lines"`
 }
 
-// TestHandleJobOutput_NonExistentJob tests that non-existent job returns 404.
-func TestHandleJobOutput_NonExistentJob(t *testing.T) {
-	server, _, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
-	w := httptest.NewRecorder()
-
-	server.handleJobOutput(w, req)
-
-	if w.Code != http.StatusNotFound {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 404, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleJobOutput_PollingRunningJob tests polling mode for a running job.
-func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
+func TestHandleJobOutput(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
-	// Create a running job
-	job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo"), "abc123", "test-agent")
-	setJobStatus(t, db, job.ID, storage.JobStatusRunning)
+	t.Run("missing job_id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
-	w := httptest.NewRecorder()
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	})
 
-	server.handleJobOutput(w, req)
+	t.Run("invalid job_id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-	if w.Code != http.StatusOK {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	})
 
-	var resp struct {
-		JobID  int64  `json:"job_id"`
-		Status string `json:"status"`
-		Lines  []struct {
-			TS       string `json:"ts"`
-			Text     string `json:"text"`
-			LineType string `json:"line_type"`
-		} `json:"lines"`
-		HasMore bool `json:"has_more"`
-	}
-	testutil.DecodeJSON(t, w, &resp)
+	t.Run("nonexistent job", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-	if resp.JobID != job.ID {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected job_id %d, got %d", job.ID, resp.JobID)
-	}
-	if resp.Status != "running" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 'running', got %q", resp.Status)
-	}
-	if !resp.HasMore {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected has_more=true for running job")
-	}
-}
+		require.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+	})
 
-// TestHandleJobOutput_PollingCompletedJob tests polling mode for a completed job.
-func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
+	t.Run("polling running job", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-running"), "abc123", "test-agent")
+		setJobStatus(t, db, job.ID, storage.JobStatusRunning)
 
-	// Create a completed job
-	job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo"), "abc123", "test-agent")
-	setJobStatus(t, db, job.ID, storage.JobStatusDone)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
-	w := httptest.NewRecorder()
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	server.handleJobOutput(w, req)
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
 
-	if w.Code != http.StatusOK {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
+		assert.Equal(t, job.ID, resp.JobID)
+		assert.Equal(t, "running", resp.Status)
+		assert.True(t, resp.HasMore, "expected has_more=true for running job")
+	})
 
-	var resp struct {
-		JobID   int64  `json:"job_id"`
-		Status  string `json:"status"`
-		HasMore bool   `json:"has_more"`
-	}
-	testutil.DecodeJSON(t, w, &resp)
+	t.Run("polling completed job", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-done"), "abc123", "test-agent")
+		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
-	if resp.Status != "done" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 'done', got %q", resp.Status)
-	}
-	if resp.HasMore {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected has_more=false for completed job")
-	}
-}
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-// TestHandleJobOutput_StreamingCompletedJob tests that streaming mode for a
-// completed job returns an immediate complete response instead of hanging.
-func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	// Create a completed job
-	job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo"), "abc123", "test-agent")
-	setJobStatus(t, db, job.ID, storage.JobStatusDone)
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
-	w := httptest.NewRecorder()
+		assert.Equal(t, "done", resp.Status)
+		assert.False(t, resp.HasMore, "expected has_more=false for completed job")
+	})
 
-	server.handleJobOutput(w, req)
+	t.Run("streaming completed job", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-stream"), "abc123", "test-agent")
+		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
-	// Should return immediately with complete message, not hang
-	if w.Code != http.StatusOK {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.handleJobOutput(w, req)
 
-	var resp struct {
-		Type   string `json:"type"`
-		Status string `json:"status"`
-	}
-	testutil.DecodeJSON(t, w, &resp)
+		// Should return immediately with complete message, not hang
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-	if resp.Type != "complete" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected type 'complete', got %q", resp.Type)
-	}
-	if resp.Status != "done" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 'done', got %q", resp.Status)
-	}
-}
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
 
-func TestHandleJobOutput_MissingJobID(t *testing.T) {
-	server, _, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
-	w := httptest.NewRecorder()
-
-	server.handleJobOutput(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected status 400, got %d: %s", w.Code, w.Body.String())
-	}
+		assert.Equal(t, "complete", resp.Type)
+		assert.Equal(t, "done", resp.Status)
+	})
 }
 
 func TestHandleJobOutputIDParsing(t *testing.T) {
