@@ -2169,6 +2169,20 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantDirty:    false,
 			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
 		},
+		{
+			name:       "legacy hidden_columns gets session_id added",
+			hiddenCols: []string{"branch"},
+			wantDirty:  true,
+			wantHidden: []string{"branch", "session_id"},
+		},
+		{
+			name:         "session_id in column_order means user chose to show it",
+			columnOrder:  []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "closed", "session_id"},
+			hiddenCols:   []string{"branch"},
+			wantDirty:    false,
+			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "closed", "session_id"},
+			wantHidden:   []string{"branch"},
+		},
 	}
 
 	for _, tt := range tests {
