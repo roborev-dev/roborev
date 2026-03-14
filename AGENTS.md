@@ -138,6 +138,8 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 
 ## Testing
 
+All Go tests use `testify` (`github.com/stretchr/testify`) for assertions. Use `require.*` for fatal preconditions and `assert.*` for non-fatal checks. Do not use raw `if`/`t.Errorf`/`t.Fatalf` patterns.
+
 - After any Go code changes, run `go fmt ./...` and `go vet ./...` before committing.
 - Fast test pass: `go test ./...`
 - Integration tests: `go test -tags=integration ./...`
