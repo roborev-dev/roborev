@@ -62,116 +62,110 @@ func getResultByType(t *testing.T, results []ReviewResult, rType string) ReviewR
 	return ReviewResult{}
 }
 
-func TestRunBatch_SingleJob(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
+func TestRunBatch(t *testing.T) {
 	t.Parallel()
-	cfg := BatchConfig{
-		RepoPath:    t.TempDir(),
-		GitRef:      "abc123",
-		Agents:      []string{"test"},
-		ReviewTypes: []string{"security"},
-		AgentRegistry: map[string]agent.Agent{
-			"test": &mockAgent{
-				name:   "test",
-				output: "looks good",
+
+	type resultCheck struct {
+		agent      string
+		reviewType string
+		status     string
+		errContain string
+		outContain string
+	}
+
+	tests := []struct {
+		name        string
+		agents      []string
+		reviewTypes []string
+		registry    map[string]agent.Agent
+		checks      []resultCheck
+	}{
+		{
+			name:        "SingleJob",
+			agents:      []string{"test"},
+			reviewTypes: []string{"security"},
+			registry: map[string]agent.Agent{
+				"test": &mockAgent{name: "test", output: "looks good"},
+			},
+			checks: []resultCheck{
+				{agent: "test", reviewType: "security", status: ResultDone, outContain: "looks good"},
+			},
+		},
+		{
+			name:        "Matrix",
+			agents:      []string{"test"},
+			reviewTypes: []string{"security", "default"},
+			registry: map[string]agent.Agent{
+				"test": &mockAgent{name: "test", output: "ok"},
+			},
+			checks: []resultCheck{
+				{agent: "test", reviewType: "security", status: ResultDone},
+				{agent: "test", reviewType: "default", status: ResultDone},
+			},
+		},
+		{
+			name:        "AgentNotFound",
+			agents:      []string{"nonexistent-agent-xyz"},
+			reviewTypes: []string{"security"},
+			registry:    map[string]agent.Agent{},
+			checks: []resultCheck{
+				{status: ResultFailed, errContain: "no agents available (mock registry)"},
+			},
+		},
+		{
+			name:        "AgentFailure",
+			agents:      []string{"fail-agent"},
+			reviewTypes: []string{"security"},
+			registry: map[string]agent.Agent{
+				"fail-agent": &mockAgent{name: "fail-agent", err: fmt.Errorf("agent exploded")},
+			},
+			checks: []resultCheck{
+				{status: ResultFailed, errContain: "agent exploded"},
 			},
 		},
 	}
 
-	// RunBatch will fail at prompt building because there's no
-	// real git repo, but we can verify it creates the right
-	// number of jobs and handles errors gracefully.
-	results := RunBatch(context.Background(), cfg)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Len(results, 1, "expected 1 result")
+			repo := testutil.NewTestRepoWithCommit(t)
+			sha := repo.RevParse("HEAD")
 
-	r := results[0]
-	assert.Equal("test", r.Agent, "agent = %q, want %q", r.Agent, "test")
-	assert.Equal("security", r.ReviewType, "reviewType = %q, want %q", r.ReviewType, "security")
-	// Without a real git repo, prompt building will fail
-	assert.Equal("failed", r.Status, "status = %q, want 'failed'", r.Status)
-	assert.Contains(r.Error, "build prompt:", "expected build prompt error, got %q", r.Error)
-}
+			cfg := BatchConfig{
+				RepoPath:      repo.Root,
+				GitRef:        sha,
+				Agents:        tc.agents,
+				ReviewTypes:   tc.reviewTypes,
+				AgentRegistry: tc.registry,
+			}
 
-func TestRunBatch_Matrix(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+			results := RunBatch(context.Background(), cfg)
+			require.Len(t, results, len(tc.checks), "result count")
 
-	t.Parallel()
-	cfg := BatchConfig{
-		RepoPath: t.TempDir(),
-		GitRef:   "abc..def",
-		Agents:   []string{"test"},
-		ReviewTypes: []string{
-			"security", "default",
-		},
-		AgentRegistry: map[string]agent.Agent{
-			"test": &mockAgent{
-				name:   "test",
-				output: "ok",
-			},
-		},
+			for i, chk := range tc.checks {
+				r := results[i]
+				// For matrix tests, look up by review type since
+				// goroutine ordering is not guaranteed.
+				if chk.reviewType != "" && len(results) > 1 {
+					r = getResultByType(t, results, chk.reviewType)
+				}
+				if chk.agent != "" {
+					assert.Equal(t, chk.agent, r.Agent, "case %d agent", i)
+				}
+				if chk.reviewType != "" {
+					assert.Equal(t, chk.reviewType, r.ReviewType, "case %d reviewType", i)
+				}
+				assert.Equal(t, chk.status, r.Status, "case %d status (err=%q)", i, r.Error)
+				if chk.errContain != "" {
+					assert.Contains(t, r.Error, chk.errContain, "case %d error", i)
+				}
+				if chk.outContain != "" {
+					assert.Contains(t, r.Output, chk.outContain, "case %d output", i)
+				}
+			}
+		})
 	}
-
-	results := RunBatch(context.Background(), cfg)
-
-	require.Len(results, 2, "expected 2 results")
-
-	assert.NotEmpty(getResultByType(t, results, "security"))
-	assert.NotEmpty(getResultByType(t, results, "default"))
-}
-
-func TestRunBatch_AgentNotFound(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	t.Parallel()
-	cfg := BatchConfig{
-		RepoPath:      t.TempDir(),
-		GitRef:        "abc123",
-		Agents:        []string{"nonexistent-agent-xyz"},
-		ReviewTypes:   []string{"security"},
-		AgentRegistry: map[string]agent.Agent{}, // Empty mock registry
-	}
-
-	results := RunBatch(context.Background(), cfg)
-
-	require.Len(results, 1, "expected 1 result")
-	r := results[0]
-	assert.Equal("failed", r.Status, "status = %q, want 'failed'", r.Status)
-	assert.NotEmpty(r.Error)
-	assert.Contains(r.Error, "no agents available (mock registry)", "expected agent not found error, got %q", r.Error)
-}
-
-func TestRunBatch_AgentFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	t.Parallel()
-	repo := testutil.NewTestRepoWithCommit(t)
-	sha := repo.RevParse("HEAD")
-
-	cfg := BatchConfig{
-		RepoPath:    repo.Root,
-		GitRef:      sha,
-		Agents:      []string{"fail-agent"},
-		ReviewTypes: []string{"security"},
-		AgentRegistry: map[string]agent.Agent{
-			"fail-agent": &mockAgent{
-				name: "fail-agent",
-				err:  fmt.Errorf("agent exploded"),
-			},
-		},
-	}
-
-	results := RunBatch(context.Background(), cfg)
-
-	require.Len(results, 1, "expected 1 result")
-	r := results[0]
-	assert.Equal("failed", r.Status, "status = %q, want 'failed'", r.Status)
-	assert.Contains(r.Error, "agent exploded", "expected agent exploded error, got %q", r.Error)
 }
 
 func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
