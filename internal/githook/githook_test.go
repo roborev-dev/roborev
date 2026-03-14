@@ -22,26 +22,27 @@ const (
 )
 
 func TestGeneratePostCommit(t *testing.T) {
+	t.Parallel()
 	content := GeneratePostCommit()
 	lines := strings.Split(content, "\n")
 
 	t.Run("has shebang", func(t *testing.T) {
+		t.Parallel()
 		assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
 	})
 
 	t.Run("has roborev comment", func(t *testing.T) {
+		t.Parallel()
 		assert.Contains(t, content, "# roborev", "hook should contain roborev comment")
 	})
 
 	t.Run("baked path comes first", func(t *testing.T) {
-		bakedIdx := strings.Index(content, "ROBOREV=\"")
-		pathIdx := strings.Index(content, "command -v roborev")
-		assert.NotEqual(t, -1, bakedIdx, "hook should have baked ROBOREV= assignment")
-		assert.NotEqual(t, -1, pathIdx, "hook should have PATH fallback")
-		assert.Less(t, bakedIdx, pathIdx, "baked path should come before PATH lookup")
+		t.Parallel()
+		assertSubstringsInOrder(t, content, "ROBOREV=\"", "command -v roborev")
 	})
 
 	t.Run("post-commit line without background", func(t *testing.T) {
+		t.Parallel()
 		require.True(t, strings.Contains(content, "post-commit") && strings.Contains(content, "2>/dev/null"), "hook should call post-commit with 2>/dev/null")
 
 		idx := strings.Index(content, "\" post-commit")
@@ -56,10 +57,12 @@ func TestGeneratePostCommit(t *testing.T) {
 	})
 
 	t.Run("has version marker", func(t *testing.T) {
+		t.Parallel()
 		assert.Contains(t, content, PostCommitVersionMarker, "hook should contain %q", PostCommitVersionMarker)
 	})
 
 	t.Run("baked path is quoted", func(t *testing.T) {
+		t.Parallel()
 		for _, line := range lines {
 			if strings.HasPrefix(line, "ROBOREV=") &&
 				!strings.Contains(line, "command -v") {
@@ -70,6 +73,7 @@ func TestGeneratePostCommit(t *testing.T) {
 	})
 
 	t.Run("baked path is absolute", func(t *testing.T) {
+		t.Parallel()
 		for _, line := range lines {
 			if strings.HasPrefix(line, "ROBOREV=") &&
 				!strings.Contains(line, "command -v") {
@@ -86,6 +90,7 @@ func TestGeneratePostCommit(t *testing.T) {
 }
 
 func TestGeneratePostRewrite(t *testing.T) {
+	t.Parallel()
 	content := GeneratePostRewrite()
 	assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
 	assert.Contains(t, content, PostRewriteVersionMarker, "hook should contain version marker")
@@ -93,6 +98,7 @@ func TestGeneratePostRewrite(t *testing.T) {
 }
 
 func TestGenerateEmbeddablePostCommit(t *testing.T) {
+	t.Parallel()
 	content := generateEmbeddablePostCommit()
 	assert.False(t, strings.HasPrefix(content, "#!"), "embeddable should not have shebang")
 	assert.Contains(t, content, "_roborev_hook() {", "embeddable should use function wrapper")
@@ -108,6 +114,7 @@ func TestGenerateEmbeddablePostCommit(t *testing.T) {
 }
 
 func TestGenerateEmbeddablePostRewrite(t *testing.T) {
+	t.Parallel()
 	content := generateEmbeddablePostRewrite()
 
 	if strings.HasPrefix(content, "#!") {
@@ -138,7 +145,9 @@ func TestGenerateEmbeddablePostRewrite(t *testing.T) {
 }
 
 func TestEmbedSnippet(t *testing.T) {
+	t.Parallel()
 	t.Run("inserts after shebang", func(t *testing.T) {
+		t.Parallel()
 		existing := "#!/bin/sh\necho 'user code'\nexit 0\n"
 		snippet := "# roborev snippet\n_roborev_hook\n"
 		result := embedSnippet(existing, snippet)
@@ -164,6 +173,7 @@ func TestEmbedSnippet(t *testing.T) {
 	})
 
 	t.Run("snippet before exit 0", func(t *testing.T) {
+		t.Parallel()
 		existing := "#!/bin/sh\nexit 0\n"
 		snippet := "SNIPPET\n"
 		result := embedSnippet(existing, snippet)
@@ -177,6 +187,7 @@ func TestEmbedSnippet(t *testing.T) {
 	})
 
 	t.Run("no shebang prepends", func(t *testing.T) {
+		t.Parallel()
 		existing := "echo 'no shebang'\n"
 		snippet := "SNIPPET\n"
 		result := embedSnippet(existing, snippet)
@@ -190,6 +201,7 @@ func TestEmbedSnippet(t *testing.T) {
 	})
 
 	t.Run("shebang without trailing newline", func(t *testing.T) {
+		t.Parallel()
 		existing := "#!/bin/sh"
 		snippet := "SNIPPET\n"
 		result := embedSnippet(existing, snippet)
@@ -209,7 +221,9 @@ func TestEmbedSnippet(t *testing.T) {
 }
 
 func TestNeedsUpgrade(t *testing.T) {
+	t.Parallel()
 	t.Run("outdated hook", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		repo.WriteHook(
 			"#!/bin/sh\n# roborev post-commit hook\n" +
@@ -225,6 +239,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	})
 
 	t.Run("current hook", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		repo.WriteHook(
 			"#!/bin/sh\n# roborev " +
@@ -241,6 +256,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	})
 
 	t.Run("no hook", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		if NeedsUpgrade(
 			repo.Root, hookPostCommit, PostCommitVersionMarker,
@@ -252,6 +268,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	})
 
 	t.Run("non-roborev hook", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
 		if NeedsUpgrade(
@@ -264,6 +281,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	})
 
 	t.Run("post-rewrite outdated", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		os.WriteFile(
 			filepath.Join(repo.HooksDir, hookPostRewrite),
@@ -282,6 +300,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	})
 
 	t.Run("post-rewrite current", func(t *testing.T) {
+		t.Parallel()
 		repo := setupHooksRepo(t)
 		os.WriteFile(
 			filepath.Join(repo.HooksDir, hookPostRewrite),
@@ -302,7 +321,9 @@ func TestNeedsUpgrade(t *testing.T) {
 }
 
 func TestNotInstalled(t *testing.T) {
+	t.Parallel()
 	t.Run("hook file absent", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		if !NotInstalled(repo.Root, hookPostCommit) {
 			assert.Condition(t, func() bool {
@@ -312,6 +333,7 @@ func TestNotInstalled(t *testing.T) {
 	})
 
 	t.Run("hook without roborev", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
 		if !NotInstalled(repo.Root, hookPostCommit) {
@@ -322,6 +344,7 @@ func TestNotInstalled(t *testing.T) {
 	})
 
 	t.Run("hook with roborev", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook(GeneratePostCommit())
 		if NotInstalled(repo.Root, hookPostCommit) {
@@ -333,6 +356,7 @@ func TestNotInstalled(t *testing.T) {
 
 	t.Run("non-ENOENT read error returns false",
 		func(t *testing.T) {
+			t.Parallel()
 			repo := testutil.NewTestRepo(t)
 			// Create a directory where the hook file would be.
 			// Reading a directory is a non-ENOENT I/O error.
@@ -352,8 +376,10 @@ func TestNotInstalled(t *testing.T) {
 }
 
 func TestMissing(t *testing.T) {
+	t.Parallel()
 	t.Run("missing post-rewrite with roborev post-commit",
 		func(t *testing.T) {
+			t.Parallel()
 			repo := testutil.NewTestRepo(t)
 			repo.WriteHook(
 				"#!/bin/sh\n# roborev " +
@@ -369,6 +395,7 @@ func TestMissing(t *testing.T) {
 	)
 
 	t.Run("no post-commit hook at all", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		if Missing(repo.Root, hookPostRewrite) {
 			assert.Condition(t, func() bool {
@@ -378,6 +405,7 @@ func TestMissing(t *testing.T) {
 	})
 
 	t.Run("post-rewrite exists with roborev", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook(
 			"#!/bin/sh\n# roborev " +
@@ -400,6 +428,7 @@ func TestMissing(t *testing.T) {
 	})
 
 	t.Run("non-roborev post-commit", func(t *testing.T) {
+		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
 		if Missing(repo.Root, hookPostRewrite) {
@@ -411,6 +440,7 @@ func TestMissing(t *testing.T) {
 
 	t.Run("non-ENOENT read error returns false",
 		func(t *testing.T) {
+			t.Parallel()
 			if runtime.GOOS == "windows" {
 				t.Skip("permission test unreliable on Windows")
 			}
@@ -450,6 +480,7 @@ type installTestCase struct {
 }
 
 func TestInstall(t *testing.T) {
+	t.Parallel()
 	tests := []installTestCase{
 		{
 			name:          "fresh install creates standalone hook",
@@ -547,6 +578,7 @@ func TestInstall(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			repo := setupHooksRepo(t)
 			hookPath := filepath.Join(repo.HooksDir, tc.hookName)
 
@@ -582,6 +614,7 @@ func TestInstall(t *testing.T) {
 	}
 
 	t.Run("appends to hooks with various shell shebangs", func(t *testing.T) {
+		t.Parallel()
 		shebangs := []string{
 			"#!/bin/sh", "#!/usr/bin/env sh",
 			"#!/bin/bash", "#!/usr/bin/env bash",
@@ -591,6 +624,7 @@ func TestInstall(t *testing.T) {
 		}
 		for _, shebang := range shebangs {
 			t.Run(shebang, func(t *testing.T) {
+				t.Parallel()
 				repo := setupHooksRepo(t)
 				hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
 				existing := shebang + "\necho 'custom'\n"
@@ -629,20 +663,7 @@ func assertInstallResult(t *testing.T, hookPath string, tc installTestCase) {
 				return false
 			}, err)
 		}
-		s := string(content)
-		searchFrom := 0
-		for _, check := range tc.orderedChecks {
-			idx := strings.Index(s[searchFrom:], check)
-			if idx == -1 {
-				assert.Condition(t, func() bool {
-					return false
-				}, "missing %q after offset %d in hook",
-					check, searchFrom)
-
-			} else {
-				searchFrom += idx + len(check)
-			}
-		}
+		assertSubstringsInOrder(t, string(content), tc.orderedChecks...)
 	}
 }
 
@@ -680,6 +701,7 @@ func TestInstall_ReReadError(t *testing.T) {
 }
 
 func TestInstallAll(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits")
 	}
@@ -713,6 +735,7 @@ func TestInstallAll(t *testing.T) {
 }
 
 func TestUninstall(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		hookName       string
@@ -801,6 +824,7 @@ func TestUninstall(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			repo := setupHooksRepo(t)
 			hookPath := filepath.Join(repo.HooksDir, tc.hookName)
 
@@ -836,6 +860,7 @@ func TestUninstall(t *testing.T) {
 	}
 
 	t.Run("missing file is no-op", func(t *testing.T) {
+		t.Parallel()
 		path := filepath.Join(t.TempDir(), "nonexistent")
 		if err := Uninstall(path); err != nil {
 			assert.Condition(t, func() bool {
@@ -846,6 +871,7 @@ func TestUninstall(t *testing.T) {
 }
 
 func TestVersionMarker(t *testing.T) {
+	t.Parallel()
 	if m := VersionMarker(hookPostCommit); m != PostCommitVersionMarker {
 		assert.Condition(t, func() bool {
 			return false
@@ -864,9 +890,11 @@ func TestVersionMarker(t *testing.T) {
 }
 
 func TestHasRealErrors(t *testing.T) {
+	t.Parallel()
 	realErr := errors.New("permission denied")
 
 	t.Run("nil", func(t *testing.T) {
+		t.Parallel()
 		if HasRealErrors(nil) {
 			assert.Condition(t, func() bool {
 				return false
@@ -875,6 +903,7 @@ func TestHasRealErrors(t *testing.T) {
 	})
 
 	t.Run("only non-shell", func(t *testing.T) {
+		t.Parallel()
 		err := fmt.Errorf("hook: %w", ErrNonShellHook)
 		if HasRealErrors(err) {
 			assert.Condition(t, func() bool {
@@ -884,6 +913,7 @@ func TestHasRealErrors(t *testing.T) {
 	})
 
 	t.Run("only real", func(t *testing.T) {
+		t.Parallel()
 		if !HasRealErrors(realErr) {
 			assert.Condition(t, func() bool {
 				return false
@@ -892,6 +922,7 @@ func TestHasRealErrors(t *testing.T) {
 	})
 
 	t.Run("joined all non-shell", func(t *testing.T) {
+		t.Parallel()
 		err := errors.Join(
 			fmt.Errorf("a: %w", ErrNonShellHook),
 			fmt.Errorf("b: %w", ErrNonShellHook),
@@ -904,6 +935,7 @@ func TestHasRealErrors(t *testing.T) {
 	})
 
 	t.Run("joined mixed", func(t *testing.T) {
+		t.Parallel()
 		err := errors.Join(
 			fmt.Errorf("a: %w", ErrNonShellHook),
 			realErr,
@@ -916,6 +948,7 @@ func TestHasRealErrors(t *testing.T) {
 	})
 
 	t.Run("joined all real", func(t *testing.T) {
+		t.Parallel()
 		err := errors.Join(realErr, errors.New("disk full"))
 		if !HasRealErrors(err) {
 			assert.Condition(t, func() bool {
@@ -926,6 +959,7 @@ func TestHasRealErrors(t *testing.T) {
 }
 
 func TestIsRoborevSnippetLine(t *testing.T) {
+	t.Parallel()
 	positives := []string{
 		`ROBOREV="/usr/local/bin/roborev"`,
 		`ROBOREV=$(command -v roborev 2>/dev/null)`,
@@ -1043,6 +1077,19 @@ func assertFileHasPrefix(t *testing.T, path string, prefix string) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "file %s should start with:\n%q\nGot start:\n%q", filepath.Base(path), prefix, str)
+	}
+}
+
+func assertSubstringsInOrder(t *testing.T, s string, substrings ...string) {
+	t.Helper()
+	searchFrom := 0
+	for i, sub := range substrings {
+		idx := strings.Index(s[searchFrom:], sub)
+		if idx == -1 {
+			t.Errorf("substring %d (%q) not found after offset %d in string", i, sub, searchFrom)
+			return
+		}
+		searchFrom += idx + len(sub)
 	}
 }
 
