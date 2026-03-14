@@ -2520,18 +2520,18 @@ func TestHiddenColumnsExplicitEmptyBecomesSentinel(t *testing.T) {
 		"explicit hidden_columns = [] should become sentinel")
 }
 
-func TestHiddenColumnsDefunctOnlyDoesNotBecomeSentinel(t *testing.T) {
+func TestHiddenColumnsRenamedOnlyDoesNotBecomeSentinel(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfgPath := GlobalConfigPath()
 	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0755))
 	require.NoError(t, os.WriteFile(cfgPath,
-		[]byte("hidden_columns = [\"pf\"]\n"), 0644))
+		[]byte("hidden_columns = [\"handled\"]\n"), 0644))
 
 	loaded, err := LoadGlobal()
 	require.NoError(t, err)
-	assert.Empty(t, loaded.HiddenColumns,
-		"hidden_columns with only defunct entries should be empty, not sentinel")
+	assert.Equal(t, []string{"closed"}, loaded.HiddenColumns,
+		"hidden_columns with renamed entries should migrate, not become sentinel")
 }
 
 func TestIsDefaultReviewType(t *testing.T) {
