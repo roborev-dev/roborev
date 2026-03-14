@@ -74,11 +74,12 @@ func TestRunBatch(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		agents      []string
-		reviewTypes []string
-		registry    map[string]agent.Agent
-		checks      []resultCheck
+		name           string
+		agents         []string
+		reviewTypes    []string
+		registry       map[string]agent.Agent
+		useInvalidRepo bool // use a non-existent repo to test prompt-build failures
+		checks         []resultCheck
 	}{
 		{
 			name:        "SingleJob",
@@ -104,10 +105,11 @@ func TestRunBatch(t *testing.T) {
 			},
 		},
 		{
-			name:        "AgentNotFound",
-			agents:      []string{"nonexistent-agent-xyz"},
-			reviewTypes: []string{"security"},
-			registry:    map[string]agent.Agent{},
+			name:           "AgentNotFound",
+			agents:         []string{"nonexistent-agent-xyz"},
+			reviewTypes:    []string{"security"},
+			registry:       map[string]agent.Agent{},
+			useInvalidRepo: true,
 			checks: []resultCheck{
 				{status: ResultFailed, errContain: "no agents available (mock registry)"},
 			},
@@ -123,18 +125,35 @@ func TestRunBatch(t *testing.T) {
 				{status: ResultFailed, errContain: "agent exploded"},
 			},
 		},
+		{
+			name:        "PromptBuildFailure",
+			agents:      []string{"test"},
+			reviewTypes: []string{"security"},
+			registry: map[string]agent.Agent{
+				"test": &mockAgent{name: "test", output: "should not run"},
+			},
+			useInvalidRepo: true,
+			checks: []resultCheck{
+				{status: ResultFailed, errContain: "build prompt"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo := testutil.NewTestRepoWithCommit(t)
-			sha := repo.RevParse("HEAD")
+			repoPath := filepath.Join(t.TempDir(), "nonexistent")
+			gitRef := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+			if !tc.useInvalidRepo {
+				repo := testutil.NewTestRepoWithCommit(t)
+				repoPath = repo.Root
+				gitRef = repo.RevParse("HEAD")
+			}
 
 			cfg := BatchConfig{
-				RepoPath:      repo.Root,
-				GitRef:        sha,
+				RepoPath:      repoPath,
+				GitRef:        gitRef,
 				Agents:        tc.agents,
 				ReviewTypes:   tc.reviewTypes,
 				AgentRegistry: tc.registry,

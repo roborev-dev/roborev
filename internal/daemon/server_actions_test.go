@@ -165,8 +165,13 @@ func TestHandleCancelJob(t *testing.T) {
 			name: "cancel already canceled job",
 			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
 				job := createTestJob(t, db, tmpDir, "alreadycanceled", "test")
-				err := db.CancelJob(job.ID)
-				require.NoError(t, err, "pre-cancel failed")
+				// Cancel through the handler (not db.CancelJob) to exercise
+				// the full code path including workerPool side-effects.
+				server := NewServer(db, config.DefaultConfig(), "")
+				req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
+				w := httptest.NewRecorder()
+				server.handleCancelJob(w, req)
+				require.Equal(t, http.StatusOK, w.Code, "first cancel should succeed")
 				return job.ID
 			},
 			request: func(t *testing.T, jobID int64) *http.Request {
