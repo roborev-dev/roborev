@@ -14,540 +14,618 @@ const (
 type verdictTestCase struct {
 	name   string
 	output string
+	want   string
 }
 
-func runVerdictTests(t *testing.T, want string, tests []verdictTestCase) {
+func runVerdictTests(t *testing.T, tests []verdictTestCase) {
 	t.Helper()
 	assert := assert.New(t)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ParseVerdict(tt.output)
-			assert.Equal(want, got, "ParseVerdict() = %q, want %q", got, want)
+			assert.Equal(tt.want, got, "ParseVerdict() = %q, want %q", got, tt.want)
 		})
 	}
 }
 
-var simplePassTests = []verdictTestCase{
+var verdictTests = []verdictTestCase{
+	// --- SimplePass: basic "no issues found" phrasing ---
 	{
-		name:   "no issues found at start",
+		name:   "SimplePass/no issues found at start",
 		output: "No issues found. This commit adds a new feature.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues found on own line",
+		name:   "SimplePass/no issues found on own line",
 		output: "Review complete.\n\nNo issues found.\n\nThe code looks good.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues found with leading whitespace",
+		name:   "SimplePass/no issues found with leading whitespace",
 		output: "  No issues found. Great work!",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues found lowercase",
+		name:   "SimplePass/no issues found lowercase",
 		output: "no issues found. The code is clean.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues found mixed case",
+		name:   "SimplePass/no issues found mixed case",
 		output: "NO ISSUES FOUND. Excellent!",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues with period",
+		name:   "SimplePass/no issues with period",
 		output: "No issues. The code is clean.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues standalone",
+		name:   "SimplePass/no issues standalone",
 		output: "No issues",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no findings at start of line",
+		name:   "SimplePass/no findings at start of line",
 		output: "No findings to report.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "bullet no issues found",
+		name:   "SimplePass/bullet no issues found",
 		output: "- No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "asterisk bullet no issues",
+		name:   "SimplePass/asterisk bullet no issues",
 		output: "* No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues with this commit",
+		name:   "SimplePass/no issues with this commit",
 		output: "No issues with this commit.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues in this change",
+		name:   "SimplePass/no issues in this change",
 		output: "No issues in this change. Looks good.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "numbered list no issues",
+		name:   "SimplePass/numbered list no issues",
 		output: "1. No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "bullet with extra spaces",
+		name:   "SimplePass/bullet with extra spaces",
 		output: "-   No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "large numbered list",
+		name:   "SimplePass/large numbered list",
 		output: "100. No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues remain is pass",
+		name:   "SimplePass/no issues remain is pass",
 		output: "No issues found. No issues remain.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no problems exist is pass",
+		name:   "SimplePass/no problems exist is pass",
 		output: "No issues found. No problems exist.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "doesn't have issues is pass",
+		name:   "SimplePass/doesn't have issues is pass",
 		output: "No issues found. The code doesn't have issues.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "doesn't have any problems is pass",
+		name:   "SimplePass/doesn't have any problems is pass",
 		output: "No issues found. Code doesn't have any problems.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "don't have vulnerabilities is pass",
+		name:   "SimplePass/don't have vulnerabilities is pass",
 		output: "No issues found. We don't have vulnerabilities.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no significant issues remain is pass",
+		name:   "SimplePass/no significant issues remain is pass",
 		output: "No issues found. No significant issues remain.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no known issues exist is pass",
+		name:   "SimplePass/no known issues exist is pass",
 		output: "No issues found. No known issues exist.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no open issues remain is pass",
+		name:   "SimplePass/no open issues remain is pass",
 		output: "No issues found. No open issues remain.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "found no critical issues with module is pass",
+		name:   "SimplePass/found no critical issues with module is pass",
 		output: "No issues found. Found no critical issues with the module.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "didn't find any major issues in code is pass",
+		name:   "SimplePass/didn't find any major issues in code is pass",
 		output: "No issues found. I didn't find any major issues in the code.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "not finding issues with is pass",
+		name:   "SimplePass/not finding issues with is pass",
 		output: "No issues found. Not finding issues with the code.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "did not see issues in module is pass",
+		name:   "SimplePass/did not see issues in module is pass",
 		output: "No issues found. I did not see issues in the module.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "can't find issues with is pass",
+		name:   "SimplePass/can't find issues with is pass",
 		output: "No issues found. I can't find issues with the code.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "cannot find issues in is pass",
+		name:   "SimplePass/cannot find issues in is pass",
 		output: "No issues found. Cannot find issues in the module.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "couldn't find issues with is pass",
+		name:   "SimplePass/couldn't find issues with is pass",
 		output: "No issues found. I couldn't find issues with the implementation.",
+		want:   VerdictPass,
 	},
-}
 
-var fieldLabelsTests = []verdictTestCase{
+	// --- FieldLabels: pass phrases after structured field labels ---
 	{
-		name:   "review findings label",
+		name:   "FieldLabels/review findings label",
 		output: "1. **Summary**: Adds features.\n2. **Review Findings**: No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "findings label",
+		name:   "FieldLabels/findings label",
 		output: "**Findings**: No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "verdict label pass",
+		name:   "FieldLabels/verdict label pass",
 		output: "**Verdict**: No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "verdict label no space after colon",
+		name:   "FieldLabels/verdict label no space after colon",
 		output: "**Verdict**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "review result label no space after colon",
+		name:   "FieldLabels/review result label no space after colon",
 		output: "**Review Result**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "review findings label no space after colon",
+		name:   "FieldLabels/review findings label no space after colon",
 		output: "2. **Review Findings**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "findings label no space after colon",
+		name:   "FieldLabels/findings label no space after colon",
 		output: "**Findings**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "result label no space after colon",
+		name:   "FieldLabels/result label no space after colon",
 		output: "**Result**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "review label no space after colon",
+		name:   "FieldLabels/review label no space after colon",
 		output: "**Review**:No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "verdict label tab after colon",
+		name:   "FieldLabels/verdict label tab after colon",
 		output: "**Verdict**:\tNo issues found.",
+		want:   VerdictPass,
 	},
-}
 
-var markdownFormattingTests = []verdictTestCase{
+	// --- MarkdownFormatting: pass phrases wrapped in markdown ---
 	{
-		name:   "bold no issues found",
+		name:   "MarkdownFormatting/bold no issues found",
 		output: "**No issues found.**",
+		want:   VerdictPass,
 	},
 	{
-		name:   "bold no issues in sentence",
+		name:   "MarkdownFormatting/bold no issues in sentence",
 		output: "**No issues found.** The code looks good.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "markdown header no issues",
+		name:   "MarkdownFormatting/markdown header no issues",
 		output: "## No issues found",
+		want:   VerdictPass,
 	},
 	{
-		name:   "markdown h3 no issues",
+		name:   "MarkdownFormatting/markdown h3 no issues",
 		output: "### No issues found.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "underscore bold no issues",
+		name:   "MarkdownFormatting/underscore bold no issues",
 		output: "__No issues found.__",
+		want:   VerdictPass,
 	},
-}
 
-var phrasingVariationsTests = []verdictTestCase{
+	// --- PhrasingVariations: alternate pass wordings and context ---
 	{
-		name:   "no tests failed is pass",
+		name:   "PhrasingVariations/no tests failed is pass",
 		output: "No issues found; no tests failed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "zero errors is pass",
+		name:   "PhrasingVariations/zero errors is pass",
 		output: "No issues found, 0 errors.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "without bugs is pass",
+		name:   "PhrasingVariations/without bugs is pass",
 		output: "No issues found, without bugs.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "avoid panics is pass",
+		name:   "PhrasingVariations/avoid panics is pass",
 		output: "No issues found. This commit hardens the code to avoid slicing panics.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "fix errors is pass",
+		name:   "PhrasingVariations/fix errors is pass",
 		output: "No issues found. The changes fix potential errors in the parser.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "prevents crashes is pass",
+		name:   "PhrasingVariations/prevents crashes is pass",
 		output: "No issues found. This update prevents crashes when input is nil.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "will avoid is pass",
+		name:   "PhrasingVariations/will avoid is pass",
 		output: "No issues found. This will avoid panics.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no tests have failed",
+		name:   "PhrasingVariations/no tests have failed",
 		output: "No issues found; no tests have failed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "none of the tests failed",
+		name:   "PhrasingVariations/none of the tests failed",
 		output: "No issues found. None of the tests failed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "never fails",
+		name:   "PhrasingVariations/never fails",
 		output: "No issues found. Build never fails.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "didn't fail contraction",
+		name:   "PhrasingVariations/didn't fail contraction",
 		output: "No issues found. Tests didn't fail.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "hasn't crashed",
+		name:   "PhrasingVariations/hasn't crashed",
 		output: "No issues found. Code hasn't crashed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i didn't find any issues",
+		name:   "PhrasingVariations/i didn't find any issues",
 		output: "I didn't find any issues in this commit.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i didnt find any issues curly apostrophe",
+		name:   "PhrasingVariations/i didnt find any issues curly apostrophe",
 		output: "I didn\u2019t find any issues in this commit.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i didn't find any issues with checked for",
+		name:   "PhrasingVariations/i didn't find any issues with checked for",
 		output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i didn't find any issues multiline",
+		name:   "PhrasingVariations/i didn't find any issues multiline",
 		output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code\nquality concerns.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "exact review 583 text",
+		name:   "PhrasingVariations/exact review 583 text",
 		output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code\nquality concerns.\nThe change updates selection revalidation during job refresh to respect visibility (repo filter and\n`hideAddressed`) in `cmd/roborev/tui.go`, and adds a focused set of `hideAddressed` tests (toggle,\nfiltering, selection movement, refresh, navigation, and repo filter interaction) in\n`cmd/roborev/tui_test.go`.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i did not find any issues",
+		name:   "PhrasingVariations/i did not find any issues",
 		output: "I did not find any issues with the code.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i found no issues",
+		name:   "PhrasingVariations/i found no issues",
 		output: "I found no issues.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "i found no issues in this commit",
+		name:   "PhrasingVariations/i found no issues in this commit",
 		output: "I found no issues in this commit. The changes are well-structured.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues with checked for context",
+		name:   "PhrasingVariations/no issues with checked for context",
 		output: "No issues found. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues with looking for context",
+		name:   "PhrasingVariations/no issues with looking for context",
 		output: "No issues. I was looking for bugs and errors but found none.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "no issues with looked for context",
+		name:   "PhrasingVariations/no issues with looked for context",
 		output: "No issues found. I looked for crashes and panics.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found no issues",
+		name:   "PhrasingVariations/checked for and found no issues",
 		output: "No issues found. I checked for bugs and found no issues.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found no bugs",
+		name:   "PhrasingVariations/checked for and found no bugs",
 		output: "No issues found. I checked for security issues and found no bugs.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found nothing",
+		name:   "PhrasingVariations/checked for and found nothing",
 		output: "No issues found. I checked for errors and found nothing.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found none",
+		name:   "PhrasingVariations/checked for and found none",
 		output: "No issues found. I checked for crashes and found none.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found 0 issues",
+		name:   "PhrasingVariations/checked for and found 0 issues",
 		output: "No issues found. I checked for bugs and found 0 issues.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "checked for and found zero errors",
+		name:   "PhrasingVariations/checked for and found zero errors",
 		output: "No issues found. I looked for problems and found zero errors.",
+		want:   VerdictPass,
 	},
-}
 
-var benignPhrasesTests = []verdictTestCase{
+	// --- BenignPhrases: negative-sounding words in benign context ---
 	{
-		name:   "benign problem statement",
+		name:   "BenignPhrases/benign problem statement",
 		output: "No issues found. The problem statement is clear.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "benign issue tracker",
+		name:   "BenignPhrases/benign issue tracker",
 		output: "No issues found. Issue tracker updated.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "benign vulnerability disclosure",
+		name:   "BenignPhrases/benign vulnerability disclosure",
 		output: "No issues found. Vulnerability disclosure policy reviewed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "benign problem domain",
+		name:   "BenignPhrases/benign problem domain",
 		output: "No issues found. The problem domain is well understood.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "error handling in description is pass",
+		name:   "BenignPhrases/error handling in description is pass",
 		output: "No issues found. The commit hardens the test setup with error handling around filesystem operations.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "error messages in description is pass",
+		name:   "BenignPhrases/error messages in description is pass",
 		output: "No issues found. The code improves error messages for better debugging.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "multiple occurrences all positive is pass",
+		name:   "BenignPhrases/multiple occurrences all positive is pass",
 		output: "No issues found. Error handling added to auth. Error handling also improved in utils.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "partial word match problem domains is pass",
+		name:   "BenignPhrases/partial word match problem domains is pass",
 		output: "No issues found. The problem domains are well-defined.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "partial word match errorhandling is pass",
+		name:   "BenignPhrases/partial word match errorhandling is pass",
 		output: "No issues found. The errorhandling module works well.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "problem domain vs problem domains mixed is pass",
+		name:   "BenignPhrases/problem domain vs problem domains mixed is pass",
 		output: "No issues found. The problem domain is clear, and the problem domains are complex.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "found a way is benign",
+		name:   "BenignPhrases/found a way is benign",
 		output: "No issues found. I checked for bugs and found a way to improve the docs.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "severity in prose not a finding",
+		name:   "BenignPhrases/severity in prose not a finding",
 		output: "No issues found. I rate this as Medium importance for the project.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "medium without separator not a finding",
+		name:   "BenignPhrases/medium without separator not a finding",
 		output: "No issues found. The medium was oil on canvas.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "severity legend not a finding",
+		name:   "BenignPhrases/severity legend not a finding",
 		output: "No issues found.\n\nSeverity levels:\nHigh - immediate action required.\nMedium - should be addressed.\nLow - minor concern.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "priority scale not a finding",
+		name:   "BenignPhrases/priority scale not a finding",
 		output: "No issues found.\n\nPriority scale:\nCritical: system down\nHigh: major feature broken",
+		want:   VerdictPass,
 	},
 	{
-		name:   "severity legend with descriptions not a finding",
+		name:   "BenignPhrases/severity legend with descriptions not a finding",
 		output: "No issues found.\n\nSeverity levels:\nHigh - immediate action required.\n  These issues block release.\nMedium - should be addressed.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "high-level overview not a finding",
+		name:   "BenignPhrases/high-level overview not a finding",
 		output: "No issues found. This is a high-level overview of the changes.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "low-level details not a finding",
+		name:   "BenignPhrases/low-level details not a finding",
 		output: "No issues found. The commit adds low-level optimizations.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "severity label value in legend is not finding",
+		name:   "BenignPhrases/severity label value in legend is not finding",
 		output: "No issues found.\n\nSeverity levels:\nSeverity: High - immediate action required.\nSeverity: Low - minor concern.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "markdown legend header not a finding",
+		name:   "BenignPhrases/markdown legend header not a finding",
 		output: "No issues found.\n\n**Severity levels:**\n- **High** - immediate action required.\n- **Medium** - should be addressed.\n- **Low** - minor concern.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "markdown legend header with severity label not a finding",
+		name:   "BenignPhrases/markdown legend header with severity label not a finding",
 		output: "No issues found.\n\n**Severity levels:**\nSeverity: High - immediate action required.\nSeverity: Low - minor concern.",
+		want:   VerdictPass,
 	},
-}
 
-// These cases are intentionally PASS. Once an agent emits a clear pass phrase,
-// verdict parsing does not try to interpret the rest of the prose for caveats
-// or contradictory narrative. That output-shaping problem belongs in the review
-// prompt, not in a brittle natural-language verdict parser.
-var passPhraseWinsTests = []verdictTestCase{
+	// These cases are intentionally PASS. Once an agent emits a clear pass phrase,
+	// verdict parsing does not try to interpret the rest of the prose for caveats
+	// or contradictory narrative. That output-shaping problem belongs in the review
+	// prompt, not in a brittle natural-language verdict parser.
 	{
-		name:   "historical broken path after pass is benign",
+		name:   "PassPhraseWins/historical broken path after pass is benign",
 		output: "Review #8609 roborev (codex: gpt-5.4)\nVerdict: Fail\n\nNo issues found. The guard on cmd.Flags().Changed(\"sha\") matches the intended behavior, and the added test exercises the previously broken quiet-mode path.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "caveat prose after pass phrase is still pass",
+		name:   "PassPhraseWins/caveat prose after pass phrase is still pass",
 		output: "No issues found, but consider refactoring.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "review findings label with caveat prose is still pass",
+		name:   "PassPhraseWins/review findings label with caveat prose is still pass",
 		output: "2. **Review Findings**: No issues found, but consider refactoring.",
+		want:   VerdictPass,
 	},
 	{
-		name:   "process narration after explicit pass phrase is still pass",
+		name:   "PassPhraseWins/process narration after explicit pass phrase is still pass",
 		output: "No issues found. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
+		want:   VerdictPass,
 	},
-}
 
-// Failures should come from clear structured findings or from the absence of a
-// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
-var failFallbackTests = []verdictTestCase{
+	// Failures should come from clear structured findings or from the absence of a
+	// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
 	{
-		name:   "empty output",
+		name:   "FailFallback/empty output",
 		output: "",
+		want:   VerdictFail,
 	},
 	{
-		name:   "ambiguous language",
+		name:   "FailFallback/ambiguous language",
 		output: "The commit looks mostly fine but could use some cleanup.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "narrative front matter without final verdict defaults to fail",
+		name:   "FailFallback/narrative front matter without final verdict defaults to fail",
 		output: "Reviewing the diff in context first. I'm opening the touched storage parsing code and adjacent tests to check for regressions.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "unstructured issue statement defaults to fail",
+		name:   "FailFallback/unstructured issue statement defaults to fail",
 		output: "The code has issues.",
+		want:   VerdictFail,
 	},
-}
 
-var structuredFailTests = []verdictTestCase{
+	// --- StructuredFail: severity-labelled findings override pass phrases ---
 	{
-		name:   "findings before no issues mention",
+		name:   "StructuredFail/findings before no issues mention",
 		output: "Medium - Security issue\nOtherwise no issues found.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label medium em dash",
+		name:   "StructuredFail/severity label medium em dash",
 		output: "**Findings**\n- Medium — Possible regression in deploy.\nNo issues found beyond the notes above.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label low with colon",
+		name:   "StructuredFail/severity label low with colon",
 		output: "- Low: Minor style issue.\nOtherwise no issues.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label high with dash",
+		name:   "StructuredFail/severity label high with dash",
 		output: "* High - Security vulnerability found.\nNo issues found.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label critical with bullet",
+		name:   "StructuredFail/severity label critical with bullet",
 		output: "- Critical — Data loss possible.\nNo issues otherwise.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label critical without bullet",
+		name:   "StructuredFail/severity label critical without bullet",
 		output: "Critical — Data loss possible.\nNo issues otherwise.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label high without bullet",
+		name:   "StructuredFail/severity label high without bullet",
 		output: "High: Security vulnerability in auth module.\nNo issues found.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label value format high",
+		name:   "StructuredFail/severity label value format high",
 		output: "- **Severity**: High\n- **Location**: file.go\n- **Problem**: Bug found.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label value format low",
+		name:   "StructuredFail/severity label value format low",
 		output: "- **Severity**: Low\n- **Problem**: Minor style issue.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label value with no issues in other file",
+		name:   "StructuredFail/severity label value with no issues in other file",
 		output: "- **Severity**: High\n- **Problem**: Bug found.\n\n- **No issues found** in test_file.go.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label value plain text",
+		name:   "StructuredFail/severity label value plain text",
 		output: "Severity: High\nLocation: file.go\nProblem: Bug found.",
+		want:   VerdictFail,
 	},
 	{
-		name:   "severity label value hyphen separator",
+		name:   "StructuredFail/severity label value hyphen separator",
 		output: "Severity - High\nLocation: file.go\nProblem: Bug found.",
+		want:   VerdictFail,
 	},
 }
 
 func TestParseVerdict(t *testing.T) {
-	t.Run("SimplePass", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, simplePassTests)
-	})
-
-	t.Run("FieldLabels", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, fieldLabelsTests)
-	})
-
-	t.Run("MarkdownFormatting", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, markdownFormattingTests)
-	})
-
-	t.Run("PhrasingVariations", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, phrasingVariationsTests)
-	})
-
-	t.Run("BenignPhrases", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, benignPhrasesTests)
-	})
-
-	t.Run("PassPhraseWins", func(t *testing.T) {
-		runVerdictTests(t, VerdictPass, passPhraseWinsTests)
-	})
-
-	t.Run("FailFallback", func(t *testing.T) {
-		runVerdictTests(t, VerdictFail, failFallbackTests)
-	})
-
-	t.Run("StructuredFail", func(t *testing.T) {
-		runVerdictTests(t, VerdictFail, structuredFailTests)
-	})
+	runVerdictTests(t, verdictTests)
 }

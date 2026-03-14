@@ -2,10 +2,11 @@ package storage
 
 import (
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetKnownJobUUIDs(t *testing.T) {
@@ -95,267 +96,235 @@ func TestParseSQLiteTime(t *testing.T) {
 	}
 }
 
-func TestGetJobsToSync_TimestampComparison(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("sync-test-sha")
+// syncTimestampTestCallbacks parameterizes the shared timestamp comparison
+// test runner so it can be used for both job and review sync paths.
+type syncTimestampTestCallbacks struct {
+	// entityName is used in assertion messages (e.g. "job", "review").
+	entityName string
 
-	t.Run("job with null synced_at is returned", func(t *testing.T) {
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+	// setup prepares the entity under test and returns (helper, entityID).
+	// It is called once per top-level test; subtests share the returned state.
+	setup func(t *testing.T) (*syncTestHelper, int64)
 
-		found := false
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found)
+	// setupForTZ is like setup but called inside the non-UTC timezone subtest
+	// (after TZ has been changed). It returns a fresh helper and entity ID.
+	setupForTZ func(t *testing.T) (*syncTestHelper, int64)
+
+	// getToSync returns IDs of entities that need syncing.
+	getToSync func(h *syncTestHelper) ([]int64, error)
+
+	// markSynced marks the entity as synced.
+	markSynced func(h *syncTestHelper, id int64) error
+
+	// setTimestamps sets synced_at and updated_at on the entity.
+	setTimestamps func(h *syncTestHelper, id int64, syncedAt sql.NullString, updatedAt string)
+
+	// createExtra creates an additional entity for mixed-format tests.
+	// Returns the helper (may be the same) and the new entity ID.
+	createExtra func(h *syncTestHelper, suffix string) (*syncTestHelper, int64)
+}
+
+// testSyncTimestampComparison is a generic test runner that validates the
+// timestamp comparison logic shared between job sync and review sync.
+func testSyncTimestampComparison(t *testing.T, cb syncTimestampTestCallbacks) {
+	t.Helper()
+
+	h, entityID := cb.setup(t)
+
+	t.Run(cb.entityName+" with null synced_at is returned", func(t *testing.T) {
+		ids, err := cb.getToSync(h)
+		require.NoError(t, err)
+
+		assert.True(t, containsID(ids, entityID))
 	})
 
-	t.Run("job after MarkJobSynced is not returned", func(t *testing.T) {
-		err := h.db.MarkJobSynced(job.ID)
-		require.NoError(t, err, "MarkJobSynced failed: %v")
+	t.Run(cb.entityName+" after marking synced is not returned", func(t *testing.T) {
+		err := cb.markSynced(h, entityID)
+		require.NoError(t, err)
 
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err := cb.getToSync(h)
+		require.NoError(t, err)
 
-		for _, j := range jobs {
-			assert.NotEqual(t, j.ID, job.ID)
-		}
+		assert.False(t, containsID(ids, entityID))
 	})
 
-	t.Run("job with updated_at after synced_at is returned", func(t *testing.T) {
-
+	t.Run(cb.entityName+" with updated_at after synced_at is returned", func(t *testing.T) {
 		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setJobTimestamps(job.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
+		cb.setTimestamps(h, entityID, sql.NullString{String: pastTime, Valid: true}, futureTime)
 
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err := cb.getToSync(h)
+		require.NoError(t, err)
 
-		found := false
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected job with updated_at > synced_at to be returned for sync")
+		assert.True(t, containsID(ids, entityID),
+			"Expected %s with updated_at > synced_at to be returned for sync", cb.entityName)
 	})
 
 	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
+		_, extraID := cb.createExtra(h, "mixed-format")
 
-		job2 := h.createCompletedJob("mixed-format-sha")
-
-		h.setJobTimestamps(job2.ID,
+		cb.setTimestamps(h, extraID,
 			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
 			"2024-06-15T14:30:00+02:00")
 
-		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err := cb.getToSync(h)
+		require.NoError(t, err)
 
-		found := false
-		for _, j := range jobs {
-			if j.ID == job2.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected job with mixed format timestamps (updated_at > synced_at) to be returned")
+		assert.True(t, containsID(ids, extraID),
+			"Expected %s with mixed format timestamps (updated_at > synced_at) to be returned", cb.entityName)
 
-		h.setJobTimestamps(job2.ID,
+		cb.setTimestamps(h, extraID,
 			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
 			"2024-06-15T10:30:00Z")
 
-		jobs, err = h.db.GetJobsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err = cb.getToSync(h)
+		require.NoError(t, err)
 
-		found = false
-		for _, j := range jobs {
-			if j.ID == job2.ID {
-				found = true
-				break
-			}
-		}
-		assert.False(t, found, "Expected job with synced_at > updated_at to NOT be returned")
+		assert.False(t, containsID(ids, extraID),
+			"Expected %s with synced_at > updated_at to NOT be returned", cb.entityName)
 	})
 
 	t.Run("mixed format timestamps work correctly in non-UTC timezone", func(t *testing.T) {
-
 		t.Setenv("TZ", "America/New_York")
 
-		hTZ := newSyncTestHelper(t)
-		job3 := hTZ.createCompletedJob("tz-test-sha")
+		hTZ, tzEntityID := cb.setupForTZ(t)
 
-		hTZ.setJobTimestamps(job3.ID,
+		cb.setTimestamps(hTZ, tzEntityID,
 			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
 			"2024-06-15T12:30:00Z")
 
-		jobs, err := hTZ.db.GetJobsToSync(hTZ.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err := cb.getToSync(hTZ)
+		require.NoError(t, err)
 
-		found := false
-		for _, j := range jobs {
-			if j.ID == job3.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected job with updated_at > synced_at to be returned regardless of local timezone")
+		assert.True(t, containsID(ids, tzEntityID),
+			"Expected %s with updated_at > synced_at to be returned regardless of local timezone", cb.entityName)
 
-		hTZ.setJobTimestamps(job3.ID,
+		cb.setTimestamps(hTZ, tzEntityID,
 			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
 			"2024-06-15T12:30:00Z")
 
-		jobs, err = hTZ.db.GetJobsToSync(hTZ.machineID, 10)
-		require.NoError(t, err, "GetJobsToSync failed: %v")
+		ids, err = cb.getToSync(hTZ)
+		require.NoError(t, err)
 
-		found = false
-		for _, j := range jobs {
-			if j.ID == job3.ID {
-				found = true
-				break
-			}
+		assert.False(t, containsID(ids, tzEntityID),
+			"Expected %s with synced_at > updated_at to NOT be returned regardless of local timezone", cb.entityName)
+	})
+}
+
+// containsID reports whether ids contains the given id.
+func containsID(ids []int64, id int64) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
 		}
-		assert.False(t, found, "Expected job with synced_at > updated_at to NOT be returned regardless of local timezone")
+	}
+	return false
+}
+
+// jobSyncIDs extracts job IDs from GetJobsToSync results.
+func jobSyncIDs(h *syncTestHelper) ([]int64, error) {
+	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(jobs))
+	for i, j := range jobs {
+		ids[i] = j.ID
+	}
+	return ids, nil
+}
+
+// reviewSyncIDs extracts review IDs from GetReviewsToSync results.
+func reviewSyncIDs(h *syncTestHelper) ([]int64, error) {
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(reviews))
+	for i, r := range reviews {
+		ids[i] = r.ID
+	}
+	return ids, nil
+}
+
+func TestGetJobsToSync_TimestampComparison(t *testing.T) {
+	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
+		entityName: "job",
+
+		setup: func(t *testing.T) (*syncTestHelper, int64) {
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("sync-test-sha")
+			return h, job.ID
+		},
+
+		setupForTZ: func(t *testing.T) (*syncTestHelper, int64) {
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("tz-test-sha")
+			return h, job.ID
+		},
+
+		getToSync: jobSyncIDs,
+
+		markSynced: func(h *syncTestHelper, id int64) error {
+			return h.db.MarkJobSynced(id)
+		},
+
+		setTimestamps: func(h *syncTestHelper, id int64, syncedAt sql.NullString, updatedAt string) {
+			h.setJobTimestamps(id, syncedAt, updatedAt)
+		},
+
+		createExtra: func(h *syncTestHelper, suffix string) (*syncTestHelper, int64) {
+			job := h.createCompletedJob(suffix + "-sha")
+			return h, job.ID
+		},
 	})
 }
 
 func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("review-sync-sha")
+	testSyncTimestampComparison(t, syncTimestampTestCallbacks{
+		entityName: "review",
 
-	err := h.db.MarkJobSynced(job.ID)
-	require.NoError(t, err, "MarkJobSynced failed: %v")
+		setup: func(t *testing.T) (*syncTestHelper, int64) {
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("review-sync-sha")
+			err := h.db.MarkJobSynced(job.ID)
+			require.NoError(t, err, "MarkJobSynced failed: %v")
+			review, err := h.db.GetReviewByJobID(job.ID)
+			require.NoError(t, err, "GetReviewByJobID failed: %v")
+			return h, review.ID
+		},
 
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err, "GetReviewByJobID failed: %v")
+		setupForTZ: func(t *testing.T) (*syncTestHelper, int64) {
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("tz-review-sha")
+			err := h.db.MarkJobSynced(job.ID)
+			require.NoError(t, err, "MarkJobSynced failed: %v")
+			review, err := h.db.GetReviewByJobID(job.ID)
+			require.NoError(t, err, "GetReviewByJobID failed: %v")
+			return h, review.ID
+		},
 
-	t.Run("review with null synced_at is returned", func(t *testing.T) {
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
+		getToSync: reviewSyncIDs,
 
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found)
-	})
+		markSynced: func(h *syncTestHelper, id int64) error {
+			return h.db.MarkReviewSynced(id)
+		},
 
-	t.Run("review after MarkReviewSynced is not returned", func(t *testing.T) {
-		err := h.db.MarkReviewSynced(review.ID)
-		require.NoError(t, err, "MarkReviewSynced failed: %v")
+		setTimestamps: func(h *syncTestHelper, id int64, syncedAt sql.NullString, updatedAt string) {
+			h.setReviewTimestamps(id, syncedAt, updatedAt)
+		},
 
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		for _, r := range reviews {
-			assert.NotEqual(t, r.ID, review.ID)
-		}
-	})
-
-	t.Run("review with updated_at after synced_at is returned", func(t *testing.T) {
-
-		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setReviewTimestamps(review.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
-
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected review with updated_at > synced_at to be returned for sync")
-	})
-
-	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
-
-		h.setReviewTimestamps(review.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T14:30:00+02:00")
-
-		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		found := false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected review with mixed format timestamps (updated_at > synced_at) to be returned")
-
-		h.setReviewTimestamps(review.ID,
-			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
-			"2024-06-15T10:30:00Z")
-
-		reviews, err = h.db.GetReviewsToSync(h.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		found = false
-		for _, r := range reviews {
-			if r.ID == review.ID {
-				found = true
-				break
-			}
-		}
-		assert.False(t, found, "Expected review with synced_at > updated_at to NOT be returned")
-	})
-
-	t.Run("mixed format timestamps work correctly in non-UTC timezone", func(t *testing.T) {
-
-		t.Setenv("TZ", "America/New_York")
-
-		hTZ := newSyncTestHelper(t)
-		tzJob := hTZ.createCompletedJob("tz-review-sha")
-
-		err := hTZ.db.MarkJobSynced(tzJob.ID)
-		require.NoError(t, err, "MarkJobSynced failed: %v")
-
-		tzReview, err := hTZ.db.GetReviewByJobID(tzJob.ID)
-		require.NoError(t, err, "GetReviewByJobID failed: %v")
-
-		hTZ.setReviewTimestamps(tzReview.ID,
-			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
-			"2024-06-15T12:30:00Z")
-
-		reviews, err := hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		found := false
-		for _, r := range reviews {
-			if r.ID == tzReview.ID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected review with updated_at > synced_at to be returned regardless of local timezone")
-
-		hTZ.setReviewTimestamps(tzReview.ID,
-			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
-			"2024-06-15T12:30:00Z")
-
-		reviews, err = hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
-		require.NoError(t, err, "GetReviewsToSync failed: %v")
-
-		found = false
-		for _, r := range reviews {
-			if r.ID == tzReview.ID {
-				found = true
-				break
-			}
-		}
-		assert.False(t, found, "Expected review with synced_at > updated_at to NOT be returned regardless of local timezone")
+		createExtra: func(h *syncTestHelper, _ string) (*syncTestHelper, int64) {
+			// Reviews share the same helper; just need a new review entity.
+			// We don't need a separate job for the mixed-format subtest,
+			// but we do need a review linked to a completed job.
+			job := h.createCompletedJob("mixed-fmt-review-sha")
+			err := h.db.MarkJobSynced(job.ID)
+			require.NoError(h.t, err, "MarkJobSynced failed: %v")
+			review, err := h.db.GetReviewByJobID(job.ID)
+			require.NoError(h.t, err, "GetReviewByJobID failed: %v")
+			return h, review.ID
+		},
 	})
 }
 
