@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -264,7 +263,7 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 	repos2, err := r.Resolve(ctx, ci, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, calls, "expected cache hit (still 1 call)")
-	assert.Equal(t, len(repos1), len(repos2), "cache returned different length")
+	assert.Len(t, repos2, len(repos1), "cache returned different length")
 }
 
 func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
@@ -445,7 +444,7 @@ func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
 	cancel()
 
 	_, err := r.Resolve(ctx, ci, nil)
-	assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got: %v", err)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
@@ -464,7 +463,7 @@ func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
 	time.Sleep(time.Millisecond)
 
 	_, err := r.Resolve(ctx, ci, nil)
-	assert.True(t, errors.Is(err, context.DeadlineExceeded), "expected context.DeadlineExceeded, got: %v", err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestExactReposOnly(t *testing.T) {

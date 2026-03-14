@@ -66,7 +66,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := fetchJobs(t, server, tt.query)
-			assert.Equal(t, tt.wantCount, len(resp.Jobs), "job count")
+			assert.Len(t, resp.Jobs, tt.wantCount, "job count")
 			if tt.wantRepoName != "" {
 				for _, job := range resp.Jobs {
 					assert.Equal(t, tt.wantRepoName, job.RepoName, "RepoName")
@@ -84,13 +84,13 @@ func TestListJobsPagination(t *testing.T) {
 
 	t.Run("has_more true when more jobs exist", func(t *testing.T) {
 		resp := fetchJobs(t, server, "limit=5")
-		assert.Equal(t, 5, len(resp.Jobs), "job count")
+		assert.Len(t, resp.Jobs, 5, "job count")
 		assert.True(t, resp.HasMore, "expected has_more=true when more jobs exist")
 	})
 
 	t.Run("has_more false when no more jobs", func(t *testing.T) {
 		resp := fetchJobs(t, server, "limit=50")
-		assert.Equal(t, 10, len(resp.Jobs), "job count")
+		assert.Len(t, resp.Jobs, 10, "job count")
 		assert.False(t, resp.HasMore, "expected has_more=false when all jobs returned")
 	})
 
@@ -112,7 +112,7 @@ func TestListJobsPagination(t *testing.T) {
 
 	t.Run("offset ignored when limit=0", func(t *testing.T) {
 		resp := fetchJobs(t, server, "limit=0&offset=5")
-		assert.Equal(t, 10, len(resp.Jobs), "expected all 10 jobs (offset ignored with limit=0)")
+		assert.Len(t, resp.Jobs, 10, "expected all 10 jobs (offset ignored with limit=0)")
 	})
 }
 
@@ -129,7 +129,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
 		resp := fetchJobs(t, server, "git_ref=abc123")
-		assert.Equal(t, 1, len(resp.Jobs), "job count")
+		assert.Len(t, resp.Jobs, 1, "job count")
 		if len(resp.Jobs) > 0 {
 			assert.Equal(t, "abc123", resp.Jobs[0].GitRef, "GitRef")
 		}
@@ -137,12 +137,12 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 
 	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
 		resp := fetchJobs(t, server, "git_ref=nonexistent")
-		assert.Equal(t, 0, len(resp.Jobs), "job count")
+		assert.Empty(t, resp.Jobs, "job count")
 	})
 
 	t.Run("git_ref filter with range ref", func(t *testing.T) {
 		resp := fetchJobs(t, server, "git_ref="+url.QueryEscape("abc123..def456"))
-		assert.Equal(t, 1, len(resp.Jobs), "job count")
+		assert.Len(t, resp.Jobs, 1, "job count")
 	})
 }
 
@@ -165,12 +165,12 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 
 	t.Run("closed=false", func(t *testing.T) {
 		resp := fetchJobs(t, server, "closed=false")
-		assert.Equal(t, 1, len(resp.Jobs), "expected 1 open job")
+		assert.Len(t, resp.Jobs, 1, "expected 1 open job")
 	})
 
 	t.Run("branch filter", func(t *testing.T) {
 		resp := fetchJobs(t, server, "branch=main")
-		assert.Equal(t, 2, len(resp.Jobs), "expected 2 jobs on main")
+		assert.Len(t, resp.Jobs, 2, "expected 2 jobs on main")
 	})
 }
 

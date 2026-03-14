@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"slices"
 	"testing"
 	"time"
 
@@ -213,12 +214,7 @@ func testSyncTimestampComparison(t *testing.T, cb syncTimestampTestCallbacks) {
 
 // containsID reports whether ids contains the given id.
 func containsID(ids []int64, id int64) bool {
-	for _, v := range ids {
-		if v == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, id)
 }
 
 // jobSyncIDs extracts job IDs from GetJobsToSync results.

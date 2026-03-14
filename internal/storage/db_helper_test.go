@@ -169,12 +169,3 @@ func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob
 	return repo, jobs
 }
 
-// findJob returns the first job in the list matching the predicate, or nil.
-func findJob(jobs []ReviewJob, pred func(ReviewJob) bool) *ReviewJob {
-	for i := range jobs {
-		if pred(jobs[i]) {
-			return &jobs[i]
-		}
-	}
-	return nil
-}
