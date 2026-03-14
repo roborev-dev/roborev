@@ -746,26 +746,6 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		cfg.HiddenColumns = nil
 		dirty = true
 	}
-	// Add default-hidden columns to existing configs that don't mention them.
-	// Skip if the user explicitly configured no hidden columns (sentinel).
-	// Also skip a column if it already appears in column_order — that means
-	// the config is aware of the column and omission from hidden_columns is
-	// the user's intentional choice to keep it visible.
-	hasSentinel := len(cfg.HiddenColumns) == 1 &&
-		cfg.HiddenColumns[0] == config.HiddenColumnsNoneSentinel
-	if len(cfg.HiddenColumns) > 0 && !hasSentinel {
-		for col := range defaultHiddenColumns {
-			name := columnConfigNames[col]
-			if slices.Contains(cfg.HiddenColumns, name) {
-				continue
-			}
-			if slices.Contains(cfg.ColumnOrder, name) {
-				continue
-			}
-			cfg.HiddenColumns = append(cfg.HiddenColumns, name)
-			dirty = true
-		}
-	}
 	// Old default orders → reset
 	oldDefaults := [][]string{
 		// status before queued (pre-rename)
