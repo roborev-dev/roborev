@@ -159,105 +159,148 @@ func TestListReposWithReviewCounts(t *testing.T) {
 }
 
 func TestListJobsWithRepoFilter(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo1 := createRepo(t, db, "/tmp/repo1")
-	repo2 := createRepo(t, db, "/tmp/repo2")
-
-	for i := range 3 {
-		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit := createCommit(t, db, repo1.ID, sha)
-		enqueueJob(t, db, repo1.ID, commit.ID, sha)
+	// seedTwoRepos is shared setup: creates repo1 (3 jobs) and repo2 (2 jobs).
+	type twoRepos struct {
+		db    *DB
+		repo1 *Repo
+		repo2 *Repo
+	}
+	seedTwoRepos := func(t *testing.T) twoRepos {
+		t.Helper()
+		db := openTestDB(t)
+		repo1, _ := seedJobs(t, db, "/tmp/repo1", 3)
+		repo2, _ := seedJobs(t, db, "/tmp/repo2", 2)
+		return twoRepos{db: db, repo1: repo1, repo2: repo2}
 	}
 
-	for i := range 2 {
-		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit := createCommit(t, db, repo2.ID, sha)
-		enqueueJob(t, db, repo2.ID, commit.ID, sha)
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T) (*DB, string, string, int, int) // returns db, statusFilter, repoFilter, limit, offset
+		wantCount int
+		verify    func(t *testing.T, jobs []ReviewJob)
+	}{
+		{
+			name: "no filter returns all jobs",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				return s.db, "", "", 50, 0
+			},
+			wantCount: 5,
+		},
+		{
+			name: "repo filter returns only matching jobs",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				return s.db, "", s.repo1.RootPath, 50, 0
+			},
+			wantCount: 3,
+			verify: func(t *testing.T, jobs []ReviewJob) {
+				for _, job := range jobs {
+					assert.Equal(t, "repo1", job.RepoName)
+				}
+			},
+		},
+		{
+			name: "limit parameter works",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				return s.db, "", "", 2, 0
+			},
+			wantCount: 2,
+		},
+		{
+			name: "limit=0 returns all jobs",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				return s.db, "", "", 0, 0
+			},
+			wantCount: 5,
+		},
+		{
+			name: "repo filter with limit",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				return s.db, "", s.repo1.RootPath, 2, 0
+			},
+			wantCount: 2,
+			verify: func(t *testing.T, jobs []ReviewJob) {
+				for _, job := range jobs {
+					assert.Equal(t, "repo1", job.RepoName)
+				}
+			},
+		},
+		{
+			name: "status and repo filter combined",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				s := seedTwoRepos(t)
+				// Complete one job in repo1 so we can filter by status=done.
+				claimed := claimJob(t, s.db, "worker-1")
+				err := s.db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+				require.NoError(t, err, "CompleteJob failed")
+				return s.db, "done", s.repo1.RootPath, 50, 0
+			},
+			wantCount: 1,
+			verify: func(t *testing.T, jobs []ReviewJob) {
+				for _, job := range jobs {
+					assert.Equal(t, JobStatusDone, job.Status)
+				}
+			},
+		},
+		{
+			name: "offset pagination returns disjoint pages",
+			setup: func(t *testing.T) (*DB, string, string, int, int) {
+				// This case is handled specially below via its verify func.
+				s := seedTwoRepos(t)
+				return s.db, "", "", 0, 0
+			},
+			wantCount: -1, // skip simple count check; verify does full pagination check
+			verify: func(t *testing.T, _ []ReviewJob) {
+				// Re-seed a fresh DB for this pagination test to ensure isolation.
+				db := openTestDB(t)
+				seedJobs(t, db, "/tmp/repo1", 3)
+				seedJobs(t, db, "/tmp/repo2", 2)
+
+				jobs1, err := db.ListJobs("", "", 2, 0)
+				require.NoError(t, err, "ListJobs page 1 failed")
+				assert.Len(t, jobs1, 2)
+
+				jobs2, err := db.ListJobs("", "", 2, 2)
+				require.NoError(t, err, "ListJobs page 2 failed")
+				assert.Len(t, jobs2, 2)
+
+				// Pages must be disjoint.
+				for _, j1 := range jobs1 {
+					for _, j2 := range jobs2 {
+						assert.NotEqual(t, j1.ID, j2.ID,
+							"page 1 and page 2 should not overlap")
+					}
+				}
+
+				jobs3, err := db.ListJobs("", "", 2, 4)
+				require.NoError(t, err, "ListJobs page 3 failed")
+				assert.Len(t, jobs3, 1)
+
+				db.Close()
+			},
+		},
 	}
 
-	t.Run("no filter returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, statusFilter, repoFilter, limit, offset := tt.setup(t)
+			defer db.Close()
 
-		assert.Len(t, jobs, 5)
-	})
+			jobs, err := db.ListJobs(statusFilter, repoFilter, limit, offset)
+			require.NoError(t, err, "ListJobs failed")
 
-	t.Run("repo filter returns only matching jobs", func(t *testing.T) {
-
-		jobs, err := db.ListJobs("", repo1.RootPath, 50, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs, 3)
-		for _, job := range jobs {
-			assert.Equal(t, "repo1", job.RepoName)
-		}
-	})
-
-	t.Run("limit parameter works", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 2, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs, 2)
-	})
-
-	t.Run("limit=0 returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 0, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs, 5)
-	})
-
-	t.Run("repo filter with limit", func(t *testing.T) {
-		jobs, err := db.ListJobs("", repo1.RootPath, 2, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs, 2)
-		for _, job := range jobs {
-			assert.Equal(t, "repo1", job.RepoName)
-		}
-	})
-
-	t.Run("status and repo filter combined", func(t *testing.T) {
-
-		claimed, err := db.ClaimJob("worker-1")
-		require.NoError(t, err, "ClaimJob failed: %v")
-
-		if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output"); err != nil {
-			require.NoError(t, err, "CompleteJob failed: %v")
-		}
-
-		jobs, err := db.ListJobs("done", repo1.RootPath, 50, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs, 1)
-		assert.False(t, len(jobs) > 0 && jobs[0].Status != JobStatusDone)
-	})
-
-	t.Run("offset pagination", func(t *testing.T) {
-
-		jobs1, err := db.ListJobs("", "", 2, 0)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs1, 2)
-
-		jobs2, err := db.ListJobs("", "", 2, 2)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs2, 2)
-
-		for _, j1 := range jobs1 {
-			for _, j2 := range jobs2 {
-				assert.NotEqual(t, j1.ID, j2.ID)
+			if tt.wantCount >= 0 {
+				assert.Len(t, jobs, tt.wantCount)
 			}
-		}
-
-		jobs3, err := db.ListJobs("", "", 2, 4)
-		require.NoError(t, err, "ListJobs failed: %v")
-
-		assert.Len(t, jobs3, 1)
-	})
+			if tt.verify != nil {
+				tt.verify(t, jobs)
+			}
+		})
+	}
 }
 
 func TestListJobsWithGitRefFilter(t *testing.T) {

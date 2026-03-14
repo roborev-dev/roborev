@@ -1,13 +1,15 @@
 package storage
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -151,4 +153,28 @@ func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit,
 	commit := createCommit(t, db, repo.ID, sha)
 	job := enqueueJob(t, db, repo.ID, commit.ID, sha)
 	return repo, commit, job
+}
+
+// seedJobs creates a repo at repoPath and enqueues n jobs for it,
+// returning the repo and the list of created jobs.
+func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob) {
+	t.Helper()
+	repo := createRepo(t, db, repoPath)
+	jobs := make([]*ReviewJob, n)
+	for i := range n {
+		sha := fmt.Sprintf("%s-sha%d", filepath.Base(repoPath), i)
+		commit := createCommit(t, db, repo.ID, sha)
+		jobs[i] = enqueueJob(t, db, repo.ID, commit.ID, sha)
+	}
+	return repo, jobs
+}
+
+// findJob returns the first job in the list matching the predicate, or nil.
+func findJob(jobs []ReviewJob, pred func(ReviewJob) bool) *ReviewJob {
+	for i := range jobs {
+		if pred(jobs[i]) {
+			return &jobs[i]
+		}
+	}
+	return nil
 }
