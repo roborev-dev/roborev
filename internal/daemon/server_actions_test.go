@@ -140,14 +140,14 @@ func TestHandlePing(t *testing.T) {
 func TestHandleCancelJob(t *testing.T) {
 	tests := []struct {
 		name       string
-		setup      func(t *testing.T, db *storage.DB, tmpDir string) int64 // returns job_id or 0
-		request    func(t *testing.T, jobID int64) *http.Request           // builds the request
+		setup      func(t *testing.T, server *Server, db *storage.DB, tmpDir string) int64 // returns job_id or 0
+		request    func(t *testing.T, jobID int64) *http.Request                           // builds the request
 		wantStatus int
 		verify     func(t *testing.T, db *storage.DB, jobID int64) // optional post-cancel check
 	}{
 		{
 			name: "cancel queued job",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, server *Server, db *storage.DB, tmpDir string) int64 {
 				job := createTestJob(t, db, tmpDir, "cancelqueued", "test")
 				return job.ID
 			},
@@ -163,11 +163,10 @@ func TestHandleCancelJob(t *testing.T) {
 		},
 		{
 			name: "cancel already canceled job",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, server *Server, db *storage.DB, tmpDir string) int64 {
 				job := createTestJob(t, db, tmpDir, "alreadycanceled", "test")
-				// Cancel through the handler (not db.CancelJob) to exercise
+				// Cancel through the same server's handler to exercise
 				// the full code path including workerPool side-effects.
-				server := NewServer(db, config.DefaultConfig(), "")
 				req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
 				w := httptest.NewRecorder()
 				server.handleCancelJob(w, req)
@@ -181,7 +180,7 @@ func TestHandleCancelJob(t *testing.T) {
 		},
 		{
 			name: "cancel nonexistent job",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, _ *Server, db *storage.DB, tmpDir string) int64 {
 				return 99999
 			},
 			request: func(t *testing.T, jobID int64) *http.Request {
@@ -191,7 +190,7 @@ func TestHandleCancelJob(t *testing.T) {
 		},
 		{
 			name: "cancel with missing job_id",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, _ *Server, db *storage.DB, tmpDir string) int64 {
 				return 0
 			},
 			request: func(t *testing.T, jobID int64) *http.Request {
@@ -201,7 +200,7 @@ func TestHandleCancelJob(t *testing.T) {
 		},
 		{
 			name: "cancel with wrong method",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, _ *Server, db *storage.DB, tmpDir string) int64 {
 				return 0
 			},
 			request: func(t *testing.T, jobID int64) *http.Request {
@@ -211,7 +210,7 @@ func TestHandleCancelJob(t *testing.T) {
 		},
 		{
 			name: "cancel running job",
-			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+			setup: func(t *testing.T, _ *Server, db *storage.DB, tmpDir string) int64 {
 				job := createTestJob(t, db, tmpDir, "cancelrunning", "test")
 				_, err := db.ClaimJob("worker-1")
 				require.NoError(t, err, "ClaimJob failed")
@@ -232,7 +231,7 @@ func TestHandleCancelJob(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server, db, tmpDir := newTestServer(t)
-			jobID := tt.setup(t, db, tmpDir)
+			jobID := tt.setup(t, server, db, tmpDir)
 
 			req := tt.request(t, jobID)
 			w := httptest.NewRecorder()
