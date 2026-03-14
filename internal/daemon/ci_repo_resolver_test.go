@@ -4,716 +4,219 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRepoResolver_ExactOnly(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/api", "acme/web"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if calls != 0 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected 0 API calls for exact-only config, got %d", calls)
-	}
-	if len(repos) != 2 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 2 repos, got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_WildcardExpansion(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, owner string, _ []string) ([]string, error) {
-			if owner == "acme" {
-				return []string{"acme/api", "acme/web", "acme/docs", "acme/api-gateway"}, nil
-			}
-			return nil, fmt.Errorf("unknown owner: %s", owner)
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/api-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// path.Match("acme/api-*", "acme/api") is false because "api" doesn't match "api-*"
-			// Only acme/api-gateway matches
-		}, "Resolve: %v", err)
-	}
-
-	if len(repos) != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 repo matching api-*, got %d: %v", len(repos), repos)
-	}
-	if repos[0] != "acme/api-gateway" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected acme/api-gateway, got %s", repos[0])
-	}
-}
-
-func TestRepoResolver_WildcardStar(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, owner string, _ []string) ([]string, error) {
-			if owner == "myorg" {
-				return []string{"myorg/api", "myorg/web", "myorg/docs"}, nil
-			}
-			return nil, fmt.Errorf("unknown owner: %s", owner)
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"myorg/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 3 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 3 repos for myorg/*, got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_ExclusionPatterns(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"acme/api", "acme/web", "acme/internal-tools", "acme/internal-docs", "acme/archived-v1"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/*"},
-		ExcludeRepos: []string{"acme/internal-*", "acme/archived-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 2 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 2 repos after exclusions, got %d: %v", len(repos), repos)
-	}
-	found := make(map[string]bool)
-	for _, r := range repos {
-		found[r] = true
-	}
-	if !found["acme/api"] || !found["acme/web"] {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected acme/api and acme/web, got %v", repos)
-	}
-}
-
-func TestRepoResolver_ExclusionAppliesToExact(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return nil, fmt.Errorf("should not be called")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/api", "acme/internal-tools"},
-		ExcludeRepos: []string{"acme/internal-*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 1 || repos[0] != "acme/api" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected [acme/api], got %v", repos)
-	}
-}
-
-func TestRepoResolver_MaxRepos(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			repos := make([]string, 200)
-			for i := range repos {
-				repos[i] = fmt.Sprintf("acme/repo-%03d", i)
-			}
-			return repos, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:    []string{"acme/*"},
-		MaxRepos: 5,
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 5 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 5 repos (max_repos cap), got %d", len(repos))
-	}
-}
-
-func TestRepoResolver_CacheHit(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return []string{"acme/api", "acme/web"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-
-	ctx := context.Background()
-
-	// First call populates cache
-	repos1, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 1: %v", err)
-	}
-	if calls != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 API call, got %d", calls)
-	}
-
-	// Second call should hit cache
-	repos2, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if calls != 1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache hit (still 1 call), got %d calls", calls)
-	}
-	if len(repos1) != len(repos2) {
-		assert.Condition(t, func() bool {
-			return false
-		}, "cache returned different length: %d vs %d", len(repos1), len(repos2))
-	}
-}
-
-func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return []string{"acme/api"}, nil
-		},
-	}
-
-	ci1 := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-
-	ctx := context.Background()
-	if _, err := r.Resolve(ctx, ci1, nil); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 1: %v", err)
-	}
-	if calls != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 call, got %d", calls)
-	}
-
-	// Change config — should invalidate cache
-	ci2 := &config.CIConfig{
-		Repos: []string{"acme/*", "other/repo"},
-	}
-	if _, err := r.Resolve(ctx, ci2, nil); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if calls != 2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache miss on config change (2 calls), got %d", calls)
-	}
-}
-
-func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return []string{"acme/api"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-
-	ctx := context.Background()
-	if _, err := r.Resolve(ctx, ci, nil); err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// Second call within TTL (1h) should hit cache
-		}, "Resolve 1: %v", err)
-	}
-
-	if _, err := r.Resolve(ctx, ci, nil); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if calls != 1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache hit within TTL floor (1 call), got %d", calls)
-	}
-
-	// Force cache miss by backdating cachedAt past the TTL
-	r.mu.Lock()
-	r.cachedAt = time.Now().Add(-2 * time.Hour)
-	r.mu.Unlock()
-
-	if _, err := r.Resolve(ctx, ci, nil); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 3: %v", err)
-	}
-	if calls != 2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache miss after TTL expiry (2 calls), got %d", calls)
-	}
-}
-
-func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			repos := make([]string, 20)
-			for i := range repos {
-				repos[i] = fmt.Sprintf("acme/repo-%02d", i)
-			}
-			return repos, nil
-		},
-	}
-
-	ci1 := &config.CIConfig{
-		Repos:    []string{"acme/*"},
-		MaxRepos: 5,
-	}
-
-	ctx := context.Background()
-	repos1, err := r.Resolve(ctx, ci1, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 1: %v", err)
-	}
-	if len(repos1) != 5 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 5 repos, got %d", len(repos1))
-	}
-	if calls != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 call, got %d", calls)
-	}
-
-	// Change max_repos — should invalidate cache
-	ci2 := &config.CIConfig{
-		Repos:    []string{"acme/*"},
-		MaxRepos: 10,
-	}
-	repos2, err := r.Resolve(ctx, ci2, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if calls != 2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache miss on max_repos change (2 calls), got %d", calls)
-	}
-	if len(repos2) != 10 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected 10 repos after max_repos increase, got %d", len(repos2))
-	}
-}
-
-func TestRepoResolver_APIFailureFallback(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return nil, fmt.Errorf("network error")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*", "acme/explicit-repo"},
-	}
-
-	ctx := context.Background()
-
-	// Should succeed — wildcards fail but exact entries pass through
-	repos, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 1 || repos[0] != "acme/explicit-repo" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected [acme/explicit-repo] on API failure, got %v", repos)
-	}
-	if calls != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 API call, got %d", calls)
-	}
-
-	// Degraded results must NOT be cached — next call should retry the API
-	repos2, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if calls != 2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected degraded result to NOT be cached (2 calls), got %d", calls)
-	}
-	if len(repos2) != 1 || repos2[0] != "acme/explicit-repo" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected [acme/explicit-repo] on second call, got %v", repos2)
-	}
-}
-
-func TestRepoResolver_EmptyResultsCached(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			calls++
-			return []string{}, nil // no repos match
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/nonexistent-*"},
-		ExcludeRepos: []string{},
-	}
-
-	ctx := context.Background()
-
-	repos1, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 1: %v", err)
-	}
-	if len(repos1) != 0 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 0 repos, got %d", len(repos1))
-	}
-	if calls != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 1 API call, got %d", calls)
-	}
-
-	// Second call should hit cache even though result is empty
-	repos2, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if len(repos2) != 0 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 0 repos from cache, got %d", len(repos2))
-	}
-	if calls != 1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected cache hit for empty result (still 1 call), got %d", calls)
-	}
-}
-
-func TestRepoResolver_Deduplication(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"acme/api", "acme/web"}, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		// "acme/api" appears as both exact and would match wildcard
-		Repos: []string{"acme/api", "acme/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// acme/api should appear only once
-		}, "Resolve: %v", err)
-	}
-
-	count := 0
-	for _, r := range repos {
-		if r == "acme/api" {
-			count++
+func TestRepoResolver_Matching(t *testing.T) {
+	// acmeRepos is a common set of repos returned by the mock API for "acme".
+	acmeRepos := func(_ context.Context, owner string, _ []string) ([]string, error) {
+		if owner == "acme" {
+			return []string{"acme/api", "acme/web", "acme/docs", "acme/api-gateway"}, nil
 		}
+		return nil, fmt.Errorf("unknown owner: %s", owner)
 	}
-	if count != 1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected acme/api to appear once, got %d times in %v", count, repos)
-	}
-}
 
-func TestRepoResolver_CaseInsensitiveWildcard(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			// GitHub API returns canonical casing
-			return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
+	tests := []struct {
+		name        string
+		listReposFn func(context.Context, string, []string) ([]string, error)
+		ci          *config.CIConfig
+		wantRepos   []string                   // expected repos (sorted); nil means don't check
+		checkExtra  func(*testing.T, []string) // optional extra assertions
+	}{
+		{
+			name: "exact only, no API calls",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				t.Error("listReposFn should not be called for exact-only config")
+				return nil, fmt.Errorf("should not be called")
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"acme/api", "acme/web"},
+			},
+			wantRepos: []string{"acme/api", "acme/web"},
 		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"}, // lowercase config
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 3 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 3 repos (case-insensitive match), got %d: %v", len(repos), repos)
-	}
-}
-
-func TestRepoResolver_CaseInsensitiveExclusion(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
+		{
+			name:        "wildcard expansion with prefix",
+			listReposFn: acmeRepos,
+			ci: &config.CIConfig{
+				Repos: []string{"acme/api-*"},
+			},
+			// path.Match("acme/api-*", "acme/api") is false — only api-gateway matches
+			wantRepos: []string{"acme/api-gateway"},
 		},
-	}
-
-	ci := &config.CIConfig{
-		Repos:        []string{"acme/*"},
-		ExcludeRepos: []string{"acme/internal-*"}, // lowercase excludes canonical case
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 2 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 2 repos after case-insensitive exclusion, got %d: %v", len(repos), repos)
-	}
-	for _, r := range repos {
-		if strings.EqualFold(r, "Acme/Internal-Tools") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "excluded repo should not appear: %v", repos)
-		}
-	}
-}
-
-func TestRepoResolver_CaseInsensitiveDedup(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			return []string{"Acme/Api", "Acme/Web"}, nil
+		{
+			name: "wildcard star matches all",
+			listReposFn: func(_ context.Context, owner string, _ []string) ([]string, error) {
+				if owner == "myorg" {
+					return []string{"myorg/api", "myorg/web", "myorg/docs"}, nil
+				}
+				return nil, fmt.Errorf("unknown owner: %s", owner)
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"myorg/*"},
+			},
+			wantRepos: []string{"myorg/api", "myorg/docs", "myorg/web"},
 		},
-	}
-
-	ci := &config.CIConfig{
-		// Explicit entry with different case should dedup with wildcard match
-		Repos: []string{"acme/api", "acme/*"},
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	count := 0
-	for _, r := range repos {
-		if strings.EqualFold(r, "acme/api") {
-			count++
-		}
-	}
-	if count != 1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected api to appear once (case-insensitive dedup), got %d in %v", count, repos)
-	}
-}
-
-func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
-	callCount := 0
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			callCount++
-			if callCount == 1 {
+		{
+			name: "exclusion patterns",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"acme/api", "acme/web", "acme/internal-tools", "acme/internal-docs", "acme/archived-v1"}, nil
+			},
+			ci: &config.CIConfig{
+				Repos:        []string{"acme/*"},
+				ExcludeRepos: []string{"acme/internal-*", "acme/archived-*"},
+			},
+			wantRepos: []string{"acme/api", "acme/web"},
+		},
+		{
+			name: "exclusion applies to exact entries",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				t.Error("listReposFn should not be called for exact-only config")
+				return nil, fmt.Errorf("should not be called")
+			},
+			ci: &config.CIConfig{
+				Repos:        []string{"acme/api", "acme/internal-tools"},
+				ExcludeRepos: []string{"acme/internal-*"},
+			},
+			wantRepos: []string{"acme/api"},
+		},
+		{
+			name: "max repos cap",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				repos := make([]string, 200)
+				for i := range repos {
+					repos[i] = fmt.Sprintf("acme/repo-%03d", i)
+				}
+				return repos, nil
+			},
+			ci: &config.CIConfig{
+				Repos:    []string{"acme/*"},
+				MaxRepos: 5,
+			},
+			checkExtra: func(t *testing.T, repos []string) {
+				t.Helper()
+				assert.Len(t, repos, 5, "expected 5 repos (max_repos cap)")
+			},
+		},
+		{
+			name: "deduplication of exact and wildcard",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
 				return []string{"acme/api", "acme/web"}, nil
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"acme/api", "acme/*"},
+			},
+			checkExtra: func(t *testing.T, repos []string) {
+				t.Helper()
+				count := 0
+				for _, r := range repos {
+					if r == "acme/api" {
+						count++
+					}
+				}
+				assert.Equal(t, 1, count, "acme/api should appear exactly once in %v", repos)
+			},
+		},
+		{
+			name: "case insensitive wildcard matching",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"acme/*"},
+			},
+			wantRepos: []string{"Acme/API", "Acme/Docs", "Acme/Web"},
+		},
+		{
+			name: "case insensitive exclusion",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
+			},
+			ci: &config.CIConfig{
+				Repos:        []string{"acme/*"},
+				ExcludeRepos: []string{"acme/internal-*"},
+			},
+			checkExtra: func(t *testing.T, repos []string) {
+				t.Helper()
+				assert.Len(t, repos, 2, "expected 2 repos after case-insensitive exclusion")
+				for _, r := range repos {
+					assert.False(t, strings.EqualFold(r, "Acme/Internal-Tools"),
+						"excluded repo should not appear: %v", repos)
+				}
+			},
+		},
+		{
+			name: "case insensitive dedup",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return []string{"Acme/Api", "Acme/Web"}, nil
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"acme/api", "acme/*"},
+			},
+			checkExtra: func(t *testing.T, repos []string) {
+				t.Helper()
+				count := 0
+				for _, r := range repos {
+					if strings.EqualFold(r, "acme/api") {
+						count++
+					}
+				}
+				assert.Equal(t, 1, count,
+					"api should appear once (case-insensitive dedup), got %d in %v", count, repos)
+			},
+		},
+		{
+			name: "max repos preserves explicit entries",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				repos := make([]string, 20)
+				for i := range repos {
+					repos[i] = fmt.Sprintf("acme/aaa-%02d", i)
+				}
+				return repos, nil
+			},
+			ci: &config.CIConfig{
+				Repos:    []string{"acme/zzz-important", "acme/*"},
+				MaxRepos: 5,
+			},
+			checkExtra: func(t *testing.T, repos []string) {
+				t.Helper()
+				assert.Len(t, repos, 5, "expected 5 repos (max_repos cap)")
+				assert.True(t, slices.Contains(repos, "acme/zzz-important"),
+					"explicit repo acme/zzz-important was dropped by max_repos truncation: %v", repos)
+			},
+		},
+		{
+			name: "API failure falls back to exact entries",
+			listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+				return nil, fmt.Errorf("network error")
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"acme/*", "acme/explicit-repo"},
+			},
+			wantRepos: []string{"acme/explicit-repo"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &RepoResolver{listReposFn: tt.listReposFn}
+
+			repos, err := r.Resolve(context.Background(), tt.ci, nil)
+			require.NoError(t, err)
+
+			if tt.wantRepos != nil {
+				assert.Equal(t, tt.wantRepos, repos)
 			}
-			return nil, fmt.Errorf("transient API error")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-	ctx := context.Background()
-
-	// First call succeeds and caches
-	repos1, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 1: %v", err)
-	}
-	if len(repos1) != 2 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 2 repos, got %d", len(repos1))
-	}
-
-	// Force TTL expiry so next call re-expands
-	r.mu.Lock()
-	r.cachedAt = time.Now().Add(-2 * time.Hour)
-	r.mu.Unlock()
-
-	// Second call fails API but should return stale cache
-	repos2, err := r.Resolve(ctx, ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve 2: %v", err)
-	}
-	if len(repos2) != 2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected stale cache (2 repos) on degraded, got %d: %v", len(repos2), repos2)
-	}
-}
-
-func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(ctx context.Context, _ string, _ []string) ([]string, error) {
-			return nil, ctx.Err()
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := r.Resolve(ctx, ci, nil)
-	if !errors.Is(err, context.Canceled) {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected context.Canceled, got: %v", err)
-	}
-}
-
-func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(ctx context.Context, _ string, _ []string) ([]string, error) {
-			return nil, ctx.Err()
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(), 0,
-	)
-	defer cancel()
-	// Allow timeout to fire
-	time.Sleep(time.Millisecond)
-
-	_, err := r.Resolve(ctx, ci, nil)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected context.DeadlineExceeded, got: %v", err)
-
+			if tt.checkExtra != nil {
+				tt.checkExtra(t, repos)
+			}
+		})
 	}
 }
 
@@ -734,16 +237,234 @@ func TestRepoResolver_EnvFnCalled(t *testing.T) {
 		return []string{"GH_TOKEN=test-token"}
 	}
 
-	if _, err := r.Resolve(context.Background(), ci, envFn); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
+	_, err := r.Resolve(context.Background(), ci, envFn)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme"}, envOwners, "expected envFn called with [acme]")
+}
+
+func TestRepoResolver_CacheHit(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return []string{"acme/api", "acme/web"}, nil
+		},
 	}
-	if len(envOwners) != 1 || envOwners[0] != "acme" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected envFn called with [acme], got %v", envOwners)
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
 	}
+
+	ctx := context.Background()
+
+	repos1, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls, "expected 1 API call")
+
+	repos2, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls, "expected cache hit (still 1 call)")
+	assert.Equal(t, len(repos1), len(repos2), "cache returned different length")
+}
+
+func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return []string{"acme/api"}, nil
+		},
+	}
+
+	ctx := context.Background()
+
+	_, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+
+	_, err = r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*", "other/repo"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "expected cache miss on config change")
+}
+
+func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return []string{"acme/api"}, nil
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+
+	ctx := context.Background()
+	_, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+
+	_, err = r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls, "expected cache hit within TTL floor")
+
+	// Force cache miss by backdating cachedAt past the TTL
+	r.mu.Lock()
+	r.cachedAt = time.Now().Add(-2 * time.Hour)
+	r.mu.Unlock()
+
+	_, err = r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "expected cache miss after TTL expiry")
+}
+
+func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			repos := make([]string, 20)
+			for i := range repos {
+				repos[i] = fmt.Sprintf("acme/repo-%02d", i)
+			}
+			return repos, nil
+		},
+	}
+
+	ctx := context.Background()
+
+	repos1, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}, MaxRepos: 5}, nil)
+	require.NoError(t, err)
+	require.Len(t, repos1, 5)
+	require.Equal(t, 1, calls)
+
+	repos2, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}, MaxRepos: 10}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "expected cache miss on max_repos change")
+	assert.Len(t, repos2, 10, "expected 10 repos after max_repos increase")
+}
+
+func TestRepoResolver_APIFailureFallback(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return nil, fmt.Errorf("network error")
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*", "acme/explicit-repo"},
+	}
+
+	ctx := context.Background()
+
+	repos, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme/explicit-repo"}, repos, "expected only explicit repo on API failure")
+	require.Equal(t, 1, calls)
+
+	// Degraded results must NOT be cached — next call should retry the API
+	repos2, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "expected degraded result to NOT be cached")
+	assert.Equal(t, []string{"acme/explicit-repo"}, repos2)
+}
+
+func TestRepoResolver_EmptyResultsCached(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return []string{}, nil
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos:        []string{"acme/nonexistent-*"},
+		ExcludeRepos: []string{},
+	}
+
+	ctx := context.Background()
+
+	repos1, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	require.Empty(t, repos1)
+	require.Equal(t, 1, calls)
+
+	repos2, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Empty(t, repos2)
+	assert.Equal(t, 1, calls, "expected cache hit for empty result")
+}
+
+func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
+	callCount := 0
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			callCount++
+			if callCount == 1 {
+				return []string{"acme/api", "acme/web"}, nil
+			}
+			return nil, fmt.Errorf("transient API error")
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+	ctx := context.Background()
+
+	repos1, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	require.Len(t, repos1, 2)
+
+	// Force TTL expiry so next call re-expands
+	r.mu.Lock()
+	r.cachedAt = time.Now().Add(-2 * time.Hour)
+	r.mu.Unlock()
+
+	// Second call fails API but should return stale cache
+	repos2, err := r.Resolve(ctx, ci, nil)
+	require.NoError(t, err)
+	assert.Len(t, repos2, 2, "expected stale cache (2 repos) on degraded")
+}
+
+func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(ctx context.Context, _ string, _ []string) ([]string, error) {
+			return nil, ctx.Err()
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := r.Resolve(ctx, ci, nil)
+	assert.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got: %v", err)
+}
+
+func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(ctx context.Context, _ string, _ []string) ([]string, error) {
+			return nil, ctx.Err()
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+	time.Sleep(time.Millisecond)
+
+	_, err := r.Resolve(ctx, ci, nil)
+	assert.True(t, errors.Is(err, context.DeadlineExceeded), "expected context.DeadlineExceeded, got: %v", err)
 }
 
 func TestExactReposOnly(t *testing.T) {
@@ -761,57 +482,8 @@ func TestExactReposOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ExactReposOnly(tt.repos)
-			if len(got) != len(tt.expect) {
-				require.Condition(t, func() bool {
-					return false
-				}, "got %v, want %v", got, tt.expect)
-			}
-			for i := range got {
-				if got[i] != tt.expect[i] {
-					assert.Condition(t, func() bool {
-						return false
-					}, "got[%d] = %q, want %q", i, got[i], tt.expect[i])
-				}
-			}
+			assert.Equal(t, tt.expect, got)
 		})
-	}
-}
-
-func TestRepoResolver_MaxReposPreservesExplicit(t *testing.T) {
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
-			// Return many repos that sort before the explicit ones alphabetically
-			repos := make([]string, 20)
-			for i := range repos {
-				repos[i] = fmt.Sprintf("acme/aaa-%02d", i)
-			}
-			return repos, nil
-		},
-	}
-
-	ci := &config.CIConfig{
-		// "acme/zzz-important" sorts last alphabetically but is explicit
-		Repos:    []string{"acme/zzz-important", "acme/*"},
-		MaxRepos: 5,
-	}
-
-	repos, err := r.Resolve(context.Background(), ci, nil)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Resolve: %v", err)
-	}
-	if len(repos) != 5 {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected 5 repos (max_repos cap), got %d: %v", len(repos), repos)
-	}
-
-	// The explicit repo must always be included regardless of alphabetical position
-	if !slices.Contains(repos, "acme/zzz-important") {
-		assert.Condition(t, func() bool {
-			return false
-		}, "explicit repo acme/zzz-important was dropped by max_repos truncation: %v", repos)
 	}
 }
 
@@ -850,21 +522,13 @@ func TestApplyExclusions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Make a copy since applyExclusions reuses the backing array
 			input := make([]string, len(tt.repos))
 			copy(input, tt.repos)
 			got := applyExclusions(input, tt.patterns)
-			if len(got) != len(tt.expect) {
-				require.Condition(t, func() bool {
-					return false
-				}, "got %v, want %v", got, tt.expect)
-			}
-			for i := range got {
-				if got[i] != tt.expect[i] {
-					assert.Condition(t, func() bool {
-						return false
-					}, "got[%d] = %q, want %q", i, got[i], tt.expect[i])
-				}
+			if tt.expect == nil {
+				assert.Empty(t, got)
+			} else {
+				assert.Equal(t, tt.expect, got)
 			}
 		})
 	}
