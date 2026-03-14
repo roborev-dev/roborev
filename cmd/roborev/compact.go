@@ -89,7 +89,7 @@ Examples:
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for verification (defaults to fix agent from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model to use")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level (fast/standard/thorough/maximum)")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level (fast/standard/medium/thorough/maximum)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include all branches")
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")

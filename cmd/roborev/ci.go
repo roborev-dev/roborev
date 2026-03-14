@@ -83,7 +83,7 @@ Flags override config values. When run inside GitHub ` +
 	cmd.Flags().StringVar(&reviewTypes, "review-types", "",
 		"comma-separated review types (overrides config)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "",
-		"reasoning level: thorough, standard, fast, maximum")
+		"reasoning level: fast, standard, medium, thorough, or maximum")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "",
 		"minimum severity filter: critical, high, medium, low")
 	cmd.Flags().StringVar(&synthesisAgent, "synthesis-agent", "",

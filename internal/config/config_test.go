@@ -1449,6 +1449,19 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"design global level-specific", "", nil, &Config{DesignAgent: "codex", DesignAgentThorough: "claude"}, "design", "thorough", "claude"},
 		{"design isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
 		{"design isolated from security", "", M{"security_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
+
+		// Maximum level
+		{"maximum repo level-specific", "", M{"review_agent_maximum": "claude"}, nil, "review", "maximum", "claude"},
+		{"maximum global level-specific", "", nil, &Config{ReviewAgentMaximum: "claude"}, "review", "maximum", "claude"},
+		{"maximum falls back to workflow", "", M{"review_agent": "claude"}, nil, "review", "maximum", "claude"},
+		{"maximum falls back to generic", "", M{"agent": "claude"}, nil, "review", "maximum", "claude"},
+		{"fix maximum level-specific", "", M{"fix_agent_maximum": "claude"}, nil, "fix", "maximum", "claude"},
+
+		// Medium level
+		{"medium repo level-specific", "", M{"review_agent_medium": "claude"}, nil, "review", "medium", "claude"},
+		{"medium global level-specific", "", nil, &Config{ReviewAgentMedium: "claude"}, "review", "medium", "claude"},
+		{"medium falls back to workflow", "", M{"review_agent": "claude"}, nil, "review", "medium", "claude"},
+		{"medium falls back to generic", "", M{"agent": "claude"}, nil, "review", "medium", "claude"},
 	}
 
 	for _, tt := range tests {

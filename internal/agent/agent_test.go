@@ -142,8 +142,8 @@ func TestParseReasoningLevel(t *testing.T) {
 		{"high", ReasoningThorough},
 		{"fast", ReasoningFast},
 		{"low", ReasoningFast},
+		{"medium", ReasoningMedium},
 		{"standard", ReasoningStandard},
-		{"medium", ReasoningStandard},
 		{"", ReasoningStandard},
 		{"unknown", ReasoningStandard},
 	}
@@ -179,6 +179,7 @@ func TestClaudeEffortMapping(t *testing.T) {
 	}{
 		{ReasoningMaximum, "max"},
 		{ReasoningThorough, "high"},
+		{ReasoningMedium, "medium"},
 		{ReasoningFast, "low"},
 		{ReasoningStandard, ""},
 	}

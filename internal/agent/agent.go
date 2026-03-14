@@ -15,11 +15,13 @@ import (
 type ReasoningLevel string
 
 const (
-	// ReasoningMaximum uses the highest available reasoning (e.g., codex xhigh)
+	// ReasoningMaximum uses the highest available reasoning (e.g., codex xhigh, claude max)
 	ReasoningMaximum ReasoningLevel = "maximum"
 	// ReasoningThorough uses deep reasoning for thorough analysis (slower)
 	ReasoningThorough ReasoningLevel = "thorough"
-	// ReasoningStandard uses balanced reasoning (default)
+	// ReasoningMedium uses moderate reasoning (e.g., claude --effort medium)
+	ReasoningMedium ReasoningLevel = "medium"
+	// ReasoningStandard uses the model's default reasoning (no effort override)
 	ReasoningStandard ReasoningLevel = "standard"
 	// ReasoningFast uses minimal reasoning for quick responses
 	ReasoningFast ReasoningLevel = "fast"
@@ -27,7 +29,7 @@ const (
 
 // ReasoningLevels returns the canonical reasoning level names.
 func ReasoningLevels() []string {
-	return []string{string(ReasoningFast), string(ReasoningStandard), string(ReasoningThorough), string(ReasoningMaximum)}
+	return []string{string(ReasoningFast), string(ReasoningStandard), string(ReasoningMedium), string(ReasoningThorough), string(ReasoningMaximum)}
 }
 
 // ParseReasoningLevel converts a string to ReasoningLevel, defaulting to standard
@@ -37,9 +39,11 @@ func ParseReasoningLevel(s string) ReasoningLevel {
 		return ReasoningMaximum
 	case "thorough", "high":
 		return ReasoningThorough
+	case "medium":
+		return ReasoningMedium
 	case "fast", "low":
 		return ReasoningFast
-	case "standard", "medium", "":
+	case "standard", "":
 		return ReasoningStandard
 	default:
 		return ReasoningStandard
