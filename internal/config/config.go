@@ -718,6 +718,13 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 	}
 	c.HideAddressedByDefault = false
 
+	// Preserve explicit hidden_columns = [] as "hide nothing" before
+	// the rename filter runs — otherwise a stale list like ["pf"] that
+	// becomes empty after filtering would be misinterpreted as "hide
+	// nothing" instead of falling through to defaults.
+	explicitlyEmpty := md.IsDefined("hidden_columns") &&
+		len(c.HiddenColumns) == 0
+
 	// hidden_columns: "handled"/"done" → "closed", remove defunct "pf"
 	filtered := c.HiddenColumns[:0]
 	for _, name := range c.HiddenColumns {
@@ -732,10 +739,7 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 	}
 	c.HiddenColumns = filtered
 
-	// Preserve explicit hidden_columns = [] as "hide nothing".
-	// Without this, an empty list is indistinguishable from an
-	// absent key and would trigger default-hidden columns.
-	if md.IsDefined("hidden_columns") && len(c.HiddenColumns) == 0 {
+	if explicitlyEmpty {
 		c.HiddenColumns = []string{HiddenColumnsNoneSentinel}
 	}
 }
