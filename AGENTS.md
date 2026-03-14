@@ -154,10 +154,9 @@ Test conventions:
 - ACP adapter integration tests use `//go:build integration && acp`.
 - Shared helpers live in `internal/testenv/`, `internal/testutil/`, and package-local `*_test_helpers*.go`.
 - In tests with more than three assertions, prefer `assert := assert.New(t)` to make grouped assertions cleaner.
-- `assert.False*` / `require.False*` /  `assert.True*` / `require.True*` should only be used to ensure that a boolean 
-  field has a desired value, never as a comparison.
-- do not use `assert.Fail`/`require.Fail` in tests.
-- Prefer `assert.Equal` for explicit expectations and avoid `assert.True*` / `require.True*` unless checking a boolean result directly.
+- `assert.True*` / `require.True*` / `assert.False*` / `require.False*` should only be used for actual boolean values (fields, return values); never use them as comparisons (e.g., `assert.True(t, x == y)` should be `assert.Equal(t, y, x)`).
+- Do not use `assert.Fail`/`require.Fail` in tests.
+- Prefer `assert.Equal` for explicit expectations.
 - Convert redundant `if` wrappers around assertions into direct assertions (for example, `if err != nil { require.NoError(t, err) }` should become `require.NoError(t, err)`).
 - Do not replace assertions with manual control-flow (`if`, `t.Fatal*`, `t.Error*`) when a direct testify check covers the same condition.
 - Enforce a no-redundant-guards policy for assertions:
