@@ -138,132 +138,109 @@ func TestHandlePing(t *testing.T) {
 }
 
 func TestHandleCancelJob(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, db *storage.DB, tmpDir string) int64 // returns job_id or 0
+		request    func(t *testing.T, jobID int64) *http.Request           // builds the request
+		wantStatus int
+		verify     func(t *testing.T, db *storage.DB, jobID int64) // optional post-cancel check
+	}{
+		{
+			name: "cancel queued job",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				job := createTestJob(t, db, tmpDir, "cancelqueued", "test")
+				return job.ID
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: jobID})
+			},
+			wantStatus: http.StatusOK,
+			verify: func(t *testing.T, db *storage.DB, jobID int64) {
+				updated, err := db.GetJobByID(jobID)
+				require.NoError(t, err, "GetJobByID failed")
+				assert.Equal(t, storage.JobStatusCanceled, updated.Status)
+			},
+		},
+		{
+			name: "cancel already canceled job",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				job := createTestJob(t, db, tmpDir, "alreadycanceled", "test")
+				err := db.CancelJob(job.ID)
+				require.NoError(t, err, "pre-cancel failed")
+				return job.ID
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: jobID})
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "cancel nonexistent job",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				return 99999
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: jobID})
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "cancel with missing job_id",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				return 0
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]any{})
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "cancel with wrong method",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				return 0
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/api/job/cancel", nil)
+			},
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "cancel running job",
+			setup: func(t *testing.T, db *storage.DB, tmpDir string) int64 {
+				job := createTestJob(t, db, tmpDir, "cancelrunning", "test")
+				_, err := db.ClaimJob("worker-1")
+				require.NoError(t, err, "ClaimJob failed")
+				return job.ID
+			},
+			request: func(t *testing.T, jobID int64) *http.Request {
+				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: jobID})
+			},
+			wantStatus: http.StatusOK,
+			verify: func(t *testing.T, db *storage.DB, jobID int64) {
+				updated, err := db.GetJobByID(jobID)
+				require.NoError(t, err, "GetJobByID failed")
+				assert.Equal(t, storage.JobStatusCanceled, updated.Status)
+			},
+		},
+	}
 
-	// Create a repo and job
-	job := createTestJob(t, db, tmpDir, "canceltest", "test")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
+			jobID := tt.setup(t, db, tmpDir)
 
-	t.Run("cancel queued job", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
+			req := tt.request(t, jobID)
+			w := httptest.NewRecorder()
 
-		server.handleCancelJob(w, req)
+			server.handleCancelJob(w, req)
 
-		if w.Code != http.StatusOK {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
+			assert.Equal(t, tt.wantStatus, w.Code, "response body: %s", w.Body.String())
 
-		updated, err := db.GetJobByID(job.ID)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusCanceled {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 'canceled', got '%s'", updated.Status)
-		}
-	})
-
-	t.Run("cancel already canceled job fails", func(t *testing.T) {
-		// Job is already canceled from previous test
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusNotFound {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 404 for already canceled job, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel nonexistent job fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: 99999})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusNotFound {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 404 for nonexistent job, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel with missing job_id fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]any{})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 400 for missing job_id, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel with wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/cancel", nil)
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusMethodNotAllowed {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 405 for GET, got %d", w.Code)
-		}
-	})
-
-	t.Run("cancel running job", func(t *testing.T) {
-		// Create a new job and claim it
-		commit2, err := db.GetOrCreateCommit(job.RepoID, "cancelrunning", "Author", "Subject", time.Now())
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "GetOrCreateCommit failed: %v", err)
-		}
-		job2, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: job.RepoID, CommitID: commit2.ID, GitRef: "cancelrunning", Agent: "test"})
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "EnqueueJob failed: %v", err)
-		}
-		if _, err := db.ClaimJob("worker-1"); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "ClaimJob failed: %v", err)
-		}
-
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job2.ID})
-		w := httptest.NewRecorder()
-
-		server.handleCancelJob(w, req)
-
-		if w.Code != http.StatusOK {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		updated, err := db.GetJobByID(job2.ID)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "GetJobByID failed: %v", err)
-		}
-		if updated.Status != storage.JobStatusCanceled {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected status 'canceled', got '%s'", updated.Status)
-		}
-	})
+			if tt.verify != nil {
+				tt.verify(t, db, jobID)
+			}
+		})
+	}
 }
 
 func TestHandleRerunJob(t *testing.T) {
