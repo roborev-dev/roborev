@@ -11,114 +11,97 @@ import (
 )
 
 func TestStripKiroOutput(t *testing.T) {
-	assert := assert.New(t)
-
-	raw := "\x1b[38;5;141m⠀⠀logo⠀⠀\x1b[0m\n" +
-		"\x1b[38;5;244m╭─── Did you know? ───╮\x1b[0m\n" +
-		"\x1b[38;5;244m│ tip text            │\x1b[0m\n" +
-		"\x1b[38;5;244m╰─────────────────────╯\x1b[0m\n" +
-		"\x1b[38;5;244mModel: auto\x1b[0m\n" +
-		"\n" +
-		"\x1b[38;5;141m> \x1b[0m\x1b[1m## Summary\x1b[0m\n" +
-		"This commit does something.\n" +
-		"\n" +
-		"## Issues Found\n" +
-		"\n" +
-		" \u25b8 Time: 21s\n"
-
-	got := stripKiroOutput(raw)
-
-	if strings.Contains(got, "\x1b[") {
-		assert.NotContains(got, "\x1b[", "result still contains ANSI escape codes")
-	}
-	if !strings.Contains(got, "## Summary") {
-		assert.Contains(got, "## Summary", "expected '## Summary' in result, got: %q", got)
-	}
-	if !strings.Contains(got, "## Issues Found") {
-		assert.Contains(got, "## Issues Found", "expected '## Issues Found' in result, got: %q", got)
-	}
-	if strings.Contains(got, "Did you know") {
-		assert.NotContains(got, "Did you know", "result should not contain tip box text")
-	}
-	if strings.Contains(got, "Model:") {
-		assert.NotContains(got, "Model:", "result should not contain model line")
-	}
-	if strings.Contains(got, "Time:") {
-		assert.NotContains(got, "Time:", "result should not contain timing footer")
-	}
-	if strings.HasPrefix(got, "> ") {
-		assert.NotContains(got, "> ", "result should not have leading '> ' prefix")
-	}
-}
-
-func TestStripKiroOutputNoMarker(t *testing.T) {
-
-	raw := "\x1b[1msome output without marker\x1b[0m\n"
-	got := stripKiroOutput(raw)
-	assert.Equal(t, "some output without marker", got, "unexpected result: %q", got)
-
-}
-
-func TestStripKiroOutputBareMarker(t *testing.T) {
-
-	raw := "chrome\n>\nreview content here\n"
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "review content here") {
-		assert.Contains(t, got, "review content here", "expected review content, got: %q", got)
-	}
-	if strings.Contains(got, "chrome") {
-		assert.NotContains(t, got, "chrome", "chrome should be stripped before the bare > marker")
-	}
-	if strings.HasPrefix(got, ">") {
-		assert.NotContains(t, got, ">", "bare > marker should not appear in output")
-	}
-}
-
-func TestStripKiroOutputFooterInContent(t *testing.T) {
-
-	var lines []string
-	lines = append(lines, "> ## Review")
-	lines = append(lines, "some content")
-	lines = append(lines, "▸ Time: 10s")
+	// Build the "footer in content" input: footer-like line followed by 10+ content lines.
+	footerInContentLines := []string{"> ## Review", "some content", "▸ Time: 10s"}
 	for range 10 {
-		lines = append(lines, "more content")
+		footerInContentLines = append(footerInContentLines, "more content")
 	}
-	raw := strings.Join(lines, "\n")
+	footerInContentInput := strings.Join(footerInContentLines, "\n")
 
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "▸ Time: 10s") {
-		assert.Contains(t, got, "▸ Time: 10s",
-			"'▸ Time:' in content body should be preserved, got: %q",
-			got,
-		)
+	// Build the "blockquote not stripped" input: 31 chrome lines then a blockquote.
+	blockquoteLines := make([]string, 31)
+	for i := range blockquoteLines {
+		blockquoteLines[i] = "chrome line"
 	}
-}
+	blockquoteLines = append(blockquoteLines, "> this is a blockquote in review content", "more content")
+	blockquoteInput := strings.Join(blockquoteLines, "\n")
 
-func TestStripKiroOutputFooterWithTrailingBlanks(t *testing.T) {
-
-	raw := "> ## Review\ncontent\n ▸ Time: 12s\n\n\n\n\n\n\n\n"
-	got := stripKiroOutput(raw)
-	if strings.Contains(got, "Time:") {
-		assert.NotContains(t, got, "Time:", "footer should be stripped despite trailing blanks, got: %q", got)
+	type stripKiroTest struct {
+		name          string
+		input         string
+		wantContains  []string
+		wantMissing   []string
+		exactMatch    string
+		wantNotPrefix string // if non-empty, output must not start with this
 	}
-	if !strings.Contains(got, "content") {
-		assert.Contains(t, got, "content", "review content should be preserved, got: %q", got)
+
+	tests := []stripKiroTest{
+		{
+			name: "full ANSI and chrome",
+			input: "\x1b[38;5;141m⠀⠀logo⠀⠀\x1b[0m\n" +
+				"\x1b[38;5;244m╭─── Did you know? ───╮\x1b[0m\n" +
+				"\x1b[38;5;244m│ tip text            │\x1b[0m\n" +
+				"\x1b[38;5;244m╰─────────────────────╯\x1b[0m\n" +
+				"\x1b[38;5;244mModel: auto\x1b[0m\n" +
+				"\n" +
+				"\x1b[38;5;141m> \x1b[0m\x1b[1m## Summary\x1b[0m\n" +
+				"This commit does something.\n" +
+				"\n" +
+				"## Issues Found\n" +
+				"\n" +
+				" \u25b8 Time: 21s\n",
+			wantContains:  []string{"## Summary", "## Issues Found"},
+			wantMissing:   []string{"\x1b[", "Did you know", "Model:", "Time:"},
+			wantNotPrefix: "> ",
+		},
+		{
+			name:       "no marker",
+			input:      "\x1b[1msome output without marker\x1b[0m\n",
+			exactMatch: "some output without marker",
+		},
+		{
+			name:          "bare marker",
+			input:         "chrome\n>\nreview content here\n",
+			wantContains:  []string{"review content here"},
+			wantMissing:   []string{"chrome"},
+			wantNotPrefix: ">",
+		},
+		{
+			name:         "footer in content body",
+			input:        footerInContentInput,
+			wantContains: []string{"▸ Time: 10s"},
+		},
+		{
+			name:         "footer with trailing blanks",
+			input:        "> ## Review\ncontent\n ▸ Time: 12s\n\n\n\n\n\n\n\n",
+			wantContains: []string{"content"},
+			wantMissing:  []string{"Time:"},
+		},
+		{
+			name:         "blockquote not stripped",
+			input:        blockquoteInput,
+			wantContains: []string{"> this is a blockquote"},
+		},
 	}
-}
 
-func TestStripKiroOutputBlockquoteNotStripped(t *testing.T) {
-
-	var lines []string
-	for range 31 {
-		lines = append(lines, "chrome line")
-	}
-	lines = append(lines, "> this is a blockquote in review content")
-	lines = append(lines, "more content")
-	raw := strings.Join(lines, "\n")
-
-	got := stripKiroOutput(raw)
-	if !strings.Contains(got, "> this is a blockquote") {
-		assert.Contains(t, got, "> this is a blockquote", "blockquote should be preserved in output, got: %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripKiroOutput(tt.input)
+			if tt.exactMatch != "" {
+				assert.Equal(t, tt.exactMatch, got)
+				return
+			}
+			for _, want := range tt.wantContains {
+				assert.Contains(t, got, want)
+			}
+			for _, miss := range tt.wantMissing {
+				assert.NotContains(t, got, miss)
+			}
+			if tt.wantNotPrefix != "" {
+				assert.False(t, strings.HasPrefix(got, tt.wantNotPrefix),
+					"output should not start with %q, got: %q", tt.wantNotPrefix, got)
+			}
+		})
 	}
 }
 
