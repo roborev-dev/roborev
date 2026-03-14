@@ -172,6 +172,25 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 	}
 }
 
+func TestClaudeEffortMapping(t *testing.T) {
+	tests := []struct {
+		level ReasoningLevel
+		want  string
+	}{
+		{ReasoningMaximum, "max"},
+		{ReasoningThorough, "high"},
+		{ReasoningFast, "low"},
+		{ReasoningStandard, ""},
+	}
+
+	for _, tt := range tests {
+		a := NewClaudeAgent("").WithReasoning(tt.level)
+		claude, ok := a.(*ClaudeAgent)
+		require.True(t, ok, "expected ClaudeAgent, got %T", a)
+		assert.Equal(t, tt.want, claude.claudeEffort(), "claudeEffort(%q)", tt.level)
+	}
+}
+
 type agentTestDef struct {
 	name                  string
 	factory               func(string) Agent
@@ -249,6 +268,21 @@ func TestWithModelEmptyPreservesDefault(t *testing.T) {
 			assertArgsContain(t, cmdLine, tt.modelFlag, "custom-model")
 		})
 	}
+}
+
+func TestClaudeBuildArgsEffort(t *testing.T) {
+	a := NewClaudeAgent("").WithModel("opus").WithReasoning(ReasoningMaximum)
+	cmdLine := a.CommandLine()
+
+	assert.Contains(t, cmdLine, "--effort max")
+	assert.Contains(t, cmdLine, "--model opus")
+}
+
+func TestClaudeBuildArgsNoEffortForStandard(t *testing.T) {
+	a := NewClaudeAgent("").WithReasoning(ReasoningStandard)
+	cmdLine := a.CommandLine()
+
+	assert.NotContains(t, cmdLine, "--effort")
 }
 
 func TestAgentBuildArgsWithModel(t *testing.T) {

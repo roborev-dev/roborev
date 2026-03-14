@@ -18,7 +18,7 @@ import (
 type ClaudeAgent struct {
 	Command   string         // The claude command to run (default: "claude")
 	Model     string         // Model to use (e.g., "opus", "sonnet", or full name)
-	Reasoning ReasoningLevel // Reasoning level (for future extended thinking support)
+	Reasoning ReasoningLevel // Reasoning level mapped to --effort flag
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 	SessionID string         // Existing session ID to resume
 }
@@ -35,7 +35,7 @@ func NewClaudeAgent(command string) *ClaudeAgent {
 	return &ClaudeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
+// WithReasoning returns a copy of the agent with the specified reasoning level.
 func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
 	return &ClaudeAgent{
 		Command:   a.Command,
@@ -82,6 +82,20 @@ func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
 	}
 }
 
+// claudeEffort maps ReasoningLevel to Claude Code's --effort flag values
+func (a *ClaudeAgent) claudeEffort() string {
+	switch a.Reasoning {
+	case ReasoningMaximum:
+		return "max"
+	case ReasoningThorough:
+		return "high"
+	case ReasoningFast:
+		return "low"
+	default:
+		return "" // use claude default
+	}
+}
+
 func (a *ClaudeAgent) Name() string {
 	return "claude-code"
 }
@@ -107,6 +121,10 @@ func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	}
 	if sessionID != "" {
 		args = append(args, "--resume", sessionID)
+	}
+
+	if effort := a.claudeEffort(); effort != "" {
+		args = append(args, "--effort", effort)
 	}
 
 	if agenticMode {
