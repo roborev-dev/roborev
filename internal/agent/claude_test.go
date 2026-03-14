@@ -48,7 +48,7 @@ func TestClaudeBuildArgs(t *testing.T) {
 
 	t.Run("ReviewMode", func(t *testing.T) {
 		// Non-agentic mode (review only): read-only tools, no dangerous flag
-		args := a.buildArgs(false)
+		args := a.buildArgs(false, false)
 		for _, req := range []string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"} {
 			assertContainsArg(t, args, req)
 		}
@@ -61,7 +61,7 @@ func TestClaudeBuildArgs(t *testing.T) {
 
 	t.Run("AgenticMode", func(t *testing.T) {
 		// Agentic mode: write tools + dangerous flag
-		args := a.buildArgs(true)
+		args := a.buildArgs(true, false)
 		assertContainsArg(t, args, claudeDangerousFlag)
 		assertContainsArg(t, args, "--allowedTools")
 
@@ -71,13 +71,13 @@ func TestClaudeBuildArgs(t *testing.T) {
 	})
 
 	t.Run("ResumeSession", func(t *testing.T) {
-		args := a.WithSessionID("session-123").(*ClaudeAgent).buildArgs(false)
+		args := a.WithSessionID("session-123").(*ClaudeAgent).buildArgs(false, false)
 		assertContainsArg(t, args, "--resume")
 		assertContainsArg(t, args, "session-123")
 	})
 
 	t.Run("RejectInvalidResumeSession", func(t *testing.T) {
-		args := a.WithSessionID("-bad-session").(*ClaudeAgent).buildArgs(false)
+		args := a.WithSessionID("-bad-session").(*ClaudeAgent).buildArgs(false, false)
 		assertNotContainsArg(t, args, "--resume")
 		assertNotContainsArg(t, args, "-bad-session")
 	})

@@ -84,7 +84,7 @@ func (a *KiloAgent) CommandName() string {
 // kiloVariant maps ReasoningLevel to kilo's --variant flag values
 func (a *KiloAgent) kiloVariant() string {
 	switch a.Reasoning {
-	case ReasoningThorough:
+	case ReasoningMaximum, ReasoningThorough:
 		return "high"
 	case ReasoningFast:
 		return "minimal"
