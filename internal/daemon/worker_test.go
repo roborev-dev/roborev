@@ -134,6 +134,27 @@ func (c *workerTestContext) assertJobPendingCancel(t *testing.T, jobID int64, ex
 	}
 }
 
+// assertJobStatus fetches the job by ID and asserts its status matches want.
+// Returns the fetched job for further assertions on other fields.
+func (c *workerTestContext) assertJobStatus(t *testing.T, jobID int64, want storage.JobStatus) *storage.ReviewJob {
+	t.Helper()
+	job, err := c.DB.GetJobByID(jobID)
+	require.NoError(t, err, "GetJobByID(%d)", jobID)
+	require.Equal(t, want, job.Status, "job %d status", jobID)
+	return job
+}
+
+// startPool starts the worker pool and returns it for chaining.
+func (c *workerTestContext) startPool() {
+	c.Pool.Start()
+}
+
+// reconfigurePool replaces the pool with a new one using the given config
+// and 1 worker, preserving the existing DB and broadcaster.
+func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
+	c.Pool = NewWorkerPool(c.DB, NewStaticConfig(cfg), 1, c.Broadcaster, nil, nil)
+}
+
 func TestWorkerPoolConcurrency(t *testing.T) {
 	tc := newWorkerTestContext(t, 4)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
@@ -142,7 +163,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 		tc.createJob(t, sha)
 	}
 
-	tc.Pool.Start()
+	tc.startPool()
 
 	// Poll until workers are active or timeout
 	var activeWorkers int
@@ -202,17 +223,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 		}, "db.CancelJob failed: %v", err)
 	}
 
-	jobAfterDBCancel, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID failed: %v", err)
-	}
-	if jobAfterDBCancel.Status != storage.JobStatusCanceled {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected status 'canceled', got '%s'", jobAfterDBCancel.Status)
-	}
+	jobAfterDBCancel := tc.assertJobStatus(t, job.ID, storage.JobStatusCanceled)
 	if jobAfterDBCancel.WorkerID == "" {
 		require.Condition(t, func() bool {
 			return false
@@ -267,17 +278,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 		}, "CompleteJob failed: %v", err)
 	}
 
-	completedJob, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID failed: %v", err)
-	}
-	if completedJob.Status != storage.JobStatusDone {
-		require.Condition(t, func() bool {
-			return false
-		}, "Expected status 'done', got '%s'", completedJob.Status)
-	}
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 
 	if tc.Pool.CancelJob(job.ID) {
 		assert.Condition(t, func() bool {
@@ -399,17 +400,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			job := tcxt.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 			tcxt.Pool.processJob(testWorkerID, job)
 
-			updated, err := tcxt.DB.GetJobByID(job.ID)
-			if err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "GetJobByID: %v", err)
-			}
-			if updated.Status != storage.JobStatusDone {
-				require.Condition(t, func() bool {
-					return false
-				}, "status=%q, want done", updated.Status)
-			}
+			updated := tcxt.assertJobStatus(t, job.ID, storage.JobStatusDone)
 			if updated.SessionID != tc.want {
 				require.Condition(t, func() bool {
 					return false
@@ -694,19 +685,7 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	// processJob should detect cooldown via alias resolution
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want failed (cooldown via alias)",
-			updated.Status)
-
-	}
+	tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 }
 
 func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
@@ -746,17 +725,7 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", quotaErr, true)
 
 	// Job should be failed (not retried) with quota prefix
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		assert.Condition(t, func() bool {
 			return false
@@ -811,17 +780,7 @@ func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 	// "quota exhausted" (not "quota exceeded") must also trigger quota-skip
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "quota exhausted, reset after 2h", true)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		assert.Condition(t, func() bool {
 			return false
@@ -843,20 +802,8 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 	// A non-quota agent error should follow the normal retry path
 	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "connection reset", true)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// Should be queued for retry, not failed
-		}, "GetJobByID: %v", err)
-	}
-
-	if updated.Status != storage.JobStatusQueued {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want queued (retry)", updated.Status)
-	}
+	// Should be queued for retry, not failed
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 
 	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
 	if err != nil {
@@ -885,7 +832,7 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	// Configure backup agent
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+	tc.reconfigurePool(cfg)
 
 	// Enqueue with agent "codex" (backup is "test")
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
@@ -894,20 +841,8 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 
 	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// Should be queued for failover, agent changed to "test"
-		}, "GetJobByID: %v", err)
-	}
-
-	if updated.Status != storage.JobStatusQueued {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want queued (failover)", updated.Status)
-	}
+	// Should be queued for failover, agent changed to "test"
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		assert.Condition(t, func() bool {
 			return false
@@ -923,24 +858,14 @@ func TestFailoverOrFail_PassesBackupModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
 	cfg.DefaultBackupModel = "claude-sonnet"
-	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+	tc.reconfigurePool(cfg)
 
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	job.RepoPath = tc.TmpDir
 
 	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusQueued {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want queued (failover)", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		assert.Condition(t, func() bool {
 			return false
@@ -961,17 +886,7 @@ func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	// No backup configured — should fail with quota prefix
 	tc.Pool.failoverOrFail(testWorkerID, job, "test", "quota exhausted")
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusFailed {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want failed", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
 		assert.Condition(t, func() bool {
 			return false
@@ -986,9 +901,7 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 	// Configure backup agent
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
+	tc.reconfigurePool(cfg)
 
 	// Enqueue with agent "codex"
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
@@ -1008,20 +921,8 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 		"connection reset", true,
 	)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// Should be failed, NOT queued for failover to cooled-down agent
-		}, "GetJobByID: %v", err)
-	}
-
-	if updated.Status != storage.JobStatusFailed {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want failed", updated.Status)
-	}
+	// Should be failed, NOT queued for failover to cooled-down agent
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	// Agent should still be codex (not failed over)
 	if updated.Agent != "codex" {
 		assert.Condition(t, func() bool {
@@ -1037,9 +938,7 @@ func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
 	// Configure backup agent
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
+	tc.reconfigurePool(cfg)
 
 	// Enqueue with agent "codex"
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
@@ -1054,20 +953,8 @@ func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
 		"connection reset", true,
 	)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-
-			// Should be queued for failover, agent changed to "test"
-		}, "GetJobByID: %v", err)
-	}
-
-	if updated.Status != storage.JobStatusQueued {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want queued (failover)", updated.Status)
-	}
+	// Should be queued for failover, agent changed to "test"
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		assert.Condition(t, func() bool {
 			return false
@@ -1241,9 +1128,7 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
 	cfg.DefaultBackupModel = "backup-model"
-	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
-	)
+	tc.reconfigurePool(cfg)
 
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	job.RepoPath = tc.TmpDir
@@ -1257,17 +1142,7 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 		"connection reset", true,
 	)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetJobByID: %v", err)
-	}
-	if updated.Status != storage.JobStatusQueued {
-		assert.Condition(t, func() bool {
-			return false
-		}, "status=%q, want queued (failover)", updated.Status)
-	}
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	if updated.Agent != "test" {
 		assert.Condition(t, func() bool {
 			return false
