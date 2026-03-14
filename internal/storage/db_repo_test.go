@@ -46,13 +46,13 @@ func TestCommitOperations(t *testing.T) {
 }
 
 func TestBranchPersistence(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/branch-test-repo")
-	commit := createCommit(t, db, repo.ID, "branch123")
-
 	t.Run("EnqueueJob stores branch", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch123", Branch: "feature/test-branch", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
@@ -60,6 +60,12 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("GetJobByID returns branch", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch456", Branch: "main", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
@@ -70,32 +76,28 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("ListJobs returns branch", func(t *testing.T) {
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch789", Branch: "develop", Agent: "codex"})
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
+		_, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branch789", Branch: "develop", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
 		jobs, err := db.ListJobs("", "", 100, 0)
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		var found bool
-		for _, j := range jobs {
-			if j.ID == job.ID {
-				found = true
-				assert.Equal(t, "develop", j.Branch)
-				break
-			}
-		}
-		assert.True(t, found)
+		require.Len(t, jobs, 1)
+		assert.Equal(t, "develop", jobs[0].Branch)
 	})
 
 	t.Run("ClaimJob returns branch", func(t *testing.T) {
-		// Drain existing jobs
-		for {
-			j, _ := db.ClaimJob("drain")
-			if j == nil {
-				break
-			}
-			db.CompleteJob(j.ID, "codex", "p", "o")
-		}
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
 
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branchclaim", Branch: "release/v1", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
@@ -103,11 +105,18 @@ func TestBranchPersistence(t *testing.T) {
 		claimed, err := db.ClaimJob("test-worker")
 		require.NoError(t, err, "ClaimJob failed: %v")
 
-		assert.False(t, claimed == nil || claimed.ID != job.ID)
+		require.NotNil(t, claimed)
+		assert.Equal(t, job.ID, claimed.ID)
 		assert.Equal(t, "release/v1", claimed.Branch)
 	})
 
 	t.Run("empty branch is allowed", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "nobranch", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob with empty branch failed: %v")
 
@@ -115,6 +124,12 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("UpdateJobBranch backfills empty branch", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
 		// Create job with empty branch
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "updatebranch", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
@@ -135,6 +150,12 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("UpdateJobBranch does not overwrite existing branch", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/branch-test-repo")
+		commit := createCommit(t, db, repo.ID, "branch123")
+
 		// Create job with existing branch
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "nooverwrite", Branch: "original-branch", Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
