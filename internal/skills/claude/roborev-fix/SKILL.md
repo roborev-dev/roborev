@@ -91,9 +91,9 @@ For each review, use `job.git_ref` to understand the scope of the reviewed chang
 
 Parse findings from the `output` field of all failing reviews. Collect every finding with its severity, file path, and line number. Then:
 
-1. Group findings by file to minimize context switches
-2. Fix issues by priority (high severity first)
-3. If the same file has findings from multiple reviews, fix them all together
+1. **Sort by severity**: fix HIGH findings first, then MEDIUM, then LOW
+2. **Group by file**: within each severity level, batch edits to the same file to minimize context switches
+3. If the same file has findings from multiple reviews, fix them all together in one edit
 4. If some findings cannot be fixed (false positives, intentional design), note them for the comment rather than silently skipping them
 
 ### 4. Run tests
