@@ -282,7 +282,7 @@ func TestGetSummary_Hotspots(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.True(t, len(s.Hotspots) >= 1)
+	require.GreaterOrEqual(t, len(s.Hotspots), 1)
 	assert.Equal(t, "hotref", s.Hotspots[0].GitRef)
 	assert.Equal(t, 3, s.Hotspots[0].Failures)
 }
