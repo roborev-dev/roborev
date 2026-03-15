@@ -1,0 +1,193 @@
+package prompt
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/roborev-dev/roborev/internal/storage"
+)
+
+// InsightsSystemPrompt is the instruction for analyzing review patterns
+const InsightsSystemPrompt = `You are a code review insights analyst. Your task is to analyze a collection of failing code reviews and identify actionable patterns that can improve future reviews.
+
+You will be given:
+1. A set of failing review outputs with metadata (agent, date, git ref, addressed status)
+2. The current project review guidelines (if any)
+
+Your analysis should produce:
+
+## 1. Recurring Finding Patterns
+
+Identify clusters of similar findings that appear across multiple reviews. For each pattern:
+- Name the pattern concisely
+- Count how many reviews contain it
+- Give 1-2 representative examples with file/line references if available
+- Assess whether this pattern represents a real code quality issue or review noise
+
+## 2. Hotspot Areas
+
+Identify files, packages, or directories that concentrate failures. List them with:
+- Path or package name
+- Number of failing reviews touching this area
+- Common finding types in this area
+
+## 3. Noise Candidates
+
+Identify finding types that are consistently present in reviews that were closed/addressed without corresponding code changes. These suggest the review guideline should suppress them. For each:
+- Describe the finding type
+- Note how many times it appeared and was dismissed
+- Suggest whether to suppress it entirely or refine the criteria
+
+## 4. Guideline Gaps
+
+Identify patterns the reviews keep flagging that are NOT mentioned in the current guidelines. For each:
+- Describe what the reviews are catching
+- Explain why it should (or shouldn't) be codified as a guideline
+- Suggest specific guideline text if appropriate
+
+## 5. Suggested Guideline Additions
+
+Provide concrete text snippets that could be added to the project's review_guidelines configuration. Format each as a ready-to-use guideline entry.
+
+Be specific and actionable. Avoid vague recommendations. Base everything on evidence from the provided reviews.`
+
+// InsightsData holds the data needed to build an insights prompt
+type InsightsData struct {
+	Reviews            []InsightsReview
+	Guidelines         string
+	RepoName           string
+	Since              time.Time
+	MaxReviews         int // Cap for number of reviews to include
+	MaxOutputPerReview int // Cap for individual review output size
+}
+
+// InsightsReview is a simplified review record for the insights prompt
+type InsightsReview struct {
+	JobID      int64
+	Agent      string
+	GitRef     string
+	Branch     string
+	FinishedAt *time.Time
+	Output     string
+	Closed     bool
+	Verdict    string // "P" or "F"
+}
+
+// BuildInsightsPrompt constructs the full prompt for insights analysis.
+// It prioritizes unaddressed (open) findings over addressed (closed) ones
+// when truncating to fit within size limits.
+func BuildInsightsPrompt(data InsightsData) string {
+	var sb strings.Builder
+
+	sb.WriteString(InsightsSystemPrompt)
+	sb.WriteString("\n\n")
+
+	// Current guidelines section
+	sb.WriteString("## Current Review Guidelines\n\n")
+	if data.Guidelines != "" {
+		sb.WriteString(data.Guidelines)
+	} else {
+		sb.WriteString("(No review guidelines configured for this project)")
+	}
+	sb.WriteString("\n\n")
+
+	// Separate into open (unaddressed) and closed (addressed) reviews
+	var open, closed []InsightsReview
+	for _, r := range data.Reviews {
+		if r.Closed {
+			closed = append(closed, r)
+		} else {
+			open = append(open, r)
+		}
+	}
+
+	maxReviews := data.MaxReviews
+	if maxReviews <= 0 {
+		maxReviews = 50
+	}
+	maxOutput := data.MaxOutputPerReview
+	if maxOutput <= 0 {
+		maxOutput = 8192
+	}
+
+	// Prioritize open reviews, fill remaining slots with closed
+	var selected []InsightsReview
+	for _, r := range open {
+		if len(selected) >= maxReviews {
+			break
+		}
+		selected = append(selected, r)
+	}
+	for _, r := range closed {
+		if len(selected) >= maxReviews {
+			break
+		}
+		selected = append(selected, r)
+	}
+
+	// Reviews section
+	sb.WriteString("## Failing Reviews\n\n")
+	fmt.Fprintf(&sb, "Showing %d failing review(s) since %s.\n\n",
+		len(selected), data.Since.Format("2006-01-02"))
+
+	for i, r := range selected {
+		fmt.Fprintf(&sb, "### Review %d (Job #%d)\n\n", i+1, r.JobID)
+		fmt.Fprintf(&sb, "- **Agent:** %s\n", r.Agent)
+		fmt.Fprintf(&sb, "- **Git Ref:** %s\n", r.GitRef)
+		if r.Branch != "" {
+			fmt.Fprintf(&sb, "- **Branch:** %s\n", r.Branch)
+		}
+		if r.FinishedAt != nil {
+			fmt.Fprintf(&sb, "- **Date:** %s\n", r.FinishedAt.Format("2006-01-02 15:04"))
+		}
+		status := "unaddressed"
+		if r.Closed {
+			status = "addressed/closed"
+		}
+		fmt.Fprintf(&sb, "- **Status:** %s\n", status)
+		sb.WriteString("\n")
+
+		output := r.Output
+		if len(output) > maxOutput {
+			output = output[:maxOutput] + "\n... (truncated)"
+		}
+		sb.WriteString(output)
+		if !strings.HasSuffix(output, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+
+		// Check total prompt size
+		if sb.Len() > MaxPromptSize-1024 {
+			fmt.Fprintf(&sb, "\n(Remaining %d reviews omitted due to prompt size limits)\n", len(selected)-i-1)
+			break
+		}
+	}
+
+	if len(data.Reviews) > len(selected) {
+		fmt.Fprintf(&sb, "\nNote: %d additional failing reviews were omitted (showing most recent %d, prioritizing unaddressed findings).\n",
+			len(data.Reviews)-len(selected), len(selected))
+	}
+
+	return sb.String()
+}
+
+// InsightsReviewFromJob converts a ReviewJob (with verdict) to an InsightsReview.
+// The review output must be fetched separately.
+func InsightsReviewFromJob(job storage.ReviewJob, output string, closed bool) InsightsReview {
+	verdict := ""
+	if job.Verdict != nil {
+		verdict = *job.Verdict
+	}
+	return InsightsReview{
+		JobID:      job.ID,
+		Agent:      job.Agent,
+		GitRef:     job.GitRef,
+		Branch:     job.Branch,
+		FinishedAt: job.FinishedAt,
+		Output:     output,
+		Closed:     closed,
+		Verdict:    verdict,
+	}
+}
