@@ -316,40 +316,66 @@ func TestGetSummary_RFC3339Timestamps(t *testing.T) {
 	assert.Equal(t, 0, s.Overview.Total)
 }
 
-func TestGetSummary_VerdictExcludesTaskJobs(t *testing.T) {
+func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create a normal review job (will have verdict)
+	// Create a normal review job that passes (will have verdict)
 	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
 
-	// Create a task job (no verdict by design)
-	j2, err := db.EnqueueJob(EnqueueOpts{
+	// Create a normal review job that fails (will have verdict)
+	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug found"))
+
+	// Create a task job (no meaningful verdict)
+	j3, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "analyze", Agent: "codex",
 		Prompt: "analyze this", JobType: JobTypeTask,
 	})
 	require.NoError(t, err)
 	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j2.ID, "codex", "", "some analysis output"))
+	require.NoError(t, db.CompleteJob(j3.ID, "codex", "", "some analysis output"))
+
+	// Create a fix job (no meaningful verdict — agent edits code, not reviews)
+	j4, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
+		Agent: "codex", JobType: JobTypeFix, ParentJobID: j2.ID,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j4.ID, "codex", "", "applied fix"))
 
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-1 * time.Hour),
 	})
 	require.NoError(t, err)
 
-	// Overview should count both jobs
-	assert.Equal(t, 2, s.Overview.Done)
+	// Overview should count all 4 jobs
+	assert.Equal(t, 4, s.Overview.Done)
 
-	// Verdicts should only count the review job (verdict-bearing)
-	// Task job has no verdict, so Passed + Failed == Total
-	assert.Equal(t, s.Verdicts.Passed+s.Verdicts.Failed, s.Verdicts.Total)
+	// Verdicts should only count the 2 review jobs
+	assert.Equal(t, 2, s.Verdicts.Total)
 	assert.Equal(t, 1, s.Verdicts.Passed)
-	assert.Equal(t, 0, s.Verdicts.Failed)
+	assert.Equal(t, 1, s.Verdicts.Failed)
+	assert.Equal(t, s.Verdicts.Passed+s.Verdicts.Failed, s.Verdicts.Total)
+
+	// Agent pass/fail should also exclude task and fix jobs
+	require.Len(t, s.Agents, 1)
+	assert.Equal(t, "codex", s.Agents[0].Agent)
+	assert.Equal(t, 4, s.Agents[0].Total)  // all 4 jobs counted in total
+	assert.Equal(t, 1, s.Agents[0].Passed) // only review pass
+	assert.Equal(t, 1, s.Agents[0].Failed) // only review fail
+
+	// Hotspots should only count the review failure, not the fix job
+	require.Len(t, s.Hotspots, 1)
+	assert.Equal(t, "abc123", s.Hotspots[0].GitRef)
+	assert.Equal(t, 1, s.Hotspots[0].Failures) // only the review fail, not the fix
 }
 
 func TestPercentile(t *testing.T) {
