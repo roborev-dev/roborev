@@ -89,6 +89,7 @@ type FailureStats struct {
 // verdictJobFilter excludes job types whose verdict_bool values are meaningless.
 // Task jobs produce freeform analysis and fix jobs produce code edits — neither
 // returns PASS/FAIL output, so ParseVerdict results are not meaningful.
+// NOTE: assumes review_jobs is aliased as "j" in the enclosing query.
 const verdictJobFilter = "COALESCE(j.job_type, 'review') NOT IN ('task', 'fix')"
 
 // SummaryOptions configures the summary query.
@@ -210,7 +211,7 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 		JOIN reviews rv ON rv.job_id = j.id
 		` + where + ` AND j.status IN ('done', 'applied', 'rebased')
 			AND rv.verdict_bool IS NOT NULL
-			AND ` + verdictJobFilter + ``
+			AND ` + verdictJobFilter
 
 	var v VerdictStats
 	err := db.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
