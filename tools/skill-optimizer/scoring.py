@@ -25,12 +25,13 @@ def score_completion(
     matched = 0
     trace_idx = 0
     for expected in expected_commands:
-        while trace_idx < len(trace_commands):
-            if _command_matches(trace_commands[trace_idx], expected):
+        search_idx = trace_idx
+        while search_idx < len(trace_commands):
+            if _command_matches(trace_commands[search_idx], expected):
                 matched += 1
-                trace_idx += 1
+                trace_idx = search_idx + 1
                 break
-            trace_idx += 1
+            search_idx += 1
 
     return matched / len(expected_commands)
 

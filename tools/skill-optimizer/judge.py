@@ -58,10 +58,10 @@ def score_quality(
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1]).strip()
+    # Extract JSON from markdown code fences if present
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence_match:
+        text = fence_match.group(1).strip()
     try:
         data = json.loads(text)
         raw_score = float(data["score"])
