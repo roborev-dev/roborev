@@ -42,6 +42,9 @@ type VerdictStats struct {
 }
 
 // AgentStats contains per-agent performance metrics.
+// Total counts all jobs by this agent (including task and fix jobs).
+// Passed and Failed count only verdict-bearing review jobs, so
+// Passed + Failed may be less than Total. PassRate is Passed/(Passed+Failed).
 type AgentStats struct {
 	Agent      string  `json:"agent"`
 	Total      int     `json:"total"`
@@ -82,6 +85,11 @@ type FailureStats struct {
 	Retries int            `json:"retries"`
 	Errors  map[string]int `json:"errors"`
 }
+
+// verdictJobFilter excludes job types whose verdict_bool values are meaningless.
+// Task jobs produce freeform analysis and fix jobs produce code edits — neither
+// returns PASS/FAIL output, so ParseVerdict results are not meaningful.
+const verdictJobFilter = "COALESCE(j.job_type, 'review') NOT IN ('task', 'fix')"
 
 // SummaryOptions configures the summary query.
 type SummaryOptions struct {
@@ -202,7 +210,7 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 		JOIN reviews rv ON rv.job_id = j.id
 		` + where + ` AND j.status IN ('done', 'applied', 'rebased')
 			AND rv.verdict_bool IS NOT NULL
-			AND COALESCE(j.job_type, 'review') NOT IN ('task')`
+			AND ` + verdictJobFilter + ``
 
 	var v VerdictStats
 	err := db.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
@@ -216,12 +224,17 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 }
 
 func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
+	// Exclude task and fix jobs from verdict counts — their verdict_bool
+	// values are meaningless (agents produce freeform output or code edits,
+	// not PASS/FAIL verdicts). Error counts still include all job types.
 	query := `
 		SELECT
 			j.agent,
 			COUNT(*) as total,
-			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -382,12 +395,15 @@ func (db *DB) summaryJobTypes(where string, args []any) ([]JobTypeStats, error) 
 }
 
 func (db *DB) summaryHotspots(where string, args []any) ([]HotspotStats, error) {
+	// Only count review-bearing job types in hotspots — task and fix jobs
+	// have meaningless verdict_bool values.
 	query := `
 		SELECT j.git_ref, COUNT(*) as failures
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		` + where + ` AND j.status IN ('done', 'applied', 'rebased') AND rv.verdict_bool = 0
+			AND ` + verdictJobFilter + `
 		GROUP BY j.git_ref
 		ORDER BY failures DESC
 		LIMIT 10`
