@@ -15,11 +15,7 @@ Fix all open review findings in one pass.
 
 ## IMPORTANT
 
-This skill requires you to **execute bash commands** to discover reviews, fetch them, fix code, record comments, and close reviews. The task is not complete until you run all commands and see confirmation output.
-
-These instructions are guidelines, not a rigid script. Use the conversation
-context. Skip steps that are already satisfied. Defer to project-level
-CLAUDE.md instructions when they conflict with these steps.
+You must **execute bash commands** to complete this task. Skip steps already satisfied by conversation context. Defer to CLAUDE.md when it conflicts.
 
 ## Instructions
 
