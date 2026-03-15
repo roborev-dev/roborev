@@ -78,6 +78,10 @@ type ReviewJob struct {
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`        // Last modification time
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
 
+	// Token usage (nullable — NULL means "not reported")
+	InputTokens  *int64 `json:"input_tokens,omitempty"`
+	OutputTokens *int64 `json:"output_tokens,omitempty"`
+
 	// Joined fields for convenience
 	RepoPath      string  `json:"repo_path,omitempty"`
 	RepoName      string  `json:"repo_name,omitempty"`

@@ -14,12 +14,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 7
+const pgSchemaVersion = 8
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v7.sql
+//go:embed schemas/postgres_v8.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -276,6 +276,16 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("migrate to v7 (add session_id column): %w", err)
 			}
 		}
+		if currentVersion < 8 {
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS input_tokens BIGINT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v8 (add input_tokens column): %w", err)
+			}
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS output_tokens BIGINT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v8 (add output_tokens column): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -529,8 +539,9 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error,
+			input_tokens, output_tokens,
 			source_machine_id, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
@@ -540,10 +551,12 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
 			commit_id = EXCLUDED.commit_id,
 			patch_id = EXCLUDED.patch_id,
+			input_tokens = COALESCE(EXCLUDED.input_tokens, review_jobs.input_tokens),
+			output_tokens = COALESCE(EXCLUDED.output_tokens, review_jobs.output_tokens),
 			updated_at = NOW()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-		nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
+		nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.InputTokens, j.OutputTokens, j.SourceMachineID)
 	return err
 }
 
@@ -598,6 +611,8 @@ type PulledJob struct {
 	Prompt          string
 	DiffContent     *string
 	Error           string
+	InputTokens     *int64
+	OutputTokens    *int64
 	SourceMachineID string
 	UpdatedAt       time.Time
 }
@@ -623,6 +638,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''),
+			j.input_tokens, j.output_tokens,
 			j.source_machine_id, j.updated_at, j.id
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
@@ -650,6 +666,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &j.Error,
+			&j.InputTokens, &j.OutputTokens,
 			&j.SourceMachineID, &j.UpdatedAt, &lastID,
 		)
 		if err != nil {
@@ -918,8 +935,9 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 			INSERT INTO review_jobs (
 				uuid, repo_id, commit_id, git_ref, session_id, agent, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, error,
+				input_tokens, output_tokens,
 				source_machine_id, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
@@ -928,10 +946,12 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
+				input_tokens = COALESCE(EXCLUDED.input_tokens, review_jobs.input_tokens),
+				output_tokens = COALESCE(EXCLUDED.output_tokens, review_jobs.output_tokens),
 				updated_at = NOW()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Reasoning),
 			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-			nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
+			nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.InputTokens, j.OutputTokens, j.SourceMachineID)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

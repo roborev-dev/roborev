@@ -445,7 +445,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
-	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
+	tokenCapture := newTokenCaptureWriter(agentOutput)
+	sessionWriter := newSessionCaptureWriter(tokenCapture, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
@@ -549,6 +550,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	} else if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
 		log.Printf("[%s] Error storing review: %v", workerID, err)
 		return
+	}
+
+	// Save token usage if the agent reported any
+	tokenCapture.Flush()
+	if in, out := tokenCapture.InputTokens(), tokenCapture.OutputTokens(); in > 0 || out > 0 {
+		if err := wp.db.SaveJobTokens(job.ID, in, out); err != nil {
+			log.Printf("[%s] Warning: save tokens for job %d: %v", workerID, job.ID, err)
+		}
 	}
 
 	// For compact jobs, verify the job actually completed (not

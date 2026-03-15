@@ -1407,3 +1407,96 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 			j.SessionID)
 	}
 }
+
+func TestSaveJobTokens(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "token-test")
+	claimJob(t, db, "worker-1")
+
+	t.Run("skipped when job is not done", func(t *testing.T) {
+		if err := db.SaveJobTokens(job.ID, 1000, 500); err != nil {
+			t.Fatalf("SaveJobTokens: %v", err)
+		}
+		j, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if j.InputTokens != nil || j.OutputTokens != nil {
+			t.Fatalf("tokens should be nil for running job, got in=%v out=%v", j.InputTokens, j.OutputTokens)
+		}
+	})
+
+	if err := db.CompleteJob(job.ID, "test", "prompt", "No issues found."); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+
+	t.Run("persisted when job is done", func(t *testing.T) {
+		if err := db.SaveJobTokens(job.ID, 1000, 500); err != nil {
+			t.Fatalf("SaveJobTokens: %v", err)
+		}
+		j, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if j.InputTokens == nil || *j.InputTokens != 1000 {
+			t.Fatalf("input_tokens = %v, want 1000", j.InputTokens)
+		}
+		if j.OutputTokens == nil || *j.OutputTokens != 500 {
+			t.Fatalf("output_tokens = %v, want 500", j.OutputTokens)
+		}
+	})
+
+	t.Run("round-trips through ListJobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("done", "", 10, 0)
+		if err != nil {
+			t.Fatalf("ListJobs: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("got %d jobs, want 1", len(jobs))
+		}
+		if jobs[0].InputTokens == nil || *jobs[0].InputTokens != 1000 {
+			t.Fatalf("ListJobs input_tokens = %v, want 1000", jobs[0].InputTokens)
+		}
+		if jobs[0].OutputTokens == nil || *jobs[0].OutputTokens != 500 {
+			t.Fatalf("ListJobs output_tokens = %v, want 500", jobs[0].OutputTokens)
+		}
+	})
+
+	t.Run("skipped for zero tokens", func(t *testing.T) {
+		_, _, job2 := createJobChain(t, db, "/tmp/test-repo2", "token-zero")
+		claimJob(t, db, "worker-2")
+		if err := db.CompleteJob(job2.ID, "test", "prompt", "No issues found."); err != nil {
+			t.Fatalf("CompleteJob: %v", err)
+		}
+		if err := db.SaveJobTokens(job2.ID, 0, 0); err != nil {
+			t.Fatalf("SaveJobTokens: %v", err)
+		}
+		j, err := db.GetJobByID(job2.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if j.InputTokens != nil || j.OutputTokens != nil {
+			t.Fatalf("tokens should be nil for zero values, got in=%v out=%v", j.InputTokens, j.OutputTokens)
+		}
+	})
+
+	t.Run("skipped for canceled job", func(t *testing.T) {
+		_, _, job3 := createJobChain(t, db, "/tmp/test-repo3", "token-cancel")
+		claimJob(t, db, "worker-3")
+		if err := db.CancelJob(job3.ID); err != nil {
+			t.Fatalf("CancelJob: %v", err)
+		}
+		if err := db.SaveJobTokens(job3.ID, 2000, 1000); err != nil {
+			t.Fatalf("SaveJobTokens: %v", err)
+		}
+		j, err := db.GetJobByID(job3.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if j.InputTokens != nil || j.OutputTokens != nil {
+			t.Fatalf("tokens should be nil for canceled job, got in=%v out=%v", j.InputTokens, j.OutputTokens)
+		}
+	})
+}
