@@ -1,0 +1,105 @@
+[
+  {
+    "name": "happy_path_single_review",
+    "user_message": "/roborev-fix",
+    "repo_state": {
+      "description": "Go project with one open review (job 42) containing 3 findings: unchecked error in main.go:15, missing nil check in handler.go:30, unused import in util.go:3",
+      "language": "go"
+    },
+    "mock_outputs": {
+      "roborev fix --open --list": "Job 42: commit abc1234 \"Add user endpoint\" (3 findings, open, agent: claude-code)",
+      "roborev show --job 42 --json": "{\"job_id\":42,\"output\":\"## Findings\\n\\n### HIGH: Unchecked error return\\n**File:** main.go:15\\nThe error from `db.Connect()` is ignored.\\n\\n### MEDIUM: Missing nil check\\n**File:** handler.go:30\\n`user` may be nil before accessing `.Name`.\\n\\n### LOW: Unused import\\n**File:** util.go:3\\n`fmt` is imported but not used.\",\"job\":{\"verdict\":\"F\",\"git_ref\":\"abc1234\"},\"closed\":false}"
+    },
+    "expected_commands": [
+      "roborev fix --open --list",
+      "roborev show --job 42 --json",
+      "git show abc1234",
+      "go test ./...",
+      "roborev comment --job 42",
+      "roborev close 42"
+    ],
+    "min_tool_calls": 7
+  },
+  {
+    "name": "multiple_reviews",
+    "user_message": "/roborev-fix",
+    "repo_state": {
+      "description": "Go project with two open reviews: job 42 (2 findings) and job 43 (1 finding) on different commits",
+      "language": "go"
+    },
+    "mock_outputs": {
+      "roborev fix --open --list": "Job 42: commit abc1234 \"Add user endpoint\" (2 findings, open, agent: claude-code)\nJob 43: commit def5678 \"Add auth middleware\" (1 finding, open, agent: gemini)",
+      "roborev show --job 42 --json": "{\"job_id\":42,\"output\":\"## Findings\\n\\n### HIGH: SQL injection\\n**File:** db.go:45\\nUser input concatenated into query.\\n\\n### MEDIUM: Missing error wrap\\n**File:** db.go:52\\nError returned without context.\",\"job\":{\"verdict\":\"F\",\"git_ref\":\"abc1234\"},\"closed\":false}",
+      "roborev show --job 43 --json": "{\"job_id\":43,\"output\":\"## Findings\\n\\n### HIGH: Hardcoded secret\\n**File:** auth.go:10\\nAPI key hardcoded in source.\",\"job\":{\"verdict\":\"F\",\"git_ref\":\"def5678\"},\"closed\":false}"
+    },
+    "expected_commands": [
+      "roborev fix --open --list",
+      "roborev show --job 42 --json",
+      "roborev show --job 43 --json",
+      "go test ./...",
+      "roborev comment --job 42",
+      "roborev close 42",
+      "roborev comment --job 43",
+      "roborev close 43"
+    ],
+    "min_tool_calls": 10
+  },
+  {
+    "name": "no_open_reviews",
+    "user_message": "/roborev-fix",
+    "repo_state": {
+      "description": "Go project with no open reviews",
+      "language": "go"
+    },
+    "mock_outputs": {
+      "roborev fix --open --list": "No open reviews found."
+    },
+    "expected_commands": [
+      "roborev fix --open --list"
+    ],
+    "min_tool_calls": 2
+  },
+  {
+    "name": "test_failure_after_fix",
+    "user_message": "/roborev-fix",
+    "repo_state": {
+      "description": "Go project with one open review (job 50). After fixing the finding, go test fails on the first attempt due to a broken test assertion that needs updating.",
+      "language": "go"
+    },
+    "mock_outputs": {
+      "roborev fix --open --list": "Job 50: commit fed9876 \"Refactor config\" (1 finding, open, agent: codex)",
+      "roborev show --job 50 --json": "{\"job_id\":50,\"output\":\"## Findings\\n\\n### HIGH: Panic on nil config\\n**File:** config.go:22\\n`cfg.Get()` panics if config is nil. Add a nil check.\",\"job\":{\"verdict\":\"F\",\"git_ref\":\"fed9876\"},\"closed\":false}",
+      "go test ./... (first run)": "--- FAIL: TestGetConfig (0.00s)\\n    config_test.go:15: expected \"default\", got \"\"\\nFAIL",
+      "go test ./... (second run)": "ok  \\t./... 0.5s"
+    },
+    "expected_commands": [
+      "roborev fix --open --list",
+      "roborev show --job 50 --json",
+      "go test ./...",
+      "go test ./...",
+      "roborev comment --job 50",
+      "roborev close 50"
+    ],
+    "min_tool_calls": 8
+  },
+  {
+    "name": "explicit_job_ids",
+    "user_message": "/roborev-fix 42 43",
+    "repo_state": {
+      "description": "Go project. User explicitly provides job IDs 42 and 43. Job 42 has verdict F with findings. Job 43 has verdict P (passing).",
+      "language": "go"
+    },
+    "mock_outputs": {
+      "roborev show --job 42 --json": "{\"job_id\":42,\"output\":\"## Findings\\n\\n### MEDIUM: Inefficient loop\\n**File:** process.go:88\\nRange loop copies large struct. Use pointer.\",\"job\":{\"verdict\":\"F\",\"git_ref\":\"abc1234\"},\"closed\":false}",
+      "roborev show --job 43 --json": "{\"job_id\":43,\"output\":\"No issues found.\",\"job\":{\"verdict\":\"P\",\"git_ref\":\"def5678\"},\"closed\":false}"
+    },
+    "expected_commands": [
+      "roborev show --job 42 --json",
+      "roborev show --job 43 --json",
+      "go test ./...",
+      "roborev comment --job 42",
+      "roborev close 42"
+    ],
+    "min_tool_calls": 6
+  }
+]
