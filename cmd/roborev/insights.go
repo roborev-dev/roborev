@@ -99,7 +99,8 @@ type insightsOptions struct {
 }
 
 func runInsights(cmd *cobra.Command, opts insightsOptions) error {
-	// Resolve repo path
+	// Resolve repo path — use main repo root so worktrees and subdirectories
+	// match the path stored in the daemon's database.
 	repoRoot := opts.repoPath
 	if repoRoot == "" {
 		workDir, err := os.Getwd()
@@ -117,6 +118,10 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 		if err != nil {
 			return fmt.Errorf("resolve repo path: %w", err)
 		}
+	}
+	// Canonicalize to main repo root (handles worktrees and subdirectories)
+	if mainRoot, err := git.GetMainRepoRoot(repoRoot); err == nil {
+		repoRoot = mainRoot
 	}
 
 	// Parse --since duration
@@ -149,7 +154,9 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 		cmd.Printf("Found %d failing review(s). Building analysis prompt...\n", len(reviews))
 	}
 
-	// Load current review guidelines
+	// Load current review guidelines and resolve prompt size budget
+	cfg, _ := config.LoadGlobal()
+	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 	guidelines := ""
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil {
 		guidelines = repoCfg.ReviewGuidelines
@@ -157,10 +164,11 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 
 	// Build the insights prompt
 	insightsPrompt := prompt.BuildInsightsPrompt(prompt.InsightsData{
-		Reviews:    reviews,
-		Guidelines: guidelines,
-		RepoName:   filepath.Base(repoRoot),
-		Since:      sinceTime,
+		Reviews:       reviews,
+		Guidelines:    guidelines,
+		RepoName:      filepath.Base(repoRoot),
+		Since:         sinceTime,
+		MaxPromptSize: maxPromptSize,
 	})
 
 	// Enqueue as a task job
@@ -217,64 +225,96 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 	return nil
 }
 
+// maxInsightsReviews is the maximum number of failing reviews to collect.
+// We stop paginating once we have this many.
+const maxInsightsReviews = 100
+
 // fetchFailingReviews queries the daemon API for done jobs with failing verdicts
-// in the given time window, then fetches review output for each.
+// in the given time window, then fetches review output for each. It paginates
+// through results to avoid silently dropping failures beyond a single page.
 func fetchFailingReviews(addr, repoPath, branch string, since time.Time) ([]prompt.InsightsReview, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Build query for done jobs, excluding task and fix jobs
-	params := url.Values{}
-	params.Set("status", "done")
-	params.Set("repo", repoPath)
-	params.Set("limit", "200")
-	params.Set("exclude_job_type", "task")
-	if branch != "" {
-		params.Set("branch", branch)
-	}
-
-	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?%s", addr, params.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("query jobs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
-	}
-
-	var jobsResp struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-		return nil, fmt.Errorf("parse jobs response: %w", err)
-	}
-
-	// Filter to failing reviews within the time window
 	var reviews []prompt.InsightsReview
-	for _, job := range jobsResp.Jobs {
-		// Skip jobs outside time window
-		if job.FinishedAt != nil && job.FinishedAt.Before(since) {
-			continue
+	pageSize := 100
+	offset := 0
+
+	for {
+		// Build query for done jobs, excluding task and fix jobs
+		params := url.Values{}
+		params.Set("status", "done")
+		params.Set("repo", repoPath)
+		params.Set("limit", fmt.Sprintf("%d", pageSize))
+		params.Set("offset", fmt.Sprintf("%d", offset))
+		params.Set("exclude_job_type", "task")
+		if branch != "" {
+			params.Set("branch", branch)
 		}
 
-		// Skip fix jobs
-		if job.IsFixJob() {
-			continue
-		}
-
-		// Only include failing verdicts
-		if job.Verdict == nil || *job.Verdict != "F" {
-			continue
-		}
-
-		// Fetch the review output
-		review, err := fetchReviewForInsights(client, addr, job.ID)
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?%s", addr, params.Encode()))
 		if err != nil {
-			continue // Skip reviews we can't fetch
+			return nil, fmt.Errorf("query jobs: %w", err)
 		}
 
-		reviews = append(reviews, prompt.InsightsReviewFromJob(job, review.Output, review.Closed))
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		}
+
+		var jobsResp struct {
+			Jobs    []storage.ReviewJob `json:"jobs"`
+			HasMore bool                `json:"has_more"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("parse jobs response: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(jobsResp.Jobs) == 0 {
+			break
+		}
+
+		// Filter and collect failing reviews within the time window
+		reachedTimeLimit := false
+		for _, job := range jobsResp.Jobs {
+			// Jobs are returned newest-first. If we've passed the since
+			// boundary, no older jobs will match — stop paginating.
+			if job.FinishedAt != nil && job.FinishedAt.Before(since) {
+				reachedTimeLimit = true
+				break
+			}
+
+			// Skip fix jobs (belt-and-suspenders with exclude_job_type)
+			if job.IsFixJob() {
+				continue
+			}
+
+			// Only include failing verdicts
+			if job.Verdict == nil || *job.Verdict != "F" {
+				continue
+			}
+
+			// Fetch the review output
+			review, err := fetchReviewForInsights(client, addr, job.ID)
+			if err != nil {
+				continue // Skip reviews we can't fetch
+			}
+
+			reviews = append(reviews, prompt.InsightsReviewFromJob(job, review.Output, review.Closed))
+
+			if len(reviews) >= maxInsightsReviews {
+				return reviews, nil
+			}
+		}
+
+		// Stop if we've gone past the time window or no more pages
+		if reachedTimeLimit || !jobsResp.HasMore {
+			break
+		}
+
+		offset += pageSize
 	}
 
 	return reviews, nil

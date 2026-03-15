@@ -60,6 +60,7 @@ type InsightsData struct {
 	Since              time.Time
 	MaxReviews         int // Cap for number of reviews to include
 	MaxOutputPerReview int // Cap for individual review output size
+	MaxPromptSize      int // Overall prompt size budget (0 = use MaxPromptSize default)
 }
 
 // InsightsReview is a simplified review record for the insights prompt
@@ -110,6 +111,10 @@ func BuildInsightsPrompt(data InsightsData) string {
 	if maxOutput <= 0 {
 		maxOutput = 8192
 	}
+	promptBudget := data.MaxPromptSize
+	if promptBudget <= 0 {
+		promptBudget = MaxPromptSize
+	}
 
 	// Prioritize open reviews, fill remaining slots with closed
 	var selected []InsightsReview
@@ -131,38 +136,46 @@ func BuildInsightsPrompt(data InsightsData) string {
 	fmt.Fprintf(&sb, "Showing %d failing review(s) since %s.\n\n",
 		len(selected), data.Since.Format("2006-01-02"))
 
+	included := 0
 	for i, r := range selected {
-		fmt.Fprintf(&sb, "### Review %d (Job #%d)\n\n", i+1, r.JobID)
-		fmt.Fprintf(&sb, "- **Agent:** %s\n", r.Agent)
-		fmt.Fprintf(&sb, "- **Git Ref:** %s\n", r.GitRef)
+		// Build the review entry in a temporary buffer so we can
+		// check size before committing it to the prompt.
+		var entry strings.Builder
+		fmt.Fprintf(&entry, "### Review %d (Job #%d)\n\n", i+1, r.JobID)
+		fmt.Fprintf(&entry, "- **Agent:** %s\n", r.Agent)
+		fmt.Fprintf(&entry, "- **Git Ref:** %s\n", r.GitRef)
 		if r.Branch != "" {
-			fmt.Fprintf(&sb, "- **Branch:** %s\n", r.Branch)
+			fmt.Fprintf(&entry, "- **Branch:** %s\n", r.Branch)
 		}
 		if r.FinishedAt != nil {
-			fmt.Fprintf(&sb, "- **Date:** %s\n", r.FinishedAt.Format("2006-01-02 15:04"))
+			fmt.Fprintf(&entry, "- **Date:** %s\n", r.FinishedAt.Format("2006-01-02 15:04"))
 		}
 		status := "unaddressed"
 		if r.Closed {
 			status = "addressed/closed"
 		}
-		fmt.Fprintf(&sb, "- **Status:** %s\n", status)
-		sb.WriteString("\n")
+		fmt.Fprintf(&entry, "- **Status:** %s\n", status)
+		entry.WriteString("\n")
 
 		output := r.Output
 		if len(output) > maxOutput {
 			output = output[:maxOutput] + "\n... (truncated)"
 		}
-		sb.WriteString(output)
+		entry.WriteString(output)
 		if !strings.HasSuffix(output, "\n") {
-			sb.WriteString("\n")
+			entry.WriteString("\n")
 		}
-		sb.WriteString("\n")
+		entry.WriteString("\n")
 
-		// Check total prompt size
-		if sb.Len() > MaxPromptSize-1024 {
-			fmt.Fprintf(&sb, "\n(Remaining %d reviews omitted due to prompt size limits)\n", len(selected)-i-1)
+		// Pre-check: would adding this entry exceed the budget?
+		if sb.Len()+entry.Len() > promptBudget-256 {
+			remaining := len(selected) - i
+			fmt.Fprintf(&sb, "\n(Remaining %d reviews omitted due to prompt size limits)\n", remaining)
 			break
 		}
+
+		sb.WriteString(entry.String())
+		included++
 	}
 
 	if len(data.Reviews) > len(selected) {

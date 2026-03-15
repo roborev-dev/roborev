@@ -151,3 +151,33 @@ func TestBuildInsightsPrompt_Empty(t *testing.T) {
 		t.Error("should show 0 reviews")
 	}
 }
+
+func TestBuildInsightsPrompt_RespectsPromptBudget(t *testing.T) {
+	// Create reviews that would exceed a small budget
+	var reviews []InsightsReview
+	for i := range 20 {
+		reviews = append(reviews, InsightsReview{
+			JobID:  int64(i + 1),
+			Agent:  "test",
+			Output: strings.Repeat("finding text ", 100), // ~1300 bytes each
+		})
+	}
+
+	budget := 5000
+	data := InsightsData{
+		Reviews:       reviews,
+		Since:         time.Now().Add(-7 * 24 * time.Hour),
+		MaxPromptSize: budget,
+	}
+
+	result := BuildInsightsPrompt(data)
+
+	if len(result) > budget {
+		t.Errorf("prompt size %d exceeds budget %d", len(result), budget)
+	}
+
+	// Should mention omitted reviews
+	if !strings.Contains(result, "omitted due to prompt size limits") {
+		t.Error("should mention size-limited omissions")
+	}
+}
