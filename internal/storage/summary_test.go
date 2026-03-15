@@ -287,6 +287,71 @@ func TestGetSummary_Hotspots(t *testing.T) {
 	assert.Equal(t, 3, s.Hotspots[0].Failures)
 }
 
+func TestGetSummary_RFC3339Timestamps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// Enqueue a job, then manually update its enqueued_at to RFC3339 format
+	// (as synced rows would have) to verify datetime() normalization works.
+	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	rfc3339Time := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	_, err := db.Exec("UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
+	require.NoError(t, err)
+
+	// Query with a since before the RFC3339 timestamp — should find the job
+	s, err := db.GetSummary(SummaryOptions{
+		Since: time.Now().Add(-2 * time.Hour),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.Overview.Total)
+
+	// Query with a since after the RFC3339 timestamp — should NOT find it
+	s, err = db.GetSummary(SummaryOptions{
+		Since: time.Now(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, s.Overview.Total)
+}
+
+func TestGetSummary_VerdictExcludesTaskJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// Create a normal review job (will have verdict)
+	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
+
+	// Create a task job (no verdict by design)
+	j2, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "analyze", Agent: "codex",
+		Prompt: "analyze this", JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j2.ID, "codex", "", "some analysis output"))
+
+	s, err := db.GetSummary(SummaryOptions{
+		Since: time.Now().Add(-1 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	// Overview should count both jobs
+	assert.Equal(t, 2, s.Overview.Done)
+
+	// Verdicts should only count the review job (verdict-bearing)
+	// Task job has no verdict, so Passed + Failed == Total
+	assert.Equal(t, s.Verdicts.Passed+s.Verdicts.Failed, s.Verdicts.Total)
+	assert.Equal(t, 1, s.Verdicts.Passed)
+	assert.Equal(t, 0, s.Verdicts.Failed)
+}
+
 func TestPercentile(t *testing.T) {
 	tests := []struct {
 		name   string

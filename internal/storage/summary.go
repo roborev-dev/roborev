@@ -100,10 +100,12 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 
 	sinceStr := opts.Since.UTC().Format("2006-01-02 15:04:05")
 
-	// Build shared WHERE clause
+	// Build shared WHERE clause.
+	// Use datetime() to normalize timestamps — synced rows may use RFC3339
+	// format (with 'T' separator) while local rows use space-separated format.
 	var conditions []string
 	var args []any
-	conditions = append(conditions, "j.enqueued_at >= ?")
+	conditions = append(conditions, "datetime(j.enqueued_at) >= datetime(?)")
 	args = append(args, sinceStr)
 	if opts.RepoPath != "" {
 		conditions = append(conditions, "r.root_path = ?")
@@ -186,6 +188,9 @@ func (db *DB) summaryOverview(where string, args []any) (OverviewStats, error) {
 }
 
 func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
+	// Only count verdict-bearing review jobs. Task jobs have no meaningful
+	// verdict (ParseVerdict always runs but the result is meaningless for
+	// freeform analysis output). Excluding them ensures Passed + Failed == Total.
 	query := `
 		SELECT
 			COUNT(*),
@@ -195,7 +200,9 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		JOIN reviews rv ON rv.job_id = j.id
-		` + where + ` AND j.status IN ('done', 'applied', 'rebased')`
+		` + where + ` AND j.status IN ('done', 'applied', 'rebased')
+			AND rv.verdict_bool IS NOT NULL
+			AND COALESCE(j.job_type, 'review') NOT IN ('task')`
 
 	var v VerdictStats
 	err := db.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
