@@ -147,7 +147,9 @@ Agent:
 2. Job 1019 is verdict Fail with 2 findings; job 1021 is verdict Pass — skips 1021, informs user
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
-5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"` then `roborev close 1019`
+5. Records comment and closes review:
+   - `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
+   - `roborev close 1019`
 6. Commits the changes per project conventions
 
 ## See also
