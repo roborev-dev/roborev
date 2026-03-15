@@ -197,7 +197,7 @@ func TestGetSummary_RepoFilter(t *testing.T) {
 
 	// Filtered to repo1
 	s, err = db.GetSummary(SummaryOptions{
-		RepoPath: "/tmp/repo1",
+		RepoPath: repo1.RootPath,
 		Since:    time.Now().Add(-1 * time.Hour),
 	})
 	require.NoError(t, err)
