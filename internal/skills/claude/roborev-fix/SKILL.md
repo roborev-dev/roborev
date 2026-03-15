@@ -108,10 +108,12 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 ### 5. Record comments and close reviews
 
-For each job that was fixed, record a summary comment and close it:
+For each job that was fixed, record a summary comment and then close it.
+Run these as **separate commands** (not chained):
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>" && roborev close <job_id>
+roborev comment --job <job_id> "<summary of changes>"
+roborev close <job_id>
 ```
 
 The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
@@ -134,8 +136,10 @@ Agent:
 4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev close 1019`
-   - `roborev comment --job 1021 "Fixed missing validation" && roborev close 1021`
+   - `roborev comment --job 1019 "Fixed null check and added error handling"`
+   - `roborev close 1019`
+   - `roborev comment --job 1021 "Fixed missing validation"`
+   - `roborev close 1021`
 7. Commits the changes per project conventions
 
 **Explicit job IDs:**
@@ -147,7 +151,7 @@ Agent:
 2. Job 1019 is verdict Fail with 2 findings; job 1021 is verdict Pass — skips 1021, informs user
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
-5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev close 1019`
+5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"` then `roborev close 1019`
 6. Commits the changes per project conventions
 
 ## See also
