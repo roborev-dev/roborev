@@ -87,7 +87,7 @@ If all reviews are skipped, inform the user there is nothing to fix.
 
 ### 3. Fix all findings
 
-For each review, use `job.git_ref` to understand the scope of the reviewed changes. If `git_ref` is not `"dirty"`, run `git show <git_ref>` to see the original diff. If it is `"dirty"`, the review was for uncommitted changes and there is no commit to inspect.
+If a finding's context is unclear from the review output alone and `job.git_ref` is not `"dirty"`, run `git show <git_ref>` to see the original diff. Only do this when needed — the review output usually contains enough detail (file paths, line numbers, descriptions) to fix findings directly.
 
 Parse findings from the `output` field of all failing reviews. Collect every finding with its severity, file path, and line number. Then:
 
