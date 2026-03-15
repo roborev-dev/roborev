@@ -50,6 +50,7 @@ func main() {
 	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(logCmd())
+	rootCmd.AddCommand(summaryCmd())
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())

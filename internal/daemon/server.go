@@ -108,6 +108,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/applied", s.handleMarkJobApplied)
 	mux.HandleFunc("/api/job/rebased", s.handleMarkJobRebased)
 	mux.HandleFunc("/api/activity", s.handleActivity)
+	mux.HandleFunc("/api/summary", s.handleSummary)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -2446,6 +2447,62 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 		entries = []ActivityEntry{}
 	}
 	writeJSON(w, map[string]any{"entries": entries})
+}
+
+func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	q := r.URL.Query()
+
+	// Parse --since duration (default 7d)
+	since := time.Now().Add(-7 * 24 * time.Hour)
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		if d, err := parseDuration(sinceStr); err == nil {
+			since = time.Now().Add(-d)
+		} else {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid since value: %s", sinceStr))
+			return
+		}
+	}
+
+	opts := storage.SummaryOptions{
+		RepoPath: q.Get("repo"),
+		Branch:   q.Get("branch"),
+		Since:    since,
+	}
+
+	summary, err := s.db.GetSummary(opts)
+	if err != nil {
+		s.writeInternalError(w, fmt.Sprintf("get summary: %v", err))
+		return
+	}
+
+	writeJSON(w, summary)
+}
+
+// parseDuration parses a human-friendly duration string like "7d", "24h", "30d".
+func parseDuration(s string) (time.Duration, error) {
+	if len(s) < 2 {
+		return 0, fmt.Errorf("duration too short: %s", s)
+	}
+	unit := s[len(s)-1]
+	val, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration number: %s", s)
+	}
+	switch unit {
+	case 'h':
+		return time.Duration(val) * time.Hour, nil
+	case 'd':
+		return time.Duration(val) * 24 * time.Hour, nil
+	case 'w':
+		return time.Duration(val) * 7 * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("unknown duration unit: %c (use h, d, or w)", unit)
+	}
 }
 
 // buildFixPrompt constructs a prompt for fixing review findings.
