@@ -574,6 +574,44 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 	})
 }
 
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		input string
+		want  time.Duration
+		err   bool
+	}{
+		{"7d", 7 * 24 * time.Hour, false},
+		{"24h", 24 * time.Hour, false},
+		{"2w", 14 * 24 * time.Hour, false},
+		{"1d", 24 * time.Hour, false},
+		// Error cases
+		{"", 0, true},
+		{"d", 0, true},
+		{"-7d", 0, true},
+		{"0d", 0, true},
+		{"7m", 0, true},
+		{"abc", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseDuration(tt.input)
+			if tt.err {
+				if err == nil {
+					t.Errorf("parseDuration(%q) expected error, got %v", tt.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseDuration(%q) unexpected error: %v", tt.input, err)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("parseDuration(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServerStop_StopsCIPoller(t *testing.T) {
 	server, db, _ := newTestServer(t)
 

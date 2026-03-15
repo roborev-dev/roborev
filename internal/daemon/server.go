@@ -2493,6 +2493,9 @@ func parseDuration(s string) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid duration number: %s", s)
 	}
+	if val <= 0 {
+		return 0, fmt.Errorf("duration must be positive: %s", s)
+	}
 	switch unit {
 	case 'h':
 		return time.Duration(val) * time.Hour, nil

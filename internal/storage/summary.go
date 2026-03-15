@@ -191,7 +191,7 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 			COUNT(*),
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rv.closed = 1 THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN rv.closed = 1 AND rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		JOIN reviews rv ON rv.job_id = j.id
@@ -459,23 +459,23 @@ func categorizeError(errMsg string) string {
 	}
 }
 
-// percentile computes the p-th percentile from a sorted slice using linear interpolation.
-// Returns 0 if the slice is empty.
-func percentile(sorted []float64, p float64) float64 {
-	n := len(sorted)
+// percentile computes the p-th percentile using linear interpolation.
+// It sorts the input slice in place. Returns 0 if the slice is empty.
+func percentile(values []float64, p float64) float64 {
+	n := len(values)
 	if n == 0 {
 		return 0
 	}
-	sort.Float64s(sorted)
+	sort.Float64s(values)
 	if n == 1 {
-		return sorted[0]
+		return values[0]
 	}
 	rank := p * float64(n-1)
 	lower := int(rank)
 	upper := lower + 1
 	if upper >= n {
-		return sorted[n-1]
+		return values[n-1]
 	}
 	frac := rank - float64(lower)
-	return sorted[lower] + frac*(sorted[upper]-sorted[lower])
+	return values[lower] + frac*(values[upper]-values[lower])
 }
