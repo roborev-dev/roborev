@@ -116,7 +116,7 @@ roborev comment --job <job_id> "<summary of changes>"
 roborev close <job_id>
 ```
 
-The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
+The comment should reference each finding by severity and file, state what was fixed, and note any findings intentionally skipped. Keep it concise (1-3 sentences). Escape quotes and special characters in the bash command.
 
 ### 6. Commit
 
