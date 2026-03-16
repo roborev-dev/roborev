@@ -126,10 +126,9 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 	}
 
 	if agenticMode {
-		args = append(args, "--yolo")
-		args = append(args, "--allowed-tools", "Edit,Write,Read,Glob,Grep,Bash,Shell")
+		args = append(args, "--approval-mode", "yolo")
 	} else {
-		args = append(args, "--allowed-tools", "Read,Glob,Grep")
+		args = append(args, "--approval-mode", "plan")
 	}
 	return args
 }

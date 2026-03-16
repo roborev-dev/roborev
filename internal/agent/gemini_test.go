@@ -44,20 +44,22 @@ func TestGeminiBuildArgs(t *testing.T) {
 			agentic: false,
 			wantArgPairs: map[string]string{
 				"--output-format": "stream-json",
-				"--allowed-tools": "Read,Glob,Grep",
+				"--approval-mode": "plan",
 			},
 			unwantedArgs: []string{
 				"--yolo",
-				"Edit", "Write", "Bash", "Shell",
+				"--allowed-tools",
 			},
 		},
 		{
-			name:      "AgenticMode",
-			agentic:   true,
-			wantFlags: []string{"--yolo"},
+			name:    "AgenticMode",
+			agentic: true,
 			wantArgPairs: map[string]string{
 				"--output-format": "stream-json",
-				"--allowed-tools": "Edit,Write,Read,Glob,Grep,Bash,Shell",
+				"--approval-mode": "yolo",
+			},
+			unwantedArgs: []string{
+				"--allowed-tools",
 			},
 		},
 	}
