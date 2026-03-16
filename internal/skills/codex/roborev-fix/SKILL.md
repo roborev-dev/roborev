@@ -29,11 +29,7 @@ must be fetched first.
 
 ## IMPORTANT
 
-This skill requires you to **execute bash commands** to discover reviews, fetch them, fix code, record comments, and close reviews. The task is not complete until you run all commands and see confirmation output.
-
-These instructions are guidelines, not a rigid script. Use the conversation
-context. Skip steps that are already satisfied. Defer to project-level
-CLAUDE.md instructions when they conflict with these steps.
+You must **execute bash commands** to complete this task. Skip steps already satisfied by conversation context. Defer to CLAUDE.md when it conflicts.
 
 ## Instructions
 
@@ -101,13 +97,13 @@ If all reviews are skipped, inform the user there is nothing to fix.
 
 ### 3. Fix all findings
 
-For each review, use `job.git_ref` to understand the scope of the reviewed changes. If `git_ref` is not `"dirty"`, run `git show <git_ref>` to see the original diff. If it is `"dirty"`, the review was for uncommitted changes and there is no commit to inspect.
+If a finding's context is unclear from the review output alone and `job.git_ref` is not `"dirty"`, run `git show <git_ref>` to see the original diff. Only do this when needed — the review output usually contains enough detail (file paths, line numbers, descriptions) to fix findings directly.
 
 Parse findings from the `output` field of all failing reviews. Collect every finding with its severity, file path, and line number. Then:
 
-1. Group findings by file to minimize context switches
-2. Fix issues by priority (high severity first)
-3. If the same file has findings from multiple reviews, fix them all together
+1. **Sort by severity**: fix HIGH findings first, then MEDIUM, then LOW
+2. **Group by file**: within each severity level, batch edits to the same file to minimize context switches
+3. If the same file has findings from multiple reviews, fix them all together in one edit
 4. If some findings cannot be fixed (false positives, intentional design), note them for the comment rather than silently skipping them
 
 ### 4. Run tests
@@ -122,13 +118,15 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 ### 5. Record comments and close reviews
 
-For each job that was fixed, record a summary comment and close it:
+For each job that was fixed, record a summary comment and then close it.
+Run these as **separate commands** (not chained):
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>" && roborev close <job_id>
+roborev comment --job <job_id> "<summary of changes>"
+roborev close <job_id>
 ```
 
-The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
+The comment should reference each finding by severity and file, state what was fixed, and note any findings intentionally skipped. Keep it concise (1-3 sentences). Escape quotes and special characters in the bash command.
 
 ### 6. Commit
 
@@ -157,8 +155,10 @@ Agent:
 4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev close 1019`
-   - `roborev comment --job 1021 "Fixed missing validation" && roborev close 1021`
+   - `roborev comment --job 1019 "Fixed null check and added error handling"`
+   - `roborev close 1019`
+   - `roborev comment --job 1021 "Fixed missing validation"`
+   - `roborev close 1021`
 7. Commits the changes per project conventions
 
 **Explicit job IDs:**
@@ -170,7 +170,9 @@ Agent:
 2. Job 1019 is verdict Fail with 2 findings; job 1021 is verdict Pass — skips 1021, informs user
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
-5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev close 1019`
+5. Records comment and closes review:
+   - `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
+   - `roborev close 1019`
 6. Commits the changes per project conventions
 
 ## See also
