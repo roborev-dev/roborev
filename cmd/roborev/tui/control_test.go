@@ -230,6 +230,41 @@ func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
 		"should resolve repos not in current job page")
 }
 
+func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	// Simulate init fetch: repoNames knows both repos.
+	m.repoNames = map[string][]string{
+		"msgvault": {"/home/user/projects/msgvault"},
+		"roborev":  {"/home/user/projects/roborev"},
+	}
+
+	// Simulate opening filter modal with branch filter active:
+	// the branch-filtered /api/repos only returns "roborev".
+	m.activeBranchFilter = "main"
+	branchFilteredRepos := reposMsg{
+		repos: []repoFilterItem{
+			{name: "roborev", rootPaths: []string{"/home/user/projects/roborev"}, count: 5},
+		},
+	}
+	result, _ := m.handleReposMsg(branchFilteredRepos)
+	updated := result.(model)
+
+	// repoNames should still contain both repos (not overwritten
+	// by the branch-scoped modal data).
+	assert.Len(t, updated.repoNames, 2,
+		"repoNames should not be clobbered by branch-filtered modal")
+	assert.Contains(t, updated.repoNames, "msgvault",
+		"msgvault should survive branch-filtered modal refresh")
+
+	// Verify set-filter still resolves the repo excluded from
+	// the branch-filtered list.
+	params, _ := json.Marshal(map[string]string{"repo": "msgvault"})
+	updated2, resp, _ := updated.handleCtrlSetFilter(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, []string{"/home/user/projects/msgvault"},
+		updated2.activeRepoFilter)
+}
+
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.lockedRepoFilter = true

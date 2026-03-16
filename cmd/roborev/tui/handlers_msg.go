@@ -249,14 +249,6 @@ func (m model) handleReposMsg(
 ) (tea.Model, tea.Cmd) {
 	m.consecutiveErrors = 0
 
-	// Refresh repoNames from filter modal data (picks up newly
-	// registered repos without waiting for next init fetch).
-	names := make(map[string][]string, len(msg.repos))
-	for _, r := range msg.repos {
-		names[r.name] = r.rootPaths
-	}
-	m.repoNames = names
-
 	// Build filterTree from repos (all collapsed, no children)
 	m.filterTree = make([]treeFilterNode, len(msg.repos))
 	for i, r := range msg.repos {
