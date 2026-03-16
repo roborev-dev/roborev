@@ -194,6 +194,25 @@ func TestIsInstalled(t *testing.T) {
 	}
 }
 
+func TestInstallRemovesLegacySkills(t *testing.T) {
+	tmpHome := setupTestEnv(t)
+
+	// Create agent dir + legacy skill
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755))
+	createMockSkill(t, tmpHome, AgentClaude, "roborev-address")
+
+	_, err := Install()
+	require.NoError(t, err)
+
+	// Legacy dir should be removed after install
+	legacyDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-address")
+	_, err = os.Stat(legacyDir)
+	assert.True(t, os.IsNotExist(err), "expected legacy dir to be removed after install")
+
+	// Current skills should be installed
+	assertSkillsInstalled(t, filepath.Join(tmpHome, ".claude"))
+}
+
 func TestUpdateRemovesLegacySkills(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 

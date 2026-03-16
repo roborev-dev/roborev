@@ -472,14 +472,16 @@ launchd or systemd).`,
 				if output, err := skillsCmd.CombinedOutput(); err != nil {
 					fmt.Printf("warning: %v\n", err)
 				} else {
-					// Parse output to show what was updated
+					// Parse output to show what changed
 					lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
+					found := false
 					for line := range lines {
-						if strings.Contains(line, "updated") {
+						if strings.Contains(line, "updated") || strings.Contains(line, "installed") {
 							fmt.Println(line)
+							found = true
 						}
 					}
-					if !strings.Contains(string(output), "updated") {
+					if !found {
 						fmt.Println("OK")
 					}
 				}

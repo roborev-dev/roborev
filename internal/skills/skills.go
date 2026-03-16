@@ -127,7 +127,6 @@ func Update() ([]InstallResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("update claude skills: %w", err)
 		}
-		removeLegacySkills(AgentClaude)
 		results = append(results, result)
 	}
 
@@ -136,7 +135,6 @@ func Update() ([]InstallResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("update codex skills: %w", err)
 		}
-		removeLegacySkills(AgentCodex)
 		results = append(results, result)
 	}
 
@@ -229,6 +227,7 @@ func installClaude() (InstallResult, error) {
 		}
 	}
 
+	removeLegacySkills(AgentClaude)
 	return result, nil
 }
 
@@ -292,6 +291,7 @@ func installCodex() (InstallResult, error) {
 		}
 	}
 
+	removeLegacySkills(AgentCodex)
 	return result, nil
 }
 
