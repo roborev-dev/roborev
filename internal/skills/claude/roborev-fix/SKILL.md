@@ -1,6 +1,6 @@
 ---
 name: roborev-fix
-description: Use when the user explicitly asks for /roborev-fix or only provides job IDs; do not use for pasted review findings
+description: Use when the user asks to fix open reviews, invokes /roborev-fix, or provides job IDs; do not use when the user only pastes review findings with no request to discover or close reviews
 ---
 
 # roborev-fix
@@ -23,9 +23,9 @@ input and work on the code normally. The presence of verdicts, severities,
 file paths, suggested fixes, or copied review summaries is not by itself a
 request to run `/roborev-fix`.
 
-Use this skill only when the user explicitly invokes `/roborev-fix`, asks you
-to use the roborev fix workflow, or provides only job IDs / open reviews that
-must be fetched first.
+Use this skill when the user explicitly invokes `/roborev-fix`, asks to fix
+open/unaddressed reviews (in any phrasing), provides job IDs that need
+fetching, or gives a mix of job IDs and pasted findings.
 
 ## IMPORTANT
 
