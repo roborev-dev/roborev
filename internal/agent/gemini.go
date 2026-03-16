@@ -28,12 +28,17 @@ func truncateStderr(stderr string) string {
 	return stderr[:maxStderrLen] + "... (truncated)"
 }
 
+// defaultGeminiModel is the built-in default that may be auto-retried
+// without -m if Google retires the model name.
+const defaultGeminiModel = "gemini-3.1-pro-preview"
+
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
-	Command   string         // The gemini command to run (default: "gemini")
-	Model     string         // Model to use (e.g., "gemini-3.1-pro")
-	Reasoning ReasoningLevel // Reasoning level (for future support)
-	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
+	Command       string         // The gemini command to run (default: "gemini")
+	Model         string         // Model to use (e.g., "gemini-3.1-pro-preview")
+	Reasoning     ReasoningLevel // Reasoning level (for future support)
+	Agentic       bool           // Whether agentic mode is enabled (allow file edits)
+	modelExplicit bool           // true when Model was set via WithModel
 }
 
 // NewGeminiAgent creates a new Gemini agent
@@ -41,26 +46,28 @@ func NewGeminiAgent(command string) *GeminiAgent {
 	if command == "" {
 		command = "gemini"
 	}
-	return &GeminiAgent{Command: command, Model: "gemini-3.1-pro", Reasoning: ReasoningStandard}
+	return &GeminiAgent{Command: command, Model: defaultGeminiModel, Reasoning: ReasoningStandard}
 }
 
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *GeminiAgent) WithReasoning(level ReasoningLevel) Agent {
 	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
+		Command:       a.Command,
+		Model:         a.Model,
+		Reasoning:     level,
+		Agentic:       a.Agentic,
+		modelExplicit: a.modelExplicit,
 	}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
 	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
+		Command:       a.Command,
+		Model:         a.Model,
+		Reasoning:     a.Reasoning,
+		Agentic:       agentic,
+		modelExplicit: a.modelExplicit,
 	}
 }
 
@@ -70,10 +77,11 @@ func (a *GeminiAgent) WithModel(model string) Agent {
 		return a
 	}
 	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
+		Command:       a.Command,
+		Model:         model,
+		Reasoning:     a.Reasoning,
+		Agentic:       a.Agentic,
+		modelExplicit: true,
 	}
 }
 
@@ -100,9 +108,11 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	args := a.buildArgs(agenticMode)
 
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)
-	if err != nil && a.Model != "" && isModelNotFoundError(stderrStr) {
-		// Model name may be stale (Google renames frequently).
-		// Retry without -m to let the Gemini CLI use its own default.
+	if err != nil && a.Model != "" && !a.modelExplicit && isModelNotFoundError(stderrStr) {
+		// Built-in default model may be stale (Google renames
+		// frequently). Retry without -m to let the Gemini CLI use
+		// its own default. User-specified models (via WithModel /
+		// config) fail fast so the config error is surfaced.
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
 		noModelArgs := a.buildArgsWithModel("", agenticMode)
 		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, output)

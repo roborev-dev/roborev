@@ -428,6 +428,26 @@ exit 1
 	assert.Contains(t, err.Error(), "gemini failed")
 }
 
+func TestGeminiReview_ExplicitModelNoFallback(t *testing.T) {
+	skipIfWindows(t)
+
+	// When the model was set via WithModel (user config), model-not-found
+	// errors should fail fast instead of silently falling back.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+echo "Error: model is not found for API version v1" >&2
+exit 1
+`)
+
+	a := NewGeminiAgent(scriptPath).WithModel("user-specified-model")
+	var output bytes.Buffer
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "sha", "prompt", &output,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gemini failed",
+		"explicit model should fail fast, not retry")
+}
+
 func TestIsModelNotFoundError(t *testing.T) {
 	tests := []struct {
 		stderr string
