@@ -355,6 +355,69 @@ exit 1
 	}
 }
 
+func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
+	skipIfWindows(t)
+
+	// Script that fails with "model not found" when -m is passed,
+	// and succeeds without it (simulating a retired model name).
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-m" ]; then
+    echo "Error: model is not found for API version v1" >&2
+    exit 1
+  fi
+done
+echo '{"type":"result","result":"Review from default model"}'
+`)
+
+	a := NewGeminiAgent(scriptPath)
+	a.Model = "gemini-old-model"
+	var output bytes.Buffer
+	res, err := a.Review(
+		context.Background(), t.TempDir(), "sha", "prompt", &output,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Review from default model", res)
+}
+
+func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
+	skipIfWindows(t)
+
+	// When Model is already empty, don't retry on model-not-found.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+echo "Error: model is not found" >&2
+exit 1
+`)
+
+	a := NewGeminiAgent(scriptPath)
+	a.Model = ""
+	var output bytes.Buffer
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "sha", "prompt", &output,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gemini failed")
+}
+
+func TestIsModelNotFoundError(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{"models/gemini-3.1-pro is not found", true},
+		{"Error: model is not found for API version v1", true},
+		{"Model not found: gemini-old", true},
+		{"NOT_FOUND: model gemini-xyz not_found", true},
+		{"quota exceeded for model gemini-2.5-pro", false},
+		{"connection refused", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		got := isModelNotFoundError(tc.stderr)
+		assert.Equal(t, tc.want, got, "isModelNotFoundError(%q)", tc.stderr)
+	}
+}
+
 func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
 	assert := assert.New(t)
 

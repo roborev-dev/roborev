@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 )
@@ -30,7 +31,7 @@ func truncateStderr(stderr string) string {
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
 	Command   string         // The gemini command to run (default: "gemini")
-	Model     string         // Model to use (e.g., "gemini-3.1-pro-preview")
+	Model     string         // Model to use (e.g., "gemini-3.1-pro")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
@@ -40,7 +41,7 @@ func NewGeminiAgent(command string) *GeminiAgent {
 	if command == "" {
 		command = "gemini"
 	}
-	return &GeminiAgent{Command: command, Model: "gemini-3.1-pro-preview", Reasoning: ReasoningStandard}
+	return &GeminiAgent{Command: command, Model: "gemini-3.1-pro", Reasoning: ReasoningStandard}
 }
 
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
@@ -91,47 +92,60 @@ func (a *GeminiAgent) CommandLine() string {
 }
 
 func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
-	// Use stream-json output for parsing, prompt via stdin
+	return a.buildArgsWithModel(a.Model, agenticMode)
+}
+
+func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.buildArgs(agenticMode)
+
+	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)
+	if err != nil && a.Model != "" && isModelNotFoundError(stderrStr) {
+		// Model name may be stale (Google renames frequently).
+		// Retry without -m to let the Gemini CLI use its own default.
+		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
+		noModelArgs := a.buildArgsWithModel("", agenticMode)
+		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, output)
+	}
+	return result, err
+}
+
+// buildArgsWithModel builds CLI args with an explicit model override
+// (empty string omits the -m flag entirely).
+func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
 	args := []string{"--output-format", "stream-json"}
 
-	if a.Model != "" {
-		args = append(args, "-m", a.Model)
+	if model != "" {
+		args = append(args, "-m", model)
 	}
 
 	if agenticMode {
-		// Agentic mode: auto-approve all actions, allow write tools
 		args = append(args, "--yolo")
 		args = append(args, "--allowed-tools", "Edit,Write,Read,Glob,Grep,Bash,Shell")
 	} else {
-		// Review mode: read-only tools only
 		args = append(args, "--allowed-tools", "Read,Glob,Grep")
 	}
 	return args
 }
 
-func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// Use agentic mode if either per-job setting or global setting enables it
-	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.buildArgs(agenticMode)
-
+// runGemini executes the Gemini CLI with the given args and returns
+// the review result, captured stderr, and any error.
+func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	tracker := configureSubprocess(cmd)
 
-	// Pipe prompt via stdin
 	cmd.Stdin = strings.NewReader(prompt)
 
-	// Create one shared sync writer for thread-safe output
 	sw := newSyncWriter(output)
 
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
+		return "", "", fmt.Errorf("create stdout pipe: %w", err)
 	}
 	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
 	defer stopClosingPipe()
-	// Tee stderr to output writer for live error visibility
 	if sw != nil {
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
 	} else {
@@ -139,38 +153,49 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start gemini: %w", err)
+		return "", "", fmt.Errorf("start gemini: %w", err)
 	}
 
-	// Parse stream-json output
 	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
+	stderrStr := stderr.String()
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
-			return "", ctxErr
+			return "", stderrStr, ctxErr
 		}
 		if parseErr != nil {
-			return "", fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderr.String()))
+			return "", stderrStr, fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderrStr))
 		}
-		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderr.String()))
+		return "", stderrStr, fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderrStr))
 	}
 
 	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
-		return "", ctxErr
+		return "", stderrStr, ctxErr
 	}
 
 	if parseErr != nil {
 		if errors.Is(parseErr, errNoStreamJSON) {
-			return "", fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(stderr.String()), errNoStreamJSON)
+			return "", stderrStr, fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(stderrStr), errNoStreamJSON)
 		}
-		return "", parseErr
+		return "", stderrStr, parseErr
 	}
 
 	if parsed.result != "" {
-		return parsed.result, nil
+		return parsed.result, stderrStr, nil
 	}
 
-	return "No review output generated", nil
+	return "No review output generated", stderrStr, nil
+}
+
+// isModelNotFoundError returns true if stderr indicates the requested
+// model does not exist. Google's API returns 404 with "model not found"
+// or "is not found" messages when a model name is invalid or retired.
+func isModelNotFoundError(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "model") &&
+		(strings.Contains(lower, "not found") ||
+			strings.Contains(lower, "is not found") ||
+			strings.Contains(lower, "not_found"))
 }
 
 // geminiStreamMessage represents a message in Gemini's stream-json output format
