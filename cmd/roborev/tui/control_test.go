@@ -265,6 +265,42 @@ func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
 		updated2.activeRepoFilter)
 }
 
+func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.repoNames = map[string][]string{
+		"roborev": {"/home/user/projects/roborev"},
+	}
+
+	// Simulate opening filter modal with no branch filter:
+	// the unfiltered response includes a newly registered repo.
+	unfilteredRepos := reposMsg{
+		repos: []repoFilterItem{
+			{name: "roborev", rootPaths: []string{"/home/user/projects/roborev"}, count: 5},
+			{name: "newrepo", rootPaths: []string{"/home/user/projects/newrepo"}, count: 1},
+		},
+	}
+	result, _ := m.handleReposMsg(unfilteredRepos)
+	updated := result.(model)
+
+	assert.Len(t, updated.repoNames, 2,
+		"unfiltered modal should refresh repoNames")
+	assert.Contains(t, updated.repoNames, "newrepo",
+		"newly registered repo should appear in repoNames")
+}
+
+func TestSetFilterFallbackWhenRepoNamesEmpty(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	// Simulate startup fetch failure: repoNames is nil.
+	m.repoNames = nil
+
+	params, _ := json.Marshal(map[string]string{"repo": "msgvault"})
+	updated, resp, _ := m.handleCtrlSetFilter(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	// Falls through to literal — not ideal, but doesn't crash.
+	assert.Equal(t, []string{"msgvault"}, updated.activeRepoFilter,
+		"should accept name as-is when repoNames is empty")
+}
+
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.lockedRepoFilter = true
@@ -600,6 +636,26 @@ func TestNoQuit_HelpViewOmitsQuit(t *testing.T) {
 		"normal help should mention Quit")
 	assert.False(t, contains(noQuit, "Quit"),
 		"noQuit help should omit Quit")
+}
+
+func TestNoQuit_TasksEmptyHelpOmitsQuit(t *testing.T) {
+	normal := newModel(testServerAddr, withExternalIODisabled())
+	normal.currentView = viewTasks
+	normal.tasksEnabled = true
+	normal.fixJobs = nil // empty tasks view
+
+	noQuitM := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	noQuitM.currentView = viewTasks
+	noQuitM.tasksEnabled = true
+	noQuitM.fixJobs = nil
+
+	normalOut := stripTestANSI(normal.renderTasksView())
+	noQuitOut := stripTestANSI(noQuitM.renderTasksView())
+
+	assert.Contains(t, normalOut, "quit",
+		"normal tasks empty view should show quit")
+	assert.NotContains(t, noQuitOut, "quit",
+		"noQuit tasks empty view should omit quit")
 }
 
 // --- Control message routing through Update() ---

@@ -249,6 +249,18 @@ func (m model) handleReposMsg(
 ) (tea.Model, tea.Cmd) {
 	m.consecutiveErrors = 0
 
+	// Refresh repoNames when the modal fetch was unfiltered (no
+	// branch constraint), so newly registered repos are picked up.
+	// Skip when a branch filter is active — that response is a
+	// subset and would clobber the authoritative mapping.
+	if m.activeBranchFilter == "" {
+		names := make(map[string][]string, len(msg.repos))
+		for _, r := range msg.repos {
+			names[r.name] = r.rootPaths
+		}
+		m.repoNames = names
+	}
+
 	// Build filterTree from repos (all collapsed, no children)
 	m.filterTree = make([]treeFilterNode, len(msg.repos))
 	for i, r := range msg.repos {
@@ -695,7 +707,9 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		}
 		m.clearFetchFailed()
 		m.loadingJobs = true
-		cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
+		cmds := []tea.Cmd{
+			m.fetchJobs(), m.fetchStatus(), m.fetchRepoNames(),
+		}
 		if cmd := m.fetchUnloadedBranches(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
