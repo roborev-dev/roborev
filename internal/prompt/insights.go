@@ -81,13 +81,24 @@ type InsightsReview struct {
 func BuildInsightsPrompt(data InsightsData) string {
 	var sb strings.Builder
 
+	promptBudget := data.MaxPromptSize
+	if promptBudget <= 0 {
+		promptBudget = MaxPromptSize
+	}
+
 	sb.WriteString(InsightsSystemPrompt)
 	sb.WriteString("\n\n")
 
-	// Current guidelines section
+	// Current guidelines section — cap at 10% of prompt budget so
+	// oversized guidelines don't crowd out review data.
 	sb.WriteString("## Current Review Guidelines\n\n")
 	if data.Guidelines != "" {
-		sb.WriteString(data.Guidelines)
+		guidelines := data.Guidelines
+		guidelineCap := max(promptBudget/10, 1024)
+		if len(guidelines) > guidelineCap {
+			guidelines = guidelines[:guidelineCap] + "\n... (guidelines truncated)"
+		}
+		sb.WriteString(guidelines)
 	} else {
 		sb.WriteString("(No review guidelines configured for this project)")
 	}
@@ -111,11 +122,6 @@ func BuildInsightsPrompt(data InsightsData) string {
 	if maxOutput <= 0 {
 		maxOutput = 8192
 	}
-	promptBudget := data.MaxPromptSize
-	if promptBudget <= 0 {
-		promptBudget = MaxPromptSize
-	}
-
 	// Prioritize open reviews, fill remaining slots with closed
 	var selected []InsightsReview
 	for _, r := range open {

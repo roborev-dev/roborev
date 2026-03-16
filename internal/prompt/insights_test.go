@@ -181,3 +181,31 @@ func TestBuildInsightsPrompt_RespectsPromptBudget(t *testing.T) {
 		t.Error("should mention size-limited omissions")
 	}
 }
+
+func TestBuildInsightsPrompt_TruncatesLargeGuidelines(t *testing.T) {
+	hugeGuidelines := strings.Repeat("guideline rule ", 10000) // ~150KB
+	data := InsightsData{
+		Reviews: []InsightsReview{
+			{JobID: 1, Agent: "test", Output: "a finding"},
+		},
+		Guidelines:    hugeGuidelines,
+		Since:         time.Now().Add(-7 * 24 * time.Hour),
+		MaxPromptSize: 10000,
+	}
+
+	result := BuildInsightsPrompt(data)
+
+	if len(result) > data.MaxPromptSize {
+		t.Errorf("prompt size %d exceeds budget %d", len(result), data.MaxPromptSize)
+	}
+
+	// Guidelines should be truncated
+	if !strings.Contains(result, "guidelines truncated") {
+		t.Error("should truncate oversized guidelines")
+	}
+
+	// Should still include the review
+	if !strings.Contains(result, "a finding") {
+		t.Error("review data should still be present after guidelines truncation")
+	}
+}

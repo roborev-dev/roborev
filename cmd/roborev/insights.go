@@ -276,14 +276,14 @@ func fetchFailingReviews(addr, repoPath, branch string, since time.Time) ([]prom
 			break
 		}
 
-		// Filter and collect failing reviews within the time window
-		reachedTimeLimit := false
+		// Filter and collect failing reviews within the time window.
+		// Note: jobs are ordered by id DESC (enqueue order), not by
+		// finished_at, so we cannot stop early on the first out-of-window
+		// job — a slower job with a lower ID could still finish in-window.
 		for _, job := range jobsResp.Jobs {
-			// Jobs are returned newest-first. If we've passed the since
-			// boundary, no older jobs will match — stop paginating.
+			// Skip jobs finished outside the time window
 			if job.FinishedAt != nil && job.FinishedAt.Before(since) {
-				reachedTimeLimit = true
-				break
+				continue
 			}
 
 			// Skip fix jobs (belt-and-suspenders with exclude_job_type)
@@ -309,8 +309,8 @@ func fetchFailingReviews(addr, repoPath, branch string, since time.Time) ([]prom
 			}
 		}
 
-		// Stop if we've gone past the time window or no more pages
-		if reachedTimeLimit || !jobsResp.HasMore {
+		// Stop if no more pages
+		if !jobsResp.HasMore {
 			break
 		}
 
