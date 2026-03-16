@@ -65,43 +65,63 @@ type Config struct {
 	ReviewAgent           string `toml:"review_agent"`
 	ReviewAgentFast       string `toml:"review_agent_fast"`
 	ReviewAgentStandard   string `toml:"review_agent_standard"`
+	ReviewAgentMedium     string `toml:"review_agent_medium"`
 	ReviewAgentThorough   string `toml:"review_agent_thorough"`
+	ReviewAgentMaximum    string `toml:"review_agent_maximum"`
 	RefineAgent           string `toml:"refine_agent"`
 	RefineAgentFast       string `toml:"refine_agent_fast"`
 	RefineAgentStandard   string `toml:"refine_agent_standard"`
+	RefineAgentMedium     string `toml:"refine_agent_medium"`
 	RefineAgentThorough   string `toml:"refine_agent_thorough"`
+	RefineAgentMaximum    string `toml:"refine_agent_maximum"`
 	ReviewModel           string `toml:"review_model"`
 	ReviewModelFast       string `toml:"review_model_fast"`
 	ReviewModelStandard   string `toml:"review_model_standard"`
+	ReviewModelMedium     string `toml:"review_model_medium"`
 	ReviewModelThorough   string `toml:"review_model_thorough"`
+	ReviewModelMaximum    string `toml:"review_model_maximum"`
 	RefineModel           string `toml:"refine_model"`
 	RefineModelFast       string `toml:"refine_model_fast"`
 	RefineModelStandard   string `toml:"refine_model_standard"`
+	RefineModelMedium     string `toml:"refine_model_medium"`
 	RefineModelThorough   string `toml:"refine_model_thorough"`
+	RefineModelMaximum    string `toml:"refine_model_maximum"`
 	FixAgent              string `toml:"fix_agent"`
 	FixAgentFast          string `toml:"fix_agent_fast"`
 	FixAgentStandard      string `toml:"fix_agent_standard"`
+	FixAgentMedium        string `toml:"fix_agent_medium"`
 	FixAgentThorough      string `toml:"fix_agent_thorough"`
+	FixAgentMaximum       string `toml:"fix_agent_maximum"`
 	FixModel              string `toml:"fix_model"`
 	FixModelFast          string `toml:"fix_model_fast"`
 	FixModelStandard      string `toml:"fix_model_standard"`
+	FixModelMedium        string `toml:"fix_model_medium"`
 	FixModelThorough      string `toml:"fix_model_thorough"`
+	FixModelMaximum       string `toml:"fix_model_maximum"`
 	SecurityAgent         string `toml:"security_agent"`
 	SecurityAgentFast     string `toml:"security_agent_fast"`
 	SecurityAgentStandard string `toml:"security_agent_standard"`
+	SecurityAgentMedium   string `toml:"security_agent_medium"`
 	SecurityAgentThorough string `toml:"security_agent_thorough"`
+	SecurityAgentMaximum  string `toml:"security_agent_maximum"`
 	SecurityModel         string `toml:"security_model"`
 	SecurityModelFast     string `toml:"security_model_fast"`
 	SecurityModelStandard string `toml:"security_model_standard"`
+	SecurityModelMedium   string `toml:"security_model_medium"`
 	SecurityModelThorough string `toml:"security_model_thorough"`
+	SecurityModelMaximum  string `toml:"security_model_maximum"`
 	DesignAgent           string `toml:"design_agent"`
 	DesignAgentFast       string `toml:"design_agent_fast"`
 	DesignAgentStandard   string `toml:"design_agent_standard"`
+	DesignAgentMedium     string `toml:"design_agent_medium"`
 	DesignAgentThorough   string `toml:"design_agent_thorough"`
+	DesignAgentMaximum    string `toml:"design_agent_maximum"`
 	DesignModel           string `toml:"design_model"`
 	DesignModelFast       string `toml:"design_model_fast"`
 	DesignModelStandard   string `toml:"design_model_standard"`
+	DesignModelMedium     string `toml:"design_model_medium"`
 	DesignModelThorough   string `toml:"design_model_thorough"`
+	DesignModelMaximum    string `toml:"design_model_maximum"`
 
 	// Backup agents for failover
 	ReviewBackupAgent   string `toml:"review_backup_agent"`
@@ -540,8 +560,8 @@ type RepoCIConfig struct {
 	// the ReviewTypes x Agents cross-product for this repo.
 	Reviews map[string][]string `toml:"reviews" comment:"Explicit CI review matrix for this repo: agent name to review types."`
 
-	// Reasoning overrides the reasoning level for CI reviews (thorough, standard, fast).
-	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, or thorough."`
+	// Reasoning overrides the reasoning level for CI reviews.
+	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, medium, thorough, or maximum."`
 
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
@@ -563,9 +583,9 @@ type RepoConfig struct {
 	ExcludedBranches           []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
 	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
 	DisplayName                string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
-	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, or thorough."`    // Reasoning level for reviews: thorough, standard, fast
-	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, or thorough."`     // Reasoning level for refine: thorough, standard, fast
-	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, or thorough."`           // Reasoning level for fix: thorough, standard, fast
+	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
+	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
+	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
 	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
 	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
 	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
@@ -580,43 +600,63 @@ type RepoConfig struct {
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
 	ReviewAgentFast       string `toml:"review_agent_fast" comment:"Agent override for fast review in this repo."`
 	ReviewAgentStandard   string `toml:"review_agent_standard" comment:"Agent override for standard review in this repo."`
+	ReviewAgentMedium     string `toml:"review_agent_medium" comment:"Agent override for medium review in this repo."`
 	ReviewAgentThorough   string `toml:"review_agent_thorough" comment:"Agent override for thorough review in this repo."`
+	ReviewAgentMaximum    string `toml:"review_agent_maximum" comment:"Agent override for maximum review in this repo."`
 	RefineAgent           string `toml:"refine_agent" comment:"Agent override for refine in this repo."`
 	RefineAgentFast       string `toml:"refine_agent_fast" comment:"Agent override for fast refine in this repo."`
 	RefineAgentStandard   string `toml:"refine_agent_standard" comment:"Agent override for standard refine in this repo."`
+	RefineAgentMedium     string `toml:"refine_agent_medium" comment:"Agent override for medium refine in this repo."`
 	RefineAgentThorough   string `toml:"refine_agent_thorough" comment:"Agent override for thorough refine in this repo."`
+	RefineAgentMaximum    string `toml:"refine_agent_maximum" comment:"Agent override for maximum refine in this repo."`
 	ReviewModel           string `toml:"review_model" comment:"Model override for standard review in this repo."`
 	ReviewModelFast       string `toml:"review_model_fast" comment:"Model override for fast review in this repo."`
 	ReviewModelStandard   string `toml:"review_model_standard" comment:"Model override for standard review in this repo."`
+	ReviewModelMedium     string `toml:"review_model_medium" comment:"Model override for medium review in this repo."`
 	ReviewModelThorough   string `toml:"review_model_thorough" comment:"Model override for thorough review in this repo."`
+	ReviewModelMaximum    string `toml:"review_model_maximum" comment:"Model override for maximum review in this repo."`
 	RefineModel           string `toml:"refine_model" comment:"Model override for standard refine in this repo."`
 	RefineModelFast       string `toml:"refine_model_fast" comment:"Model override for fast refine in this repo."`
 	RefineModelStandard   string `toml:"refine_model_standard" comment:"Model override for standard refine in this repo."`
+	RefineModelMedium     string `toml:"refine_model_medium" comment:"Model override for medium refine in this repo."`
 	RefineModelThorough   string `toml:"refine_model_thorough" comment:"Model override for thorough refine in this repo."`
+	RefineModelMaximum    string `toml:"refine_model_maximum" comment:"Model override for maximum refine in this repo."`
 	FixAgent              string `toml:"fix_agent" comment:"Agent override for fix in this repo."`
 	FixAgentFast          string `toml:"fix_agent_fast" comment:"Agent override for fast fix in this repo."`
 	FixAgentStandard      string `toml:"fix_agent_standard" comment:"Agent override for standard fix in this repo."`
+	FixAgentMedium        string `toml:"fix_agent_medium" comment:"Agent override for medium fix in this repo."`
 	FixAgentThorough      string `toml:"fix_agent_thorough" comment:"Agent override for thorough fix in this repo."`
+	FixAgentMaximum       string `toml:"fix_agent_maximum" comment:"Agent override for maximum fix in this repo."`
 	FixModel              string `toml:"fix_model" comment:"Model override for standard fix in this repo."`
 	FixModelFast          string `toml:"fix_model_fast" comment:"Model override for fast fix in this repo."`
 	FixModelStandard      string `toml:"fix_model_standard" comment:"Model override for standard fix in this repo."`
+	FixModelMedium        string `toml:"fix_model_medium" comment:"Model override for medium fix in this repo."`
 	FixModelThorough      string `toml:"fix_model_thorough" comment:"Model override for thorough fix in this repo."`
+	FixModelMaximum       string `toml:"fix_model_maximum" comment:"Model override for maximum fix in this repo."`
 	SecurityAgent         string `toml:"security_agent" comment:"Agent override for security review in this repo."`
 	SecurityAgentFast     string `toml:"security_agent_fast" comment:"Agent override for fast security review in this repo."`
 	SecurityAgentStandard string `toml:"security_agent_standard" comment:"Agent override for standard security review in this repo."`
+	SecurityAgentMedium   string `toml:"security_agent_medium" comment:"Agent override for medium security review in this repo."`
 	SecurityAgentThorough string `toml:"security_agent_thorough" comment:"Agent override for thorough security review in this repo."`
+	SecurityAgentMaximum  string `toml:"security_agent_maximum" comment:"Agent override for maximum security review in this repo."`
 	SecurityModel         string `toml:"security_model" comment:"Model override for standard security review in this repo."`
 	SecurityModelFast     string `toml:"security_model_fast" comment:"Model override for fast security review in this repo."`
 	SecurityModelStandard string `toml:"security_model_standard" comment:"Model override for standard security review in this repo."`
+	SecurityModelMedium   string `toml:"security_model_medium" comment:"Model override for medium security review in this repo."`
 	SecurityModelThorough string `toml:"security_model_thorough" comment:"Model override for thorough security review in this repo."`
+	SecurityModelMaximum  string `toml:"security_model_maximum" comment:"Model override for maximum security review in this repo."`
 	DesignAgent           string `toml:"design_agent" comment:"Agent override for design review in this repo."`
 	DesignAgentFast       string `toml:"design_agent_fast" comment:"Agent override for fast design review in this repo."`
 	DesignAgentStandard   string `toml:"design_agent_standard" comment:"Agent override for standard design review in this repo."`
+	DesignAgentMedium     string `toml:"design_agent_medium" comment:"Agent override for medium design review in this repo."`
 	DesignAgentThorough   string `toml:"design_agent_thorough" comment:"Agent override for thorough design review in this repo."`
+	DesignAgentMaximum    string `toml:"design_agent_maximum" comment:"Agent override for maximum design review in this repo."`
 	DesignModel           string `toml:"design_model" comment:"Model override for standard design review in this repo."`
 	DesignModelFast       string `toml:"design_model_fast" comment:"Model override for fast design review in this repo."`
 	DesignModelStandard   string `toml:"design_model_standard" comment:"Model override for standard design review in this repo."`
+	DesignModelMedium     string `toml:"design_model_medium" comment:"Model override for medium design review in this repo."`
 	DesignModelThorough   string `toml:"design_model_thorough" comment:"Model override for thorough design review in this repo."`
+	DesignModelMaximum    string `toml:"design_model_maximum" comment:"Model override for maximum design review in this repo."`
 
 	// Backup agents for failover
 	ReviewBackupAgent   string `toml:"review_backup_agent" comment:"Backup agent for review in this repo."`
@@ -1088,7 +1128,7 @@ func ValidateReviewTypes(types []string) ([]string, error) {
 }
 
 // NormalizeReasoning validates and normalizes a reasoning level string.
-// Returns the canonical form (thorough, standard, fast) or an error if invalid.
+// Returns the canonical form (maximum, thorough, medium, standard, fast) or an error if invalid.
 // Returns empty string (no error) for empty input.
 func NormalizeReasoning(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
@@ -1097,9 +1137,13 @@ func NormalizeReasoning(value string) (string, error) {
 	}
 
 	switch normalized {
+	case "maximum", "max", "xhigh":
+		return "maximum", nil
 	case "thorough", "high":
 		return "thorough", nil
-	case "standard", "medium":
+	case "medium":
+		return "medium", nil
+	case "standard":
 		return "standard", nil
 	case "fast", "low":
 		return "fast", nil

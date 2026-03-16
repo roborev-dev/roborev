@@ -86,6 +86,8 @@ func (a *CodexAgent) WithSessionID(sessionID string) Agent {
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
 func (a *CodexAgent) codexReasoningEffort() string {
 	switch a.Reasoning {
+	case ReasoningMaximum:
+		return "xhigh"
 	case ReasoningThorough:
 		return "high"
 	case ReasoningFast:

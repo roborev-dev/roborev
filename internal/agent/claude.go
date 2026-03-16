@@ -18,14 +18,16 @@ import (
 type ClaudeAgent struct {
 	Command   string         // The claude command to run (default: "claude")
 	Model     string         // Model to use (e.g., "opus", "sonnet", or full name)
-	Reasoning ReasoningLevel // Reasoning level (for future extended thinking support)
+	Reasoning ReasoningLevel // Reasoning level mapped to --effort flag
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 	SessionID string         // Existing session ID to resume
 }
 
 const claudeDangerousFlag = "--dangerously-skip-permissions"
+const claudeEffortFlag = "--effort"
 
 var claudeDangerousSupport sync.Map
+var claudeEffortSupport sync.Map
 
 // NewClaudeAgent creates a new Claude Code agent
 func NewClaudeAgent(command string) *ClaudeAgent {
@@ -35,7 +37,7 @@ func NewClaudeAgent(command string) *ClaudeAgent {
 	return &ClaudeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
+// WithReasoning returns a copy of the agent with the specified reasoning level.
 func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
 	return &ClaudeAgent{
 		Command:   a.Command,
@@ -82,6 +84,22 @@ func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
 	}
 }
 
+// claudeEffort maps ReasoningLevel to Claude Code's --effort flag values
+func (a *ClaudeAgent) claudeEffort() string {
+	switch a.Reasoning {
+	case ReasoningMaximum:
+		return "max"
+	case ReasoningThorough:
+		return "high"
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningFast:
+		return "low"
+	default:
+		return "" // use claude default (standard = no override)
+	}
+}
+
 func (a *ClaudeAgent) Name() string {
 	return "claude-code"
 }
@@ -92,11 +110,11 @@ func (a *ClaudeAgent) CommandName() string {
 
 func (a *ClaudeAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.buildArgs(agenticMode)
+	args := a.buildArgs(agenticMode, true)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
+func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 	sessionID := sanitizedResumeSessionID(a.SessionID)
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)
@@ -107,6 +125,12 @@ func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	}
 	if sessionID != "" {
 		args = append(args, "--resume", sessionID)
+	}
+
+	if includeEffort {
+		if effort := a.claudeEffort(); effort != "" {
+			args = append(args, claudeEffortFlag, effort)
+		}
 	}
 
 	if agenticMode {
@@ -134,6 +158,17 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 	return supported, nil
 }
 
+func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
+	if cached, ok := claudeEffortSupport.Load(command); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	output, _ := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), claudeEffortFlag)
+	claudeEffortSupport.Store(command, supported)
+	return supported
+}
+
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use agentic mode if either per-job setting or global setting enables it
 	agenticMode := a.Agentic || AllowUnsafeAgents()
@@ -148,8 +183,11 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 	}
 
+	// Only pass --effort if the installed Claude Code supports it
+	includeEffort := a.claudeEffort() != "" && claudeSupportsEffortFlag(ctx, a.Command)
+
 	// Build args - always uses stdin piping + stream-json for non-interactive execution
-	args := a.buildArgs(agenticMode)
+	args := a.buildArgs(agenticMode, includeEffort)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
