@@ -261,6 +261,11 @@ func repoLabels(repos []storage.RepoSummary) []string {
 				parts := splitPath(repos[i].Path)
 				depth[i]++
 				if depth[i] > len(parts) {
+					// Fall back to full path (includes volume/root)
+					if labels[i] != repos[i].Path {
+						labels[i] = repos[i].Path
+						progress = true
+					}
 					continue
 				}
 				prefix := filepath.Join(parts[len(parts)-depth[i] : len(parts)-depth[i]+1]...)
