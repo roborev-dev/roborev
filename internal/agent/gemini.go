@@ -157,9 +157,13 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	}
 
 	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
+
+	// Wait() is the synchronization point: all stderr writes are
+	// guaranteed complete after it returns.
+	waitErr := cmd.Wait()
 	stderrStr := stderr.String()
 
-	if waitErr := cmd.Wait(); waitErr != nil {
+	if waitErr != nil {
 		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
 			return "", stderrStr, ctxErr
 		}

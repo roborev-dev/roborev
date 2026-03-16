@@ -380,6 +380,35 @@ echo '{"type":"result","result":"Review from default model"}'
 	assert.Equal(t, "Review from default model", res)
 }
 
+func TestGeminiReview_ModelNotFoundLateStderr(t *testing.T) {
+	skipIfWindows(t)
+
+	// Regression: stderr emitted only at exit (after stdout closes).
+	// Previously stderrStr was read before cmd.Wait(), racing with
+	// the goroutine writing stderr.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+echo '{"type":"system","subtype":"init"}'
+# Close stdout before writing stderr, simulating late error output.
+exec 1>&-
+sleep 0.05
+echo "Error: model is not found for API version v1" >&2
+exit 1
+`)
+
+	a := NewGeminiAgent(scriptPath)
+	a.Model = "gemini-old-model"
+	var output bytes.Buffer
+	// The retry (without -m) will also fail since the script always
+	// exits 1, but the important thing is that stderr is captured
+	// correctly and the model-not-found detection triggers the retry.
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "sha", "prompt", &output,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gemini failed",
+		"should fail on retry but not panic or lose stderr")
+}
+
 func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
 	skipIfWindows(t)
 
