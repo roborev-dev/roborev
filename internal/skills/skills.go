@@ -70,24 +70,10 @@ func IsInstalled(agent Agent) bool {
 	switch agent {
 	case AgentClaude:
 		skillsDir := filepath.Join(home, ".claude", "skills")
-		checkFiles = []string{
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review-branch", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md"),
-		}
+		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
 	case AgentCodex:
 		skillsDir := filepath.Join(home, ".codex", "skills")
-		checkFiles = []string{
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-design-review-branch", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md"),
-		}
+		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
 	default:
 		return false
 	}
@@ -105,6 +91,30 @@ func IsInstalled(agent Agent) bool {
 // should be deleted from user machines during Update.
 var legacySkills = []string{
 	"roborev-address",
+}
+
+func currentSkillChecks(skillsDir string) []string {
+	names := []string{
+		"roborev-respond",
+		"roborev-fix",
+		"roborev-design-review",
+		"roborev-design-review-branch",
+		"roborev-review",
+		"roborev-review-branch",
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+	}
+	return out
+}
+
+func legacySkillChecks(skillsDir string) []string {
+	out := make([]string, len(legacySkills))
+	for i, n := range legacySkills {
+		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+	}
+	return out
 }
 
 // Update updates skills for agents that already have them installed
