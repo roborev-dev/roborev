@@ -683,6 +683,12 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Backfill verdict_bool for any reviews that have output but no verdict yet.
+	// This covers pre-migration reviews so summary stats include historical data.
+	if err := backfillVerdictBool(db); err != nil {
+		return fmt.Errorf("backfill verdict_bool: %w", err)
+	}
+
 	// Migration: add provider column to review_jobs if missing
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'provider'`).Scan(&count)
 	if err != nil {
@@ -1218,4 +1224,54 @@ func (db *DB) CountStalledJobs(threshold time.Duration) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// backfillVerdictBool sets verdict_bool for reviews that have output but
+// no stored verdict. This ensures historical reviews (created before the
+// verdict_bool column existed) are counted by summary stats.
+func backfillVerdictBool(db *DB) error {
+	rows, err := db.Query(`
+		SELECT rv.id, rv.output, j.job_type
+		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
+		WHERE rv.verdict_bool IS NULL AND rv.output != ''
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type pending struct {
+		id      int64
+		verdict int // 1=pass, 0=fail
+	}
+	var updates []pending
+
+	for rows.Next() {
+		var id int64
+		var output string
+		var jobType *string
+		if err := rows.Scan(&id, &output, &jobType); err != nil {
+			return err
+		}
+		// Skip task and fix jobs — their output isn't a verdict
+		if jobType != nil && (*jobType == JobTypeTask || *jobType == JobTypeFix) {
+			continue
+		}
+		v := 0
+		if ParseVerdict(output) == "P" {
+			v = 1
+		}
+		updates = append(updates, pending{id: id, verdict: v})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, u := range updates {
+		if _, err := db.Exec(`UPDATE reviews SET verdict_bool = ? WHERE id = ?`, u.verdict, u.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
