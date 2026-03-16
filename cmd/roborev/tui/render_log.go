@@ -113,7 +113,7 @@ func disabledHelpLine(key, desc string) string {
 	return statusStyle.Render(formatHelpLine(key, desc+" (disabled)"))
 }
 
-func helpLines(tasksEnabled bool) []string {
+func helpLines(tasksEnabled, noQuit bool) []string {
 	shortcuts := []struct {
 		group string
 		keys  []struct{ key, desc string }
@@ -200,10 +200,17 @@ func helpLines(tasksEnabled bool) []string {
 		},
 		{
 			group: "General",
-			keys: []struct{ key, desc string }{
-				{"?", "Toggle this help"},
-				{"q", "Quit (from queue view)"},
-			},
+			keys: func() []struct{ key, desc string } {
+				keys := []struct{ key, desc string }{
+					{"?", "Toggle this help"},
+				}
+				if !noQuit {
+					keys = append(keys, struct{ key, desc string }{
+						"q", "Quit (from queue view)",
+					})
+				}
+				return keys
+			}(),
 		},
 	}
 
@@ -245,7 +252,7 @@ func helpLines(tasksEnabled bool) []string {
 func (m model) helpMaxScroll() int {
 	reservedLines := 3 // title + blank + help hint
 	visibleLines := max(m.height-reservedLines, 5)
-	maxScroll := len(helpLines(m.tasksWorkflowEnabled())) - visibleLines
+	maxScroll := len(helpLines(m.tasksWorkflowEnabled(), m.noQuit)) - visibleLines
 	if maxScroll < 0 {
 		return 0
 	}
@@ -257,7 +264,7 @@ func (m model) renderHelpView() string {
 	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
-	allLines := helpLines(m.tasksWorkflowEnabled())
+	allLines := helpLines(m.tasksWorkflowEnabled(), m.noQuit)
 
 	// Calculate visible area: title(1) + blank(1) + help(1)
 	reservedLines := 3

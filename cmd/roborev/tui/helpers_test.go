@@ -546,13 +546,13 @@ func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
 }
 
 func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
-	disabled := strings.Join(helpLines(false), "\n")
+	disabled := strings.Join(helpLines(false, false), "\n")
 	assert.Contains(t, stripTestANSI(disabled), "Trigger fix for selected review (disabled)")
 	assert.Contains(t, stripTestANSI(disabled), "Trigger fix (opens inline panel) (disabled)")
 	assert.Contains(t, stripTestANSI(disabled), "Open Tasks view (disabled)")
 	assert.Contains(t, stripTestANSI(disabled), "advanced.tasks_enabled = false")
 
-	enabled := strings.Join(helpLines(true), "\n")
+	enabled := strings.Join(helpLines(true, false), "\n")
 	assert.NotContains(t, stripTestANSI(enabled), "(disabled)")
 }
 

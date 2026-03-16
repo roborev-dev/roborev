@@ -48,7 +48,10 @@ func (m model) queueHelpRows() [][]helpItem {
 	if m.tasksWorkflowEnabled() {
 		row2 = append(row2, helpItem{"T", "tasks"})
 	}
-	row2 = append(row2, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	row2 = append(row2, helpItem{"?", "help"})
+	if !m.noQuit {
+		row2 = append(row2, helpItem{"q", "quit"})
+	}
 	return [][]helpItem{row1, row2}
 }
 func (m model) queueHelpLines() int {

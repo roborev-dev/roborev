@@ -156,9 +156,11 @@ func (m model) renderTasksView() string {
 	if len(m.fixJobs) == 0 {
 		b.WriteString("\n  No fix tasks. Press F on a review to trigger a background fix.\n")
 		b.WriteString("\n")
-		b.WriteString(renderHelpTable([][]helpItem{
-			{{"T", "back to queue"}, {"F", "fix review"}, {"q", "quit"}},
-		}, m.width))
+		emptyHelp := []helpItem{{"T", "back to queue"}, {"F", "fix review"}}
+		if !m.noQuit {
+			emptyHelp = append(emptyHelp, helpItem{"q", "quit"})
+		}
+		b.WriteString(renderHelpTable([][]helpItem{emptyHelp}, m.width))
 		b.WriteString("\x1b[K\x1b[J")
 		return b.String()
 	}

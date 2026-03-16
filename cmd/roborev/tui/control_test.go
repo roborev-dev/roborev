@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -521,6 +522,49 @@ func TestNoQuit_QStillClosesModal(t *testing.T) {
 	updated := result.(model)
 	assert.Equal(t, viewQueue, updated.currentView,
 		"q in review view should close modal even with noQuit")
+}
+
+func TestNoQuit_QueueHelpOmitsQuit(t *testing.T) {
+	normal := newModel(testServerAddr, withExternalIODisabled())
+	noQuit := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+
+	normalRows := normal.queueHelpRows()
+	noQuitRows := noQuit.queueHelpRows()
+
+	hasQuit := func(rows [][]helpItem) bool {
+		for _, row := range rows {
+			for _, item := range row {
+				if item.key == "q" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	assert.True(t, hasQuit(normalRows),
+		"normal mode should show q in queue help")
+	assert.False(t, hasQuit(noQuitRows),
+		"noQuit mode should omit q from queue help")
+}
+
+func TestNoQuit_HelpViewOmitsQuit(t *testing.T) {
+	normal := helpLines(true, false)
+	noQuit := helpLines(true, true)
+
+	contains := func(lines []string, substr string) bool {
+		for _, line := range lines {
+			if strings.Contains(line, substr) {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.True(t, contains(normal, "Quit"),
+		"normal help should mention Quit")
+	assert.False(t, contains(noQuit, "Quit"),
+		"noQuit help should omit Quit")
 }
 
 // --- Control message routing through Update() ---
