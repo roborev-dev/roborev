@@ -118,6 +118,10 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 		if err != nil {
 			return fmt.Errorf("resolve repo path: %w", err)
 		}
+		// Validate that --repo points at an actual git repository
+		if _, err := git.GetRepoRoot(repoRoot); err != nil {
+			return fmt.Errorf("--repo %q is not a git repository", opts.repoPath)
+		}
 	}
 	// Canonicalize to main repo root (handles worktrees and subdirectories)
 	if mainRoot, err := git.GetMainRepoRoot(repoRoot); err == nil {
