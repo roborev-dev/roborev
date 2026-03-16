@@ -59,6 +59,8 @@ func (m model) handleControlMutation(
 		m, resp, cmd = m.handleCtrlCancelJob(msg.req.Params)
 	case "rerun-job":
 		m, resp, cmd = m.handleCtrlRerunJob(msg.req.Params)
+	case "quit":
+		m, resp, cmd = m.handleCtrlQuit()
 	default:
 		resp = controlResponse{
 			Error: fmt.Sprintf("unknown mutation: %s", msg.req.Command),
@@ -566,4 +568,8 @@ func (m model) handleCtrlRerunJob(
 		m.rerunJob(
 			params.JobID, oldStatus, oldStartedAt, oldFinishedAt, oldError,
 		)
+}
+
+func (m model) handleCtrlQuit() (model, controlResponse, tea.Cmd) {
+	return m, controlResponse{OK: true}, tea.Quit
 }

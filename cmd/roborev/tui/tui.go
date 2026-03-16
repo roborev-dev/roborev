@@ -370,6 +370,7 @@ type model struct {
 	clipboard       ClipboardWriter
 	tasksEnabled    bool // Enables advanced tasks workflow in the TUI
 	mouseEnabled    bool // Enables mouse capture and mouse-driven interactions in the TUI
+	noQuit          bool // Suppress keyboard quit (for managed TUI instances)
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -543,6 +544,7 @@ func newModel(serverAddr string, opts ...option) model {
 		mdCache:             newMarkdownCache(tabWidth),
 		tasksEnabled:        tasksEnabled,
 		mouseEnabled:        mouseEnabled,
+		noQuit:              opt.noQuit,
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -828,6 +830,7 @@ type Config struct {
 	RepoFilter    string
 	BranchFilter  string
 	ControlSocket string // Unix socket path for external control (default: auto)
+	NoQuit        bool   // Suppress keyboard quit (for managed TUI instances)
 }
 
 func programOptionsForModel(m model) []tea.ProgramOption {
@@ -851,6 +854,9 @@ func Run(cfg Config) error {
 	}
 	if cfg.BranchFilter != "" {
 		opts = append(opts, withBranchFilter(cfg.BranchFilter))
+	}
+	if cfg.NoQuit {
+		opts = append(opts, withNoQuit())
 	}
 	m := newModel(cfg.ServerAddr, opts...)
 	p := tea.NewProgram(

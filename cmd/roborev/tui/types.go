@@ -290,11 +290,17 @@ func withAutoFilterRepo(repo string) option {
 type options struct {
 	repoFilter        string // --repo flag: lock filter to this repo path
 	branchFilter      string // --branch flag: lock filter to this branch
+	noQuit            bool   // --no-quit flag: suppress keyboard quit
 	disableExternalIO bool   // tests: disable daemon/config/git calls
 	autoFilterRepo    bool   // tests: simulate auto_filter_repo config
 	autoFilterBranch  bool   // tests: simulate auto_filter_branch config
 	cwdRepoRoot       string // tests: simulate detected repo root
 	cwdBranch         string // tests: simulate detected branch
+}
+
+// withNoQuit disables keyboard-initiated quit (q key).
+func withNoQuit() option {
+	return func(o *options) { o.noQuit = true }
 }
 
 // errNoLog is a sentinel error returned when the job log API

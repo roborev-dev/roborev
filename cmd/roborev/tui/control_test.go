@@ -64,6 +64,7 @@ func TestIsControlCommand(t *testing.T) {
 		{"get-filter", true, false},
 		{"set-filter", false, true},
 		{"cancel-job", false, true},
+		{"quit", false, true},
 		{"bogus", false, false},
 	}
 	for _, tt := range tests {
@@ -419,6 +420,46 @@ func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 	params, _ := json.Marshal(map[string]int64{"job_id": 8})
 	_, resp, _ := m.handleCtrlRerunJob(params)
 	require.False(t, resp.OK, "expected error for non-rerunnable job")
+}
+
+func TestHandleCtrlQuit(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+
+	updated, resp, cmd := m.handleCtrlQuit()
+	assert.True(t, resp.OK, "expected OK response")
+	assert.NotNil(t, cmd, "expected non-nil cmd (tea.Quit)")
+	_ = updated
+}
+
+func TestNoQuit_QKeyInQueueView(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m.currentView = viewQueue
+
+	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := result.(model)
+	assert.Equal(t, viewQueue, updated.currentView,
+		"q should be suppressed in queue view with noQuit")
+	assert.Nil(t, cmd, "no cmd expected when q is suppressed")
+}
+
+func TestNoQuit_CtrlCStillQuits(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m.currentView = viewQueue
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	assert.NotNil(t, cmd,
+		"ctrl+c should still produce tea.Quit with noQuit")
+}
+
+func TestNoQuit_QStillClosesModal(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m.currentView = viewReview
+	m.currentReview = &storage.Review{Agent: "test", Output: "test"}
+
+	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := result.(model)
+	assert.Equal(t, viewQueue, updated.currentView,
+		"q in review view should close modal even with noQuit")
 }
 
 // --- Control message routing through Update() ---

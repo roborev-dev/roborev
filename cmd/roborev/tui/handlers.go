@@ -92,7 +92,12 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnterKey()
 	}
 	switch msg.String() {
-	case "ctrl+c", "ctrl+d", "q":
+	case "ctrl+c", "ctrl+d":
+		return m.handleQuitKey()
+	case "q":
+		if m.noQuit && m.currentView == viewQueue {
+			return m, nil
+		}
 		return m.handleQuitKey()
 	case "home", "g":
 		return m.handleHomeKey()

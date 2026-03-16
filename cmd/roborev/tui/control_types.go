@@ -130,6 +130,7 @@ var controlMutationCommands = map[string]bool{
 	"close-review":    true,
 	"cancel-job":      true,
 	"rerun-job":       true,
+	"quit":            true,
 }
 
 // isControlCommand returns true and the message type for known commands.

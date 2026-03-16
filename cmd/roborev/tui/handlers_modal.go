@@ -378,7 +378,12 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "ctrl+c", "ctrl+d", "q":
+	case "ctrl+c", "ctrl+d":
+		return m, tea.Quit
+	case "q":
+		if m.noQuit {
+			return m, nil
+		}
 		return m, tea.Quit
 	case "esc", "T":
 		m.currentView = viewQueue
