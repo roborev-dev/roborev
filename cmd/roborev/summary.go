@@ -228,32 +228,58 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 	}
 }
 
-// repoLabels returns display labels for repos, disambiguating duplicate basenames
-// by appending parent directory components.
+// repoLabels returns display labels for repos, disambiguating duplicate names
+// by prepending parent directory components until all labels are unique.
 func repoLabels(repos []storage.RepoSummary) []string {
 	labels := make([]string, len(repos))
+	// Track how many path components each label uses (1 = basename only)
+	depth := make([]int, len(repos))
 	for i, r := range repos {
 		labels[i] = r.Name
 		if labels[i] == "" {
 			labels[i] = filepath.Base(r.Path)
 		}
+		depth[i] = 1
 	}
 
-	// Find duplicates and disambiguate with parent path
-	seen := make(map[string][]int)
-	for i, l := range labels {
-		seen[l] = append(seen[l], i)
-	}
-	for _, indices := range seen {
-		if len(indices) < 2 {
-			continue
+	for {
+		seen := make(map[string][]int)
+		for i, l := range labels {
+			seen[l] = append(seen[l], i)
 		}
-		for _, i := range indices {
-			parent := filepath.Base(filepath.Dir(repos[i].Path))
-			labels[i] = parent + "/" + labels[i]
+
+		hasDupes := false
+		for _, indices := range seen {
+			if len(indices) < 2 {
+				continue
+			}
+			hasDupes = true
+			for _, i := range indices {
+				parts := splitPath(repos[i].Path)
+				depth[i]++
+				if depth[i] > len(parts) {
+					labels[i] = repos[i].Path
+				} else {
+					labels[i] = filepath.Join(parts[len(parts)-depth[i]:]...)
+				}
+			}
+		}
+		if !hasDupes {
+			break
 		}
 	}
 	return labels
+}
+
+// splitPath splits a cleaned path into its components.
+func splitPath(p string) []string {
+	p = filepath.Clean(p)
+	var parts []string
+	for p != "." && p != "/" {
+		parts = append([]string{filepath.Base(p)}, parts...)
+		p = filepath.Dir(p)
+	}
+	return parts
 }
 
 // sortedErrorCategories returns error category keys in deterministic order.
