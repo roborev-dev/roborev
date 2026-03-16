@@ -119,10 +119,12 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 ### 5. Record comments and close reviews
 
 For each job that was fixed, record a summary comment and then close it.
-Run these as **separate commands** (not chained):
+Run these as **separate commands**, but only run `roborev close` after
+confirming the comment succeeded:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>"
+# Only if the comment above succeeded:
 roborev close <job_id>
 ```
 
