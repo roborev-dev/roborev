@@ -265,6 +265,33 @@ func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
 		updated2.activeRepoFilter)
 }
 
+func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			// Verify no branch query parameter was sent.
+			assert.Empty(t, r.URL.Query().Get("branch"),
+				"branchNone should not send branch param")
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"repos": []map[string]any{
+					{"name": "myrepo", "root_path": "/r", "count": 1},
+				},
+			})
+		},
+	))
+	defer ts.Close()
+
+	m := newModel(ts.URL, withExternalIODisabled())
+	m.activeBranchFilter = branchNone
+
+	cmd := m.fetchRepos()
+	msg := cmd()
+	rMsg, ok := msg.(reposMsg)
+	require.True(t, ok, "expected reposMsg, got %T", msg)
+	assert.False(t, rMsg.branchFiltered,
+		"branchNone should produce branchFiltered=false")
+}
+
 func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.repoNames = map[string][]string{
