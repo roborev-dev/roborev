@@ -103,6 +103,7 @@ Examples:
 	cmd.Flags().StringVar(&since, "since", "7d", "time window (e.g. 24h, 7d, 30d)")
 	cmd.Flags().BoolVar(&allRepos, "all", false, "show summary across all repos")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "structured output for scripting")
+	cmd.MarkFlagsMutuallyExclusive("all", "repo")
 
 	return cmd
 }
@@ -198,15 +199,12 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 	// Per-repo breakdown (only when showing all repos)
 	if len(s.Repos) > 0 {
 		cmd.Println("Repos")
+		labels := repoLabels(s.Repos)
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "  Repo\tJobs\tPass\tFail\tAddressed\n")
-		for _, r := range s.Repos {
-			name := r.Name
-			if name == "" {
-				name = filepath.Base(r.Path)
-			}
+		for i, r := range s.Repos {
 			fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\n",
-				name, r.Total, r.Passed, r.Failed, r.Addressed)
+				labels[i], r.Total, r.Passed, r.Failed, r.Addressed)
 		}
 		w.Flush()
 		cmd.Println()
@@ -228,6 +226,34 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 	if s.Overview.Total == 0 {
 		cmd.Println("No review data for this time window.")
 	}
+}
+
+// repoLabels returns display labels for repos, disambiguating duplicate basenames
+// by appending parent directory components.
+func repoLabels(repos []storage.RepoSummary) []string {
+	labels := make([]string, len(repos))
+	for i, r := range repos {
+		labels[i] = r.Name
+		if labels[i] == "" {
+			labels[i] = filepath.Base(r.Path)
+		}
+	}
+
+	// Find duplicates and disambiguate with parent path
+	seen := make(map[string][]int)
+	for i, l := range labels {
+		seen[l] = append(seen[l], i)
+	}
+	for _, indices := range seen {
+		if len(indices) < 2 {
+			continue
+		}
+		for _, i := range indices {
+			parent := filepath.Base(filepath.Dir(repos[i].Path))
+			labels[i] = parent + "/" + labels[i]
+		}
+	}
+	return labels
 }
 
 // sortedErrorCategories returns error category keys in deterministic order.
