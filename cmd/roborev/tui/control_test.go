@@ -268,8 +268,9 @@ func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
 func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			// Verify no branch query parameter was sent.
-			assert.Empty(t, r.URL.Query().Get("branch"),
+			// Verify branch key is absent (not just empty).
+			_, hasBranch := r.URL.Query()["branch"]
+			assert.False(t, hasBranch,
 				"branchNone should not send branch param")
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
