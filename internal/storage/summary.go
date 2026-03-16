@@ -1,10 +1,17 @@
 package storage
 
 import (
+	"database/sql"
 	"sort"
 	"strings"
 	"time"
 )
+
+// querier abstracts *sql.DB and *sql.Tx for summary queries.
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
 
 // Summary holds aggregate review statistics for a time window.
 type Summary struct {
@@ -106,7 +113,14 @@ type SummaryOptions struct {
 }
 
 // GetSummary computes aggregate review statistics.
+// All sub-queries run inside a single read transaction for snapshot consistency.
 func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	s := &Summary{
 		Since:    opts.Since,
 		RepoPath: opts.RepoPath,
@@ -132,40 +146,38 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	}
 	where := "WHERE " + strings.Join(conditions, " AND ")
 
-	var err error
-
-	s.Overview, err = db.summaryOverview(where, args)
+	s.Overview, err = summaryOverview(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Verdicts, err = db.summaryVerdicts(where, args)
+	s.Verdicts, err = summaryVerdicts(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Agents, err = db.summaryAgents(where, args)
+	s.Agents, err = summaryAgents(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Duration, err = db.summaryDurations(where, args)
+	s.Duration, err = summaryDurations(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.JobTypes, err = db.summaryJobTypes(where, args)
+	s.JobTypes, err = summaryJobTypes(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Failures, err = db.summaryFailures(where, args)
+	s.Failures, err = summaryFailures(tx, where, args)
 	if err != nil {
 		return nil, err
 	}
 
 	if opts.AllRepos || opts.RepoPath == "" {
-		s.Repos, err = db.summaryRepos(where, args)
+		s.Repos, err = summaryRepos(tx, where, args)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +186,7 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	return s, nil
 }
 
-func (db *DB) summaryOverview(where string, args []any) (OverviewStats, error) {
+func summaryOverview(q querier, where string, args []any) (OverviewStats, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
@@ -190,14 +202,14 @@ func (db *DB) summaryOverview(where string, args []any) (OverviewStats, error) {
 		` + where
 
 	var o OverviewStats
-	err := db.QueryRow(query, args...).Scan(
+	err := q.QueryRow(query, args...).Scan(
 		&o.Queued, &o.Running, &o.Done, &o.Failed,
 		&o.Canceled, &o.Applied, &o.Rebased, &o.Total,
 	)
 	return o, err
 }
 
-func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
+func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) {
 	query := `
 		SELECT
 			COUNT(*),
@@ -212,7 +224,7 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 			AND ` + verdictJobFilter
 
 	var v VerdictStats
-	err := db.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
+	err := q.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
 	if err != nil {
 		return v, err
 	}
@@ -225,7 +237,7 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 	return v, nil
 }
 
-func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
+func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 	query := `
 		SELECT
 			j.agent,
@@ -242,7 +254,7 @@ func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
 		GROUP BY j.agent
 		ORDER BY total DESC`
 
-	rows, err := db.Query(query, args...)
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +277,7 @@ func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
 	}
 
 	for i := range agents {
-		median, err := db.agentMedianDuration(where, args, agents[i].Agent)
+		median, err := agentMedianDuration(q, where, args, agents[i].Agent)
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +287,7 @@ func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
 	return agents, nil
 }
 
-func (db *DB) agentMedianDuration(where string, args []any, agent string) (float64, error) {
+func agentMedianDuration(q querier, where string, args []any, agent string) (float64, error) {
 	query := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -284,7 +296,7 @@ func (db *DB) agentMedianDuration(where string, args []any, agent string) (float
 		ORDER BY 1`
 
 	allArgs := append(append([]any{}, args...), agent)
-	rows, err := db.Query(query, allArgs...)
+	rows, err := q.Query(query, allArgs...)
 	if err != nil {
 		return 0, err
 	}
@@ -305,7 +317,7 @@ func (db *DB) agentMedianDuration(where string, args []any, agent string) (float
 	return percentile(durations, 0.5), nil
 }
 
-func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) {
+func summaryDurations(q querier, where string, args []any) (DurationStats, error) {
 	reviewQuery := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -313,7 +325,7 @@ func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) 
 		` + where + ` AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL
 		ORDER BY 1`
 
-	reviewDurations, err := db.collectDurations(reviewQuery, args)
+	reviewDurations, err := collectDurations(q, reviewQuery, args)
 	if err != nil {
 		return DurationStats{}, err
 	}
@@ -325,7 +337,7 @@ func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) 
 		` + where + ` AND j.started_at IS NOT NULL
 		ORDER BY 1`
 
-	queueDurations, err := db.collectDurations(queueQuery, args)
+	queueDurations, err := collectDurations(q, queueQuery, args)
 	if err != nil {
 		return DurationStats{}, err
 	}
@@ -340,8 +352,8 @@ func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) 
 	}, nil
 }
 
-func (db *DB) collectDurations(query string, args []any) ([]float64, error) {
-	rows, err := db.Query(query, args...)
+func collectDurations(q querier, query string, args []any) ([]float64, error) {
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +372,7 @@ func (db *DB) collectDurations(query string, args []any) ([]float64, error) {
 	return durations, rows.Err()
 }
 
-func (db *DB) summaryJobTypes(where string, args []any) ([]JobTypeStats, error) {
+func summaryJobTypes(q querier, where string, args []any) ([]JobTypeStats, error) {
 	query := `
 		SELECT
 			COALESCE(NULLIF(j.job_type, ''), 'review') as jt,
@@ -373,7 +385,7 @@ func (db *DB) summaryJobTypes(where string, args []any) ([]JobTypeStats, error) 
 		GROUP BY jt
 		ORDER BY COUNT(*) DESC`
 
-	rows, err := db.Query(query, args...)
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +402,7 @@ func (db *DB) summaryJobTypes(where string, args []any) ([]JobTypeStats, error) 
 	return types, rows.Err()
 }
 
-func (db *DB) summaryRepos(where string, args []any) ([]RepoSummary, error) {
+func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
 	query := `
 		SELECT
 			r.name,
@@ -409,7 +421,7 @@ func (db *DB) summaryRepos(where string, args []any) ([]RepoSummary, error) {
 		GROUP BY r.id
 		ORDER BY total DESC`
 
-	rows, err := db.Query(query, args...)
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -426,17 +438,17 @@ func (db *DB) summaryRepos(where string, args []any) ([]RepoSummary, error) {
 	return repos, rows.Err()
 }
 
-func (db *DB) summaryFailures(where string, args []any) (FailureStats, error) {
+func summaryFailures(q querier, where string, args []any) (FailureStats, error) {
 	countQuery := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(j.retry_count), 0)
+			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN j.retry_count ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		` + where
 
 	var f FailureStats
-	if err := db.QueryRow(countQuery, args...).Scan(&f.Total, &f.Retries); err != nil {
+	if err := q.QueryRow(countQuery, args...).Scan(&f.Total, &f.Retries); err != nil {
 		return f, err
 	}
 
@@ -446,7 +458,7 @@ func (db *DB) summaryFailures(where string, args []any) (FailureStats, error) {
 		JOIN repos r ON r.id = j.repo_id
 		` + where + ` AND j.status = 'failed' AND j.error != ''`
 
-	rows, err := db.Query(errQuery, args...)
+	rows, err := q.Query(errQuery, args...)
 	if err != nil {
 		return f, err
 	}

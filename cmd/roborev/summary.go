@@ -252,26 +252,23 @@ func repoLabels(repos []storage.RepoSummary) []string {
 			seen[l] = append(seen[l], i)
 		}
 
-		hasDupes := false
+		progress := false
 		for _, indices := range seen {
 			if len(indices) < 2 {
 				continue
 			}
-			hasDupes = true
 			for _, i := range indices {
 				parts := splitPath(repos[i].Path)
 				depth[i]++
 				if depth[i] > len(parts) {
-					// Exhausted path components, use full path
-					labels[i] = repos[i].Path
 					continue
 				}
-				// Prepend parent components to the original label
 				prefix := filepath.Join(parts[len(parts)-depth[i] : len(parts)-depth[i]+1]...)
 				labels[i] = prefix + "/" + labels[i]
+				progress = true
 			}
 		}
-		if !hasDupes {
+		if !progress {
 			break
 		}
 	}
