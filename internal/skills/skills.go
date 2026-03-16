@@ -161,10 +161,8 @@ func removeLegacySkills(agent Agent) error {
 
 	for _, name := range legacySkills {
 		dir := filepath.Join(skillsDir, name)
-		if _, err := os.Stat(dir); err == nil {
-			if err := os.RemoveAll(dir); err != nil {
-				return fmt.Errorf("remove legacy skill %s: %w", name, err)
-			}
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove legacy skill %s: %w", name, err)
 		}
 	}
 	return nil
