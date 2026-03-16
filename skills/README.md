@@ -17,7 +17,6 @@ Skills are updated automatically when you run `roborev update`.
 | `/roborev-fix [job_id...]` | Fix all open review findings (or specific jobs) in one pass |
 | `/roborev-design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
 | `/roborev-respond <job_id> [message]` | Add a response to a review |
-| ~`/roborev-address <job_id>`~ | Deprecated: use `/roborev-fix` |
 
 ## Example Workflow
 

@@ -10,7 +10,7 @@ Review a design proposal for completeness, feasibility, and technical soundness.
 
 ## Description
 
-Reviews design proposals (PRDs and task lists) for completeness, feasibility, and technical soundness. Unlike `/roborev-address` which fixes code review findings, this skill evaluates design documents before implementation begins.
+Reviews design proposals (PRDs and task lists) for completeness, feasibility, and technical soundness. Unlike `/roborev-fix` which fixes code review findings, this skill evaluates design documents before implementation begins.
 
 If a file path is given, that file is reviewed directly. If a job ID is given, the design output is fetched from roborev. If no argument is given, the skill looks for design docs in `docs/design/`.
 
