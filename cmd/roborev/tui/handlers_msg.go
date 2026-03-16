@@ -251,9 +251,9 @@ func (m model) handleReposMsg(
 
 	// Refresh repoNames when the modal fetch was unfiltered (no
 	// branch constraint), so newly registered repos are picked up.
-	// Skip when a branch filter is active — that response is a
-	// subset and would clobber the authoritative mapping.
-	if m.activeBranchFilter == "" {
+	// Skip branch-filtered responses — they are a subset and would
+	// clobber the authoritative mapping.
+	if !msg.branchFiltered {
 		names := make(map[string][]string, len(msg.repos))
 		for _, r := range msg.repos {
 			names[r.name] = r.rootPaths

@@ -293,7 +293,9 @@ func (m model) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return reposMsg{repos: repos}
+		filtered := activeBranchFilter != "" &&
+			activeBranchFilter != branchNone
+		return reposMsg{repos: repos, branchFiltered: filtered}
 	}
 }
 

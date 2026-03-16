@@ -174,7 +174,8 @@ type updateCheckMsg struct {
 	isDevBuild bool   // True if running a dev build
 }
 type reposMsg struct {
-	repos []repoFilterItem
+	repos          []repoFilterItem
+	branchFiltered bool // true if fetched with a branch constraint
 }
 
 // repoNamesMsg delivers the display-name-to-root-paths mapping from

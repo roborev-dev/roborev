@@ -240,11 +240,11 @@ func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
 
 	// Simulate opening filter modal with branch filter active:
 	// the branch-filtered /api/repos only returns "roborev".
-	m.activeBranchFilter = "main"
 	branchFilteredRepos := reposMsg{
 		repos: []repoFilterItem{
 			{name: "roborev", rootPaths: []string{"/home/user/projects/roborev"}, count: 5},
 		},
+		branchFiltered: true,
 	}
 	result, _ := m.handleReposMsg(branchFilteredRepos)
 	updated := result.(model)
