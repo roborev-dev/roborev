@@ -170,9 +170,9 @@ func TestHandleCtrlSetFilter(t *testing.T) {
 
 func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
-	m.displayNames = map[string]string{
-		"/home/user/projects/msgvault": "msgvault",
-		"/home/user/projects/roborev": "roborev",
+	m.repoNames = map[string][]string{
+		"msgvault": {"/home/user/projects/msgvault"},
+		"roborev":  {"/home/user/projects/roborev"},
 	}
 
 	params, _ := json.Marshal(map[string]string{
@@ -187,10 +187,12 @@ func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
 
 func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
-	m.displayNames = map[string]string{
-		"/home/user/work/backend":    "backend",
-		"/home/user/oss/backend":     "backend",
-		"/home/user/projects/roborev": "roborev",
+	m.repoNames = map[string][]string{
+		"backend": {
+			"/home/user/work/backend",
+			"/home/user/oss/backend",
+		},
+		"roborev": {"/home/user/projects/roborev"},
 	}
 
 	params, _ := json.Marshal(map[string]string{
@@ -203,6 +205,28 @@ func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
 	assert.ElementsMatch(t,
 		[]string{"/home/user/work/backend", "/home/user/oss/backend"},
 		updated.activeRepoFilter)
+}
+
+func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	// Simulate: jobs are loaded for "roborev" but "msgvault" has no
+	// visible jobs. repoNames (from /api/repos) knows about both.
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoPath("/home/user/projects/roborev")),
+	}
+	m.repoNames = map[string][]string{
+		"msgvault": {"/home/user/projects/msgvault"},
+		"roborev":  {"/home/user/projects/roborev"},
+	}
+
+	params, _ := json.Marshal(map[string]string{
+		"repo": "msgvault",
+	})
+	updated, resp, _ := m.handleCtrlSetFilter(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, []string{"/home/user/projects/msgvault"},
+		updated.activeRepoFilter,
+		"should resolve repos not in current job page")
 }
 
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {

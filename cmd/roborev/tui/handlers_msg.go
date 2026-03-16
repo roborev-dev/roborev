@@ -232,11 +232,31 @@ func (m model) handleStatusMsg(msg statusMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleRepoNamesMsg stores the display-name-to-root-paths mapping
+// fetched from /api/repos at init, used by control socket set-filter.
+func (m model) handleRepoNamesMsg(
+	msg repoNamesMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.names != nil {
+		m.repoNames = msg.names
+	}
+	return m, nil
+}
+
 // handleReposMsg processes repo list results for the filter modal.
 func (m model) handleReposMsg(
 	msg reposMsg,
 ) (tea.Model, tea.Cmd) {
 	m.consecutiveErrors = 0
+
+	// Refresh repoNames from filter modal data (picks up newly
+	// registered repos without waiting for next init fetch).
+	names := make(map[string][]string, len(msg.repos))
+	for _, r := range msg.repos {
+		names[r.name] = r.rootPaths
+	}
+	m.repoNames = names
+
 	// Build filterTree from repos (all collapsed, no children)
 	m.filterTree = make([]treeFilterNode, len(msg.repos))
 	for i, r := range msg.repos {

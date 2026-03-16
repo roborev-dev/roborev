@@ -176,6 +176,13 @@ type updateCheckMsg struct {
 type reposMsg struct {
 	repos []repoFilterItem
 }
+
+// repoNamesMsg delivers the display-name-to-root-paths mapping from
+// /api/repos, used by the control socket to resolve display names in
+// set-filter commands. Fetched once at init.
+type repoNamesMsg struct {
+	names map[string][]string // display name → root paths
+}
 type branchesMsg struct {
 	backfillCount int // Number of branches successfully backfilled to the database
 }

@@ -310,6 +310,11 @@ type model struct {
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
 
+	// Repo name lookup (display name → root paths), populated from
+	// /api/repos at init. Used by control socket set-filter to resolve
+	// display names to the root paths that the daemon API expects.
+	repoNames map[string][]string
+
 	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
 	branchNames map[int64]string
 
@@ -560,6 +565,7 @@ func (m model) Init() tea.Cmd {
 		m.tick(),
 		m.fetchJobs(),
 		m.fetchStatus(),
+		m.fetchRepoNames(),
 		m.checkForUpdate(),
 	)
 }
@@ -716,6 +722,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleCancelResultMsg(msg)
 	case rerunResultMsg:
 		result, cmd = m.handleRerunResultMsg(msg)
+	case repoNamesMsg:
+		result, cmd = m.handleRepoNamesMsg(msg)
 	case reposMsg:
 		result, cmd = m.handleReposMsg(msg)
 	case repoBranchesMsg:

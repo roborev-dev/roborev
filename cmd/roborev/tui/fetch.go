@@ -193,6 +193,44 @@ func (m model) tryReconnect() tea.Cmd {
 	}
 }
 
+// fetchRepoNames fetches the unfiltered repo list and builds a
+// display-name-to-root-paths mapping for control socket resolution.
+func (m model) fetchRepoNames() tea.Cmd {
+	client := m.client
+	serverAddr := m.serverAddr
+
+	return func() tea.Msg {
+		resp, err := client.Get(serverAddr + "/api/repos")
+		if err != nil {
+			return repoNamesMsg{} // non-fatal; map stays nil
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return repoNamesMsg{}
+		}
+
+		var result struct {
+			Repos []struct {
+				Name     string `json:"name"`
+				RootPath string `json:"root_path"`
+			} `json:"repos"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return repoNamesMsg{}
+		}
+
+		names := make(map[string][]string)
+		for _, r := range result.Repos {
+			displayName := config.GetDisplayName(r.RootPath)
+			if displayName == "" {
+				displayName = r.Name
+			}
+			names[displayName] = append(names[displayName], r.RootPath)
+		}
+		return repoNamesMsg{names: names}
+	}
+}
+
 func (m model) fetchRepos() tea.Cmd {
 	// Capture values for use in goroutine
 	client := m.client

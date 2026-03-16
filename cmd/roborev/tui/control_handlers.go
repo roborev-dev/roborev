@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -178,30 +179,22 @@ func copyStrings(s []string) []string {
 // resolveRepoFilter resolves a repo name to root paths. The input
 // can be a display name (e.g. "msgvault") or a literal root path
 // (e.g. "/home/user/projects/msgvault"). Display names are resolved
-// via the displayNames cache (populated from job data on each fetch).
-// Returns nil if the name doesn't match any known repo.
+// via repoNames (populated from /api/repos at init).
 func (m model) resolveRepoFilter(name string) []string {
-	// Reverse-lookup: collect all root paths whose display name
-	// matches the input (case-sensitive, same as the filter modal).
-	var paths []string
-	for rootPath, displayName := range m.displayNames {
-		if displayName == name {
-			paths = append(paths, rootPath)
-		}
-	}
-	if len(paths) > 0 {
+	// Check display name lookup (authoritative, from /api/repos).
+	if paths, ok := m.repoNames[name]; ok {
 		return paths
 	}
 
-	// Check if it matches a root path directly (from jobs).
-	for rootPath := range m.displayNames {
-		if rootPath == name {
+	// Check if it matches a root path in the repo list.
+	for _, paths := range m.repoNames {
+		if slices.Contains(paths, name) {
 			return []string{name}
 		}
 	}
 
-	// Unknown name — accept as-is so callers that pass a root
-	// path before any jobs are loaded still work.
+	// Unknown name — accept as-is so callers that pass a path
+	// before the repo list is loaded still work.
 	return []string{name}
 }
 
