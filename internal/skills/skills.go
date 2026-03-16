@@ -143,10 +143,10 @@ func Update() ([]InstallResult, error) {
 
 // removeLegacySkills deletes skill directories that are no longer
 // embedded in the binary.
-func removeLegacySkills(agent Agent) {
+func removeLegacySkills(agent Agent) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return
+		return fmt.Errorf("get home dir: %w", err)
 	}
 
 	var skillsDir string
@@ -156,15 +156,18 @@ func removeLegacySkills(agent Agent) {
 	case AgentCodex:
 		skillsDir = filepath.Join(home, ".codex", "skills")
 	default:
-		return
+		return nil
 	}
 
 	for _, name := range legacySkills {
 		dir := filepath.Join(skillsDir, name)
 		if _, err := os.Stat(dir); err == nil {
-			os.RemoveAll(dir)
+			if err := os.RemoveAll(dir); err != nil {
+				return fmt.Errorf("remove legacy skill %s: %w", name, err)
+			}
 		}
 	}
+	return nil
 }
 
 func installClaude() (InstallResult, error) {
@@ -227,7 +230,9 @@ func installClaude() (InstallResult, error) {
 		}
 	}
 
-	removeLegacySkills(AgentClaude)
+	if err := removeLegacySkills(AgentClaude); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -291,7 +296,9 @@ func installCodex() (InstallResult, error) {
 		}
 	}
 
-	removeLegacySkills(AgentCodex)
+	if err := removeLegacySkills(AgentCodex); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
