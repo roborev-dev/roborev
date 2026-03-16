@@ -168,6 +168,43 @@ func TestHandleCtrlSetFilter(t *testing.T) {
 	assert.Equal(t, -1, updated.selectedIdx)
 }
 
+func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.displayNames = map[string]string{
+		"/home/user/projects/msgvault": "msgvault",
+		"/home/user/projects/roborev": "roborev",
+	}
+
+	params, _ := json.Marshal(map[string]string{
+		"repo": "msgvault",
+	})
+	updated, resp, _ := m.handleCtrlSetFilter(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, []string{"/home/user/projects/msgvault"},
+		updated.activeRepoFilter,
+		"display name should resolve to root path")
+}
+
+func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.displayNames = map[string]string{
+		"/home/user/work/backend":    "backend",
+		"/home/user/oss/backend":     "backend",
+		"/home/user/projects/roborev": "roborev",
+	}
+
+	params, _ := json.Marshal(map[string]string{
+		"repo": "backend",
+	})
+	updated, resp, _ := m.handleCtrlSetFilter(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Len(t, updated.activeRepoFilter, 2,
+		"display name matching multiple repos should return all paths")
+	assert.ElementsMatch(t,
+		[]string{"/home/user/work/backend", "/home/user/oss/backend"},
+		updated.activeRepoFilter)
+}
+
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.lockedRepoFilter = true

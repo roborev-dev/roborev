@@ -175,6 +175,36 @@ func copyStrings(s []string) []string {
 	return cp
 }
 
+// resolveRepoFilter resolves a repo name to root paths. The input
+// can be a display name (e.g. "msgvault") or a literal root path
+// (e.g. "/home/user/projects/msgvault"). Display names are resolved
+// via the displayNames cache (populated from job data on each fetch).
+// Returns nil if the name doesn't match any known repo.
+func (m model) resolveRepoFilter(name string) []string {
+	// Reverse-lookup: collect all root paths whose display name
+	// matches the input (case-sensitive, same as the filter modal).
+	var paths []string
+	for rootPath, displayName := range m.displayNames {
+		if displayName == name {
+			paths = append(paths, rootPath)
+		}
+	}
+	if len(paths) > 0 {
+		return paths
+	}
+
+	// Check if it matches a root path directly (from jobs).
+	for rootPath := range m.displayNames {
+		if rootPath == name {
+			return []string{name}
+		}
+	}
+
+	// Unknown name — accept as-is so callers that pass a root
+	// path before any jobs are loaded still work.
+	return []string{name}
+}
+
 // --- Mutation handlers ---
 // Each returns (updated model, response, cmd) so value-receiver
 // mutations propagate through Bubble Tea's Update chain.
@@ -202,7 +232,7 @@ func (m model) handleCtrlSetFilter(
 			m.activeRepoFilter = nil
 			m.removeFilterFromStack(filterTypeRepo)
 		} else {
-			m.activeRepoFilter = []string{*params.Repo}
+			m.activeRepoFilter = m.resolveRepoFilter(*params.Repo)
 			m.pushFilter(filterTypeRepo)
 		}
 	}
