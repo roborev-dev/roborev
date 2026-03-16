@@ -171,13 +171,16 @@ func dispatchCommand(
 	}
 }
 
-// queryViaProgram sends a controlQueryMsg through the program and
-// waits for the Update handler to write the response.
-func queryViaProgram(
-	ctx context.Context, p *tea.Program, req controlRequest,
+// sendViaProgram dispatches msg through p.Send in a goroutine so
+// the response timeout covers the Send call itself. Program.Send
+// blocks until the event loop is running, so without the goroutine
+// a control request arriving during startup would hang outside the
+// timeout select.
+func sendViaProgram(
+	ctx context.Context, p *tea.Program, msg tea.Msg,
+	respCh <-chan controlResponse,
 ) controlResponse {
-	respCh := make(chan controlResponse, 1)
-	p.Send(controlQueryMsg{req: req, respCh: respCh})
+	go p.Send(msg)
 
 	select {
 	case resp := <-respCh:
@@ -189,22 +192,30 @@ func queryViaProgram(
 	}
 }
 
+// queryViaProgram sends a controlQueryMsg through the program and
+// waits for the Update handler to write the response.
+func queryViaProgram(
+	ctx context.Context, p *tea.Program, req controlRequest,
+) controlResponse {
+	respCh := make(chan controlResponse, 1)
+	return sendViaProgram(
+		ctx, p,
+		controlQueryMsg{req: req, respCh: respCh},
+		respCh,
+	)
+}
+
 // mutateViaProgram sends a controlMutationMsg through the program
 // and waits for the Update handler to write the response.
 func mutateViaProgram(
 	ctx context.Context, p *tea.Program, req controlRequest,
 ) controlResponse {
 	respCh := make(chan controlResponse, 1)
-	p.Send(controlMutationMsg{req: req, respCh: respCh})
-
-	select {
-	case resp := <-respCh:
-		return resp
-	case <-ctx.Done():
-		return controlResponse{Error: "TUI is shutting down"}
-	case <-time.After(controlResponseTimeout):
-		return controlResponse{Error: "response timeout"}
-	}
+	return sendViaProgram(
+		ctx, p,
+		controlMutationMsg{req: req, respCh: respCh},
+		respCh,
+	)
 }
 
 func writeResponse(conn net.Conn, resp controlResponse) {
