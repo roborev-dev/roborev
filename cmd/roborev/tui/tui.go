@@ -373,9 +373,10 @@ type model struct {
 
 	distractionFree bool // hide status line, headers, footer, scroll indicator
 	clipboard       ClipboardWriter
-	tasksEnabled    bool // Enables advanced tasks workflow in the TUI
-	mouseEnabled    bool // Enables mouse capture and mouse-driven interactions in the TUI
-	noQuit          bool // Suppress keyboard quit (for managed TUI instances)
+	tasksEnabled    bool          // Enables advanced tasks workflow in the TUI
+	mouseEnabled    bool          // Enables mouse capture and mouse-driven interactions in the TUI
+	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
+	ready           chan struct{} // Closed on first Update; signals event loop is running
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -550,6 +551,7 @@ func newModel(serverAddr string, opts ...option) model {
 		tasksEnabled:        tasksEnabled,
 		mouseEnabled:        mouseEnabled,
 		noQuit:              opt.noQuit,
+		ready:               make(chan struct{}),
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -683,6 +685,16 @@ func mouseCaptureCmd(v viewKind, mouseEnabled bool) tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Signal that the event loop is running (once). The control
+	// listener waits on this before accepting connections.
+	if m.ready != nil {
+		select {
+		case <-m.ready:
+		default:
+			close(m.ready)
+		}
+	}
+
 	prevView := m.currentView
 
 	var result tea.Model
@@ -872,33 +884,39 @@ func Run(cfg Config) error {
 		programOptionsForModel(m)...,
 	)
 
-	// Start control socket listener
+	// Resolve socket path before starting the program so we can
+	// set up cleanup in the right order.
 	socketPath := cfg.ControlSocket
 	if socketPath == "" {
 		socketPath = defaultControlSocketPath()
 	}
-	controlEnabled := false
-	cleanup, err := startControlListener(socketPath, p)
-	if err != nil {
-		log.Printf("warning: control socket disabled: %v", err)
-	} else {
-		controlEnabled = true
-		defer cleanup()
-	}
 
-	// Only write runtime metadata when the socket is actually
-	// listening, so external tools don't discover a broken endpoint.
-	if controlEnabled {
+	// Start the control listener after the event loop is running
+	// so that p.Send (used by control handlers) never blocks. The
+	// model closes m.ready on its first Update call.
+	go func() {
+		<-m.ready
+
+		cleanup, err := startControlListener(socketPath, p)
+		if err != nil {
+			log.Printf("warning: control socket disabled: %v", err)
+			return
+		}
+
 		rtInfo := buildTUIRuntimeInfo(m, socketPath, cfg.ServerAddr)
 		if err := WriteTUIRuntime(rtInfo); err != nil {
 			log.Printf(
 				"warning: failed to write TUI runtime info: %v", err,
 			)
 		}
-		defer RemoveTUIRuntime(socketPath)
-	}
 
-	_, err = p.Run()
+		// Block until the program exits, then clean up.
+		p.Wait()
+		cleanup()
+		RemoveTUIRuntime(socketPath)
+	}()
+
+	_, err := p.Run()
 	return err
 }
 
