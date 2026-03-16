@@ -153,8 +153,8 @@ User: `$roborev-fix`
 Agent:
 1. Runs `roborev fix --open --list` and finds 2 open reviews: job 1019 and job 1021
 2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
-3. Runs `git show <git_ref>` for each to see the reviewed diffs
-4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
+3. Runs `git show <git_ref>` for one review where the finding lacked enough context
+4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
    - `roborev comment --job 1019 "Fixed null check and added error handling"`
