@@ -379,12 +379,12 @@ func TestGetSummary_RepoBreakdown(t *testing.T) {
 
 	require.Len(t, s.Repos, 2)
 	// Sorted by total desc
-	assert.Equal(t, "/tmp/repo1", s.Repos[0].Path)
+	assert.Equal(t, repo1.RootPath, s.Repos[0].Path)
 	assert.Equal(t, 2, s.Repos[0].Total)
 	assert.Equal(t, 1, s.Repos[0].Passed)
 	assert.Equal(t, 1, s.Repos[0].Failed)
 
-	assert.Equal(t, "/tmp/repo2", s.Repos[1].Path)
+	assert.Equal(t, repo2.RootPath, s.Repos[1].Path)
 	assert.Equal(t, 1, s.Repos[1].Total)
 	assert.Equal(t, 1, s.Repos[1].Passed)
 	assert.Equal(t, 0, s.Repos[1].Failed)
