@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -73,6 +74,45 @@ func TestRepoLabels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := repoLabels(tt.repos)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSplitPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{"unix absolute", "/home/user/project", []string{"home", "user", "project"}},
+		{"unix root child", "/project", []string{"project"}},
+		{"relative", "a/b/c", []string{"a", "b", "c"}},
+		{"single component", "project", []string{"project"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitPath(tt.path)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSplitPath_Windows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test")
+	}
+	tests := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{"drive root", `C:\Users\alice\repo`, []string{"Users", "alice", "repo"}},
+		{"drive root child", `D:\repo`, []string{"repo"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitPath(tt.path)
 			assert.Equal(t, tt.want, got)
 		})
 	}
