@@ -46,6 +46,14 @@ func TestRepoLabels(t *testing.T) {
 			want: []string{"my-repo", "other-repo"},
 		},
 		{
+			name: "duplicate custom names preserved with path context",
+			repos: []storage.RepoSummary{
+				{Name: "app", Path: "/home/alice/src/app"},
+				{Name: "app", Path: "/home/bob/src/app"},
+			},
+			want: []string{"alice/src/app", "bob/src/app"},
+		},
+		{
 			name: "single repo",
 			repos: []storage.RepoSummary{
 				{Path: "/home/user/project"},
@@ -53,7 +61,7 @@ func TestRepoLabels(t *testing.T) {
 			want: []string{"project"},
 		},
 		{
-			name: "three duplicates",
+			name: "three duplicates with shared parents",
 			repos: []storage.RepoSummary{
 				{Path: "/x/a/repo"},
 				{Path: "/y/a/repo"},

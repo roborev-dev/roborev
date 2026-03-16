@@ -1,12 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"text/tabwriter"
 	"time"
 
@@ -48,9 +50,11 @@ Examples:
 
 			// Auto-resolve repo from cwd when not specified (unless --all)
 			if !allRepos && repoPath == "" {
-				if root, err := git.GetMainRepoRoot("."); err == nil {
-					repoPath = root
+				root, err := git.GetMainRepoRoot(".")
+				if err != nil {
+					return fmt.Errorf("not in a git repo; use --all for all repos or --repo to specify one")
 				}
+				repoPath = root
 			} else if repoPath != "" {
 				if root, err := git.GetMainRepoRoot(repoPath); err == nil {
 					repoPath = root
@@ -258,10 +262,13 @@ func repoLabels(repos []storage.RepoSummary) []string {
 				parts := splitPath(repos[i].Path)
 				depth[i]++
 				if depth[i] > len(parts) {
+					// Exhausted path components, use full path
 					labels[i] = repos[i].Path
-				} else {
-					labels[i] = filepath.Join(parts[len(parts)-depth[i]:]...)
+					continue
 				}
+				// Prepend parent components to the original label
+				prefix := filepath.Join(parts[len(parts)-depth[i] : len(parts)-depth[i]+1]...)
+				labels[i] = prefix + "/" + labels[i]
 			}
 		}
 		if !hasDupes {
@@ -275,9 +282,13 @@ func repoLabels(repos []storage.RepoSummary) []string {
 func splitPath(p string) []string {
 	p = filepath.Clean(p)
 	var parts []string
-	for p != "." && p != "/" {
-		parts = append([]string{filepath.Base(p)}, parts...)
-		p = filepath.Dir(p)
+	for {
+		dir, base := filepath.Dir(p), filepath.Base(p)
+		if dir == p {
+			break
+		}
+		parts = append([]string{base}, parts...)
+		p = dir
 	}
 	return parts
 }
@@ -288,24 +299,13 @@ func sortedErrorCategories(errors map[string]int) []string {
 	for k := range errors {
 		keys = append(keys, k)
 	}
-	// Sort by count descending, then alphabetically
-	sortFunc := func(i, j int) bool {
-		if errors[keys[i]] != errors[keys[j]] {
-			return errors[keys[i]] > errors[keys[j]]
+	slices.SortFunc(keys, func(a, b string) int {
+		if errors[a] != errors[b] {
+			return cmp.Compare(errors[b], errors[a]) // descending
 		}
-		return keys[i] < keys[j]
-	}
-	sortSlice(keys, sortFunc)
+		return cmp.Compare(a, b)
+	})
 	return keys
-}
-
-// sortSlice sorts a string slice using the given less function.
-func sortSlice(s []string, less func(i, j int) bool) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && less(j, j-1); j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
 
 // formatDuration formats seconds into a human-readable string.
