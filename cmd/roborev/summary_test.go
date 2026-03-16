@@ -117,3 +117,17 @@ func TestSplitPath_Windows(t *testing.T) {
 		})
 	}
 }
+
+func TestRepoLabels_Windows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only test")
+	}
+	// Repos that differ only by drive letter — splitPath drops the volume,
+	// so disambiguation must fall back to full paths.
+	repos := []storage.RepoSummary{
+		{Path: `C:\work\repo`},
+		{Path: `D:\work\repo`},
+	}
+	got := repoLabels(repos)
+	assert.Equal(t, []string{`C:\work\repo`, `D:\work\repo`}, got)
+}

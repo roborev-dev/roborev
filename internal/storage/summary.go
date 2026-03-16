@@ -476,6 +476,67 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 	return f, rows.Err()
 }
 
+// BackfillVerdictBool populates verdict_bool for reviews that have output
+// but a NULL verdict_bool. Returns the number of rows updated.
+func (db *DB) BackfillVerdictBool() (int, error) {
+	rows, err := db.Query(`
+		SELECT rv.id, rv.output
+		FROM reviews rv
+		WHERE rv.verdict_bool IS NULL AND rv.output != ''
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type pending struct {
+		id      int64
+		verdict int
+	}
+	var updates []pending
+	for rows.Next() {
+		var id int64
+		var output string
+		if err := rows.Scan(&id, &output); err != nil {
+			return 0, err
+		}
+		updates = append(updates, pending{
+			id:      id,
+			verdict: verdictToBool(ParseVerdict(output)),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`UPDATE reviews SET verdict_bool = ? WHERE id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.verdict, u.id); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(updates), nil
+}
+
 // categorizeError maps error messages to categories.
 func categorizeError(errMsg string) string {
 	lower := strings.ToLower(errMsg)

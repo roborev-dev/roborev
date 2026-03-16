@@ -406,6 +406,49 @@ func TestGetSummary_RepoBreakdownOmittedForSingleRepo(t *testing.T) {
 	assert.Empty(t, s.Repos)
 }
 
+func TestBackfillVerdictBool(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// Create reviews with verdict_bool set (normal path)
+	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
+
+	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug"))
+
+	// Simulate legacy rows by nullifying verdict_bool
+	_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL`)
+	require.NoError(t, err)
+
+	// Verify summary sees nothing before backfill
+	s, err := db.GetSummary(SummaryOptions{Since: time.Now().Add(-1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Equal(t, 0, s.Verdicts.Total)
+
+	// Backfill
+	count, err := db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// Verify summary now sees the verdicts
+	s, err = db.GetSummary(SummaryOptions{Since: time.Now().Add(-1 * time.Hour)})
+	require.NoError(t, err)
+	assert.Equal(t, 2, s.Verdicts.Total)
+	assert.Equal(t, 1, s.Verdicts.Passed)
+	assert.Equal(t, 1, s.Verdicts.Failed)
+
+	// Running again is a no-op
+	count, err = db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
 func TestPercentile(t *testing.T) {
 	tests := []struct {
 		name   string
