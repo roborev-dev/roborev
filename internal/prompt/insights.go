@@ -142,7 +142,6 @@ func BuildInsightsPrompt(data InsightsData) string {
 	fmt.Fprintf(&sb, "Showing %d failing review(s) since %s.\n\n",
 		len(selected), data.Since.Format("2006-01-02"))
 
-	included := 0
 	for i, r := range selected {
 		// Build the review entry in a temporary buffer so we can
 		// check size before committing it to the prompt.
@@ -181,7 +180,6 @@ func BuildInsightsPrompt(data InsightsData) string {
 		}
 
 		sb.WriteString(entry.String())
-		included++
 	}
 
 	if len(data.Reviews) > len(selected) {

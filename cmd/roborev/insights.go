@@ -107,11 +107,11 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
 		}
-		if root, err := git.GetRepoRoot(workDir); err == nil {
-			repoRoot = root
-		} else {
-			repoRoot = workDir
+		root, err := git.GetRepoRoot(workDir)
+		if err != nil {
+			return fmt.Errorf("not in a git repository (use --repo to specify one)")
 		}
+		repoRoot = root
 	} else {
 		var err error
 		repoRoot, err = filepath.Abs(repoRoot)
