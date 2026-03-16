@@ -359,7 +359,7 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	skipIfWindows(t)
 
 	// Script that fails with "model not found" when -m is passed,
-	// and succeeds without it (simulating a retired model name).
+	// and succeeds without it (simulating a retired default model).
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 for arg in "$@"; do
   if [ "$arg" = "-m" ]; then
@@ -371,7 +371,6 @@ echo '{"type":"result","result":"Review from default model"}'
 `)
 
 	a := NewGeminiAgent(scriptPath)
-	a.Model = "gemini-old-model"
 	var output bytes.Buffer
 	res, err := a.Review(
 		context.Background(), t.TempDir(), "sha", "prompt", &output,
@@ -396,7 +395,6 @@ exit 1
 `)
 
 	a := NewGeminiAgent(scriptPath)
-	a.Model = "gemini-old-model"
 	var output bytes.Buffer
 	// The retry (without -m) will also fail since the script always
 	// exits 1, but the important thing is that stderr is captured
@@ -412,7 +410,7 @@ exit 1
 func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
 	skipIfWindows(t)
 
-	// When Model is already empty, don't retry on model-not-found.
+	// When Model is empty, don't retry on model-not-found.
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo "Error: model is not found" >&2
 exit 1
@@ -431,21 +429,29 @@ exit 1
 func TestGeminiReview_ExplicitModelNoFallback(t *testing.T) {
 	skipIfWindows(t)
 
-	// When the model was set via WithModel (user config), model-not-found
-	// errors should fail fast instead of silently falling back.
+	// When the model is not the built-in default, model-not-found
+	// errors should fail fast with exactly one invocation.
+	counterFile := filepath.Join(t.TempDir(), "invocations")
 	scriptPath := writeTempCommand(t, `#!/bin/sh
+echo "invoked" >> "$COUNTER_FILE"
 echo "Error: model is not found for API version v1" >&2
 exit 1
 `)
 
+	t.Setenv("COUNTER_FILE", counterFile)
 	a := NewGeminiAgent(scriptPath).WithModel("user-specified-model")
 	var output bytes.Buffer
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "sha", "prompt", &output,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed",
-		"explicit model should fail fast, not retry")
+	assert.Contains(t, err.Error(), "gemini failed")
+
+	countBytes, readErr := os.ReadFile(counterFile)
+	require.NoError(t, readErr)
+	lines := strings.Count(string(countBytes), "invoked")
+	assert.Equal(t, 1, lines,
+		"explicit model should invoke exactly once, not retry")
 }
 
 func TestIsModelNotFoundError(t *testing.T) {
