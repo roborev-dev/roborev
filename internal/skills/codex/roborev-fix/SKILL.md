@@ -1,6 +1,6 @@
 ---
 name: roborev-fix
-description: Fix multiple review findings in one pass by discovering open reviews and fixing them all
+description: Use when the user explicitly asks for $roborev-fix or only provides job IDs; do not use for pasted review findings
 ---
 
 # roborev-fix
@@ -12,6 +12,20 @@ Fix all open review findings in one pass.
 ```
 $roborev-fix [job_id...]
 ```
+
+## When NOT to invoke this skill
+
+Do NOT invoke this skill just because the user pasted existing review
+findings or review text into the conversation.
+
+If the prompt already contains the findings to fix, treat that as direct fix
+input and work on the code normally. The presence of verdicts, severities,
+file paths, suggested fixes, or copied review summaries is not by itself a
+request to run `$roborev-fix`.
+
+Use this skill only when the user explicitly invokes `$roborev-fix`, asks you
+to use the roborev fix workflow, or provides only job IDs / open reviews that
+must be fetched first.
 
 ## IMPORTANT
 
@@ -122,6 +136,15 @@ Follow the project's commit conventions (see CLAUDE.md). If the project
 instructs you to always commit, do so without asking.
 
 ## Examples
+
+**Pasted findings in the prompt:**
+
+User: "Roborev found HIGH in foo.go:42 and MEDIUM in bar.go:10 ..."
+
+Agent:
+1. Treats the pasted findings as direct fix input
+2. Fixes the code directly without invoking `$roborev-fix`
+3. Only uses roborev commands if the user later asks to comment on or close a specific review
 
 **Auto-discovery:**
 
