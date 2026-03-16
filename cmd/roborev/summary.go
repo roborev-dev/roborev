@@ -20,6 +20,7 @@ func summaryCmd() *cobra.Command {
 		repoPath   string
 		branch     string
 		since      string
+		allRepos   bool
 		jsonOutput bool
 	)
 
@@ -29,10 +30,11 @@ func summaryCmd() *cobra.Command {
 		Long: `Show aggregate review statistics from existing data.
 
 Surfaces pass/fail trends, agent effectiveness, review duration,
-fix adoption rates, and codebase hotspots.
+fix adoption rates, and per-repo breakdowns.
 
 Examples:
   roborev summary                     # Last 7 days, current repo
+  roborev summary --all               # Last 7 days, all repos
   roborev summary --since 30d         # Last 30 days
   roborev summary --branch main       # Filter by branch
   roborev summary --repo /path/to/repo
@@ -44,18 +46,17 @@ Examples:
 
 			addr := getDaemonAddr()
 
-			// Auto-resolve repo from cwd when not specified
-			if repoPath == "" {
+			// Auto-resolve repo from cwd when not specified (unless --all)
+			if !allRepos && repoPath == "" {
 				if root, err := git.GetMainRepoRoot("."); err == nil {
 					repoPath = root
 				}
-			} else {
+			} else if repoPath != "" {
 				if root, err := git.GetMainRepoRoot(repoPath); err == nil {
 					repoPath = root
 				}
 			}
 
-			// Build query
 			params := url.Values{}
 			if repoPath != "" {
 				params.Set("repo", repoPath)
@@ -65,6 +66,9 @@ Examples:
 			}
 			if since != "" {
 				params.Set("since", since)
+			}
+			if allRepos {
+				params.Set("all", "true")
 			}
 
 			client := &http.Client{Timeout: 10 * time.Second}
@@ -97,6 +101,7 @@ Examples:
 	cmd.Flags().StringVar(&repoPath, "repo", "", "scope to a single repo (default: current repo)")
 	cmd.Flags().StringVar(&branch, "branch", "", "scope to a single branch")
 	cmd.Flags().StringVar(&since, "since", "7d", "time window (e.g. 24h, 7d, 30d)")
+	cmd.Flags().BoolVar(&allRepos, "all", false, "show summary across all repos")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "structured output for scripting")
 
 	return cmd
@@ -133,8 +138,12 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 	if s.Verdicts.Total > 0 {
 		cmd.Println("Verdicts")
 		v := s.Verdicts
-		cmd.Printf("  Pass: %d | Fail: %d | Addressed: %d | Pass rate: %.0f%%\n",
-			v.Passed, v.Failed, v.Addressed, v.PassRate*100)
+		cmd.Printf("  Pass: %d | Fail: %d | Pass rate: %.0f%%\n",
+			v.Passed, v.Failed, v.PassRate*100)
+		if v.Failed > 0 {
+			cmd.Printf("  Addressed: %d of %d failures (%.0f%% resolution rate)\n",
+				v.Addressed, v.Failed, v.ResolutionRate*100)
+		}
 		cmd.Println()
 	}
 
@@ -186,12 +195,20 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 		cmd.Println()
 	}
 
-	// Hotspots
-	if len(s.Hotspots) > 0 {
-		cmd.Println("Hotspots (most failures)")
-		for _, h := range s.Hotspots {
-			cmd.Printf("  %s  %d failures\n", shortRef(h.GitRef), h.Failures)
+	// Per-repo breakdown (only when showing all repos)
+	if len(s.Repos) > 0 {
+		cmd.Println("Repos")
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "  Repo\tJobs\tPass\tFail\tAddressed\n")
+		for _, r := range s.Repos {
+			name := r.Name
+			if name == "" {
+				name = filepath.Base(r.Path)
+			}
+			fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\n",
+				name, r.Total, r.Passed, r.Failed, r.Addressed)
 		}
+		w.Flush()
 		cmd.Println()
 	}
 
@@ -201,8 +218,8 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 		cmd.Printf("  Total: %d | Retries: %d\n", s.Failures.Total, s.Failures.Retries)
 		if len(s.Failures.Errors) > 0 {
 			cmd.Println("  By category:")
-			for cat, count := range s.Failures.Errors {
-				cmd.Printf("    %-12s %d\n", cat, count)
+			for _, cat := range sortedErrorCategories(s.Failures.Errors) {
+				cmd.Printf("    %-12s %d\n", cat, s.Failures.Errors[cat])
 			}
 		}
 		cmd.Println()
@@ -210,6 +227,32 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 
 	if s.Overview.Total == 0 {
 		cmd.Println("No review data for this time window.")
+	}
+}
+
+// sortedErrorCategories returns error category keys in deterministic order.
+func sortedErrorCategories(errors map[string]int) []string {
+	keys := make([]string, 0, len(errors))
+	for k := range errors {
+		keys = append(keys, k)
+	}
+	// Sort by count descending, then alphabetically
+	sortFunc := func(i, j int) bool {
+		if errors[keys[i]] != errors[keys[j]] {
+			return errors[keys[i]] > errors[keys[j]]
+		}
+		return keys[i] < keys[j]
+	}
+	sortSlice(keys, sortFunc)
+	return keys
+}
+
+// sortSlice sorts a string slice using the given less function.
+func sortSlice(s []string, less func(i, j int) bool) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && less(j, j-1); j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
 	}
 }
 

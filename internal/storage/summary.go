@@ -16,8 +16,8 @@ type Summary struct {
 	Agents   []AgentStats   `json:"agents"`
 	Duration DurationStats  `json:"duration"`
 	JobTypes []JobTypeStats `json:"job_types"`
-	Hotspots []HotspotStats `json:"hotspots"`
 	Failures FailureStats   `json:"failures"`
+	Repos    []RepoSummary  `json:"repos,omitempty"`
 }
 
 // OverviewStats contains job counts by status.
@@ -34,11 +34,12 @@ type OverviewStats struct {
 
 // VerdictStats contains pass/fail/addressed counts for completed reviews.
 type VerdictStats struct {
-	Total     int     `json:"total"`
-	Passed    int     `json:"passed"`
-	Failed    int     `json:"failed"`
-	Addressed int     `json:"addressed"`
-	PassRate  float64 `json:"pass_rate"`
+	Total          int     `json:"total"`
+	Passed         int     `json:"passed"`
+	Failed         int     `json:"failed"`
+	Addressed      int     `json:"addressed"`
+	PassRate       float64 `json:"pass_rate"`
+	ResolutionRate float64 `json:"resolution_rate"`
 }
 
 // AgentStats contains per-agent performance metrics.
@@ -73,10 +74,14 @@ type JobTypeStats struct {
 	Rebased int    `json:"rebased,omitempty"`
 }
 
-// HotspotStats contains git refs with the most failures.
-type HotspotStats struct {
-	GitRef   string `json:"git_ref"`
-	Failures int    `json:"failures"`
+// RepoSummary contains per-repo summary when querying across all repos.
+type RepoSummary struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Total     int    `json:"total"`
+	Passed    int    `json:"passed"`
+	Failed    int    `json:"failed"`
+	Addressed int    `json:"addressed"`
 }
 
 // FailureStats contains failure categorization.
@@ -97,6 +102,7 @@ type SummaryOptions struct {
 	RepoPath string
 	Branch   string
 	Since    time.Time
+	AllRepos bool
 }
 
 // GetSummary computes aggregate review statistics.
@@ -128,46 +134,41 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 
 	var err error
 
-	// 1. Overview: job counts by status
 	s.Overview, err = db.summaryOverview(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Verdicts: pass/fail/addressed
 	s.Verdicts, err = db.summaryVerdicts(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Agent breakdown
 	s.Agents, err = db.summaryAgents(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Duration percentiles
 	s.Duration, err = db.summaryDurations(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Job type breakdown
 	s.JobTypes, err = db.summaryJobTypes(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 6. Hotspots
-	s.Hotspots, err = db.summaryHotspots(where, args)
+	s.Failures, err = db.summaryFailures(where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	// 7. Failures
-	s.Failures, err = db.summaryFailures(where, args)
-	if err != nil {
-		return nil, err
+	if opts.AllRepos || opts.RepoPath == "" {
+		s.Repos, err = db.summaryRepos(where, args)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return s, nil
@@ -197,9 +198,6 @@ func (db *DB) summaryOverview(where string, args []any) (OverviewStats, error) {
 }
 
 func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
-	// Only count verdict-bearing review jobs. Task jobs have no meaningful
-	// verdict (ParseVerdict always runs but the result is meaningless for
-	// freeform analysis output). Excluding them ensures Passed + Failed == Total.
 	query := `
 		SELECT
 			COUNT(*),
@@ -221,13 +219,13 @@ func (db *DB) summaryVerdicts(where string, args []any) (VerdictStats, error) {
 	if v.Total > 0 {
 		v.PassRate = float64(v.Passed) / float64(v.Total)
 	}
+	if v.Failed > 0 {
+		v.ResolutionRate = float64(v.Addressed) / float64(v.Failed)
+	}
 	return v, nil
 }
 
 func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
-	// Exclude task and fix jobs from verdict counts — their verdict_bool
-	// values are meaningless (agents produce freeform output or code edits,
-	// not PASS/FAIL verdicts). Error counts still include all job types.
 	query := `
 		SELECT
 			j.agent,
@@ -266,7 +264,6 @@ func (db *DB) summaryAgents(where string, args []any) ([]AgentStats, error) {
 		return nil, err
 	}
 
-	// Compute median durations per agent
 	for i := range agents {
 		median, err := db.agentMedianDuration(where, args, agents[i].Agent)
 		if err != nil {
@@ -309,7 +306,6 @@ func (db *DB) agentMedianDuration(where string, args []any, agent string) (float
 }
 
 func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) {
-	// Review duration: started_at to finished_at
 	reviewQuery := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -322,7 +318,6 @@ func (db *DB) summaryDurations(where string, args []any) (DurationStats, error) 
 		return DurationStats{}, err
 	}
 
-	// Queue wait: enqueued_at to started_at
 	queueQuery := `
 		SELECT CAST((julianday(j.started_at) - julianday(j.enqueued_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -395,19 +390,24 @@ func (db *DB) summaryJobTypes(where string, args []any) ([]JobTypeStats, error) 
 	return types, rows.Err()
 }
 
-func (db *DB) summaryHotspots(where string, args []any) ([]HotspotStats, error) {
-	// Only count review-bearing job types in hotspots — task and fix jobs
-	// have meaningless verdict_bool values.
+func (db *DB) summaryRepos(where string, args []any) ([]RepoSummary, error) {
 	query := `
-		SELECT j.git_ref, COUNT(*) as failures
+		SELECT
+			r.name,
+			r.root_path,
+			COUNT(*) as total,
+			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rv.closed = 1 AND rv.verdict_bool = 0
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
-		` + where + ` AND j.status IN ('done', 'applied', 'rebased') AND rv.verdict_bool = 0
-			AND ` + verdictJobFilter + `
-		GROUP BY j.git_ref
-		ORDER BY failures DESC
-		LIMIT 10`
+		` + where + `
+		GROUP BY r.id
+		ORDER BY total DESC`
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -415,19 +415,18 @@ func (db *DB) summaryHotspots(where string, args []any) ([]HotspotStats, error) 
 	}
 	defer rows.Close()
 
-	var hotspots []HotspotStats
+	var repos []RepoSummary
 	for rows.Next() {
-		var h HotspotStats
-		if err := rows.Scan(&h.GitRef, &h.Failures); err != nil {
+		var rs RepoSummary
+		if err := rows.Scan(&rs.Name, &rs.Path, &rs.Total, &rs.Passed, &rs.Failed, &rs.Addressed); err != nil {
 			return nil, err
 		}
-		hotspots = append(hotspots, h)
+		repos = append(repos, rs)
 	}
-	return hotspots, rows.Err()
+	return repos, rows.Err()
 }
 
 func (db *DB) summaryFailures(where string, args []any) (FailureStats, error) {
-	// Total failed + total retries
 	countQuery := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
@@ -441,7 +440,6 @@ func (db *DB) summaryFailures(where string, args []any) (FailureStats, error) {
 		return f, err
 	}
 
-	// Error categorization
 	errQuery := `
 		SELECT j.error
 		FROM review_jobs j

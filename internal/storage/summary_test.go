@@ -20,7 +20,6 @@ func TestGetSummary_Empty(t *testing.T) {
 	assert.Equal(t, 0, s.Verdicts.Total)
 	assert.Empty(t, s.Agents)
 	assert.Empty(t, s.JobTypes)
-	assert.Empty(t, s.Hotspots)
 	assert.Equal(t, 0, s.Failures.Total)
 }
 
@@ -31,16 +30,13 @@ func TestGetSummary_Overview(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Enqueue 3 jobs, complete 2 (one pass, one fail), leave 1 queued
 	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	_ = enqueueJob(t, db, repo.ID, commit.ID, "abc123") // stays queued
 
-	// Claim and complete j1 (pass)
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j1.ID, "codex", "prompt", "No issues found."))
 
-	// Claim and complete j2 (fail)
 	claimJob(t, db, "w2")
 	require.NoError(t, db.CompleteJob(j2.ID, "codex", "prompt", "- Medium — Bug found"))
 
@@ -61,7 +57,7 @@ func TestGetSummary_Verdicts(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create 3 completed jobs: 2 pass, 1 fail
+	// 2 pass, 1 fail
 	for range 2 {
 		j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 		claimJob(t, db, "w1")
@@ -80,6 +76,34 @@ func TestGetSummary_Verdicts(t *testing.T) {
 	assert.Equal(t, 2, s.Verdicts.Passed)
 	assert.Equal(t, 1, s.Verdicts.Failed)
 	assert.InDelta(t, 0.667, s.Verdicts.PassRate, 0.01)
+	assert.InDelta(t, 0.0, s.Verdicts.ResolutionRate, 0.01)
+}
+
+func TestGetSummary_ResolutionRate(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// 3 failing reviews, close 2 of them (addressed)
+	for i := range 3 {
+		j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+		claimJob(t, db, "w1")
+		require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Bug"))
+		if i < 2 {
+			require.NoError(t, db.MarkReviewClosedByJobID(j.ID, true))
+		}
+	}
+
+	s, err := db.GetSummary(SummaryOptions{
+		Since: time.Now().Add(-1 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, s.Verdicts.Failed)
+	assert.Equal(t, 2, s.Verdicts.Addressed)
+	assert.InDelta(t, 0.667, s.Verdicts.ResolutionRate, 0.01)
 }
 
 func TestGetSummary_AgentBreakdown(t *testing.T) {
@@ -89,7 +113,6 @@ func TestGetSummary_AgentBreakdown(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create jobs with different agents
 	for _, agent := range []string{"codex", "codex", "claude-code"} {
 		j, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: agent,
@@ -105,7 +128,6 @@ func TestGetSummary_AgentBreakdown(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, s.Agents, 2)
-	// Sorted by total DESC
 	assert.Equal(t, "codex", s.Agents[0].Agent)
 	assert.Equal(t, 2, s.Agents[0].Total)
 	assert.Equal(t, "claude-code", s.Agents[1].Agent)
@@ -119,10 +141,8 @@ func TestGetSummary_JobTypes(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Regular review
 	enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 
-	// Task job
 	_, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "analyze", Agent: "codex",
 		Prompt: "analyze this", JobType: JobTypeTask,
@@ -150,7 +170,6 @@ func TestGetSummary_Failures(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create and fail jobs with different errors
 	errors := []string{
 		"quota exceeded: rate limit hit",
 		"timeout: deadline exceeded",
@@ -183,7 +202,6 @@ func TestGetSummary_RepoFilter(t *testing.T) {
 	c1 := createCommit(t, db, repo1.ID, "aaa111")
 	c2 := createCommit(t, db, repo2.ID, "bbb222")
 
-	// 2 jobs in repo1, 1 in repo2
 	enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
 	enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
 	enqueueJob(t, db, repo2.ID, c2.ID, "bbb222")
@@ -211,7 +229,6 @@ func TestGetSummary_BranchFilter(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Jobs on different branches
 	for _, branch := range []string{"main", "main", "feature"} {
 		_, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
@@ -235,56 +252,21 @@ func TestGetSummary_SinceFilter(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create a job now
 	enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 
-	// Query with a since in the future — should find nothing
+	// Since in the future — nothing
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(1 * time.Hour),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, s.Overview.Total)
 
-	// Query with since in the past — should find the job
+	// Since in the past — finds it
 	s, err = db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-1 * time.Hour),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.Overview.Total)
-}
-
-func TestGetSummary_Hotspots(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/test-repo")
-
-	// Create multiple failing reviews for one ref and one for another
-	for i := range 3 {
-		c := createCommit(t, db, repo.ID, "hot"+string(rune('a'+i)))
-		j, err := db.EnqueueJob(EnqueueOpts{
-			RepoID: repo.ID, CommitID: c.ID, GitRef: "hotref", Agent: "codex",
-		})
-		require.NoError(t, err)
-		claimJob(t, db, "w1")
-		require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Bug"))
-	}
-	c := createCommit(t, db, repo.ID, "cold1")
-	j, err := db.EnqueueJob(EnqueueOpts{
-		RepoID: repo.ID, CommitID: c.ID, GitRef: "coldref", Agent: "codex",
-	})
-	require.NoError(t, err)
-	claimJob(t, db, "w1")
-	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- Low — Minor thing"))
-
-	s, err := db.GetSummary(SummaryOptions{
-		Since: time.Now().Add(-1 * time.Hour),
-	})
-	require.NoError(t, err)
-
-	require.GreaterOrEqual(t, len(s.Hotspots), 1)
-	assert.Equal(t, "hotref", s.Hotspots[0].GitRef)
-	assert.Equal(t, 3, s.Hotspots[0].Failures)
 }
 
 func TestGetSummary_RFC3339Timestamps(t *testing.T) {
@@ -294,21 +276,17 @@ func TestGetSummary_RFC3339Timestamps(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Enqueue a job, then manually update its enqueued_at to RFC3339 format
-	// (as synced rows would have) to verify datetime() normalization works.
 	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	rfc3339Time := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
 	_, err := db.Exec("UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
 	require.NoError(t, err)
 
-	// Query with a since before the RFC3339 timestamp — should find the job
 	s, err := db.GetSummary(SummaryOptions{
 		Since: time.Now().Add(-2 * time.Hour),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.Overview.Total)
 
-	// Query with a since after the RFC3339 timestamp — should NOT find it
 	s, err = db.GetSummary(SummaryOptions{
 		Since: time.Now(),
 	})
@@ -323,17 +301,17 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
 
-	// Create a normal review job that passes (will have verdict)
+	// Normal review (pass)
 	j1 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j1.ID, "codex", "p", "No issues found."))
 
-	// Create a normal review job that fails (will have verdict)
+	// Normal review (fail)
 	j2 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug found"))
 
-	// Create a task job (no meaningful verdict)
+	// Task job (no meaningful verdict)
 	j3, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "analyze", Agent: "codex",
 		Prompt: "analyze this", JobType: JobTypeTask,
@@ -342,7 +320,7 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j3.ID, "codex", "", "some analysis output"))
 
-	// Create a fix job (no meaningful verdict — agent edits code, not reviews)
+	// Fix job (no meaningful verdict)
 	j4, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
 		Agent: "codex", JobType: JobTypeFix, ParentJobID: j2.ID,
@@ -356,26 +334,76 @@ func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Overview should count all 4 jobs
 	assert.Equal(t, 4, s.Overview.Done)
-
-	// Verdicts should only count the 2 review jobs
 	assert.Equal(t, 2, s.Verdicts.Total)
 	assert.Equal(t, 1, s.Verdicts.Passed)
 	assert.Equal(t, 1, s.Verdicts.Failed)
 	assert.Equal(t, s.Verdicts.Passed+s.Verdicts.Failed, s.Verdicts.Total)
 
-	// Agent pass/fail should also exclude task and fix jobs
 	require.Len(t, s.Agents, 1)
 	assert.Equal(t, "codex", s.Agents[0].Agent)
-	assert.Equal(t, 4, s.Agents[0].Total)  // all 4 jobs counted in total
-	assert.Equal(t, 1, s.Agents[0].Passed) // only review pass
-	assert.Equal(t, 1, s.Agents[0].Failed) // only review fail
+	assert.Equal(t, 4, s.Agents[0].Total)
+	assert.Equal(t, 1, s.Agents[0].Passed)
+	assert.Equal(t, 1, s.Agents[0].Failed)
+}
 
-	// Hotspots should only count the review failure, not the fix job
-	require.Len(t, s.Hotspots, 1)
-	assert.Equal(t, "abc123", s.Hotspots[0].GitRef)
-	assert.Equal(t, 1, s.Hotspots[0].Failures) // only the review fail, not the fix
+func TestGetSummary_RepoBreakdown(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo1 := createRepo(t, db, "/tmp/repo1")
+	repo2 := createRepo(t, db, "/tmp/repo2")
+	c1 := createCommit(t, db, repo1.ID, "aaa111")
+	c2 := createCommit(t, db, repo2.ID, "bbb222")
+
+	// repo1: 2 jobs (1 pass, 1 fail)
+	j := enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "No issues found."))
+
+	j = enqueueJob(t, db, repo1.ID, c1.ID, "aaa111")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "- High — Bug"))
+
+	// repo2: 1 job (pass)
+	j = enqueueJob(t, db, repo2.ID, c2.ID, "bbb222")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j.ID, "codex", "p", "No issues found."))
+
+	// All repos query includes repo breakdown
+	s, err := db.GetSummary(SummaryOptions{
+		Since:    time.Now().Add(-1 * time.Hour),
+		AllRepos: true,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, s.Repos, 2)
+	// Sorted by total desc
+	assert.Equal(t, "/tmp/repo1", s.Repos[0].Path)
+	assert.Equal(t, 2, s.Repos[0].Total)
+	assert.Equal(t, 1, s.Repos[0].Passed)
+	assert.Equal(t, 1, s.Repos[0].Failed)
+
+	assert.Equal(t, "/tmp/repo2", s.Repos[1].Path)
+	assert.Equal(t, 1, s.Repos[1].Total)
+	assert.Equal(t, 1, s.Repos[1].Passed)
+	assert.Equal(t, 0, s.Repos[1].Failed)
+}
+
+func TestGetSummary_RepoBreakdownOmittedForSingleRepo(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+
+	s, err := db.GetSummary(SummaryOptions{
+		RepoPath: repo.RootPath,
+		Since:    time.Now().Add(-1 * time.Hour),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, s.Repos)
 }
 
 func TestPercentile(t *testing.T) {

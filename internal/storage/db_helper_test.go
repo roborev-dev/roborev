@@ -168,4 +168,3 @@ func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob
 	}
 	return repo, jobs
 }
-

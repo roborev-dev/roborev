@@ -2472,6 +2472,7 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		RepoPath: q.Get("repo"),
 		Branch:   q.Get("branch"),
 		Since:    since,
+		AllRepos: q.Get("all") == "true",
 	}
 
 	summary, err := s.db.GetSummary(opts)
