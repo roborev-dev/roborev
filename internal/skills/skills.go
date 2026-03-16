@@ -123,20 +123,20 @@ func Update() ([]InstallResult, error) {
 	var results []InstallResult
 
 	if IsInstalled(AgentClaude) {
-		removeLegacySkills(AgentClaude)
 		result, err := installClaude()
 		if err != nil {
 			return nil, fmt.Errorf("update claude skills: %w", err)
 		}
+		removeLegacySkills(AgentClaude)
 		results = append(results, result)
 	}
 
 	if IsInstalled(AgentCodex) {
-		removeLegacySkills(AgentCodex)
 		result, err := installCodex()
 		if err != nil {
 			return nil, fmt.Errorf("update codex skills: %w", err)
 		}
+		removeLegacySkills(AgentCodex)
 		results = append(results, result)
 	}
 

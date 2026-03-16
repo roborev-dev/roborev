@@ -214,23 +214,34 @@ func TestUpdateRemovesLegacySkills(t *testing.T) {
 }
 
 func TestUpdateLegacyOnlyInstall(t *testing.T) {
-	tmpHome := setupTestEnv(t)
+	tests := []struct {
+		agent   Agent
+		dirName string
+	}{
+		{AgentClaude, ".claude"},
+		{AgentCodex, ".codex"},
+	}
 
-	// User only has the deprecated skill — no current skills at all
-	createMockSkill(t, tmpHome, AgentClaude, "roborev-address")
+	for _, tt := range tests {
+		t.Run(string(tt.agent), func(t *testing.T) {
+			tmpHome := setupTestEnv(t)
 
-	results, err := Update()
-	require.NoError(t, err)
+			// User only has the deprecated skill — no current skills
+			createMockSkill(t, tmpHome, tt.agent, "roborev-address")
 
-	// Should still detect and update this agent
-	require.Len(t, results, 1)
-	res := getResultForAgent(t, results, AgentClaude)
-	assert.Len(t, res.Installed, len(expectedSkills))
+			results, err := Update()
+			require.NoError(t, err)
 
-	// Legacy dir should be removed
-	legacyDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-address")
-	_, err = os.Stat(legacyDir)
-	assert.True(t, os.IsNotExist(err), "expected legacy roborev-address dir to be removed")
+			require.Len(t, results, 1)
+			res := getResultForAgent(t, results, tt.agent)
+			assert.Len(t, res.Installed, len(expectedSkills))
+
+			// Legacy dir should be removed
+			legacyDir := filepath.Join(tmpHome, tt.dirName, "skills", "roborev-address")
+			_, err = os.Stat(legacyDir)
+			assert.True(t, os.IsNotExist(err), "expected legacy dir to be removed")
+		})
+	}
 }
 
 func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
