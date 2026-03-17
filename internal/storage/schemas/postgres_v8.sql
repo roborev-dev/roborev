@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   job_type TEXT NOT NULL DEFAULT 'review',
   review_type TEXT NOT NULL DEFAULT '',
   patch_id TEXT,
-  status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
+  status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'done', 'failed', 'canceled', 'applied', 'rebased')),
   agentic BOOLEAN DEFAULT FALSE,
   enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL,
   started_at TIMESTAMP WITH TIME ZONE,
