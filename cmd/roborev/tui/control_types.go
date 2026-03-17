@@ -34,6 +34,13 @@ type controlMutationMsg struct {
 	respCh chan<- controlResponse
 }
 
+// controlSocketReadyMsg is sent to the model after the control
+// listener starts successfully, so the model can update runtime
+// metadata on reconnect without advertising a dead socket.
+type controlSocketReadyMsg struct {
+	socketPath string
+}
+
 // stateSnapshot is the data payload for the get-state query.
 type stateSnapshot struct {
 	View            string           `json:"view"`

@@ -775,6 +775,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			5*time.Second, m.currentView,
 		)
 		result = m
+	case controlSocketReadyMsg:
+		m.controlSocket = msg.socketPath
+		result = m
 	case controlQueryMsg:
 		result, cmd = m.handleControlQuery(msg)
 	case controlMutationMsg:
@@ -898,7 +901,6 @@ func Run(cfg Config) error {
 	}
 
 	m := newModel(cfg.ServerAddr, opts...)
-	m.controlSocket = socketPath
 	p := tea.NewProgram(
 		m,
 		programOptionsForModel(m)...,
@@ -919,6 +921,15 @@ func Run(cfg Config) error {
 				)
 				return
 			}
+
+			// Notify the model that the control socket is
+			// active so it can update runtime metadata on
+			// reconnect. This is deferred until after the
+			// listener succeeds to avoid advertising a
+			// socket that failed to bind.
+			p.Send(controlSocketReadyMsg{
+				socketPath: socketPath,
+			})
 
 			rtInfo := buildTUIRuntimeInfo(
 				socketPath, cfg.ServerAddr,
