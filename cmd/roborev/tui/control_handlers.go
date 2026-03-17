@@ -469,6 +469,9 @@ func (m model) handleCtrlCloseReview(
 			m.selectedIdx = idx
 			m.updateSelectedJobID()
 			restoreSelection = true
+		} else {
+			m.selectedIdx = -1
+			m.selectedJobID = 0
 		}
 	}
 
@@ -535,6 +538,9 @@ func (m model) handleCtrlCancelJob(
 		if idx >= 0 {
 			m.selectedIdx = idx
 			m.updateSelectedJobID()
+		} else {
+			m.selectedIdx = -1
+			m.selectedJobID = 0
 		}
 	}
 

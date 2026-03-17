@@ -118,10 +118,11 @@ func startControlListener(
 
 	go acceptLoop(ctx, ln, p)
 
-	// Remove the socket file before closing the listener so
-	// that a new process reusing the same --control-socket path
-	// cannot have its freshly-created socket unlinked by our
-	// deferred cleanup.
+	// Disable automatic unlinking so ln.Close() does not remove
+	// whatever is at socketPath — a successor process may have
+	// already bound a new socket there.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+
 	cleanup := func() {
 		cancel()
 		os.Remove(socketPath)

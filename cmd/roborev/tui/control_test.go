@@ -551,6 +551,28 @@ func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
 	require.False(t, resp.OK, "expected error for job without review")
 }
 
+func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	// Only one visible job — closing it leaves no visible jobs.
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withClosed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	params, _ := json.Marshal(map[string]any{
+		"job_id": int64(1),
+		"closed": true,
+	})
+	updated, resp, _ := m.handleCtrlCloseReview(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, -1, updated.selectedIdx,
+		"selectedIdx should be cleared when no visible jobs remain")
+	assert.EqualValues(t, 0, updated.selectedJobID,
+		"selectedJobID should be cleared when no visible jobs remain")
+}
+
 func TestHandleCtrlCancelJob(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
@@ -583,6 +605,25 @@ func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
 		"selection should remain on job 1")
 	assert.Equal(t, 0, updated.selectedIdx,
 		"selectedIdx should remain 0")
+}
+
+func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	// Only one visible job — canceling it hides it under hideClosed.
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusRunning)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	params, _ := json.Marshal(map[string]int64{"job_id": 1})
+	updated, resp, _ := m.handleCtrlCancelJob(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, -1, updated.selectedIdx,
+		"selectedIdx should be cleared when no visible jobs remain")
+	assert.EqualValues(t, 0, updated.selectedJobID,
+		"selectedJobID should be cleared when no visible jobs remain")
 }
 
 func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
