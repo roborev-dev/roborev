@@ -1536,6 +1536,12 @@ func applyCommandOverrides(a Agent, cfg *config.Config) Agent {
 			clone.Command = cfg.PiCmd
 			return &clone
 		}
+	case *OpenCodeAgent:
+		if cfg.OpenCodeCmd != "" {
+			clone := *agent
+			clone.Command = cfg.OpenCodeCmd
+			return &clone
+		}
 	}
 	return a
 }

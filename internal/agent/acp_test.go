@@ -1149,6 +1149,38 @@ func TestGetAvailableWithConfigPiCmd(t *testing.T) {
 	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
 }
 
+func TestGetAvailableWithConfigOpenCodeCmd(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := "custom-opencode"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	err := os.WriteFile(
+		filepath.Join(fakeBin, wrapper),
+		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
+	)
+	require.NoError(t, err)
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"opencode": NewOpenCodeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{
+		OpenCodeCmd: filepath.Join(fakeBin, wrapper),
+	}
+
+	resolved, err := GetAvailableWithConfig("opencode", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "opencode", resolved.Name())
+
+	ca, ok := resolved.(CommandAgent)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+}
+
 func TestGetAvailableWithConfigACPFallbackBackupUsesConfigCmd(t *testing.T) {
 	// Configured ACP alias is requested but ACP command is
 	// unavailable. The backup agent's default command is also

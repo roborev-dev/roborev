@@ -145,6 +145,7 @@ type Config struct {
 	ClaudeCodeCmd string `toml:"claude_code_cmd"`
 	CursorCmd     string `toml:"cursor_cmd"`
 	PiCmd         string `toml:"pi_cmd"`
+	OpenCodeCmd   string `toml:"opencode_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key" sensitive:"true"`
@@ -691,6 +692,7 @@ func DefaultConfig() *Config {
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
 		PiCmd:              "pi",
+		OpenCodeCmd:        "opencode",
 		MouseEnabled:       true,
 	}
 	cfg.CI.ThrottleBypassUsers = []string{
