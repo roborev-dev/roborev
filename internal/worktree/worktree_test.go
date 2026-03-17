@@ -2,14 +2,20 @@ package worktree
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
 
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()

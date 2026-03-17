@@ -23,6 +23,15 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Prevent global/system git config from leaking into tests.
+	// Without this, commit.gpgsign=true in global config triggers
+	// gpg-agent/pinentry during test commits.
+	os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Never allow git to prompt for input (passwords, passphrases, etc).
+	// If something unexpected tries to prompt, fail fast instead of blocking.
+	os.Setenv("GIT_TERMINAL_PROMPT", "0")
+
 	origEnv, hasEnv := os.LookupEnv("ROBOREV_DATA_DIR")
 	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
