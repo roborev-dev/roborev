@@ -36,14 +36,14 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			// Count completed jobs per session ID. If multiple
-			// completed jobs share a session, it was resumed and
-			// agentsview totals are cumulative — skip to avoid
-			// overcounting. Jobs that never ran (queued/canceled/
-			// failed) don't contribute turns, so ignore them.
+			// Count started jobs per session ID. If multiple jobs
+			// share a session and any of them moved past queued,
+			// the session was resumed and agentsview totals are
+			// cumulative — skip to avoid overcounting.
 			sessionCount := make(map[string]int)
 			for _, job := range jobs {
-				if job.SessionID != "" && job.HasViewableOutput() {
+				if job.SessionID != "" &&
+					job.Status != storage.JobStatusQueued {
 					sessionCount[job.SessionID]++
 				}
 			}
