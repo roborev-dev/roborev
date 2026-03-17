@@ -45,8 +45,3 @@ func systemRoot() string {
 	return `C:\Windows`
 }
 
-// restrictedUmask is a no-op on Windows (umask is a Unix concept).
-func restrictedUmask() int { return 0 }
-
-// restoreUmask is a no-op on Windows.
-func restoreUmask(_ int) {}

@@ -28,14 +28,3 @@ func isProcessAlive(pid int) bool {
 	return errors.Is(err, syscall.EPERM)
 }
 
-// restrictedUmask sets umask to 0177 so that newly created files
-// (including Unix sockets) are owner-only. Returns the previous
-// umask for restoring.
-func restrictedUmask() int {
-	return syscall.Umask(0177)
-}
-
-// restoreUmask resets the process umask to a previous value.
-func restoreUmask(old int) {
-	syscall.Umask(old)
-}

@@ -74,8 +74,9 @@ func startControlListener(
 	socketPath string, p *tea.Program,
 ) (func(), error) {
 	// Ensure the parent directory exists (fresh installs,
-	// custom --control-socket paths).
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+	// custom --control-socket paths). Use 0700 so only the
+	// owning user can traverse into the socket directory.
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
 		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
 
@@ -86,23 +87,31 @@ func startControlListener(
 		return nil, err
 	}
 
-	// Restrict umask so the socket is created with 0600 from the
-	// start, closing the TOCTOU window between Listen and Chmod.
-	oldUmask := restrictedUmask()
 	ln, err := net.Listen("unix", socketPath)
-	restoreUmask(oldUmask)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
+	}
+
+	// Restrict socket permissions to owner-only. The parent
+	// directory is already 0700, so the brief window between
+	// Listen and Chmod is not exploitable.
+	if err := os.Chmod(socketPath, 0600); err != nil {
+		ln.Close()
+		return nil, fmt.Errorf("chmod socket: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go acceptLoop(ctx, ln, p)
 
+	// Remove the socket file before closing the listener so
+	// that a new process reusing the same --control-socket path
+	// cannot have its freshly-created socket unlinked by our
+	// deferred cleanup.
 	cleanup := func() {
 		cancel()
-		ln.Close()
 		os.Remove(socketPath)
+		ln.Close()
 	}
 	return cleanup, nil
 }
