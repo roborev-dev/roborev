@@ -910,8 +910,13 @@ func Run(cfg Config) error {
 	// so that p.Send (used by control handlers) never blocks. The
 	// model closes m.ready on its first Update call. Skip if
 	// socketPath is empty (ensureSocketDir failed).
+	// cleanupDone is closed after socket/runtime cleanup finishes
+	// so Run() can wait for it before returning, preventing stale
+	// files if the process exits immediately after p.Run().
+	cleanupDone := make(chan struct{})
 	if socketPath != "" {
 		go func() {
+			defer close(cleanupDone)
 			<-m.ready
 
 			cleanup, err := startControlListener(socketPath, p)
@@ -946,9 +951,12 @@ func Run(cfg Config) error {
 			cleanup()
 			RemoveTUIRuntime()
 		}()
+	} else {
+		close(cleanupDone)
 	}
 
 	_, err := p.Run()
+	<-cleanupDone
 	return err
 }
 
