@@ -157,6 +157,8 @@ type rerunResultMsg struct {
 	oldStartedAt  *time.Time
 	oldFinishedAt *time.Time
 	oldError      string
+	oldClosed     *bool
+	oldVerdict    *string
 	err           error
 }
 type errMsg error

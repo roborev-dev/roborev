@@ -648,6 +648,10 @@ func (m model) handleRerunResultMsg(
 		m.setJobStartedAt(msg.jobID, msg.oldStartedAt)
 		m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
 		m.setJobError(msg.jobID, msg.oldError)
+		m.mutateJob(msg.jobID, func(job *storage.ReviewJob) {
+			job.Closed = msg.oldClosed
+			job.Verdict = msg.oldVerdict
+		})
 		m.err = msg.err
 	}
 	return m, nil

@@ -128,15 +128,22 @@ func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
-		oldStatus := job.Status
-		oldStartedAt := job.StartedAt
-		oldFinishedAt := job.FinishedAt
-		oldError := job.Error
+		snap := rerunSnapshot{
+			jobID:         job.ID,
+			oldStatus:     job.Status,
+			oldStartedAt:  job.StartedAt,
+			oldFinishedAt: job.FinishedAt,
+			oldError:      job.Error,
+			oldClosed:     job.Closed,
+			oldVerdict:    job.Verdict,
+		}
 		job.Status = storage.JobStatusQueued
 		job.StartedAt = nil
 		job.FinishedAt = nil
 		job.Error = ""
-		return m, m.rerunJob(job.ID, oldStatus, oldStartedAt, oldFinishedAt, oldError)
+		job.Closed = nil
+		job.Verdict = nil
+		return m, m.rerunJob(snap)
 	}
 	return m, nil
 }

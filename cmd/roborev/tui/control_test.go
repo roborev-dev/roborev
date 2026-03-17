@@ -647,6 +647,60 @@ func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 	require.False(t, resp.OK, "expected error for non-rerunnable job")
 }
 
+func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
+	verdict := "FAIL"
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(10,
+			withStatus(storage.JobStatusDone),
+			withClosed(boolPtr(true)),
+			func(j *storage.ReviewJob) { j.Verdict = &verdict },
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 10
+
+	result, _ := m.handleRerunKey()
+	updated := result.(model)
+	assert.Equal(t, storage.JobStatusQueued, updated.jobs[0].Status)
+	assert.Nil(t, updated.jobs[0].Closed,
+		"Closed should be cleared on rerun")
+	assert.Nil(t, updated.jobs[0].Verdict,
+		"Verdict should be cleared on rerun")
+	assert.True(t, updated.isJobVisible(updated.jobs[0]),
+		"rerun job should be visible with hideClosed")
+}
+
+func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
+	verdict := "FAIL"
+	closed := true
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{
+		makeJob(10, withStatus(storage.JobStatusQueued)),
+	}
+	// Simulate the optimistic update already applied — job is
+	// queued with nil Closed/Verdict. The error path should
+	// restore the original values.
+	msg := rerunResultMsg{
+		jobID:      10,
+		oldState:   storage.JobStatusDone,
+		oldClosed:  &closed,
+		oldVerdict: &verdict,
+		err:        fmt.Errorf("server error"),
+	}
+	result, _ := m.handleRerunResultMsg(msg)
+	updated := result.(model)
+	assert.Equal(t, storage.JobStatusDone, updated.jobs[0].Status)
+	require.NotNil(t, updated.jobs[0].Closed)
+	assert.True(t, *updated.jobs[0].Closed,
+		"Closed should be restored on failure")
+	require.NotNil(t, updated.jobs[0].Verdict)
+	assert.Equal(t, "FAIL", *updated.jobs[0].Verdict,
+		"Verdict should be restored on failure")
+}
+
 func TestHandleCtrlQuit(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 

@@ -583,10 +583,15 @@ func (m model) handleCtrlRerunJob(
 		}, nil
 	}
 
-	oldStatus := job.Status
-	oldStartedAt := job.StartedAt
-	oldFinishedAt := job.FinishedAt
-	oldError := job.Error
+	snap := rerunSnapshot{
+		jobID:         job.ID,
+		oldStatus:     job.Status,
+		oldStartedAt:  job.StartedAt,
+		oldFinishedAt: job.FinishedAt,
+		oldError:      job.Error,
+		oldClosed:     job.Closed,
+		oldVerdict:    job.Verdict,
+	}
 	job.Status = storage.JobStatusQueued
 	job.StartedAt = nil
 	job.FinishedAt = nil
@@ -598,10 +603,7 @@ func (m model) handleCtrlRerunJob(
 	job.Closed = nil
 	job.Verdict = nil
 
-	return m, controlResponse{OK: true},
-		m.rerunJob(
-			params.JobID, oldStatus, oldStartedAt, oldFinishedAt, oldError,
-		)
+	return m, controlResponse{OK: true}, m.rerunJob(snap)
 }
 
 func (m model) handleCtrlQuit() (model, controlResponse, tea.Cmd) {

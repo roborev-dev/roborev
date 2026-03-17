@@ -152,12 +152,36 @@ func (m model) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt
 	}
 }
 
-// rerunJob sends a rerun request to the server for failed/canceled jobs
-func (m model) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedAt, oldFinishedAt *time.Time, oldError string) tea.Cmd {
+// rerunJob sends a rerun request to the server for failed/canceled jobs.
+func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON("/api/job/rerun", map[string]any{"job_id": jobID}, nil)
-		return rerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
+		err := m.postJSON(
+			"/api/job/rerun",
+			map[string]any{"job_id": snap.jobID}, nil,
+		)
+		return rerunResultMsg{
+			jobID:         snap.jobID,
+			oldState:      snap.oldStatus,
+			oldStartedAt:  snap.oldStartedAt,
+			oldFinishedAt: snap.oldFinishedAt,
+			oldError:      snap.oldError,
+			oldClosed:     snap.oldClosed,
+			oldVerdict:    snap.oldVerdict,
+			err:           err,
+		}
 	}
+}
+
+// rerunSnapshot captures job state before an optimistic rerun
+// update so it can be rolled back if the server request fails.
+type rerunSnapshot struct {
+	jobID         int64
+	oldStatus     storage.JobStatus
+	oldStartedAt  *time.Time
+	oldFinishedAt *time.Time
+	oldError      string
+	oldClosed     *bool
+	oldVerdict    *string
 }
 
 func (m model) submitComment(jobID int64, text string) tea.Cmd {
