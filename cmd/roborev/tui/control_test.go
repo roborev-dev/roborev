@@ -609,6 +609,33 @@ func TestHandleCtrlRerunJob(t *testing.T) {
 	assert.Equal(t, storage.JobStatusQueued, updated.jobs[0].Status)
 }
 
+func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
+	verdict := "FAIL"
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(8,
+			withStatus(storage.JobStatusDone),
+			withClosed(boolPtr(true)),
+			func(j *storage.ReviewJob) { j.Verdict = &verdict },
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 8
+
+	params, _ := json.Marshal(map[string]int64{"job_id": 8})
+	updated, resp, _ := m.handleCtrlRerunJob(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	assert.Equal(t, storage.JobStatusQueued, updated.jobs[0].Status)
+	assert.Nil(t, updated.jobs[0].Closed,
+		"Closed should be cleared on rerun")
+	assert.Nil(t, updated.jobs[0].Verdict,
+		"Verdict should be cleared on rerun")
+	// Job should now be visible under hideClosed
+	assert.True(t, updated.isJobVisible(updated.jobs[0]),
+		"rerun job should be visible with hideClosed")
+}
+
 func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{

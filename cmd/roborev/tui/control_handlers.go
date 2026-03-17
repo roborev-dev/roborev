@@ -591,6 +591,12 @@ func (m model) handleCtrlRerunJob(
 	job.StartedAt = nil
 	job.FinishedAt = nil
 	job.Error = ""
+	// Clear review-derived fields so the rerun job is visible
+	// under hideClosed and doesn't expose stale verdict data.
+	// The daemon deletes the review row on rerun; this keeps
+	// the local optimistic state consistent until the next fetch.
+	job.Closed = nil
+	job.Verdict = nil
 
 	return m, controlResponse{OK: true},
 		m.rerunJob(
