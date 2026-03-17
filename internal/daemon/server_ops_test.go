@@ -504,26 +504,76 @@ type fixJobRequest struct {
 	StaleJobID  int64  `json:"stale_job_id,omitempty"`
 }
 
-func TestHandleFixJobStaleValidation(t *testing.T) {
+type fixJobFixture struct {
+	server    *Server
+	db        *storage.DB
+	tmpDir    string
+	repoDir   string
+	repo      *storage.Repo
+	commit    *storage.Commit
+	reviewJob *storage.ReviewJob
+}
+
+func assertHandlerStatus(
+	t *testing.T, w *httptest.ResponseRecorder, want int,
+) {
+	t.Helper()
+	require.Equalf(t, want, w.Code,
+		"unexpected handler status, body: %s", w.Body.String(),
+	)
+}
+
+func setupFixJobFixture(
+	t *testing.T, repoName, gitRef string,
+) *fixJobFixture {
+	t.Helper()
 	server, db, tmpDir := newTestServer(t)
 	server.configWatcher.Config().FixAgent = "test"
 
-	repoDir := filepath.Join(tmpDir, "repo-fix-val")
+	repoDir := filepath.Join(tmpDir, repoName)
 	testutil.InitTestGitRepo(t, repoDir)
-	repo, _ := db.GetOrCreateRepo(repoDir)
-	commit, _ := db.GetOrCreateCommit(
-		repo.ID, "fix-val-abc", "Author", "Subject", time.Now(),
-	)
 
-	// Create a review job and complete it with output
-	reviewJob, _ := db.EnqueueJob(storage.EnqueueOpts{
+	repo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err, "GetOrCreateRepo failed")
+
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, gitRef, "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err, "GetOrCreateCommit failed")
+
+	reviewJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   repo.ID,
 		CommitID: commit.ID,
-		GitRef:   "fix-val-abc",
+		GitRef:   gitRef,
 		Agent:    "test",
 	})
-	db.ClaimJob("w1")
-	db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
+	require.NoError(t, err, "EnqueueJob failed")
+
+	_, err = db.ClaimJob("w1")
+	require.NoError(t, err, "ClaimJob failed")
+	require.NoError(t, db.CompleteJob(
+		reviewJob.ID, "test", "prompt", "FAIL: issues found",
+	), "CompleteJob failed")
+
+	return &fixJobFixture{
+		server:    server,
+		db:        db,
+		tmpDir:    tmpDir,
+		repoDir:   repoDir,
+		repo:      repo,
+		commit:    commit,
+		reviewJob: reviewJob,
+	}
+}
+
+func TestHandleFixJobStaleValidation(t *testing.T) {
+	fixture := setupFixJobFixture(t, "repo-fix-val", "fix-val-abc")
+	server := fixture.server
+	db := fixture.db
+	tmpDir := fixture.tmpDir
+	repo := fixture.repo
+	commit := fixture.commit
+	reviewJob := fixture.reviewJob
 
 	t.Run("fix job inherits parent commit metadata", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(
@@ -532,52 +582,19 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for fix enqueue, got %d: %s",
-				w.Code, w.Body.String())
-
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
-		if fixJob.CommitID == nil || *fixJob.CommitID != commit.ID {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected fix job commit_id=%d, got %v",
-				commit.ID, fixJob.CommitID)
-
-		}
-		if fixJob.CommitSubject != commit.Subject {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected fix job commit_subject %q, got %q",
-				commit.Subject, fixJob.CommitSubject)
-
-		}
+		require.NotNil(t, fixJob.CommitID)
+		require.Equal(t, commit.ID, *fixJob.CommitID)
+		require.Equal(t, commit.Subject, fixJob.CommitSubject)
 
 		stored, err := db.GetJobByID(fixJob.ID)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "GetJobByID(%d): %v", fixJob.ID, err)
-		}
-		if stored.CommitID == nil || *stored.CommitID != commit.ID {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected stored fix job commit_id=%d, got %v",
-				commit.ID, stored.CommitID)
-
-		}
-		if stored.CommitSubject != commit.Subject {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected stored fix job commit_subject %q, got %q",
-				commit.Subject, stored.CommitSubject)
-
-		}
+		require.NoError(t, err, "GetJobByID(%d)", fixJob.ID)
+		require.NotNil(t, stored.CommitID)
+		require.Equal(t, commit.ID, *stored.CommitID)
+		require.Equal(t, commit.Subject, stored.CommitSubject)
 	})
 
 	t.Run("custom prompt includes review context", func(t *testing.T) {
@@ -590,40 +607,17 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for fix enqueue with custom prompt, got %d: %s",
-				w.Code, w.Body.String())
-
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
 
 		stored, err := db.GetJobByID(fixJob.ID)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "GetJobByID(%d): %v", fixJob.ID, err)
-		}
+		require.NoError(t, err, "GetJobByID(%d)", fixJob.ID)
 
 		// The stored prompt must contain both the review output AND the custom instructions
-		if !strings.Contains(stored.Prompt, "FAIL: issues found") {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected fix prompt to contain review output, got:\n%s",
-				stored.Prompt)
-
-		}
-		if !strings.Contains(stored.Prompt, "Ignore the security concern") {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected fix prompt to contain custom instructions, got:\n%s",
-				stored.Prompt)
-
-		}
+		require.Contains(t, stored.Prompt, "FAIL: issues found")
+		require.Contains(t, stored.Prompt, "Ignore the security concern")
 	})
 
 	t.Run("fix job as parent is rejected", func(t *testing.T) {
@@ -645,14 +639,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for fix-job parent, got %d: %s",
-				w.Code, w.Body.String())
-
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("stale job that is not a fix job is rejected", func(t *testing.T) {
@@ -663,13 +650,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for non-fix stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("stale job with wrong parent is rejected", func(t *testing.T) {
@@ -702,13 +683,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for wrong-parent stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("stale job without patch is rejected", func(t *testing.T) {
@@ -731,13 +706,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for patchless stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("non-terminal stale job statuses are rejected", func(t *testing.T) {
@@ -797,14 +766,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				)
 				w := httptest.NewRecorder()
 				server.handleFixJob(w, req)
-
-				if w.Code != http.StatusBadRequest {
-					assert.Condition(t, func() bool {
-						return false
-					}, "Expected 400 for %s stale job, got %d: %s",
-						status, w.Code, w.Body.String())
-
-				}
+				assertHandlerStatus(t, w, http.StatusBadRequest)
 			})
 		}
 	})
@@ -832,12 +794,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for compact parent fix, got %d: %s", w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -872,12 +829,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for range parent fix, got %d: %s", w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -901,12 +853,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for dash-prefixed git_ref, got %d", w.Code)
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("rejects git_ref with control chars", func(t *testing.T) {
@@ -916,12 +863,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for control-char git_ref, got %d", w.Code)
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("rejects whitespace-padded dash ref", func(t *testing.T) {
@@ -931,14 +873,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for space+dash git_ref, got %d",
-				w.Code)
-
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("treats whitespace-only git_ref as empty", func(t *testing.T) {
@@ -952,13 +887,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		// Whitespace-only trims to empty, so it's treated as
 		// no user-provided ref — the server falls through to
 		// the parent ref/branch/HEAD resolution chain.
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for whitespace-only git_ref (treated as empty), got %d: %s",
-				w.Code, w.Body.String())
-
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 	})
 
 	t.Run("accepts valid git_ref from request", func(t *testing.T) {
@@ -968,12 +897,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusCreated {
-			require.Condition(t, func() bool {
-				return false
-			}, "Expected 201 for valid git_ref, got %d: %s", w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
 		testutil.DecodeJSON(t, w, &fixJob)
@@ -1016,13 +940,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400 for cross-repo stale job, got %d: %s",
-				w.Code, w.Body.String())
-		}
+		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 }
 
@@ -1073,23 +991,10 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, db, tmpDir := newTestServer(t)
+			fixture := setupFixJobFixture(t, "repo-fix-avail", "fix-avail-abc")
+			server := fixture.server
 			server.configWatcher.Config().FixAgent = tt.fixAgent
-
-			repoDir := filepath.Join(tmpDir, "repo-fix-avail")
-			testutil.InitTestGitRepo(t, repoDir)
-			repo, _ := db.GetOrCreateRepo(repoDir)
-			commit, _ := db.GetOrCreateCommit(
-				repo.ID, "fix-avail-abc", "Author", "Subject", time.Now(),
-			)
-			reviewJob, _ := db.EnqueueJob(storage.EnqueueOpts{
-				RepoID:   repo.ID,
-				CommitID: commit.ID,
-				GitRef:   "fix-avail-abc",
-				Agent:    "test",
-			})
-			db.ClaimJob("w1")
-			db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
+			reviewJob := fixture.reviewJob
 
 			// Isolate PATH
 			mockDir := t.TempDir()
@@ -1117,13 +1022,7 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 			)
 			w := httptest.NewRecorder()
 			server.handleFixJob(w, req)
-
-			if w.Code != tt.expectedCode {
-				require.Condition(t, func() bool {
-					return false
-				}, "Expected status %d, got %d: %s",
-					tt.expectedCode, w.Code, w.Body.String())
-			}
+			assertHandlerStatus(t, w, tt.expectedCode)
 		})
 	}
 }
