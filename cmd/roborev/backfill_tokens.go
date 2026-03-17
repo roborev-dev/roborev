@@ -36,12 +36,14 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			// Build set of session IDs used by multiple jobs.
-			// These are resumed sessions whose agentsview totals
-			// are cumulative — backfilling would overcount.
+			// Count completed jobs per session ID. If multiple
+			// completed jobs share a session, it was resumed and
+			// agentsview totals are cumulative — skip to avoid
+			// overcounting. Jobs that never ran (queued/canceled/
+			// failed) don't contribute turns, so ignore them.
 			sessionCount := make(map[string]int)
 			for _, job := range jobs {
-				if job.SessionID != "" {
+				if job.SessionID != "" && job.HasViewableOutput() {
 					sessionCount[job.SessionID]++
 				}
 			}

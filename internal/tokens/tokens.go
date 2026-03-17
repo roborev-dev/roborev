@@ -3,6 +3,7 @@ package tokens
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -73,8 +74,19 @@ func FetchForSession(
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		// agentsview failed or session not found — not fatal
-		return nil, nil
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr := string(exitErr.Stderr)
+			// Exit 1 with no output means session not found
+			if exitErr.ExitCode() == 1 && len(out) == 0 {
+				return nil, nil
+			}
+			return nil, fmt.Errorf(
+				"agentsview token-use: exit %d: %s",
+				exitErr.ExitCode(), stderr,
+			)
+		}
+		return nil, fmt.Errorf("agentsview token-use: %w", err)
 	}
 
 	var resp agentsviewResponse
