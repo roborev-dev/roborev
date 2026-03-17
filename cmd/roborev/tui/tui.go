@@ -25,10 +25,11 @@ import (
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-// Tick intervals for adaptive polling
+// Tick intervals for local redraws and adaptive polling.
 const (
-	tickIntervalActive = 2 * time.Second  // Poll frequently when jobs are running/pending
-	tickIntervalIdle   = 10 * time.Second // Poll less when queue is idle
+	displayTickInterval = 1 * time.Second  // Repaint only (elapsed counters, flash expiry)
+	tickIntervalActive  = 2 * time.Second  // Poll frequently when jobs are running/pending
+	tickIntervalIdle    = 10 * time.Second // Poll less when queue is idle
 )
 
 // TUI styles using AdaptiveColor for light/dark terminal support.
@@ -566,6 +567,7 @@ func newModel(serverAddr string, opts ...option) model {
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.WindowSize(), // request initial window size
+		m.displayTick(),
 		m.tick(),
 		m.fetchJobs(),
 		m.fetchStatus(),
@@ -712,6 +714,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
 		result, cmd = m.handleWindowSizeMsg(msg)
+	case displayTickMsg:
+		return m, m.displayTick()
 	case tickMsg:
 		result, cmd = m.handleTickMsg(msg)
 	case logTickMsg:

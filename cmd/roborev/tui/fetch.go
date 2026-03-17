@@ -28,6 +28,12 @@ func (m model) tick() tea.Cmd {
 	})
 }
 
+func (m model) displayTick() tea.Cmd {
+	return tea.Tick(displayTickInterval, func(time.Time) tea.Msg {
+		return displayTickMsg{}
+	})
+}
+
 // tickInterval returns the appropriate polling interval based on queue activity.
 // Uses faster polling when jobs are running or pending, slower when idle.
 func (m model) tickInterval() time.Duration {

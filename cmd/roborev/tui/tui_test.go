@@ -330,6 +330,25 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
+	m := newModel("http://localhost")
+	m.loadingJobs = false
+	m.loadingMore = false
+
+	updated, cmd := m.Update(displayTickMsg{})
+	m2 := updated.(model)
+
+	if m2.loadingJobs {
+		t.Error("display tick should not mark jobs as loading")
+	}
+	if m2.loadingMore {
+		t.Error("display tick should not start pagination loads")
+	}
+	if cmd == nil {
+		t.Error("display tick should reschedule itself")
+	}
+}
+
 func TestTUITickInterval(t *testing.T) {
 	tests := []struct {
 		name              string

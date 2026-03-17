@@ -115,6 +115,9 @@ type logOutputMsg struct {
 // logTickMsg triggers a refresh of the log output
 type logTickMsg struct{}
 
+// displayTickMsg triggers a local repaint without polling the daemon.
+type displayTickMsg struct{}
+
 type tickMsg time.Time
 type jobsMsg struct {
 	jobs    []storage.ReviewJob
