@@ -29,7 +29,7 @@ jobs:
 
       - name: Test with race detection (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: go test -race -tags integration ./...
+        run: go test -race -shuffle=on -tags integration ./...
 
       - name: Test (Windows)
         if: matrix.os == 'windows-latest'
@@ -38,7 +38,7 @@ jobs:
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
-          go test -tags integration ./... 2>&1 | Tee-Object -Variable testOut
+          go test -shuffle=on -tags integration ./... 2>&1 | Tee-Object -Variable testOut
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             $failed = $testOut | Select-String "^FAIL\s"
@@ -73,7 +73,7 @@ jobs:
       - name: Test with coverage
         # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
         # between tests in different packages that modify this environment variable
-        run: go test -race -tags integration -p 1 -coverprofile=coverage.out ./...
+        run: go test -race -shuffle=on -tags integration -p 1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de  # v5.5.2
@@ -105,7 +105,7 @@ jobs:
           go-version: '1.25'
 
       - name: Run integration tests
-        run: go test -tags=postgres -v ./internal/storage/... -run Integration
+        run: go test -shuffle=on -tags=postgres -v ./internal/storage/... -run Integration
         env:
           TEST_POSTGRES_URL: postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test
 
