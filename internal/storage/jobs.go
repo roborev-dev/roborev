@@ -1020,7 +1020,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.provider
+		       j.parent_job_id, j.provider, j.token_usage
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -1099,7 +1099,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, sessionID, jobTypeStr, reviewTypeStr, patchIDStr, provider sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, sessionID, jobTypeStr, reviewTypeStr, patchIDStr, provider, tokenUsage sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var closed sql.NullInt64
@@ -1110,7 +1110,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &closed, &output,
 			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-			&parentJobID, &provider)
+			&parentJobID, &provider, &tokenUsage)
 		if err != nil {
 			return nil, err
 		}
@@ -1173,6 +1173,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if parentJobID.Valid {
 			j.ParentJobID = &parentJobID.Int64
+		}
+		if tokenUsage.Valid {
+			j.TokenUsage = tokenUsage.String
 		}
 		// Compute verdict only for non-task jobs (task jobs don't have PASS/FAIL verdicts)
 		// Task jobs (run, analyze, custom) are identified by having no commit_id and not being dirty

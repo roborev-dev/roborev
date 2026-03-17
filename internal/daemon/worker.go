@@ -580,16 +580,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Fetch token usage from agentsview (best-effort).
-	// Use the captured session ID from this run, falling back to the
-	// job's pre-existing session ID (for resumed sessions).
+	// Only collect for fresh sessions (where we captured a new session ID).
+	// Resumed sessions report cumulative totals across all turns, which
+	// would overcount if assigned to a single job.
 	capturedSession := ""
 	if sessionWriter != nil {
 		capturedSession = sessionWriter.SessionID()
 	}
-	if capturedSession == "" {
-		capturedSession = job.SessionID
-	}
-	if capturedSession != "" {
+	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
+	if capturedSession != "" && !wasResumed {
 		usage, tokenErr := tokens.FetchForSession(
 			context.Background(), capturedSession,
 		)

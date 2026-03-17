@@ -29,15 +29,18 @@ will be skipped.`,
 			}
 			defer db.Close()
 
-			jobs, err := db.ListJobs(
-				"done", "", 0, 0,
-			)
+			// Query all jobs (no status filter) and filter for
+			// terminal states that could have token data.
+			jobs, err := db.ListJobs("", "", 0, 0)
 			if err != nil {
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
 			var total, updated, skipped, failed int
 			for _, job := range jobs {
+				if !job.HasViewableOutput() {
+					continue
+				}
 				if job.TokenUsage != "" {
 					continue // already has token data
 				}
