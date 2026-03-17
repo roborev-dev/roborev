@@ -246,12 +246,10 @@ func TestIncrementBatchConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, err := db.IncrementBatchCompleted(batch.ID)
 			assert.NoError(t, err, "IncrementBatchCompleted")
-		}()
+		})
 	}
 	wg.Wait()
 

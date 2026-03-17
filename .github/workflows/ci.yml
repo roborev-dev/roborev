@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Build
         run: go build ./...
@@ -68,7 +68,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Test with coverage
         # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
@@ -102,7 +102,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Run integration tests
         run: go test -tags=postgres -v ./internal/storage/... -run Integration
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6.3.0
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20  # v9.2.0
