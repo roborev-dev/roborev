@@ -853,7 +853,151 @@ func TestRunFixOpen(t *testing.T) {
 		require.Error(t, err, "expected error on server failure")
 		assert.Contains(t, err.Error(), "server error")
 	})
+
+	t.Run("all-branches includes jobs from other branches", func(t *testing.T) {
+		// The repo is on its default branch (e.g. "master"). Jobs from
+		// "other-branch" should still be discovered when branch==""
+		// (all-branches mode) — filterReachableJobs must be skipped.
+		var reviewCalls atomic.Int32
+		var openQueryCalls atomic.Int32
+
+		_ = newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+				q := r.URL.Query()
+				if q.Get("closed") == "false" && q.Get("limit") == "0" {
+					// Verify no branch filter in the API query
+					assert.Empty(t, q.Get("branch"),
+						"all-branches should not send branch filter")
+					if openQueryCalls.Add(1) == 1 {
+						writeJSON(w, map[string]any{
+							"jobs": []storage.ReviewJob{
+								{
+									ID:     30,
+									Status: storage.JobStatusDone,
+									Agent:  "test",
+									Branch: "other-branch",
+									GitRef: "dirty",
+								},
+								{
+									ID:     31,
+									Status: storage.JobStatusDone,
+									Agent:  "test",
+									Branch: "yet-another",
+									GitRef: "dirty",
+								},
+							},
+							"has_more": false,
+						})
+					} else {
+						writeJSON(w, map[string]any{
+							"jobs":     []storage.ReviewJob{},
+							"has_more": false,
+						})
+					}
+				} else {
+					writeJSON(w, map[string]any{
+						"jobs": []storage.ReviewJob{
+							{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				}
+			}).
+			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+				reviewCalls.Add(1)
+				writeJSON(w, storage.Review{Output: "findings"})
+			}).
+			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}).
+			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}).
+			Build()
+
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixOpen(cmd, "", false, fixOptions{
+				agentName: "test",
+				reasoning: "fast",
+			})
+		})
+		require.NoError(t, err, "runFixOpen all-branches")
+		assert.Contains(t, out, "Found 2 open job(s)")
+		assert.GreaterOrEqual(t, reviewCalls.Load(), int32(2),
+			"should process jobs from other branches")
+	})
+
+	t.Run("explicit branch filters by branch field", func(t *testing.T) {
+		// When branch="target-branch", only jobs with that branch
+		// should survive filterReachableJobs (branchOnly path).
+		var reviewCalls atomic.Int32
+		var openQueryCalls atomic.Int32
+
+		_ = newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+				q := r.URL.Query()
+				if q.Get("closed") == "false" && q.Get("limit") == "0" {
+					assert.Equal(t, "target-branch", q.Get("branch"))
+					if openQueryCalls.Add(1) == 1 {
+						writeJSON(w, map[string]any{
+							"jobs": []storage.ReviewJob{
+								{
+									ID:     40,
+									Status: storage.JobStatusDone,
+									Agent:  "test",
+									Branch: "target-branch",
+									GitRef: "dirty",
+								},
+								{
+									ID:     41,
+									Status: storage.JobStatusDone,
+									Agent:  "test",
+									Branch: "wrong-branch",
+									GitRef: "dirty",
+								},
+							},
+							"has_more": false,
+						})
+					} else {
+						writeJSON(w, map[string]any{
+							"jobs":     []storage.ReviewJob{},
+							"has_more": false,
+						})
+					}
+				} else {
+					writeJSON(w, map[string]any{
+						"jobs": []storage.ReviewJob{
+							{ID: 40, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				}
+			}).
+			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+				reviewCalls.Add(1)
+				writeJSON(w, storage.Review{Output: "findings"})
+			}).
+			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}).
+			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}).
+			Build()
+
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixOpen(cmd, "target-branch", false, fixOptions{
+				agentName: "test",
+				reasoning: "fast",
+			})
+		})
+		require.NoError(t, err, "runFixOpen with explicit branch")
+		// Only job 40 matches; job 41 has wrong branch
+		assert.Contains(t, out, "Found 1 open job(s)")
+		assert.Equal(t, int32(1), reviewCalls.Load())
+	})
 }
+
 func TestRunFixOpenOrdering(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
@@ -2886,9 +3030,12 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 		}).
 		Build()
 
+	// Pass the worktree's branch explicitly, matching what the CLI does
+	// when neither --all-branches nor --branch is set (effectiveBranch
+	// is resolved to the current branch before calling runFixOpen).
 	_, runErr := runWithOutput(t, worktreeDir, func(cmd *cobra.Command) error {
 		return runFixOpen(
-			cmd, "", false,
+			cmd, "wt-branch", false,
 			fixOptions{agentName: "test", reasoning: "fast"},
 		)
 	})

@@ -458,7 +458,12 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 		if err != nil {
 			return err
 		}
-		jobs = filterReachableJobs(worktreeRoot, "", jobs)
+		// When listing a specific branch, filter by reachability/branch.
+		// When listing all branches (branch==""), skip filtering — the
+		// user explicitly asked for everything in this repo.
+		if branch != "" {
+			jobs = filterReachableJobs(worktreeRoot, branch, jobs)
+		}
 
 		// Filter out jobs we've already processed
 		var newIDs []int64
@@ -963,7 +968,9 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		if queryErr != nil {
 			return queryErr
 		}
-		jobs = filterReachableJobs(repoRoot, "", jobs)
+		if branch != "" {
+			jobs = filterReachableJobs(repoRoot, branch, jobs)
+		}
 		jobIDs = make([]int64, len(jobs))
 		for i, j := range jobs {
 			jobIDs[i] = j.ID
