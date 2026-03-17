@@ -49,6 +49,25 @@ type capturedEnqueue struct {
 	Reasoning string `json:"reasoning"`
 }
 
+type repoCommitSpec struct {
+	path    string
+	content string
+	message string
+}
+
+func setupRepoWithCommits(
+	t *testing.T, repo *TestGitRepo, commits ...repoCommitSpec,
+) []string {
+	t.Helper()
+	shas := make([]string, 0, len(commits))
+	for _, commit := range commits {
+		shas = append(shas, repo.CommitFile(
+			commit.path, commit.content, commit.message,
+		))
+	}
+	return shas
+}
+
 func mockEnqueue(
 	t *testing.T, mux *http.ServeMux,
 ) <-chan capturedEnqueue {
@@ -76,28 +95,40 @@ func mockEnqueue(
 	return ch
 }
 
-func mockWaitableReview(
-	t *testing.T, mux *http.ServeMux, output string,
+func mockEnqueueQueued(
+	mux *http.ServeMux, gitRef string,
 ) {
-	t.Helper()
 	mux.HandleFunc("/api/enqueue", func(
 		w http.ResponseWriter, r *http.Request,
 	) {
 		respondJSON(w, http.StatusCreated, storage.ReviewJob{
-			ID: 1, GitRef: "abc123", Agent: "test",
+			ID: 1, GitRef: gitRef, Agent: "test",
 			Status: "queued",
 		})
 	})
+}
+
+func handleJobsDone(
+	w http.ResponseWriter, _ *http.Request, status storage.JobStatus,
+) {
+	job := storage.ReviewJob{
+		ID: 1, GitRef: "abc123", Agent: "test",
+		Status: status,
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"jobs": []storage.ReviewJob{job}, "has_more": false,
+	})
+}
+
+func mockWaitableReview(
+	t *testing.T, mux *http.ServeMux, output string,
+) {
+	t.Helper()
+	mockEnqueueQueued(mux, "abc123")
 	mux.HandleFunc("/api/jobs", func(
 		w http.ResponseWriter, r *http.Request,
 	) {
-		job := storage.ReviewJob{
-			ID: 1, GitRef: "abc123", Agent: "test",
-			Status: "done",
-		}
-		respondJSON(w, http.StatusOK, map[string]any{
-			"jobs": []storage.ReviewJob{job}, "has_more": false,
-		})
+		handleJobsDone(w, r, storage.JobStatusDone)
 	})
 	mux.HandleFunc("/api/review", func(
 		w http.ResponseWriter, r *http.Request,
@@ -113,10 +144,12 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
-		repo.CommitFile("file2.txt", "second", "second commit")
+		shas := setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file1.txt", "first", "first commit"},
+			repoCommitSpec{"file2.txt", "second", "second commit"},
+		)
 
-		shortFirstSHA := firstSHA[:7]
+		shortFirstSHA := shas[0][:7]
 		_, _, err := executeReviewCmd("--repo", repo.Dir, shortFirstSHA)
 		require.NoError(t, err, "enqueue failed: %v")
 
@@ -129,10 +162,12 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
-		repo.CommitFile("file2.txt", "second", "second commit")
+		shas := setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file1.txt", "first", "first commit"},
+			repoCommitSpec{"file2.txt", "second", "second commit"},
+		)
 
-		shortFirstSHA := firstSHA[:7]
+		shortFirstSHA := shas[0][:7]
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--sha", shortFirstSHA)
 		require.NoError(t, err, "enqueue failed: %v")
 
@@ -144,7 +179,9 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		repo.CommitFile("file1.txt", "first", "first commit")
+		setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file1.txt", "first", "first commit"},
+		)
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir)
 		require.NoError(t, err, "enqueue failed: %v")
@@ -228,20 +265,15 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 	t.Run("unknown status exceeds max retries", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		repo.CommitFile("file.txt", "content", "initial commit")
+		setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file.txt", "content", "initial commit"},
+		)
 
 		callCount := 0
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-			respondJSON(w, http.StatusCreated, job)
-		})
+		mockEnqueueQueued(mux, "abc123")
 		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			callCount++
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
-			respondJSON(w, http.StatusOK, map[string]any{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
+			handleJobsDone(w, r, storage.JobStatus("future_status"))
 		})
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
@@ -254,14 +286,13 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 	t.Run("counter resets on known status", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		repo.CommitFile("file.txt", "content", "initial commit")
+		setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file.txt", "content", "initial commit"},
+		)
 
 		poller := &mockJobPoller{}
 
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-			respondJSON(w, http.StatusCreated, job)
-		})
+		mockEnqueueQueued(mux, "abc123")
 		mux.HandleFunc("/api/jobs", poller.HandleJobs)
 		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, http.StatusOK, storage.Review{
@@ -298,14 +329,7 @@ func (m *mockJobPoller) HandleJobs(
 	default:
 		status = "done"
 	}
-	job := storage.ReviewJob{
-		ID: 1, GitRef: "abc123", Agent: "test",
-		Status: storage.JobStatus(status),
-	}
-	respondJSON(w, http.StatusOK, map[string]any{
-		"jobs":     []storage.ReviewJob{job},
-		"has_more": false,
-	})
+	handleJobsDone(w, r, storage.JobStatus(status))
 }
 
 func TestReviewFlagValidation(t *testing.T) {
@@ -361,14 +385,16 @@ func TestReviewSinceFlag(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
-		repo.CommitFile("file2.txt", "second", "second commit")
+		shas := setupRepoWithCommits(t, repo,
+			repoCommitSpec{"file1.txt", "first", "first commit"},
+			repoCommitSpec{"file2.txt", "second", "second commit"},
+		)
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", firstSHA[:7])
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", shas[0][:7])
 		require.NoError(t, err)
 
 		req := <-reqCh
-		assert.Contains(t, req.GitRef, firstSHA)
+		assert.Contains(t, req.GitRef, shas[0])
 		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"))
 	})
 
