@@ -913,11 +913,21 @@ func Run(cfg Config) error {
 	// cleanupDone is closed after socket/runtime cleanup finishes
 	// so Run() can wait for it before returning, preventing stale
 	// files if the process exits immediately after p.Run().
+	// programDone is closed after p.Run() returns so the goroutine
+	// can unblock if the program exits before m.ready fires.
 	cleanupDone := make(chan struct{})
+	programDone := make(chan struct{})
 	if socketPath != "" {
 		go func() {
 			defer close(cleanupDone)
-			<-m.ready
+
+			// Wait for either the event loop to start or the
+			// program to exit (e.g. terminal init failure).
+			select {
+			case <-m.ready:
+			case <-programDone:
+				return
+			}
 
 			cleanup, err := startControlListener(socketPath, p)
 			if err != nil {
@@ -956,6 +966,7 @@ func Run(cfg Config) error {
 	}
 
 	_, err := p.Run()
+	close(programDone)
 	<-cleanupDone
 	return err
 }
