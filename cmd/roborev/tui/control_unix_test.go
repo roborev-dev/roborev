@@ -4,6 +4,7 @@ package tui
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,25 +75,24 @@ func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 func TestCleanupDoesNotUnlinkSuccessorSocket(t *testing.T) {
 	socketPath := shortSocketPath(t, "succ")
 
-	// Start listener A.
-	cleanupA, err := startControlListener(
-		socketPath, newTestProgramUnix(t),
-	)
-	require.NoError(t, err, "start listener A")
+	// Listener A binds.
+	lnA, err := net.Listen("unix", socketPath)
+	require.NoError(t, err, "bind listener A")
+	lnA.(*net.UnixListener).SetUnlinkOnClose(false)
 
-	// Start listener B on the same path (simulates a successor
-	// process that removed A's stale socket and rebound).
-	cleanupA() // A cleans up: removes its socket, closes listener
-	cleanupB, err := startControlListener(
-		socketPath, newTestProgramUnix(t),
-	)
-	require.NoError(t, err, "start listener B")
-	t.Cleanup(cleanupB)
+	// Simulate the race window: A's cleanup removes its own
+	// socket, then B binds to the same path before A closes.
+	require.NoError(t, os.Remove(socketPath))
+	lnB, err := net.Listen("unix", socketPath)
+	require.NoError(t, err, "bind listener B")
+	t.Cleanup(func() { lnB.Close() })
 
-	// B's socket must still exist — A's cleanup must not have
-	// removed B's socket via the listener's automatic unlink.
+	// A's Close must not unlink B's socket. Without
+	// SetUnlinkOnClose(false), this would delete B's file.
+	lnA.Close()
+
 	assert.FileExists(t, socketPath,
-		"successor socket should survive predecessor cleanup")
+		"successor socket should survive predecessor close")
 }
 
 // newTestProgramUnix creates a tea.Program for Unix-only tests.

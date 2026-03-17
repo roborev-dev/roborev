@@ -693,6 +693,52 @@ func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
 	require.False(t, resp.OK, "expected error for non-cancellable job")
 }
 
+func TestHandleCancelKey_ClearsSelectionWhenNoneVisible(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusRunning)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	result, cmd := m.handleCancelKey()
+	updated := result.(model)
+	assert.Equal(t, storage.JobStatusCanceled, updated.jobs[0].Status)
+	assert.Equal(t, -1, updated.selectedIdx,
+		"selectedIdx should be cleared when no visible jobs remain")
+	assert.EqualValues(t, 0, updated.selectedJobID,
+		"selectedJobID should be cleared")
+	assert.NotNil(t, cmd, "expected non-nil cmd for cancel")
+}
+
+func TestHandleCancelKey_RollbackRestoresSelection(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusRunning)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	result, cmd := m.handleCancelKey()
+	updated := result.(model)
+	require.Equal(t, -1, updated.selectedIdx)
+
+	// Simulate server failure.
+	msg := cmd()
+	rollback, _ := updated.handleCancelResultMsg(msg.(cancelResultMsg))
+	restored := rollback.(model)
+	assert.Equal(t, storage.JobStatusRunning, restored.jobs[0].Status,
+		"status should be rolled back")
+	assert.EqualValues(t, 1, restored.selectedJobID,
+		"selection should be restored on rollback")
+	assert.Equal(t, 0, restored.selectedIdx,
+		"selectedIdx should point to the restored job")
+}
+
 func TestHandleCtrlRerunJob(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
