@@ -71,6 +71,30 @@ func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 		"incompatible socket should not be deleted")
 }
 
+func TestCleanupDoesNotUnlinkSuccessorSocket(t *testing.T) {
+	socketPath := shortSocketPath(t, "succ")
+
+	// Start listener A.
+	cleanupA, err := startControlListener(
+		socketPath, newTestProgramUnix(t),
+	)
+	require.NoError(t, err, "start listener A")
+
+	// Start listener B on the same path (simulates a successor
+	// process that removed A's stale socket and rebound).
+	cleanupA() // A cleans up: removes its socket, closes listener
+	cleanupB, err := startControlListener(
+		socketPath, newTestProgramUnix(t),
+	)
+	require.NoError(t, err, "start listener B")
+	t.Cleanup(cleanupB)
+
+	// B's socket must still exist — A's cleanup must not have
+	// removed B's socket via the listener's automatic unlink.
+	assert.FileExists(t, socketPath,
+		"successor socket should survive predecessor cleanup")
+}
+
 // newTestProgramUnix creates a tea.Program for Unix-only tests.
 func newTestProgramUnix(t *testing.T) *tea.Program {
 	t.Helper()

@@ -104,6 +104,7 @@ func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 		now := time.Now()
 		job.FinishedAt = &now
 		// Canceled jobs are hidden when hideClosed is active
+		restoreSelection := false
 		if m.hideClosed {
 			idx := m.findPrevVisibleJob(m.selectedIdx)
 			if idx < 0 {
@@ -115,9 +116,15 @@ func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 			if idx >= 0 {
 				m.selectedIdx = idx
 				m.updateSelectedJobID()
+			} else {
+				m.selectedIdx = -1
+				m.selectedJobID = 0
 			}
+			restoreSelection = true
 		}
-		return m, m.cancelJob(job.ID, oldStatus, oldFinishedAt)
+		return m, m.cancelJob(
+			job.ID, oldStatus, oldFinishedAt, restoreSelection,
+		)
 	}
 	return m, nil
 }

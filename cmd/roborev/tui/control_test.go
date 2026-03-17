@@ -573,6 +573,35 @@ func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
 		"selectedJobID should be cleared when no visible jobs remain")
 }
 
+func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withClosed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	params, _ := json.Marshal(map[string]any{
+		"job_id": int64(1),
+		"closed": true,
+	})
+	updated, resp, cmd := m.handleCtrlCloseReview(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	// Selection was cleared (no visible jobs remain).
+	require.Equal(t, -1, updated.selectedIdx)
+
+	// Simulate server failure — the result handler should
+	// restore job state and reselect the original job.
+	msg := cmd()
+	result, _ := updated.handleClosedResultMsg(msg.(closedResultMsg))
+	restored := result.(model)
+	assert.EqualValues(t, 1, restored.selectedJobID,
+		"selection should be restored to original job on rollback")
+	assert.Equal(t, 0, restored.selectedIdx,
+		"selectedIdx should point to the restored job")
+}
+
 func TestHandleCtrlCancelJob(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
@@ -624,6 +653,33 @@ func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
 		"selectedIdx should be cleared when no visible jobs remain")
 	assert.EqualValues(t, 0, updated.selectedJobID,
 		"selectedJobID should be cleared when no visible jobs remain")
+}
+
+func TestHandleCtrlCancelJob_RollbackRestoresSelection(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusRunning)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	params, _ := json.Marshal(map[string]int64{"job_id": 1})
+	updated, resp, cmd := m.handleCtrlCancelJob(params)
+	require.True(t, resp.OK, "expected OK, got error: %s", resp.Error)
+	require.Equal(t, -1, updated.selectedIdx)
+
+	// Simulate server failure — the result handler should
+	// restore status and reselect the original job.
+	msg := cmd()
+	result, _ := updated.handleCancelResultMsg(msg.(cancelResultMsg))
+	restored := result.(model)
+	assert.Equal(t, storage.JobStatusRunning, restored.jobs[0].Status,
+		"status should be rolled back")
+	assert.EqualValues(t, 1, restored.selectedJobID,
+		"selection should be restored on rollback")
+	assert.Equal(t, 0, restored.selectedIdx,
+		"selectedIdx should point to the restored job")
 }
 
 func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {

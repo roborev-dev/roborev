@@ -144,11 +144,25 @@ func (m model) markParentClosed(parentJobID int64) tea.Cmd {
 	}
 }
 
-// cancelJob sends a cancel request to the server
-func (m model) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt *time.Time) tea.Cmd {
+// cancelJob sends a cancel request to the server.
+// restoreSelection tells the result handler to reselect the job
+// if the request fails and the optimistic update is rolled back.
+func (m model) cancelJob(
+	jobID int64, oldStatus storage.JobStatus,
+	oldFinishedAt *time.Time, restoreSelection bool,
+) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON("/api/job/cancel", map[string]any{"job_id": jobID}, nil)
-		return cancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: err}
+		err := m.postJSON(
+			"/api/job/cancel",
+			map[string]any{"job_id": jobID}, nil,
+		)
+		return cancelResultMsg{
+			jobID:            jobID,
+			oldState:         oldStatus,
+			oldFinishedAt:    oldFinishedAt,
+			restoreSelection: restoreSelection,
+			err:              err,
+		}
 	}
 }
 

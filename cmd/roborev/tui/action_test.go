@@ -512,7 +512,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 	}
 	_, m := mockServerModel(t, expectJSONPost(t, "/api/job/cancel", cancelRequest{JobID: 42}, map[string]any{"success": true}))
 	oldFinishedAt := time.Now().Add(-1 * time.Hour)
-	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt)
+	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt, false)
 	msg := cmd()
 
 	result := assertMsgType[cancelResultMsg](t, msg)
@@ -530,7 +530,7 @@ func TestTUICancelJobNotFound(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	})
-	cmd := m.cancelJob(99, storage.JobStatusQueued, nil)
+	cmd := m.cancelJob(99, storage.JobStatusQueued, nil, false)
 	msg := cmd()
 
 	result := assertMsgType[cancelResultMsg](t, msg)

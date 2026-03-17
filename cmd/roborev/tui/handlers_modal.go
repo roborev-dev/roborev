@@ -269,6 +269,7 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.logStreaming = false
 				return m, m.cancelJob(
 					job.ID, oldStatus, oldFinishedAt,
+					false,
 				)
 			}
 		}
@@ -439,7 +440,9 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				job.Status = storage.JobStatusCanceled
 				now := time.Now()
 				job.FinishedAt = &now
-				return m, m.cancelJob(job.ID, oldStatus, oldFinishedAt)
+				return m, m.cancelJob(
+					job.ID, oldStatus, oldFinishedAt, false,
+				)
 			}
 		}
 		return m, nil

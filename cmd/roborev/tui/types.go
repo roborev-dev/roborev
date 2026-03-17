@@ -146,10 +146,11 @@ type closedResultMsg struct {
 	err              error
 }
 type cancelResultMsg struct {
-	jobID         int64
-	oldState      storage.JobStatus
-	oldFinishedAt *time.Time
-	err           error
+	jobID            int64
+	oldState         storage.JobStatus
+	oldFinishedAt    *time.Time
+	restoreSelection bool
+	err              error
 }
 type rerunResultMsg struct {
 	jobID         int64

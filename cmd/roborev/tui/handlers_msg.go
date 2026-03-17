@@ -635,6 +635,9 @@ func (m model) handleCancelResultMsg(
 	if msg.err != nil {
 		m.setJobStatus(msg.jobID, msg.oldState)
 		m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
+		if msg.restoreSelection {
+			m.selectJobByID(msg.jobID)
+		}
 		m.err = msg.err
 	}
 	return m, nil

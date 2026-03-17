@@ -472,6 +472,7 @@ func (m model) handleCtrlCloseReview(
 		} else {
 			m.selectedIdx = -1
 			m.selectedJobID = 0
+			restoreSelection = true
 		}
 	}
 
@@ -527,6 +528,7 @@ func (m model) handleCtrlCancelJob(
 	now := time.Now()
 	job.FinishedAt = &now
 
+	restoreSelection := false
 	if m.hideClosed && m.selectedJobID == params.JobID {
 		idx := m.findPrevVisibleJob(m.selectedIdx)
 		if idx < 0 {
@@ -542,10 +544,14 @@ func (m model) handleCtrlCancelJob(
 			m.selectedIdx = -1
 			m.selectedJobID = 0
 		}
+		restoreSelection = true
 	}
 
 	return m, controlResponse{OK: true},
-		m.cancelJob(params.JobID, oldStatus, oldFinishedAt)
+		m.cancelJob(
+			params.JobID, oldStatus, oldFinishedAt,
+			restoreSelection,
+		)
 }
 
 func (m model) handleCtrlRerunJob(
