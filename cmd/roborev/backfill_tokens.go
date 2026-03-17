@@ -36,14 +36,13 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			// Count started jobs per session ID. If multiple jobs
-			// share a session and any of them moved past queued,
-			// the session was resumed and agentsview totals are
-			// cumulative — skip to avoid overcounting.
+			// Count jobs that actually started per session ID. If
+			// multiple jobs ran on the same session, it was resumed
+			// and agentsview totals are cumulative — skip to avoid
+			// overcounting.
 			sessionCount := make(map[string]int)
 			for _, job := range jobs {
-				if job.SessionID != "" &&
-					job.Status != storage.JobStatusQueued {
+				if job.SessionID != "" && job.StartedAt != nil {
 					sessionCount[job.SessionID]++
 				}
 			}
