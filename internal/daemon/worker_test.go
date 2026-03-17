@@ -396,6 +396,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			sha := testutil.GetHeadSHA(t, tcxt.TmpDir)
 			agentName := fmt.Sprintf("session-stream-%s", strings.ReplaceAll(tc.name, " ", "-"))
 			agent.Register(&sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine})
+			t.Cleanup(func() { agent.Unregister(agentName) })
 
 			job := tcxt.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 			tcxt.Pool.processJob(testWorkerID, job)
