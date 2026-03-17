@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -88,6 +89,13 @@ func ensureSocketDir(dir string) error {
 func startControlListener(
 	socketPath string, p *tea.Program,
 ) (func(), error) {
+	// Ensure the parent directory exists for custom socket paths.
+	// Permission tightening is handled separately by ensureSocketDir
+	// for the default managed directory only.
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
+
 	// Only remove an existing path if it is a stale Unix socket.
 	// Refusing to remove regular files prevents data loss from
 	// a mistyped --control-socket path.

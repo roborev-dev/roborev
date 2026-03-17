@@ -918,6 +918,20 @@ func TestEnsureSocketDir_CreatesParentDir(t *testing.T) {
 	assert.Equal(t, os.FileMode(0700), di.Mode().Perm())
 }
 
+func TestStartControlListener_CreatesCustomParentDir(t *testing.T) {
+	base := shortSocketPath(t, "cust")
+	os.Remove(base)
+	socketPath := filepath.Join(base, "sub", "t.sock")
+	t.Cleanup(func() { os.RemoveAll(base) })
+
+	cleanup, err := startControlListener(
+		socketPath, newTestProgram(t),
+	)
+	require.NoError(t, err,
+		"custom socket path with missing parent should work")
+	cleanup()
+}
+
 // shortSocketPath returns a temporary socket path short enough for
 // the Unix socket 104-byte name limit on macOS.
 func shortSocketPath(t *testing.T, prefix string) string {
