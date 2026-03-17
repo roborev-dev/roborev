@@ -377,6 +377,7 @@ type model struct {
 	tasksEnabled    bool          // Enables advanced tasks workflow in the TUI
 	mouseEnabled    bool          // Enables mouse capture and mouse-driven interactions in the TUI
 	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
+	controlSocket   string        // Socket path for runtime metadata updates (empty if disabled)
 	ready           chan struct{} // Closed on first Update; signals event loop is running
 
 	// Review view navigation
@@ -879,14 +880,8 @@ func Run(cfg Config) error {
 	if cfg.NoQuit {
 		opts = append(opts, withNoQuit())
 	}
-	m := newModel(cfg.ServerAddr, opts...)
-	p := tea.NewProgram(
-		m,
-		programOptionsForModel(m)...,
-	)
-
-	// Resolve socket path before starting the program so we can
-	// set up cleanup in the right order.
+	// Resolve socket path before creating the model so the
+	// model knows its socket path for runtime metadata updates.
 	socketPath := cfg.ControlSocket
 	if socketPath == "" {
 		socketPath = defaultControlSocketPath()
@@ -901,6 +896,13 @@ func Run(cfg Config) error {
 			socketPath = ""
 		}
 	}
+
+	m := newModel(cfg.ServerAddr, opts...)
+	m.controlSocket = socketPath
+	p := tea.NewProgram(
+		m,
+		programOptionsForModel(m)...,
+	)
 
 	// Start the control listener after the event loop is running
 	// so that p.Send (used by control handlers) never blocks. The

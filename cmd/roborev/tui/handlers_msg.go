@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"slices"
 	"time"
 
@@ -708,6 +709,19 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		if msg.version != "" {
 			m.daemonVersion = msg.version
+		}
+		// Update runtime metadata so external tools see the
+		// new daemon address after reconnect.
+		if m.controlSocket != "" {
+			rtInfo := buildTUIRuntimeInfo(
+				m.controlSocket, m.serverAddr,
+			)
+			if err := WriteTUIRuntime(rtInfo); err != nil {
+				log.Printf(
+					"warning: failed to update runtime info: %v",
+					err,
+				)
+			}
 		}
 		m.clearFetchFailed()
 		m.loadingJobs = true
