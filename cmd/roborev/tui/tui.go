@@ -7,6 +7,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -889,6 +890,15 @@ func Run(cfg Config) error {
 	socketPath := cfg.ControlSocket
 	if socketPath == "" {
 		socketPath = defaultControlSocketPath()
+		// Only tighten directory permissions for the default
+		// managed directory. Custom --control-socket paths may
+		// point anywhere (e.g. /tmp, repo root) and mutating
+		// their parent would be destructive.
+		if err := ensureSocketDir(
+			filepath.Dir(socketPath),
+		); err != nil {
+			log.Printf("warning: control socket disabled: %v", err)
+		}
 	}
 
 	// Start the control listener after the event loop is running
@@ -903,7 +913,7 @@ func Run(cfg Config) error {
 			return
 		}
 
-		rtInfo := buildTUIRuntimeInfo(m, socketPath, cfg.ServerAddr)
+		rtInfo := buildTUIRuntimeInfo(socketPath, cfg.ServerAddr)
 		if err := WriteTUIRuntime(rtInfo); err != nil {
 			log.Printf(
 				"warning: failed to write TUI runtime info: %v", err,

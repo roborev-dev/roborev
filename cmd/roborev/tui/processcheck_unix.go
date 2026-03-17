@@ -27,4 +27,3 @@ func isProcessAlive(pid int) bool {
 	// EPERM means the process exists but belongs to another user.
 	return errors.Is(err, syscall.EPERM)
 }
-

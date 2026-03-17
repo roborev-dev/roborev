@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -70,21 +69,25 @@ func isConnRefused(err error) bool {
 // dispatches it through the tea.Program, and returns a JSON response.
 // Returns a cleanup function that closes the listener and removes
 // the socket file.
+// ensureSocketDir creates the socket parent directory with
+// owner-only permissions. MkdirAll is a no-op on existing
+// directories, so we always chmod explicitly to tighten
+// pre-existing dirs (e.g. ~/.roborev created with 0755).
+// This must only be called for managed directories (the
+// default data dir), never for arbitrary user-supplied paths.
+func ensureSocketDir(dir string) error {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create socket directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return fmt.Errorf("chmod socket directory: %w", err)
+	}
+	return nil
+}
+
 func startControlListener(
 	socketPath string, p *tea.Program,
 ) (func(), error) {
-	// Ensure the parent directory exists and is owner-only.
-	// MkdirAll is a no-op on existing directories so we
-	// always chmod explicitly to tighten pre-existing dirs
-	// (e.g. ~/.roborev created earlier with 0755).
-	socketDir := filepath.Dir(socketPath)
-	if err := os.MkdirAll(socketDir, 0700); err != nil {
-		return nil, fmt.Errorf("create socket directory: %w", err)
-	}
-	if err := os.Chmod(socketDir, 0700); err != nil {
-		return nil, fmt.Errorf("chmod socket directory: %w", err)
-	}
-
 	// Only remove an existing path if it is a stale Unix socket.
 	// Refusing to remove regular files prevents data loss from
 	// a mistyped --control-socket path.
@@ -97,9 +100,7 @@ func startControlListener(
 		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
 
-	// Restrict socket permissions to owner-only. The parent
-	// directory is already 0700, so the brief window between
-	// Listen and Chmod is not exploitable.
+	// Restrict socket permissions to owner-only.
 	if err := os.Chmod(socketPath, 0600); err != nil {
 		ln.Close()
 		return nil, fmt.Errorf("chmod socket: %w", err)

@@ -903,17 +903,19 @@ func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	assert.FileExists(t, path, "live socket should not be deleted")
 }
 
-func TestStartControlListener_CreatesParentDir(t *testing.T) {
+func TestEnsureSocketDir_CreatesParentDir(t *testing.T) {
 	base := shortSocketPath(t, "dir")
 	// Remove the file shortSocketPath created, use it as a subdir.
 	os.Remove(base)
-	socketPath := filepath.Join(base, "sub", "t.sock")
+	socketDir := filepath.Join(base, "sub")
+	t.Cleanup(func() { os.RemoveAll(base) })
 
-	cleanup, err := startControlListener(
-		socketPath, newTestProgram(t),
-	)
-	require.NoError(t, err, "expected listener to create dirs")
-	cleanup()
+	require.NoError(t, ensureSocketDir(socketDir),
+		"expected ensureSocketDir to create dirs")
+
+	di, err := os.Stat(socketDir)
+	require.NoError(t, err, "stat created dir")
+	assert.Equal(t, os.FileMode(0700), di.Mode().Perm())
 }
 
 // shortSocketPath returns a temporary socket path short enough for
@@ -938,11 +940,9 @@ func TestTUIRuntimeWriteAndRead(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 
 	info := TUIRuntimeInfo{
-		PID:          12345,
-		SocketPath:   filepath.Join(tmpDir, "tui.12345.sock"),
-		ServerAddr:   "http://127.0.0.1:7373",
-		RepoFilter:   []string{"/repo"},
-		BranchFilter: "main",
+		PID:        12345,
+		SocketPath: filepath.Join(tmpDir, "tui.12345.sock"),
+		ServerAddr: "http://127.0.0.1:7373",
 	}
 
 	require.NoError(WriteTUIRuntime(info))
@@ -1009,82 +1009,6 @@ func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) {
 	// The regular file must NOT have been deleted.
 	assert.FileExists(filePath,
 		"regular file should not be removed")
-}
-
-func TestRuntimeMetadataReflectsModelFilters(t *testing.T) {
-	setupTuiTestEnv(t)
-
-	tests := []struct {
-		name       string
-		opts       []option
-		wantRepo   []string
-		wantBranch string
-	}{
-		{
-			name:       "cli repo flag",
-			opts:       []option{withRepoFilter("/cli/repo")},
-			wantRepo:   []string{"/cli/repo"},
-			wantBranch: "",
-		},
-		{
-			name: "auto-filter repo",
-			opts: []option{
-				withAutoFilterRepo("/auto/repo"),
-			},
-			wantRepo:   []string{"/auto/repo"},
-			wantBranch: "",
-		},
-		{
-			name: "auto-filter branch",
-			opts: []option{
-				withAutoFilterBranch("feat/auto"),
-			},
-			wantRepo:   nil,
-			wantBranch: "feat/auto",
-		},
-		{
-			name: "cli overrides auto-filter",
-			opts: []option{
-				withAutoFilterBranch("feat/auto"),
-				withBranchFilter("feat/cli"),
-			},
-			wantRepo:   nil,
-			wantBranch: "feat/cli",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-
-			opts := append(
-				[]option{withExternalIODisabled()},
-				tt.opts...,
-			)
-			m := newModel(testServerAddr, opts...)
-
-			// Use buildTUIRuntimeInfo — the same helper that
-			// Run() calls — so this test breaks if Run() stops
-			// using it or if the helper regresses.
-			info := buildTUIRuntimeInfo(
-				m, "/tmp/test.sock", testServerAddr,
-			)
-
-			require.NoError(WriteTUIRuntime(info))
-
-			runtimes, err := ListAllTUIRuntimes()
-			require.NoError(err)
-			require.Len(runtimes, 1)
-
-			rt := runtimes[0]
-			assert.Equal(tt.wantRepo, rt.RepoFilter)
-			assert.Equal(tt.wantBranch, rt.BranchFilter)
-
-			// Clean up for next subtest
-			RemoveTUIRuntime(info.SocketPath)
-		})
-	}
 }
 
 // --- Helper ---

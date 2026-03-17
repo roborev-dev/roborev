@@ -44,4 +44,3 @@ func systemRoot() string {
 	}
 	return `C:\Windows`
 }
-

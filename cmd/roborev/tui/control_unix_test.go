@@ -36,22 +36,13 @@ func TestControlSocketPermissions(t *testing.T) {
 		"socket permissions %o allow group/other access", perm)
 }
 
-func TestControlSocketTightensExistingDir(t *testing.T) {
-	// Use a short base path to stay within the Unix socket
-	// path length limit (~104 bytes on macOS).
-	socketDir, err := os.MkdirTemp("", "tui")
-	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(socketDir) })
+func TestEnsureSocketDirTightensExistingDir(t *testing.T) {
+	socketDir := t.TempDir()
 
 	// Simulate a pre-existing data directory created with 0755.
 	require.NoError(t, os.Chmod(socketDir, 0755))
-	socketPath := filepath.Join(socketDir, "t.sock")
 
-	cleanup, err := startControlListener(
-		socketPath, newTestProgramUnix(t),
-	)
-	require.NoError(t, err, "startControlListener")
-	t.Cleanup(cleanup)
+	require.NoError(t, ensureSocketDir(socketDir))
 
 	di, err := os.Stat(socketDir)
 	require.NoError(t, err, "stat socket dir")

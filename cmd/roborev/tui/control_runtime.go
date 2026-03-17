@@ -11,13 +11,13 @@ import (
 )
 
 // TUIRuntimeInfo stores metadata about a running TUI instance for
-// discoverability by external tools.
+// discoverability by external tools. Filter state is intentionally
+// omitted — it changes at runtime and should be queried via the
+// control socket's get-filters command.
 type TUIRuntimeInfo struct {
-	PID          int      `json:"pid"`
-	SocketPath   string   `json:"socket_path"`
-	ServerAddr   string   `json:"server_addr"`
-	RepoFilter   []string `json:"repo_filter,omitempty"`
-	BranchFilter string   `json:"branch_filter,omitempty"`
+	PID        int    `json:"pid"`
+	SocketPath string `json:"socket_path"`
+	ServerAddr string `json:"server_addr"`
 }
 
 // tuiRuntimePath returns the metadata file path for a given PID.
@@ -146,18 +146,16 @@ func CleanupStaleTUIRuntimes() int {
 	return cleaned
 }
 
-// buildTUIRuntimeInfo constructs the runtime metadata from the
-// resolved model state. This is the single source of truth for
-// what gets written to the runtime metadata file.
+// buildTUIRuntimeInfo constructs the runtime metadata for the
+// current process. This is the single source of truth for what
+// gets written to the runtime metadata file.
 func buildTUIRuntimeInfo(
-	m model, socketPath, serverAddr string,
+	socketPath, serverAddr string,
 ) TUIRuntimeInfo {
 	return TUIRuntimeInfo{
-		PID:          os.Getpid(),
-		SocketPath:   socketPath,
-		ServerAddr:   serverAddr,
-		RepoFilter:   m.activeRepoFilter,
-		BranchFilter: m.activeBranchFilter,
+		PID:        os.Getpid(),
+		SocketPath: socketPath,
+		ServerAddr: serverAddr,
 	}
 }
 
