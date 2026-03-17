@@ -396,16 +396,20 @@ func TestHandleCtrlClearFilter_LockedBranchNoRepoMutation(t *testing.T) {
 	m.lockedBranchFilter = true
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
+	m.filterStack = []string{"repo", "branch"}
 
 	params, _ := json.Marshal(map[string]bool{
 		"repo": true, "branch": true,
 	})
-	updated, resp, _ := m.handleCtrlClearFilter(params)
+	updated, resp, cmd := m.handleCtrlClearFilter(params)
 	require.False(t, resp.OK, "expected error for locked branch")
 	assert.Equal(t, []string{"/repo"}, updated.activeRepoFilter,
 		"repo filter should not be mutated on error")
 	assert.Equal(t, "main", updated.activeBranchFilter,
 		"branch filter should not be mutated on error")
+	assert.Equal(t, []string{"repo", "branch"}, updated.filterStack,
+		"filter stack should not be mutated on error")
+	assert.Nil(t, cmd, "no cmd should be returned on error")
 }
 
 func TestHandleCtrlSetHideClosed(t *testing.T) {
