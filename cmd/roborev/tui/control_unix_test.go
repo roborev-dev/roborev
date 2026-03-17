@@ -36,6 +36,29 @@ func TestControlSocketPermissions(t *testing.T) {
 		"socket permissions %o allow group/other access", perm)
 }
 
+func TestControlSocketTightensExistingDir(t *testing.T) {
+	// Use a short base path to stay within the Unix socket
+	// path length limit (~104 bytes on macOS).
+	socketDir, err := os.MkdirTemp("", "tui")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+
+	// Simulate a pre-existing data directory created with 0755.
+	require.NoError(t, os.Chmod(socketDir, 0755))
+	socketPath := filepath.Join(socketDir, "t.sock")
+
+	cleanup, err := startControlListener(
+		socketPath, newTestProgramUnix(t),
+	)
+	require.NoError(t, err, "startControlListener")
+	t.Cleanup(cleanup)
+
+	di, err := os.Stat(socketDir)
+	require.NoError(t, err, "stat socket dir")
+	assert.Equal(t, os.FileMode(0700), di.Mode().Perm(),
+		"socket directory should be tightened to 0700")
+}
+
 func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 	path := shortSocketPath(t, "dgram")
 	// Create a DGRAM socket -- dial with STREAM will fail with a

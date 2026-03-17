@@ -73,11 +73,16 @@ func isConnRefused(err error) bool {
 func startControlListener(
 	socketPath string, p *tea.Program,
 ) (func(), error) {
-	// Ensure the parent directory exists (fresh installs,
-	// custom --control-socket paths). Use 0700 so only the
-	// owning user can traverse into the socket directory.
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+	// Ensure the parent directory exists and is owner-only.
+	// MkdirAll is a no-op on existing directories so we
+	// always chmod explicitly to tighten pre-existing dirs
+	// (e.g. ~/.roborev created earlier with 0755).
+	socketDir := filepath.Dir(socketPath)
+	if err := os.MkdirAll(socketDir, 0700); err != nil {
 		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
+	if err := os.Chmod(socketDir, 0700); err != nil {
+		return nil, fmt.Errorf("chmod socket directory: %w", err)
 	}
 
 	// Only remove an existing path if it is a stale Unix socket.
