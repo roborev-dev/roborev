@@ -2,190 +2,213 @@ package storage
 
 import (
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestJobLifecycle(t *testing.T) {
+type jobEnv struct {
+	db     *DB
+	repo   *Repo
+	commit *Commit
+	job    *ReviewJob
+}
+
+func setupJobEnv(
+	t *testing.T, repoPath, gitRef string,
+) jobEnv {
+	t.Helper()
 	db := openTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() { db.Close() })
 
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	repo, commit, job := createJobChain(t, db, repoPath, gitRef)
+	return jobEnv{
+		db:     db,
+		repo:   repo,
+		commit: commit,
+		job:    job,
+	}
+}
 
-	assert.Equal(t, JobStatusQueued, job.Status)
+func TestJobLifecycle(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/test-repo", "abc123")
+
+	assert.Equal(t, JobStatusQueued, env.job.Status)
 
 	// Claim job
-	claimed := claimJob(t, db, "worker-1")
-	assert.Equal(t, claimed.ID, job.ID)
+	claimed := claimJob(t, env.db, "worker-1")
+	assert.Equal(t, claimed.ID, env.job.ID)
 	assert.Equal(t, JobStatusRunning, claimed.Status)
 
 	// Claim again should return nil (no more jobs)
-	claimed2, err := db.ClaimJob("worker-2")
-	require.NoError(t, err, "ClaimJob (second) failed: %v")
-
+	claimed2, err := env.db.ClaimJob("worker-2")
+	require.NoError(t, err, "ClaimJob (second) failed")
 	assert.Nil(t, claimed2)
 
 	// Complete job
-	err = db.CompleteJob(job.ID, "codex", "test prompt", "test output")
-	require.NoError(t, err, "CompleteJob failed: %v")
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "test prompt", "test output",
+	), "CompleteJob failed")
 
 	// Verify job status
-	updatedJob, err := db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	updatedJob, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
 func TestJobFailure(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "def456")
-	claimJob(t, db, "worker-1")
+	env := setupJobEnv(t, "/tmp/test-repo", "def456")
+	claimJob(t, env.db, "worker-1")
 
 	// Fail the job
-	_, err := db.FailJob(job.ID, "", "test error message")
-	require.NoError(t, err, "FailJob failed: %v")
+	_, err := env.db.FailJob(env.job.ID, "", "test error message")
+	require.NoError(t, err, "FailJob failed")
 
-	updatedJob, err := db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	updatedJob, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusFailed, updatedJob.Status)
 	assert.Equal(t, "test error message", updatedJob.Error)
 }
 
 func TestFailJobOwnerScoped(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "fail-owner")
-	claimJob(t, db, "worker-1")
+	env := setupJobEnv(t, "/tmp/test-repo", "fail-owner")
+	claimJob(t, env.db, "worker-1")
 
 	// Wrong worker should not be able to fail the job
-	updated, err := db.FailJob(job.ID, "worker-2", "stale fail")
-	require.NoError(t, err, "FailJob with wrong worker failed: %v")
+	updated, err := env.db.FailJob(env.job.ID, "worker-2", "stale fail")
+	require.NoError(t, err, "FailJob with wrong worker failed")
 
 	assert.False(t, updated)
 
 	// Job should still be running
-	j, err := db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	j, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusRunning, j.Status)
 
 	// Correct worker should succeed
-	updated, err = db.FailJob(job.ID, "worker-1", "legit fail")
-	require.NoError(t, err, "FailJob with correct worker failed: %v")
+	updated, err = env.db.FailJob(env.job.ID, "worker-1", "legit fail")
+	require.NoError(t, err, "FailJob with correct worker failed")
 
 	assert.True(t, updated)
 
-	j, err = db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	j, err = env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusFailed, j.Status)
 	assert.Equal(t, "legit fail", j.Error)
 }
 
 func TestRetryJobOwnerScoped(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-owner")
-	claimJob(t, db, "worker-1")
+	env := setupJobEnv(t, "/tmp/test-repo", "retry-owner")
+	claimJob(t, env.db, "worker-1")
 
 	// Wrong worker should not be able to retry the job
-	retried, err := db.RetryJob(job.ID, "worker-2", 3)
-	require.NoError(t, err, "RetryJob with wrong worker failed: %v")
+	retried, err := env.db.RetryJob(env.job.ID, "worker-2", 3)
+	require.NoError(t, err, "RetryJob with wrong worker failed")
 
 	assert.False(t, retried)
 
 	// Job should still be running (not requeued)
-	j, err := db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	j, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusRunning, j.Status)
 
 	// Correct worker should succeed
-	retried, err = db.RetryJob(job.ID, "worker-1", 3)
-	require.NoError(t, err, "RetryJob with correct worker failed: %v")
+	retried, err = env.db.RetryJob(env.job.ID, "worker-1", 3)
+	require.NoError(t, err, "RetryJob with correct worker failed")
 
 	assert.True(t, retried)
 
-	j, err = db.GetJobByID(job.ID)
-	require.NoError(t, err, "GetJobByID failed: %v")
+	j, err = env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err, "GetJobByID failed")
 
 	assert.Equal(t, JobStatusQueued, j.Status)
 }
 
 func TestReviewOperations(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "rev123")
-	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job.ID, "codex", "the prompt", "the review output"); err != nil {
-		require.NoError(t, err, "CompleteJob failed: %v")
-	}
+	env := setupJobEnv(t, "/tmp/test-repo", "rev123")
+	claimJob(t, env.db, "worker-1")
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "the prompt", "the review output",
+	), "CompleteJob failed")
 
 	// Get review by commit SHA
-	review, err := db.GetReviewByCommitSHA("rev123")
-	require.NoError(t, err, "GetReviewByCommitSHA failed: %v")
+	review, err := env.db.GetReviewByCommitSHA("rev123")
+	require.NoError(t, err, "GetReviewByCommitSHA failed")
 
 	assert.Equal(t, "the review output", review.Output)
 	assert.Equal(t, "codex", review.Agent)
 }
 
 func TestReviewVerdictComputation(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
 	t.Run("verdict populated when output exists and no error", func(t *testing.T) {
-		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-pass")
-		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found. The code looks good.")
+		env := setupJobEnv(t, "/tmp/test-repo", "verdict-pass")
+		_, err := env.db.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NoError(t, env.db.CompleteJob(
+			env.job.ID, "codex", "the prompt",
+			"No issues found. The code looks good.",
+		))
 
-		review, err := db.GetReviewByJobID(job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed: %v")
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err, "GetReviewByJobID failed")
 
 		assert.NotNil(t, review.Job.Verdict)
 		assert.Equal(t, "P", *review.Job.Verdict)
 	})
 
 	t.Run("verdict nil when output is empty", func(t *testing.T) {
-		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-empty")
-		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "") // empty output
+		env := setupJobEnv(t, "/tmp/test-repo", "verdict-empty")
+		_, err := env.db.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NoError(t, env.db.CompleteJob(
+			env.job.ID, "codex", "the prompt", "",
+		)) // empty output
 
-		review, err := db.GetReviewByJobID(job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed: %v")
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err, "GetReviewByJobID failed")
 
 		assert.Nil(t, review.Job.Verdict)
 	})
 
 	t.Run("verdict nil when job has error", func(t *testing.T) {
-		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-error")
-		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "", "API rate limit exceeded")
+		env := setupJobEnv(t, "/tmp/test-repo", "verdict-error")
+		_, err := env.db.ClaimJob("worker-1")
+		require.NoError(t, err)
+		_, err = env.db.FailJob(
+			env.job.ID, "", "API rate limit exceeded",
+		)
+		require.NoError(t, err)
 
 		// Manually insert a review to simulate edge case
-		_, err := db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, 'codex', 'prompt', 'No issues found.')`, job.ID)
-		require.NoError(t, err, "Failed to insert review: %v")
+		_, err = env.db.Exec(
+			`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, 'codex', 'prompt', 'No issues found.')`,
+			env.job.ID,
+		)
+		require.NoError(t, err, "Failed to insert review")
 
-		review, err := db.GetReviewByJobID(job.ID)
-		require.NoError(t, err, "GetReviewByJobID failed: %v")
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err, "GetReviewByJobID failed")
 
 		assert.Nil(t, review.Job.Verdict)
 	})
 
 	t.Run("GetReviewByCommitSHA also respects verdict guard", func(t *testing.T) {
-		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-sha")
-		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found.")
+		env := setupJobEnv(t, "/tmp/test-repo", "verdict-sha")
+		_, err := env.db.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NoError(t, env.db.CompleteJob(
+			env.job.ID, "codex", "the prompt", "No issues found.",
+		))
 
-		review, err := db.GetReviewByCommitSHA("verdict-sha")
-		require.NoError(t, err, "GetReviewByCommitSHA failed: %v")
+		review, err := env.db.GetReviewByCommitSHA("verdict-sha")
+		require.NoError(t, err, "GetReviewByCommitSHA failed")
 
 		assert.NotNil(t, review.Job.Verdict)
 		assert.Equal(t, "P", *review.Job.Verdict)
@@ -213,33 +236,35 @@ func TestResponseOperations(t *testing.T) {
 }
 
 func TestMarkReviewClosed(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "addr123")
-	db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "prompt", "output")
+	env := setupJobEnv(t, "/tmp/test-repo", "addr123")
+	_, err := env.db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "prompt", "output",
+	))
 
 	// Get the review
-	review, err := db.GetReviewByJobID(job.ID)
-	require.NoError(t, err, "GetReviewByJobID failed: %v")
+	review, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err, "GetReviewByJobID failed")
 
 	// Initially not closed
 	assert.False(t, review.Closed)
 
 	// Mark as closed
-	err = db.MarkReviewClosed(review.ID, true)
-	require.NoError(t, err, "MarkReviewClosed failed: %v")
+	err = env.db.MarkReviewClosed(review.ID, true)
+	require.NoError(t, err, "MarkReviewClosed failed")
 
 	// Verify it's closed
-	updated, _ := db.GetReviewByID(review.ID)
+	updated, err := env.db.GetReviewByID(review.ID)
+	require.NoError(t, err)
 	assert.True(t, updated.Closed, "Review should be closed after MarkReviewClosed(true)")
 
 	// Mark as open
-	err = db.MarkReviewClosed(review.ID, false)
-	require.NoError(t, err, "MarkReviewClosed(false) failed: %v")
+	err = env.db.MarkReviewClosed(review.ID, false)
+	require.NoError(t, err, "MarkReviewClosed(false) failed")
 
-	updated2, _ := db.GetReviewByID(review.ID)
+	updated2, err := env.db.GetReviewByID(review.ID)
+	require.NoError(t, err)
 	assert.False(t, updated2.Closed, "Review should not be closed after MarkReviewClosed(false)")
 }
 
@@ -256,42 +281,43 @@ func TestMarkReviewClosedNotFound(t *testing.T) {
 }
 
 func TestMarkReviewClosedByJobID(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	_, _, job := createJobChain(t, db, "/tmp/test-repo", "jobaddr123")
-	db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "prompt", "output")
+	env := setupJobEnv(t, "/tmp/test-repo", "jobaddr123")
+	_, err := env.db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "prompt", "output",
+	))
 
 	// Get the review to verify initial state
-	review, err := db.GetReviewByJobID(job.ID)
-	require.NoError(t, err, "GetReviewByJobID failed: %v")
+	review, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err, "GetReviewByJobID failed")
 
 	// Initially not closed
 	assert.False(t, review.Closed)
 
 	// Mark as closed using job ID
-	err = db.MarkReviewClosedByJobID(job.ID, true)
-	require.NoError(t, err, "MarkReviewClosedByJobID failed: %v")
+	err = env.db.MarkReviewClosedByJobID(env.job.ID, true)
+	require.NoError(t, err, "MarkReviewClosedByJobID failed")
 
 	// Verify it's closed
-	updated, _ := db.GetReviewByJobID(job.ID)
+	updated, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err)
 	assert.True(t, updated.Closed, "Review should be closed after MarkReviewClosedByJobID(true)")
 
 	// Mark as open using job ID
-	err = db.MarkReviewClosedByJobID(job.ID, false)
-	require.NoError(t, err, "MarkReviewClosedByJobID(false) failed: %v")
+	err = env.db.MarkReviewClosedByJobID(env.job.ID, false)
+	require.NoError(t, err, "MarkReviewClosedByJobID(false) failed")
 
-	updated2, _ := db.GetReviewByJobID(job.ID)
+	updated2, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err)
 	assert.False(t, updated2.Closed, "Review should not be closed after MarkReviewClosedByJobID(false)")
 }
 
 func TestMarkReviewClosedByJobIDNotFound(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
+	env := setupJobEnv(t, "/tmp/test-repo", "jobaddr-missing")
 
 	// Try to mark a non-existent job
-	err := db.MarkReviewClosedByJobID(999999, true)
+	err := env.db.MarkReviewClosedByJobID(999999, true)
 	require.Error(t, err)
 
 	// Should be sql.ErrNoRows
