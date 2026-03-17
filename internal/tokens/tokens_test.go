@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,23 +16,23 @@ func TestFormatSummary(t *testing.T) {
 		{"zero", Usage{}, ""},
 		{
 			"small counts",
-			Usage{InputTokens: 500, OutputTokens: 120},
-			"500 in · 120 out",
+			Usage{PeakContextTokens: 500, OutputTokens: 120},
+			"500 ctx · 120 out",
 		},
 		{
 			"thousands",
-			Usage{InputTokens: 45200, OutputTokens: 3900},
-			"45.2k in · 3.9k out",
+			Usage{PeakContextTokens: 45200, OutputTokens: 3900},
+			"45.2k ctx · 3.9k out",
 		},
 		{
 			"millions",
-			Usage{InputTokens: 2_500_000, OutputTokens: 15_000},
-			"2.5M in · 15.0k out",
+			Usage{PeakContextTokens: 2_500_000, OutputTokens: 15_000},
+			"2.5M ctx · 15.0k out",
 		},
 		{
 			"output only",
 			Usage{OutputTokens: 800},
-			"0 in · 800 out",
+			"0 ctx · 800 out",
 		},
 	}
 
@@ -51,30 +50,22 @@ func TestParseJSON(t *testing.T) {
 	})
 
 	t.Run("valid json", func(t *testing.T) {
-		u := ParseJSON(`{"input_tokens":1000,"output_tokens":200}`)
+		u := ParseJSON(
+			`{"peak_context_tokens":1000,"total_output_tokens":200}`,
+		)
 		require.NotNil(t, u)
-		assert.Equal(t, int64(1000), u.InputTokens)
+		assert.Equal(t, int64(1000), u.PeakContextTokens)
 		assert.Equal(t, int64(200), u.OutputTokens)
 	})
 
 	t.Run("all zeros", func(t *testing.T) {
-		assert.Nil(t, ParseJSON(`{"input_tokens":0,"output_tokens":0}`))
+		assert.Nil(t, ParseJSON(
+			`{"peak_context_tokens":0,"total_output_tokens":0}`,
+		))
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
 		assert.Nil(t, ParseJSON(`{invalid`))
-	})
-
-	t.Run("with cache fields", func(t *testing.T) {
-		u := ParseJSON(`{
-			"input_tokens": 5000,
-			"output_tokens": 300,
-			"cache_read_tokens": 4000,
-			"cache_creation_tokens": 1000
-		}`)
-		require.NotNil(t, u)
-		assert.Equal(t, int64(4000), u.CacheReadTokens)
-		assert.Equal(t, int64(1000), u.CacheCreationTokens)
 	})
 }
 
@@ -85,32 +76,13 @@ func TestToJSON(t *testing.T) {
 
 	t.Run("round trip", func(t *testing.T) {
 		orig := &Usage{
-			InputTokens:  5000,
-			OutputTokens: 300,
+			PeakContextTokens: 5000,
+			OutputTokens:      300,
 		}
 		s := ToJSON(orig)
 		got := ParseJSON(s)
 		require.NotNil(t, got)
-		assert.Equal(t, orig.InputTokens, got.InputTokens)
+		assert.Equal(t, orig.PeakContextTokens, got.PeakContextTokens)
 		assert.Equal(t, orig.OutputTokens, got.OutputTokens)
 	})
-}
-
-func TestFetchForSession_Stub(t *testing.T) {
-	// Stub always returns nil until agentsview CLI support is added
-	u, err := FetchForSession(context.Background(), "claude-code", "abc123")
-	require.NoError(t, err)
-	assert.Nil(t, u)
-}
-
-func TestFetchForSession_EmptySessionID(t *testing.T) {
-	u, err := FetchForSession(context.Background(), "claude-code", "")
-	require.NoError(t, err)
-	assert.Nil(t, u)
-}
-
-func TestFetchForSessionTurn_Stub(t *testing.T) {
-	u, err := FetchForSessionTurn(context.Background(), "claude-code", "abc123")
-	require.NoError(t, err)
-	assert.Nil(t, u)
 }

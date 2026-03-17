@@ -50,7 +50,7 @@ will be skipped.`,
 					context.Background(), 15*time.Second,
 				)
 				usage, fetchErr := tokens.FetchForSession(
-					ctx, job.Agent, job.SessionID,
+					ctx, job.SessionID,
 				)
 				cancel()
 
