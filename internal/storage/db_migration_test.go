@@ -3,12 +3,13 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData string) {
@@ -35,90 +36,171 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 	}
 }
 
-func TestMigrationFromOldSchema(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "old.db")
+const legacyReviewJobSchema = `
+	CREATE TABLE repos (
+		id INTEGER PRIMARY KEY,
+		root_path TEXT UNIQUE NOT NULL,
+		name TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE commits (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		sha TEXT UNIQUE NOT NULL,
+		author TEXT NOT NULL,
+		subject TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE review_jobs (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		commit_id INTEGER REFERENCES commits(id),
+		git_ref TEXT NOT NULL,
+		agent TEXT NOT NULL DEFAULT 'codex',
+		status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
+		enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
+		started_at TEXT,
+		finished_at TEXT,
+		worker_id TEXT,
+		error TEXT,
+		prompt TEXT,
+		retry_count INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE reviews (
+		id INTEGER PRIMARY KEY,
+		job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
+		agent TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		output TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		addressed INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE responses (
+		id INTEGER PRIMARY KEY,
+		commit_id INTEGER NOT NULL REFERENCES commits(id),
+		responder TEXT NOT NULL,
+		response TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX idx_review_jobs_status ON review_jobs(status);
+`
 
-	// Create database with OLD schema (without 'canceled' status)
-	setupOldSchemaDB(t, dbPath, `
-		CREATE TABLE repos (
-			id INTEGER PRIMARY KEY,
-			root_path TEXT UNIQUE NOT NULL,
-			name TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
-		CREATE TABLE commits (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			sha TEXT UNIQUE NOT NULL,
-			author TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			timestamp TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
-		CREATE TABLE review_jobs (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			commit_id INTEGER REFERENCES commits(id),
-			git_ref TEXT NOT NULL,
-			agent TEXT NOT NULL DEFAULT 'codex',
-			status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
-			enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-			started_at TEXT,
-			finished_at TEXT,
-			worker_id TEXT,
-			error TEXT,
-			prompt TEXT,
-			retry_count INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE reviews (
-			id INTEGER PRIMARY KEY,
-			job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
-			agent TEXT NOT NULL,
-			prompt TEXT NOT NULL,
-			output TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			addressed INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE responses (
-			id INTEGER PRIMARY KEY,
-			commit_id INTEGER NOT NULL REFERENCES commits(id),
-			responder TEXT NOT NULL,
-			response TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
-		CREATE INDEX idx_review_jobs_status ON review_jobs(status);
-	`, `
-		INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
-		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
-			VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
-		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, enqueued_at)
-			VALUES (1, 1, 1, 'abc123', 'codex', 'done', '2024-01-01');
-		INSERT INTO reviews (id, job_id, agent, prompt, output)
-			VALUES (1, 1, 'codex', 'test prompt', 'test output');
-	`)
+const legacyReviewJobSeed = `
+	INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
+	INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
+		VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
+	INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, enqueued_at)
+		VALUES (1, 1, 1, 'abc123', 'codex', 'done', '2024-01-01');
+	INSERT INTO reviews (id, job_id, agent, prompt, output)
+		VALUES (1, 1, 'codex', 'test prompt', 'test output');
+`
 
-	// Now open with our Open() function - should trigger migration
+const legacyReviewJobSchemaWithoutReasoning = `
+	CREATE TABLE repos (
+		id INTEGER PRIMARY KEY,
+		root_path TEXT UNIQUE NOT NULL,
+		name TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE commits (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		sha TEXT UNIQUE NOT NULL,
+		author TEXT NOT NULL,
+		subject TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE review_jobs (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		commit_id INTEGER REFERENCES commits(id),
+		git_ref TEXT NOT NULL,
+		agent TEXT NOT NULL DEFAULT 'codex',
+		status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
+		enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
+		started_at TEXT,
+		finished_at TEXT,
+		worker_id TEXT,
+		error TEXT,
+		prompt TEXT,
+		retry_count INTEGER NOT NULL DEFAULT 0
+	);
+`
+
+const legacyReviewJobSeedWithoutReasoning = `
+	INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
+	INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
+		VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
+	INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, enqueued_at)
+		VALUES (1, 1, 1, 'abc123', 'codex', 'done', '2024-01-01');
+`
+
+const legacyReviewJobSchemaWithReasoning = `
+	CREATE TABLE repos (
+		id INTEGER PRIMARY KEY,
+		root_path TEXT UNIQUE NOT NULL,
+		name TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE commits (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		sha TEXT UNIQUE NOT NULL,
+		author TEXT NOT NULL,
+		subject TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE TABLE review_jobs (
+		id INTEGER PRIMARY KEY,
+		repo_id INTEGER NOT NULL REFERENCES repos(id),
+		commit_id INTEGER REFERENCES commits(id),
+		git_ref TEXT NOT NULL,
+		agent TEXT NOT NULL DEFAULT 'codex',
+		reasoning TEXT NOT NULL DEFAULT 'thorough',
+		status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
+		enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
+		started_at TEXT,
+		finished_at TEXT,
+		worker_id TEXT,
+		error TEXT,
+		prompt TEXT,
+		retry_count INTEGER NOT NULL DEFAULT 0
+	);
+`
+
+const legacyReviewJobSeedWithReasoning = `
+	INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
+	INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
+		VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
+	INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at)
+		VALUES (1, 1, 1, 'abc123', 'codex', 'fast', 'done', '2024-01-01');
+`
+
+func prepareMigratedDB(
+	t *testing.T, dbName, schema, seedData string,
+) *DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), dbName)
+	setupOldSchemaDB(t, dbPath, schema, seedData)
+
 	db, err := Open(dbPath)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Open() failed after migration: %v", err)
-	}
-	defer db.Close()
+	require.NoError(t, err, "Open() failed after migration")
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestMigrationFromOldSchema(t *testing.T) {
+	db := prepareMigratedDB(
+		t, "old.db", legacyReviewJobSchema, legacyReviewJobSeed,
+	)
 
 	// Verify the old data is preserved
 	review, err := db.GetReviewByJobID(1)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "GetReviewByJobID failed: %v", err)
-	}
-	if review.Output != "test output" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "Expected output 'test output', got '%s'", review.Output)
-	}
+	require.NoError(t, err, "GetReviewByJobID failed")
+	assert.Equal(t, "test output", review.Output)
 
 	// Verify the new constraint allows 'canceled' status
 	// Use raw SQL to insert a job, since the migration test's schema may not
@@ -912,132 +994,35 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 
 func TestMigrationReasoningColumn(t *testing.T) {
 	t.Run("missing reasoning gets default", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		dbPath := filepath.Join(tmpDir, "missing_reasoning.db")
-
-		setupOldSchemaDB(t, dbPath, `
-			CREATE TABLE repos (
-				id INTEGER PRIMARY KEY,
-				root_path TEXT UNIQUE NOT NULL,
-				name TEXT NOT NULL,
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-			CREATE TABLE commits (
-				id INTEGER PRIMARY KEY,
-				repo_id INTEGER NOT NULL REFERENCES repos(id),
-				sha TEXT UNIQUE NOT NULL,
-				author TEXT NOT NULL,
-				subject TEXT NOT NULL,
-				timestamp TEXT NOT NULL,
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-			CREATE TABLE review_jobs (
-				id INTEGER PRIMARY KEY,
-				repo_id INTEGER NOT NULL REFERENCES repos(id),
-				commit_id INTEGER REFERENCES commits(id),
-				git_ref TEXT NOT NULL,
-				agent TEXT NOT NULL DEFAULT 'codex',
-				status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
-				enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-				started_at TEXT,
-				finished_at TEXT,
-				worker_id TEXT,
-				error TEXT,
-				prompt TEXT,
-				retry_count INTEGER NOT NULL DEFAULT 0
-			);
-		`, `
-			INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
-			INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
-				VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
-			INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, enqueued_at)
-				VALUES (1, 1, 1, 'abc123', 'codex', 'done', '2024-01-01');
-		`)
-
-		db, err := Open(dbPath)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "Open() failed after migration: %v", err)
-		}
-		defer db.Close()
+		db := prepareMigratedDB(
+			t,
+			"missing_reasoning.db",
+			legacyReviewJobSchemaWithoutReasoning,
+			legacyReviewJobSeedWithoutReasoning,
+		)
 
 		var reasoning string
-		if err := db.QueryRow(`SELECT reasoning FROM review_jobs WHERE id = 1`).Scan(&reasoning); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "Failed to read reasoning: %v", err)
-		}
-		if reasoning != "thorough" {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected default reasoning 'thorough', got '%s'", reasoning)
-		}
+		err := db.QueryRow(
+			`SELECT reasoning FROM review_jobs WHERE id = 1`,
+		).Scan(&reasoning)
+		require.NoError(t, err, "Failed to read reasoning")
+		assert.Equal(t, "thorough", reasoning)
 	})
 
 	t.Run("preserves existing reasoning during rebuild", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		dbPath := filepath.Join(tmpDir, "preserve_reasoning.db")
-
-		setupOldSchemaDB(t, dbPath, `
-			CREATE TABLE repos (
-				id INTEGER PRIMARY KEY,
-				root_path TEXT UNIQUE NOT NULL,
-				name TEXT NOT NULL,
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-			CREATE TABLE commits (
-				id INTEGER PRIMARY KEY,
-				repo_id INTEGER NOT NULL REFERENCES repos(id),
-				sha TEXT UNIQUE NOT NULL,
-				author TEXT NOT NULL,
-				subject TEXT NOT NULL,
-				timestamp TEXT NOT NULL,
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-			CREATE TABLE review_jobs (
-				id INTEGER PRIMARY KEY,
-				repo_id INTEGER NOT NULL REFERENCES repos(id),
-				commit_id INTEGER REFERENCES commits(id),
-				git_ref TEXT NOT NULL,
-				agent TEXT NOT NULL DEFAULT 'codex',
-				reasoning TEXT NOT NULL DEFAULT 'thorough',
-				status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed')) DEFAULT 'queued',
-				enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-				started_at TEXT,
-				finished_at TEXT,
-				worker_id TEXT,
-				error TEXT,
-				prompt TEXT,
-				retry_count INTEGER NOT NULL DEFAULT 0
-			);
-		`, `
-			INSERT INTO repos (id, root_path, name) VALUES (1, '/tmp/test', 'test');
-			INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
-				VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
-			INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at)
-				VALUES (1, 1, 1, 'abc123', 'codex', 'fast', 'done', '2024-01-01');
-		`)
-
-		db, err := Open(dbPath)
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "Open() failed after migration: %v", err)
-		}
-		defer db.Close()
+		db := prepareMigratedDB(
+			t,
+			"preserve_reasoning.db",
+			legacyReviewJobSchemaWithReasoning,
+			legacyReviewJobSeedWithReasoning,
+		)
 
 		var reasoning string
-		if err := db.QueryRow(`SELECT reasoning FROM review_jobs WHERE id = 1`).Scan(&reasoning); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "Failed to read reasoning: %v", err)
-		}
-		if reasoning != "fast" {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected preserved reasoning 'fast', got '%s'", reasoning)
-		}
+		err := db.QueryRow(
+			`SELECT reasoning FROM review_jobs WHERE id = 1`,
+		).Scan(&reasoning)
+		require.NoError(t, err, "Failed to read reasoning")
+		assert.Equal(t, "fast", reasoning)
 	})
 }
 
