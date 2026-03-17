@@ -630,49 +630,39 @@ func TestFixCmdFlagValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "--branch without --open",
-			args:    []string{"--branch", "main"},
-			wantErr: "--branch requires --open",
-		},
-		{
 			name:    "--all-branches with positional args",
 			args:    []string{"--all-branches", "123"},
-			wantErr: "--open cannot be used with positional job IDs",
+			wantErr: "--all-branches cannot be used with positional job IDs",
 		},
 		{
-			name:    "--open with positional args",
-			args:    []string{"--unaddressed", "123"},
-			wantErr: "--open cannot be used with positional job IDs",
+			name:    "--branch with positional args",
+			args:    []string{"--branch", "main", "123"},
+			wantErr: "--branch cannot be used with positional job IDs",
 		},
 		{
-			name:    "--newest-first without --open",
+			name:    "--newest-first with positional args",
 			args:    []string{"--newest-first", "123"},
-			wantErr: "--newest-first requires --open",
+			wantErr: "--newest-first cannot be used with positional job IDs",
 		},
 		{
-			name:    "--all-branches with --branch (no explicit --unaddressed)",
+			name:    "--all-branches with --branch",
 			args:    []string{"--all-branches", "--branch", "main"},
 			wantErr: "--all-branches and --branch are mutually exclusive",
 		},
 		{
-			name:    "--batch with --open",
-			args:    []string{"--batch", "--unaddressed"},
-			wantErr: "--batch and --open are mutually exclusive",
-		},
-		{
 			name:    "--batch with explicit IDs and --branch",
 			args:    []string{"--batch", "--branch", "main", "123"},
-			wantErr: "cannot be used with explicit job IDs",
+			wantErr: "--branch cannot be used with positional job IDs",
 		},
 		{
 			name:    "--batch with explicit IDs and --all-branches",
 			args:    []string{"--batch", "--all-branches", "123"},
-			wantErr: "cannot be used with explicit job IDs",
+			wantErr: "--all-branches cannot be used with positional job IDs",
 		},
 		{
 			name:    "--batch with explicit IDs and --newest-first",
 			args:    []string{"--batch", "--newest-first", "123"},
-			wantErr: "cannot be used with explicit job IDs",
+			wantErr: "--newest-first cannot be used with positional job IDs",
 		},
 		{
 			name:    "--list with positional args",
@@ -724,9 +714,9 @@ func TestFixNoArgsDefaultsToOpen(t *testing.T) {
 	assert.False(t, err != nil && strings.Contains(err.Error(), "requires at least"))
 }
 
-func TestFixAllBranchesImpliesOpen(t *testing.T) {
-	// --all-branches alone should imply --open and pass
-	// validation, routing through open discovery.
+func TestFixAllBranchesDiscovery(t *testing.T) {
+	// --all-branches alone should pass validation and
+	// route through open discovery.
 	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"jobs":     []any{},
@@ -1830,7 +1820,7 @@ func TestRunFixList(t *testing.T) {
 
 		// Check usage hints
 		assert.Contains(t, out, "roborev fix <job_id>")
-		assert.Contains(t, out, "roborev fix --open")
+		assert.Contains(t, out, "roborev fix\n")
 	})
 
 	t.Run("no open jobs", func(t *testing.T) {

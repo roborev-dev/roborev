@@ -25,7 +25,7 @@ import (
 
 var (
 	// Retry up to 3 times after the initial daemon request. Each retry waits
-	// for the daemon to come back for up to a minute so `roborev fix --open`
+	// for the daemon to come back for up to a minute so `roborev fix`
 	// can survive daemon restarts without immediately aborting.
 	fixDaemonMaxRetries          = 3
 	fixDaemonRecoveryWait        = 1 * time.Minute
@@ -43,8 +43,8 @@ func fixCmd() *cobra.Command {
 		reasoning   string
 		minSeverity string
 		quiet       bool
-		open        bool
-		unaddressed bool // deprecated alias for open
+		open        bool // deprecated, silently ignored
+		unaddressed bool // deprecated, silently ignored
 		allBranches bool
 		newestFirst bool
 		branch      string
@@ -65,20 +65,19 @@ The agent runs synchronously in your terminal, streaming output as it
 works. The review output is printed first so you can see what needs
 fixing. When complete, the job is closed.
 
-Use --open to automatically discover and fix all open completed jobs
-for the current repo.
+With no arguments, discovers and fixes all open completed jobs on the
+current branch.
 
 Examples:
+  roborev fix                            # Fix all open jobs on current branch
   roborev fix 123                        # Fix a single job
   roborev fix 123 124 125                # Fix multiple jobs sequentially
   roborev fix --agent claude-code 123    # Use a specific agent
-  roborev fix --open                     # Fix all open jobs on current branch
-  roborev fix --open --branch main
+  roborev fix --branch main              # Fix all open jobs on main
   roborev fix --all-branches             # Fix all open jobs across all branches
   roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
   roborev fix --batch                    # Batch all open jobs on current branch
   roborev fix --list                     # List open jobs without fixing
-  roborev fix --open --list              # Same as above
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,27 +90,17 @@ Examples:
 				_ = git.EnsureAbsoluteHooksPath(root)
 			}
 
-			// Support deprecated --unaddressed as alias for --open
-			if unaddressed {
-				open = true
-			}
-			if allBranches && !open && !batch && !list {
-				open = true
-			}
-			if branch != "" && !open && !batch && !list {
-				return fmt.Errorf("--branch requires --open, --batch, or --list")
-			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
-			if newestFirst && !open && !batch && !list {
-				return fmt.Errorf("--newest-first requires --open, --batch, or --list")
+			if allBranches && len(args) > 0 {
+				return fmt.Errorf("--all-branches cannot be used with positional job IDs")
 			}
-			if open && len(args) > 0 {
-				return fmt.Errorf("--open cannot be used with positional job IDs")
+			if branch != "" && len(args) > 0 {
+				return fmt.Errorf("--branch cannot be used with positional job IDs")
 			}
-			if batch && open {
-				return fmt.Errorf("--batch and --open are mutually exclusive (--batch without args already discovers open jobs)")
+			if newestFirst && len(args) > 0 {
+				return fmt.Errorf("--newest-first cannot be used with positional job IDs")
 			}
 			if list && len(args) > 0 {
 				return fmt.Errorf("--list cannot be used with positional job IDs")
@@ -175,7 +164,7 @@ Examples:
 				return runFixBatch(cmd, jobIDs, "", false, opts)
 			}
 
-			if open || len(args) == 0 {
+			if len(args) == 0 {
 				// Default to current branch unless --branch or --all-branches is set
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
@@ -211,13 +200,14 @@ Examples:
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, medium, thorough, or maximum")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
-	cmd.Flags().BoolVar(&open, "open", false, "fix all open completed jobs for the current repo")
-	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "deprecated: use --open")
-	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --open)")
-	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include open jobs from all branches (implies --open)")
-	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --open)")
+	cmd.Flags().BoolVar(&open, "open", false, "deprecated: open is now the default behavior")
+	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "deprecated: open is now the default behavior")
+	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")
+	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include open jobs from all branches")
+	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first")
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
-	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing (implies --open)")
+	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing")
+	_ = cmd.Flags().MarkHidden("open")
 	_ = cmd.Flags().MarkHidden("unaddressed")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
@@ -507,7 +497,7 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 // branch matching. branchOverride is the explicit --branch value
 // for non-mutating flows (e.g. --list); when set, all job types
 // use branch matching, so cross-branch listing works for SHA/range
-// jobs too. Mutating flows (--open, --batch) must pass "" so that
+// jobs too. Mutating flows (fix, --batch) must pass "" so that
 // fixes are never applied to the wrong checkout. On git errors the
 // job is kept (fail open) to avoid silently dropping work.
 func filterReachableJobs(
@@ -742,7 +732,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	}
 
 	cmd.Printf("To apply a fix: roborev fix <job_id>\n")
-	cmd.Printf("To apply all:   roborev fix --open\n")
+	cmd.Printf("To apply all:   roborev fix\n")
 
 	return nil
 }
