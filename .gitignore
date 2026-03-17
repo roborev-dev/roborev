@@ -38,3 +38,6 @@ tmp/
 REPORT.md
 .zed
 .superset
+
+# Claude Code worktrees
+.claude/worktrees/
