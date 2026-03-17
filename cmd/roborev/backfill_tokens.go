@@ -36,31 +36,10 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			// Count jobs that actually started per session ID. If
-			// multiple jobs ran on the same session, it was resumed
-			// and agentsview totals are cumulative — skip to avoid
-			// overcounting.
-			sessionCount := make(map[string]int)
-			for _, job := range jobs {
-				if job.SessionID != "" && job.StartedAt != nil {
-					sessionCount[job.SessionID]++
-				}
-			}
+			candidates := backfillCandidates(jobs)
 
 			var total, updated, skipped, failed int
-			for _, job := range jobs {
-				if !job.HasViewableOutput() {
-					continue
-				}
-				if job.TokenUsage != "" {
-					continue // already has token data
-				}
-				if job.SessionID == "" {
-					continue // no session to look up
-				}
-				if sessionCount[job.SessionID] > 1 {
-					continue // resumed session, skip to avoid overcounting
-				}
+			for _, job := range candidates {
 				total++
 
 				ctx, cancel := context.WithTimeout(
@@ -124,4 +103,40 @@ will be skipped.`,
 		"show what would be updated without writing",
 	)
 	return cmd
+}
+
+// backfillCandidates filters jobs to those eligible for token
+// backfill: completed, has a session ID, no existing token data,
+// and the session was not reused by another started job.
+func backfillCandidates(
+	jobs []storage.ReviewJob,
+) []storage.ReviewJob {
+	// Count jobs that actually started per session ID. If
+	// multiple jobs ran on the same session, it was resumed
+	// and agentsview totals are cumulative — skip to avoid
+	// overcounting.
+	sessionCount := make(map[string]int)
+	for _, job := range jobs {
+		if job.SessionID != "" && job.StartedAt != nil {
+			sessionCount[job.SessionID]++
+		}
+	}
+
+	var out []storage.ReviewJob
+	for _, job := range jobs {
+		if !job.HasViewableOutput() {
+			continue
+		}
+		if job.TokenUsage != "" {
+			continue
+		}
+		if job.SessionID == "" {
+			continue
+		}
+		if sessionCount[job.SessionID] > 1 {
+			continue
+		}
+		out = append(out, job)
+	}
+	return out
 }
