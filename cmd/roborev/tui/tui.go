@@ -898,33 +898,42 @@ func Run(cfg Config) error {
 			filepath.Dir(socketPath),
 		); err != nil {
 			log.Printf("warning: control socket disabled: %v", err)
+			socketPath = ""
 		}
 	}
 
 	// Start the control listener after the event loop is running
 	// so that p.Send (used by control handlers) never blocks. The
-	// model closes m.ready on its first Update call.
-	go func() {
-		<-m.ready
+	// model closes m.ready on its first Update call. Skip if
+	// socketPath is empty (ensureSocketDir failed).
+	if socketPath != "" {
+		go func() {
+			<-m.ready
 
-		cleanup, err := startControlListener(socketPath, p)
-		if err != nil {
-			log.Printf("warning: control socket disabled: %v", err)
-			return
-		}
+			cleanup, err := startControlListener(socketPath, p)
+			if err != nil {
+				log.Printf(
+					"warning: control socket disabled: %v", err,
+				)
+				return
+			}
 
-		rtInfo := buildTUIRuntimeInfo(socketPath, cfg.ServerAddr)
-		if err := WriteTUIRuntime(rtInfo); err != nil {
-			log.Printf(
-				"warning: failed to write TUI runtime info: %v", err,
+			rtInfo := buildTUIRuntimeInfo(
+				socketPath, cfg.ServerAddr,
 			)
-		}
+			if err := WriteTUIRuntime(rtInfo); err != nil {
+				log.Printf(
+					"warning: failed to write TUI runtime info: %v",
+					err,
+				)
+			}
 
-		// Block until the program exits, then clean up.
-		p.Wait()
-		cleanup()
-		RemoveTUIRuntime(socketPath)
-	}()
+			// Block until the program exits, then clean up.
+			p.Wait()
+			cleanup()
+			RemoveTUIRuntime()
+		}()
+	}
 
 	_, err := p.Run()
 	return err

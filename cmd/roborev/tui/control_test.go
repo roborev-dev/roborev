@@ -348,6 +348,22 @@ func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
 	require.False(t, resp.OK, "expected error for locked branch filter")
 }
 
+func TestHandleCtrlSetFilter_LockedBranchNoRepoMutation(t *testing.T) {
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.lockedBranchFilter = true
+	m.activeRepoFilter = []string{"/original"}
+
+	// Request both repo + branch; branch is locked so the entire
+	// request should fail without mutating repo.
+	params, _ := json.Marshal(map[string]string{
+		"repo": "/new", "branch": "main",
+	})
+	updated, resp, _ := m.handleCtrlSetFilter(params)
+	require.False(t, resp.OK, "expected error for locked branch")
+	assert.Equal(t, []string{"/original"}, updated.activeRepoFilter,
+		"repo filter should not be mutated on error")
+}
+
 func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/old"}
@@ -913,9 +929,11 @@ func TestEnsureSocketDir_CreatesParentDir(t *testing.T) {
 	require.NoError(t, ensureSocketDir(socketDir),
 		"expected ensureSocketDir to create dirs")
 
-	di, err := os.Stat(socketDir)
+	_, err := os.Stat(socketDir)
 	require.NoError(t, err, "stat created dir")
-	assert.Equal(t, os.FileMode(0700), di.Mode().Perm())
+	// Permission assertions are Unix-only; see
+	// TestEnsureSocketDirTightensExistingDir in
+	// control_unix_test.go.
 }
 
 func TestStartControlListener_CreatesCustomParentDir(t *testing.T) {

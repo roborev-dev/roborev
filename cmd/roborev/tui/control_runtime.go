@@ -72,15 +72,11 @@ func WriteTUIRuntime(info TUIRuntimeInfo) error {
 	return nil
 }
 
-// RemoveTUIRuntime removes the runtime metadata and socket files
-// for the current process.
-func RemoveTUIRuntime(socketPath string) {
+// RemoveTUIRuntime removes the runtime metadata file for the
+// current process. The socket file is removed separately by the
+// control listener's cleanup function.
+func RemoveTUIRuntime() {
 	os.Remove(tuiRuntimePath(os.Getpid()))
-	// Socket file is already removed by the control listener cleanup,
-	// but remove here as a safety net.
-	if socketPath != "" {
-		os.Remove(socketPath)
-	}
 }
 
 // ListAllTUIRuntimes returns metadata for all discovered TUI

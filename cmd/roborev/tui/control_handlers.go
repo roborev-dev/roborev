@@ -215,12 +215,20 @@ func (m model) handleCtrlSetFilter(
 		}, nil
 	}
 
+	// Validate all lock constraints before mutating any state
+	// so a partial-success / partial-error cannot occur.
+	if params.Repo != nil && m.lockedRepoFilter {
+		return m, controlResponse{
+			Error: "repo filter is locked via --repo flag",
+		}, nil
+	}
+	if params.Branch != nil && m.lockedBranchFilter {
+		return m, controlResponse{
+			Error: "branch filter is locked via --branch flag",
+		}, nil
+	}
+
 	if params.Repo != nil {
-		if m.lockedRepoFilter {
-			return m, controlResponse{
-				Error: "repo filter is locked via --repo flag",
-			}, nil
-		}
 		if *params.Repo == "" {
 			m.activeRepoFilter = nil
 			m.removeFilterFromStack(filterTypeRepo)
@@ -231,11 +239,6 @@ func (m model) handleCtrlSetFilter(
 	}
 
 	if params.Branch != nil {
-		if m.lockedBranchFilter {
-			return m, controlResponse{
-				Error: "branch filter is locked via --branch flag",
-			}, nil
-		}
 		m.activeBranchFilter = *params.Branch
 		if *params.Branch == "" {
 			m.removeFilterFromStack(filterTypeBranch)
@@ -266,22 +269,24 @@ func (m model) handleCtrlClearFilter(
 		}, nil
 	}
 
+	// Validate all lock constraints before mutating any state.
+	if params.Repo && m.lockedRepoFilter {
+		return m, controlResponse{
+			Error: "repo filter is locked via --repo flag",
+		}, nil
+	}
+	if params.Branch && m.lockedBranchFilter {
+		return m, controlResponse{
+			Error: "branch filter is locked via --branch flag",
+		}, nil
+	}
+
 	if params.Repo {
-		if m.lockedRepoFilter {
-			return m, controlResponse{
-				Error: "repo filter is locked via --repo flag",
-			}, nil
-		}
 		m.activeRepoFilter = nil
 		m.removeFilterFromStack(filterTypeRepo)
 	}
 
 	if params.Branch {
-		if m.lockedBranchFilter {
-			return m, controlResponse{
-				Error: "branch filter is locked via --branch flag",
-			}, nil
-		}
 		m.activeBranchFilter = ""
 		m.removeFilterFromStack(filterTypeBranch)
 	}
