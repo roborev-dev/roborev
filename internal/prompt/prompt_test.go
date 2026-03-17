@@ -9,10 +9,15 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
 
 func TestBuildPromptWithoutContext(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)

@@ -8,9 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
 
 type TestRepo struct {
 	T   *testing.T
@@ -370,6 +375,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 				fakeHome, ".config",
 			))
 			globalCfg := filepath.Join(fakeHome, ".gitconfig")
+			t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 			err := os.WriteFile(globalCfg, []byte(
 				"[core]\n\thooksPath = .githooks\n",
 			), 0644)
