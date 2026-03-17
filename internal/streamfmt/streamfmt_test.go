@@ -109,137 +109,231 @@ func runStreamTestCase(t *testing.T, tc streamTestCase) {
 	})
 }
 
-// Event builders for Anthropic-style JSON.
+type toolInput struct {
+	FilePath  string `json:"file_path,omitempty"`
+	OldString string `json:"old_string,omitempty"`
+	NewString string `json:"new_string,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Pattern   string `json:"pattern,omitempty"`
+	Path      string `json:"path,omitempty"`
+}
+
+func filePathInput(path string) *toolInput {
+	return &toolInput{FilePath: path}
+}
+
+func editInput(
+	path, oldString, newString string,
+) *toolInput {
+	return &toolInput{
+		FilePath:  path,
+		OldString: oldString,
+		NewString: newString,
+	}
+}
+
+func commandInput(command string) *toolInput {
+	return &toolInput{Command: command}
+}
+
+func grepInput(pattern, path string) *toolInput {
+	return &toolInput{Pattern: pattern, Path: path}
+}
+
+type anthropicContentBlock struct {
+	Type  string     `json:"type"`
+	Text  string     `json:"text,omitempty"`
+	Name  string     `json:"name,omitempty"`
+	Input *toolInput `json:"input,omitempty"`
+}
+
+type anthropicMessage struct {
+	Content any `json:"content"`
+}
+
+type anthropicToolUseResult struct {
+	FilePath string `json:"filePath"`
+}
+
+type anthropicEvent struct {
+	Type          string                  `json:"type"`
+	Message       *anthropicMessage       `json:"message,omitempty"`
+	ToolUseResult *anthropicToolUseResult `json:"tool_use_result,omitempty"`
+	Result        string                  `json:"result,omitempty"`
+}
 
 func eventAssistantToolUse(
-	toolName string, input map[string]any,
+	toolName string, input *toolInput,
 ) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": []any{
-				map[string]any{
-					"type":  "tool_use",
-					"name":  toolName,
-					"input": input,
-				},
-			},
+	return toJSON(anthropicEvent{
+		Type: "assistant",
+		Message: &anthropicMessage{
+			Content: []anthropicContentBlock{{
+				Type:  "tool_use",
+				Name:  toolName,
+				Input: input,
+			}},
 		},
 	})
 }
 
 func eventAssistantText(text string) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": []any{
-				map[string]any{
-					"type": "text", "text": text,
-				},
-			},
+	return toJSON(anthropicEvent{
+		Type: "assistant",
+		Message: &anthropicMessage{
+			Content: []anthropicContentBlock{{
+				Type: "text",
+				Text: text,
+			}},
 		},
 	})
 }
 
-func eventAssistantMulti(blocks ...map[string]any) string {
-	return toJSON(map[string]any{
-		"type": "assistant",
-		"message": map[string]any{
-			"content": blocks,
-		},
+func eventAssistantMulti(
+	blocks ...anthropicContentBlock,
+) string {
+	return toJSON(anthropicEvent{
+		Type:    "assistant",
+		Message: &anthropicMessage{Content: blocks},
 	})
 }
 
-func contentBlockText(text string) map[string]any {
-	return map[string]any{"type": "text", "text": text}
+func contentBlockText(text string) anthropicContentBlock {
+	return anthropicContentBlock{Type: "text", Text: text}
 }
 
 func contentBlockToolUse(
-	toolName string, input map[string]any,
-) map[string]any {
-	return map[string]any{
-		"type": "tool_use", "name": toolName, "input": input,
+	toolName string, input *toolInput,
+) anthropicContentBlock {
+	return anthropicContentBlock{
+		Type: "tool_use", Name: toolName, Input: input,
 	}
 }
 
 func eventAssistantLegacy(content string) string {
-	return toJSON(map[string]any{
-		"type":    "assistant",
-		"message": map[string]any{"content": content},
+	return toJSON(anthropicEvent{
+		Type:    "assistant",
+		Message: &anthropicMessage{Content: content},
 	})
 }
 
 func eventAssistantToolUseResult(filePath string) string {
-	return toJSON(map[string]any{
-		"type":            "user",
-		"tool_use_result": map[string]any{"filePath": filePath},
+	return toJSON(anthropicEvent{
+		Type: "user",
+		ToolUseResult: &anthropicToolUseResult{
+			FilePath: filePath,
+		},
 	})
 }
 
 func eventAssistantResult(result string) string {
-	return toJSON(map[string]any{
-		"type": "result", "result": result,
+	return toJSON(anthropicEvent{
+		Type: "result", Result: result,
 	})
 }
 
-// Event builders for Gemini-style JSON.
+type geminiInitEvent struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+type geminiMessageEvent struct {
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	Delta   bool   `json:"delta,omitempty"`
+}
+
+type geminiToolUseEvent struct {
+	Type       string     `json:"type"`
+	ToolName   string     `json:"tool_name"`
+	ToolID     string     `json:"tool_id"`
+	Parameters *toolInput `json:"parameters"`
+}
+
+type geminiToolResultEvent struct {
+	Type   string `json:"type"`
+	ToolID string `json:"tool_id"`
+	Status string `json:"status"`
+	Output string `json:"output,omitempty"`
+}
+
+type geminiResultEvent struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}
 
 func eventGeminiInit(sessionID string) string {
-	return toJSON(map[string]any{
-		"type": "init", "session_id": sessionID,
+	return toJSON(geminiInitEvent{
+		Type: "init", SessionID: sessionID,
 	})
 }
 
 func eventGeminiMessage(
 	role, content string, delta bool,
 ) string {
-	m := map[string]any{
-		"type": "message", "role": role, "content": content,
-	}
-	if delta {
-		m["delta"] = true
-	}
-	return toJSON(m)
+	return toJSON(geminiMessageEvent{
+		Type:    "message",
+		Role:    role,
+		Content: content,
+		Delta:   delta,
+	})
 }
 
 func eventGeminiToolUse(
-	toolName, toolID string, params map[string]any,
+	toolName, toolID string, params *toolInput,
 ) string {
-	return toJSON(map[string]any{
-		"type":       "tool_use",
-		"tool_name":  toolName,
-		"tool_id":    toolID,
-		"parameters": params,
+	return toJSON(geminiToolUseEvent{
+		Type:       "tool_use",
+		ToolName:   toolName,
+		ToolID:     toolID,
+		Parameters: params,
 	})
 }
 
 func eventGeminiToolResult(
 	toolID, status, output string,
 ) string {
-	m := map[string]any{
-		"type": "tool_result", "tool_id": toolID,
-		"status": status,
-	}
-	if output != "" {
-		m["output"] = output
-	}
-	return toJSON(m)
-}
-
-func eventGeminiResult(status string) string {
-	return toJSON(map[string]any{
-		"type": "result", "status": status,
+	return toJSON(geminiToolResultEvent{
+		Type:   "tool_result",
+		ToolID: toolID,
+		Status: status,
+		Output: output,
 	})
 }
 
-// Event builder for OpenCode-style JSON.
+func eventGeminiResult(status string) string {
+	return toJSON(geminiResultEvent{
+		Type: "result", Status: status,
+	})
+}
+
+type openCodeState struct {
+	Status string     `json:"status"`
+	Input  *toolInput `json:"input,omitempty"`
+}
+
+type openCodePart struct {
+	Type   string         `json:"type"`
+	Text   string         `json:"text,omitempty"`
+	Tool   string         `json:"tool,omitempty"`
+	ID     string         `json:"id,omitempty"`
+	State  *openCodeState `json:"state,omitempty"`
+	Reason string         `json:"reason,omitempty"`
+	Cost   float64        `json:"cost,omitempty"`
+}
+
+type openCodeEvent struct {
+	Type string       `json:"type"`
+	Part openCodePart `json:"part"`
+}
 
 func eventOpenCode(
-	eventType string, part map[string]any,
+	eventType string, part openCodePart,
 ) string {
-	return toJSON(map[string]any{
-		"type": eventType,
-		"part": part,
+	return toJSON(openCodeEvent{
+		Type: eventType,
+		Part: part,
 	})
 }
 
@@ -282,10 +376,14 @@ func TestFormatter_Anthropic(t *testing.T) {
 		{
 			name: "ToolUse",
 			events: []string{
-				eventAssistantToolUse("Read", map[string]any{"file_path": "internal/gmail/ratelimit.go"}),
+				eventAssistantToolUse("Read", filePathInput("internal/gmail/ratelimit.go")),
 				eventAssistantToolUseResult("internal/gmail/ratelimit.go"),
-				eventAssistantToolUse("Edit", map[string]any{"file_path": "internal/gmail/ratelimit.go", "old_string": "foo", "new_string": "bar"}),
-				eventAssistantToolUse("Bash", map[string]any{"command": "go test ./internal/gmail/ -run TestRateLimiter"}),
+				eventAssistantToolUse("Edit", editInput(
+					"internal/gmail/ratelimit.go", "foo", "bar",
+				)),
+				eventAssistantToolUse("Bash", commandInput(
+					"go test ./internal/gmail/ -run TestRateLimiter",
+				)),
 			},
 			contains: []string{
 				"Read   internal/gmail/ratelimit.go",
@@ -314,7 +412,9 @@ func TestFormatter_Anthropic(t *testing.T) {
 		{
 			name: "BashTruncation",
 			events: []string{
-				eventAssistantToolUse("Bash", map[string]any{"command": strings.Repeat("x", 100)}),
+				eventAssistantToolUse("Bash", commandInput(
+					strings.Repeat("x", 100),
+				)),
 			},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
 				got := fix.output()
@@ -326,7 +426,9 @@ func TestFormatter_Anthropic(t *testing.T) {
 		{
 			name: "GrepWithPath",
 			events: []string{
-				eventAssistantToolUse("Grep", map[string]any{"pattern": "TODO", "path": "internal/"}),
+				eventAssistantToolUse("Grep", grepInput(
+					"TODO", "internal/",
+				)),
 			},
 			contains: []string{"Grep   TODO  internal/"},
 		},
@@ -342,7 +444,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			events: []string{
 				eventAssistantMulti(
 					contentBlockText("thinking..."),
-					contentBlockToolUse("Read", map[string]any{"file_path": "main.go"}),
+					contentBlockToolUse("Read", filePathInput("main.go")),
 				),
 			},
 			contains: []string{
@@ -354,13 +456,10 @@ func TestFormatter_Anthropic(t *testing.T) {
 			name: "TextToToolTransition",
 			events: []string{
 				eventAssistantText("Reviewing code."),
-				eventAssistantToolUse("Read", map[string]any{
-					"file_path": "main.go",
-				}),
-				eventAssistantToolUse("Edit", map[string]any{
-					"file_path":  "main.go",
-					"old_string": "old", "new_string": "new",
-				}),
+				eventAssistantToolUse("Read", filePathInput("main.go")),
+				eventAssistantToolUse("Edit", editInput(
+					"main.go", "old", "new",
+				)),
 				eventAssistantText("Done fixing."),
 			},
 			contains: []string{
@@ -405,9 +504,9 @@ func TestFormatter_Anthropic(t *testing.T) {
 		{
 			name: "SanitizesToolArgs",
 			events: []string{
-				eventAssistantToolUse("Read", map[string]any{
-					"file_path": "/tmp/\x1b]0;evil\x07\x1b[31mred\x1b[0m.go",
-				}),
+				eventAssistantToolUse("Read", filePathInput(
+					"/tmp/\x1b]0;evil\x07\x1b[31mred\x1b[0m.go",
+				)),
 			},
 			contains: []string{"Read", ".go"},
 			checkOutput: func(t *testing.T, fix *streamFormatterFixture) {
@@ -421,9 +520,7 @@ func TestFormatter_Anthropic(t *testing.T) {
 			name: "SanitizesToolName",
 			events: []string{
 				eventAssistantToolUse(
-					"Read\x1b[31m", map[string]any{
-						"file_path": "clean.go",
-					},
+					"Read\x1b[31m", filePathInput("clean.go"),
 				),
 			},
 			contains: []string{"clean.go"},
@@ -447,10 +544,12 @@ func TestFormatter_Gemini(t *testing.T) {
 				eventGeminiInit("abc"),
 				eventGeminiMessage("user", "fix this", false),
 				eventGeminiMessage("assistant", "I'll fix this.", true),
-				eventGeminiToolUse("read_file", "t1", map[string]any{"file_path": "main.go"}),
+				eventGeminiToolUse("read_file", "t1", filePathInput("main.go")),
 				eventGeminiToolResult("t1", "success", ""),
-				eventGeminiToolUse("replace", "t2", map[string]any{"file_path": "main.go", "old_string": "foo", "new_string": "bar"}),
-				eventGeminiToolUse("run_shell_command", "t3", map[string]any{"command": "go test ./..."}),
+				eventGeminiToolUse("replace", "t2", editInput(
+					"main.go", "foo", "bar",
+				)),
+				eventGeminiToolUse("run_shell_command", "t3", commandInput("go test ./...")),
 				eventGeminiResult("success"),
 			},
 			contains: []string{
@@ -475,10 +574,10 @@ func TestFormatter_Gemini(t *testing.T) {
 		{
 			name: "SanitizesGeminiText",
 			events: []string{
-				toJSON(map[string]any{
-					"type":    "message",
-					"role":    "assistant",
-					"content": "\x1b[1mbold\x1b[0m safe \x1b]0;title\x07",
+				toJSON(geminiMessageEvent{
+					Type:    "message",
+					Role:    "assistant",
+					Content: "\x1b[1mbold\x1b[0m safe \x1b]0;title\x07",
 				}),
 			},
 			contains:    []string{"bold", "safe"},
@@ -501,9 +600,9 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "Text",
 			events: []string{
-				eventOpenCode("text", map[string]any{
-					"type": "text",
-					"text": "I found a bug in the code.",
+				eventOpenCode("text", openCodePart{
+					Type: "text",
+					Text: "I found a bug in the code.",
 				}),
 			},
 			contains: []string{"I found a bug in the code."},
@@ -511,38 +610,31 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "Tool",
 			events: []string{
-				eventOpenCode("tool", map[string]any{
-					"type": "tool",
-					"tool": "Read",
-					"id":   "tc_1",
-					"state": map[string]any{
-						"status": "running",
-						"input": map[string]any{
-							"file_path": "internal/server.go",
-						},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool",
+					Tool: "Read",
+					ID:   "tc_1",
+					State: &openCodeState{
+						Status: "running",
+						Input:  filePathInput("internal/server.go"),
 					},
 				}),
-				eventOpenCode("tool", map[string]any{
-					"type": "tool",
-					"tool": "Bash",
-					"id":   "tc_2",
-					"state": map[string]any{
-						"status": "running",
-						"input": map[string]any{
-							"command": "go test ./...",
-						},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool",
+					Tool: "Bash",
+					ID:   "tc_2",
+					State: &openCodeState{
+						Status: "running",
+						Input:  commandInput("go test ./..."),
 					},
 				}),
-				eventOpenCode("tool", map[string]any{
-					"type": "tool",
-					"tool": "Grep",
-					"id":   "tc_3",
-					"state": map[string]any{
-						"status": "running",
-						"input": map[string]any{
-							"pattern": "TODO",
-							"path":    "internal/",
-						},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool",
+					Tool: "Grep",
+					ID:   "tc_3",
+					State: &openCodeState{
+						Status: "running",
+						Input:  grepInput("TODO", "internal/"),
 					},
 				}),
 			},
@@ -555,26 +647,22 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "ToolDedup",
 			events: []string{
-				eventOpenCode("tool", map[string]any{
-					"type": "tool", "tool": "Read", "id": "tc_1",
-					"state": map[string]any{"status": "pending"},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool", Tool: "Read", ID: "tc_1",
+					State: &openCodeState{Status: "pending"},
 				}),
-				eventOpenCode("tool", map[string]any{
-					"type": "tool", "tool": "Read", "id": "tc_1",
-					"state": map[string]any{
-						"status": "running",
-						"input": map[string]any{
-							"file_path": "main.go",
-						},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool", Tool: "Read", ID: "tc_1",
+					State: &openCodeState{
+						Status: "running",
+						Input:  filePathInput("main.go"),
 					},
 				}),
-				eventOpenCode("tool", map[string]any{
-					"type": "tool", "tool": "Read", "id": "tc_1",
-					"state": map[string]any{
-						"status": "completed",
-						"input": map[string]any{
-							"file_path": "main.go",
-						},
+				eventOpenCode("tool", openCodePart{
+					Type: "tool", Tool: "Read", ID: "tc_1",
+					State: &openCodeState{
+						Status: "completed",
+						Input:  filePathInput("main.go"),
 					},
 				}),
 			},
@@ -583,9 +671,9 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "Reasoning",
 			events: []string{
-				eventOpenCode("reasoning", map[string]any{
-					"type": "reasoning",
-					"text": "Reviewing error handling changes",
+				eventOpenCode("reasoning", openCodePart{
+					Type: "reasoning",
+					Text: "Reviewing error handling changes",
 				}),
 			},
 			contains: []string{"Reviewing error handling changes"},
@@ -593,13 +681,13 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "SuppressesLifecycle",
 			events: []string{
-				eventOpenCode("step_start", map[string]any{
-					"type": "step-start",
+				eventOpenCode("step_start", openCodePart{
+					Type: "step-start",
 				}),
-				eventOpenCode("step_finish", map[string]any{
-					"type":   "step-finish",
-					"reason": "stop",
-					"cost":   0.01,
+				eventOpenCode("step_finish", openCodePart{
+					Type:   "step-finish",
+					Reason: "stop",
+					Cost:   0.01,
 				}),
 			},
 			empty: true,
@@ -607,11 +695,11 @@ func TestFormatter_OpenCode(t *testing.T) {
 		{
 			name: "PendingToolSuppressed",
 			events: []string{
-				eventOpenCode("tool", map[string]any{
-					"type":  "tool",
-					"tool":  "Read",
-					"id":    "tc_1",
-					"state": map[string]any{"status": "pending"},
+				eventOpenCode("tool", openCodePart{
+					Type:  "tool",
+					Tool:  "Read",
+					ID:    "tc_1",
+					State: &openCodeState{Status: "pending"},
 				}),
 			},
 			empty: true,
