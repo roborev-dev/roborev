@@ -49,6 +49,9 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	// agent binaries from the developer environment.
 	cfg.CI.SynthesisAgent = "test"
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	// Default to assuming PR is open so tests don't shell out to `gh pr view`.
+	// Tests that need specific isPROpen behavior can override this.
+	p.isPROpenFn = func(string, int) bool { return true }
 	return &ciPollerHarness{DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
 }
 
