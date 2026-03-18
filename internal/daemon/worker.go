@@ -275,13 +275,23 @@ func (wp *WorkerPool) worker(id int) {
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("claim job: %v", err), 0)
 			}
-			time.Sleep(5 * time.Second)
+			select {
+			case <-wp.stopCh:
+				log.Printf("[%s] Shutting down", workerID)
+				return
+			case <-time.After(5 * time.Second):
+			}
 			continue
 		}
 
 		if job == nil {
 			// No jobs available, wait and retry
-			time.Sleep(2 * time.Second)
+			select {
+			case <-wp.stopCh:
+				log.Printf("[%s] Shutting down", workerID)
+				return
+			case <-time.After(2 * time.Second):
+			}
 			continue
 		}
 
