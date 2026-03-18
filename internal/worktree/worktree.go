@@ -72,11 +72,11 @@ func newWorktree(repoPath, ref string) (*Worktree, error) {
 }
 
 func (w *Worktree) initSubmodules() error {
-	// Scan BEFORE any submodule checkout so the decision is based only on
-	// content the repo owner controls (the top-level .gitmodules), not on
-	// .gitmodules files inside submodules that may be attacker-controlled.
-	// Reuse this result for both the non-recursive and recursive passes to
-	// avoid the escalation path described in CVE-2022-39253.
+	// Only enable file protocol for the non-recursive (top-level) pass
+	// where the URLs come from the repo owner's .gitmodules. The recursive
+	// pass never gets the override because nested .gitmodules content may
+	// be attacker-controlled (CVE-2022-39253). Users who legitimately need
+	// file-protocol nested submodules can set protocol.file.allow globally.
 	allowFileProtocol, err := repoUsesFileProtocolSubmodules(w.Dir)
 	if err != nil {
 		return fmt.Errorf("detect submodule protocol requirements: %w", err)
@@ -84,7 +84,10 @@ func (w *Worktree) initSubmodules() error {
 	if err := runSubmoduleUpdate(w.Dir, allowFileProtocol, false); err != nil {
 		return err
 	}
-	return runSubmoduleUpdate(w.Dir, allowFileProtocol, true)
+	// Best-effort: nested submodules that require file transport will fail
+	// here, but the worktree is still usable for review without them.
+	_ = runSubmoduleUpdate(w.Dir, false, true)
+	return nil
 }
 
 func runSubmoduleUpdate(repoPath string, allowFileProtocol, recursive bool) error {

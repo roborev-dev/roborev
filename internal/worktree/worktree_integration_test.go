@@ -114,7 +114,13 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCreateTempWorktreeInitializesNestedLocalSubmodules(t *testing.T) {
+// TestCreateWorktreeBlocksNestedLocalSubmodules verifies that the recursive
+// submodule pass does NOT enable protocol.file.allow=always, even when the
+// top-level repo uses file-protocol submodules. This prevents
+// attacker-controlled nested .gitmodules from cloning arbitrary local repos
+// (CVE-2022-39253). The top-level local submodule is initialized, but
+// the nested local submodule within it is blocked.
+func TestCreateWorktreeBlocksNestedLocalSubmodules(t *testing.T) {
 	requireGitAvailable(t)
 
 	leafRepo := testutil.NewTestRepo(t)
@@ -129,6 +135,7 @@ func TestCreateTempWorktreeInitializesNestedLocalSubmodules(t *testing.T) {
 	subRepo.SymbolicRef("HEAD", "refs/heads/main")
 	subRepo.Config("user.email", testutil.GitUserEmail)
 	subRepo.Config("user.name", testutil.GitUserName)
+	subRepo.CommitFile("sub.txt", "sub", "sub commit")
 	subRepo.Config("protocol.file.allow", "always")
 	leafRepoURL, err := filepath.Rel(subRepo.Root, leafRepo.Root)
 	require.NoError(t, err)
@@ -144,10 +151,17 @@ func TestCreateTempWorktreeInitializesNestedLocalSubmodules(t *testing.T) {
 	mainRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Root, "deps/sub")
 	mainRepo.RunGit("commit", "-m", "add top-level submodule")
 
+	// Create should still succeed — the recursive pass failure is non-fatal
+	// for the worktree overall, but the nested submodule won't be cloned.
 	wt, err := worktree.Create(mainRepo.Root, "HEAD")
 	require.NoError(t, err)
 	defer wt.Close()
 
+	// Top-level local submodule IS initialized.
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt"))
+	require.NoError(t, err, "top-level local submodule should be initialized")
+
+	// Nested local submodule is NOT initialized (file protocol blocked).
 	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "deps", "leaf", "leaf.txt"))
-	require.NoError(t, err)
+	require.ErrorIs(t, err, os.ErrNotExist, "nested local submodule should be blocked")
 }
