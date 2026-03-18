@@ -749,7 +749,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"})
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Contains(t, out, "No open jobs found")
@@ -800,7 +800,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Contains(t, out, "Found 2 open job(s)")
@@ -823,7 +823,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "feature-branch", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "feature-branch", false, true, false, fixOptions{agentName: "test"})
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Equal(t, "feature-branch", gotBranch)
@@ -838,7 +838,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"})
 		})
 		require.Error(t, err, "expected error on server failure")
 		assert.Contains(t, err.Error(), "server error")
@@ -906,7 +906,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, fixOptions{
+			return runFixOpen(cmd, "", true, false, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
 			})
@@ -976,7 +976,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "target-branch", false, fixOptions{
+			return runFixOpen(cmd, "target-branch", false, true, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
 			})
@@ -1042,7 +1042,7 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		require.NoError(t, err)
 
@@ -1054,7 +1054,7 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", false, false, true, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		require.NoError(t, err)
 
@@ -1120,7 +1120,7 @@ func TestRunFixOpenRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
 	})
 	require.NoError(t, err)
 
@@ -1214,7 +1214,7 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
 	})
 	require.NoError(t, err)
 
@@ -1964,7 +1964,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		if err := runFixOpen(cmd, "", false, opts); err != nil {
+		if err := runFixOpen(cmd, "", false, false, false, opts); err != nil {
 			require.NoError(t, err, "runFixOpen: %v")
 		}
 
@@ -1982,7 +1982,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
 		// nil jobIDs triggers discovery via queryOpenJobs
-		if err := runFixBatch(cmd, nil, "", false, opts); err != nil {
+		if err := runFixBatch(cmd, nil, "", false, false, false, opts); err != nil {
 			require.NoError(t, err, "runFixBatch: %v")
 		}
 
@@ -2178,7 +2178,7 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			cmd,
 			[]int64{10, 20},
 			"",
-			false,
+			false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
 		)
 	})
@@ -3020,12 +3020,13 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 		}).
 		Build()
 
-	// Pass the worktree's branch explicitly, matching what the CLI does
-	// when neither --all-branches nor --branch is set (effectiveBranch
-	// is resolved to the current branch before calling runFixOpen).
+	// Pass the worktree's branch for API query filtering, matching what
+	// the CLI does when neither --all-branches nor --branch is set
+	// (effectiveBranch is resolved to the current branch). allBranches
+	// is false, so filterReachableJobs uses commit-graph reachability.
 	_, runErr := runWithOutput(t, worktreeDir, func(cmd *cobra.Command) error {
 		return runFixOpen(
-			cmd, "wt-branch", false,
+			cmd, "wt-branch", false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
 		)
 	})

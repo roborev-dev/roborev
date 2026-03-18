@@ -159,13 +159,16 @@ Examples:
 						}
 						effectiveBranch = git.GetCurrentBranch(repoRoot)
 					}
-					return runFixBatch(cmd, nil, effectiveBranch, newestFirst, opts)
+					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, opts)
 				}
-				return runFixBatch(cmd, jobIDs, "", false, opts)
+				return runFixBatch(cmd, jobIDs, "", false, false, false, opts)
 			}
 
 			if len(args) == 0 {
-				// Default to current branch unless --branch or --all-branches is set
+				// Resolve branch for API query filtering.
+				// --branch X: use explicit branch
+				// --all-branches: empty string (no filter)
+				// default: current branch
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
 					workDir, err := os.Getwd()
@@ -178,7 +181,7 @@ Examples:
 					}
 					effectiveBranch = git.GetCurrentBranch(repoRoot)
 				}
-				return runFixOpen(cmd, effectiveBranch, newestFirst, opts)
+				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts)
 			}
 
 			// Parse job IDs
@@ -417,7 +420,19 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 	return nil
 }
 
-func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOptions) error {
+// runFixOpen discovers and fixes open jobs.
+//
+// branch is used for the API query filter (current branch, explicit
+// --branch, or "" for --all-branches). allBranches controls local
+// filtering: when true, filterReachableJobs is skipped entirely.
+// When false and the user passed --branch, the explicit branch is
+// forwarded as a branchOverride for branch-field matching. When false
+// and no --branch was passed, "" is used so filterReachableJobs falls
+// back to commit-graph reachability.
+//
+// explicitBranch should be true when the caller set --branch (as
+// opposed to auto-resolving the current branch).
+func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions) error {
 	// Ensure daemon is running
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -448,11 +463,17 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 		if err != nil {
 			return err
 		}
-		// When listing a specific branch, filter by reachability/branch.
-		// When listing all branches (branch==""), skip filtering — the
-		// user explicitly asked for everything in this repo.
-		if branch != "" {
-			jobs = filterReachableJobs(worktreeRoot, branch, jobs)
+		// --all-branches: skip filtering, user wants everything.
+		// --branch X: pass branch so filterReachableJobs uses
+		// branch-field matching (cross-branch from worktree).
+		// Default: pass "" so filterReachableJobs uses commit-graph
+		// reachability for SHA/range refs.
+		if !allBranches {
+			filterBranch := ""
+			if explicitBranch {
+				filterBranch = branch
+			}
+			jobs = filterReachableJobs(worktreeRoot, filterBranch, jobs)
 		}
 
 		// Filter out jobs we've already processed
@@ -496,10 +517,11 @@ func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOpt
 // graph; non-SHA refs (dirty, empty, task labels) fall back to
 // branch matching. branchOverride is the explicit --branch value
 // for non-mutating flows (e.g. --list); when set, all job types
-// use branch matching, so cross-branch listing works for SHA/range
-// jobs too. Mutating flows (fix, --batch) must pass "" so that
-// fixes are never applied to the wrong checkout. On git errors the
-// job is kept (fail open) to avoid silently dropping work.
+// use branch matching so cross-branch listing works for SHA/range
+// jobs too. Mutating flows (fix, --batch) pass "" so that
+// commit-graph reachability is checked. Callers that want all
+// branches (--all-branches) skip this function entirely. On git
+// errors the job is kept (fail open) to avoid silently dropping work.
 func filterReachableJobs(
 	worktreeRoot, branchOverride string,
 	jobs []storage.ReviewJob,
@@ -929,7 +951,7 @@ type batchEntry struct {
 
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
-func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst bool, opts fixOptions) error {
+func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
@@ -958,8 +980,12 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		if queryErr != nil {
 			return queryErr
 		}
-		if branch != "" {
-			jobs = filterReachableJobs(repoRoot, branch, jobs)
+		if !allBranches {
+			filterBranch := ""
+			if explicitBranch {
+				filterBranch = branch
+			}
+			jobs = filterReachableJobs(repoRoot, filterBranch, jobs)
 		}
 		jobIDs = make([]int64, len(jobs))
 		for i, j := range jobs {
