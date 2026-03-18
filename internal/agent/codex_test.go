@@ -157,7 +157,7 @@ if [ "$1" = "--help" ]; then
   echo "usage `+codexAutoApproveFlag+`"
   exit 0
 fi
-(sleep 2) &
+(sleep 0.2) &
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
 exit 0
 `)

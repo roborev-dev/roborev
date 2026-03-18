@@ -54,6 +54,39 @@ func skipIfWindows(t *testing.T) {
 	}
 }
 
+// writeTempCommand writes script to a temporary executable file and returns
+// its path. The file is cleaned up when the test finishes.
+//
+// # ETXTBSY probes and Go 1.25
+//
+// Go 1.25 added a built-in ETXTBSY probe to os/exec: every exec.Cmd.Start()
+// forks a child that calls execve(path, ["path", "--help-probe-etxtbsy"]) to
+// check whether the file is still being written. If execve succeeds (no
+// ETXTBSY), the probe child has *actually started running the command* — it
+// is not killed or cleaned up, and the parent waits for it to exit.
+//
+// For most commands this is harmless because the probe exits quickly. But
+// shell scripts that ignore their arguments will execute their full body
+// inside the probe child. A script containing "sleep 60" will spawn a probe
+// process that sleeps for 60 real seconds, and the Go test binary blocks
+// until it finishes (confirmed via strace: the probe child runs
+// clock_nanosleep for the full duration, and the test binary's waitid blocks
+// on it).
+//
+// This means every shell script launched via os/exec in Go 1.25 runs twice:
+// once as the ETXTBSY probe, once for real. Additionally, writeTempCommand
+// itself does a manual probe (the retry loop below), so slow scripts can
+// run three times total.
+//
+// If your test script does anything expensive or long-running, add this
+// guard as the first line after the shebang:
+//
+//	case "$1" in *etxtbsy*) exit 0;; esac
+//
+// This makes the probe child exit immediately while the real invocation
+// (which receives no arguments, or receives the agent's real arguments)
+// runs normally. See https://github.com/golang/go/issues/22315 for
+// background on Go's ETXTBSY handling.
 func writeTempCommand(t *testing.T, script string) string {
 	t.Helper()
 	skipIfWindows(t)
@@ -75,10 +108,10 @@ func writeTempCommand(t *testing.T, script string) string {
 	if err := f.Close(); err != nil {
 		t.Fatalf("write temp command close: %v", err)
 	}
-	// On Linux (especially under -race), exec can race against the
-	// kernel releasing the inode write reference and hit ETXTBSY.
-	// Verify the script is execable by attempting a no-op exec.
-	// Retry with exponential backoff if we hit the race.
+	// Manual ETXTBSY probe: on Linux (especially under -race), exec can
+	// race against the kernel releasing the inode write reference. Retry
+	// with exponential backoff if we hit the race. Note that Go 1.25+
+	// also does its own probe inside exec.Cmd.Start(); see doc comment.
 	const maxRetries = 10
 	for i := range maxRetries {
 		_, err = exec.Command(path, "--help-probe-etxtbsy").CombinedOutput()

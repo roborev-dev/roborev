@@ -3,13 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
 	"io/fs"
 	"os"
 	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type countingCloser struct {
@@ -88,7 +89,16 @@ func TestContextProcessError(t *testing.T) {
 func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	skipIfWindows(t)
 
-	cmdPath := writeTempCommand(t, "#!/bin/sh\nsleep 5\n")
+	prev := subprocessWaitDelay
+	subprocessWaitDelay = 50 * time.Millisecond
+	t.Cleanup(func() { subprocessWaitDelay = prev })
+
+	// Use a shell script (not a bare binary) to exercise the realistic
+	// process tree: sh forks sleep as a child, so killing sh leaves an
+	// orphan — matching what happens with real agent subprocesses.
+	// The etxtbsy guard prevents Go 1.25's ETXTBSY probe from running
+	// the full script in a second child process that is never killed.
+	cmdPath := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nsleep 5\n")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
