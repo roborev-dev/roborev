@@ -154,7 +154,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Find available port
-	addr, port, err := FindAvailablePort(cfg.ServerAddr)
+	addr, _, err := FindAvailablePort(cfg.ServerAddr)
 	if err != nil {
 		s.configWatcher.Stop()
 		return fmt.Errorf("find available port: %w", err)
@@ -169,9 +169,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
 	addr = listener.Addr().String()
-	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
-		port = tcpAddr.Port
-	}
 	s.httpServer.Addr = addr
 
 	serveErrCh := make(chan error, 1)
@@ -200,7 +197,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(addr, port, version.Version); err != nil {
+	if err := WriteRuntime(DaemonEndpoint{Network: "tcp", Address: addr}, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 

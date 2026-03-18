@@ -22,8 +22,19 @@ type RuntimeInfo struct {
 	PID        int    `json:"pid"`
 	Addr       string `json:"addr"`
 	Port       int    `json:"port"`
+	Network    string `json:"network"`
 	Version    string `json:"version"`
 	SourcePath string `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
+}
+
+// Endpoint returns a DaemonEndpoint for this runtime. An empty Network defaults to "tcp"
+// for backwards compatibility with old runtime files that predate the Network field.
+func (r RuntimeInfo) Endpoint() DaemonEndpoint {
+	network := r.Network
+	if network == "" {
+		network = "tcp"
+	}
+	return DaemonEndpoint{Network: network, Address: r.Addr}
 }
 
 // PingInfo is the minimal daemon identity payload used for liveness probes.
@@ -50,11 +61,12 @@ func LegacyRuntimePath() string {
 
 // WriteRuntime saves the daemon runtime info atomically.
 // Uses write-to-temp-then-rename to prevent readers from seeing partial writes.
-func WriteRuntime(addr string, port int, version string) error {
+func WriteRuntime(ep DaemonEndpoint, version string) error {
 	info := RuntimeInfo{
 		PID:     os.Getpid(),
-		Addr:    addr,
-		Port:    port,
+		Addr:    ep.Address,
+		Port:    ep.Port(),
+		Network: ep.Network,
 		Version: version,
 	}
 
