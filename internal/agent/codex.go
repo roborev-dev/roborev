@@ -116,7 +116,7 @@ func (a *CodexAgent) CommandLine() string {
 	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	} else {
-		args = append(args, codexAutoApproveFlag)
+		args = append(args, "--sandbox", "read-only", "-a", "never")
 	}
 	if a.Model != "" {
 		args = append(args, "-m", a.Model)
@@ -177,13 +177,13 @@ func codexSupportsDangerousFlag(ctx context.Context, command string) (bool, erro
 	return supported, nil
 }
 
-func codexSupportsAutoApproveFlag(ctx context.Context, command string) (bool, error) {
+func codexSupportsSandboxFlag(ctx context.Context, command string) (bool, error) {
 	if cached, ok := codexAutoApproveSupport.Load(command); ok {
 		return cached.(bool), nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
 	output, err := cmd.CombinedOutput()
-	supported := strings.Contains(string(output), codexAutoApproveFlag)
+	supported := strings.Contains(string(output), "--sandbox")
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
@@ -207,10 +207,9 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 
 	// Non-agentic review mode uses --sandbox read-only -a never for
 	// non-interactive execution without writing to the working tree.
-	// Probe for --full-auto as a proxy for non-interactive support.
 	autoApprove := false
 	if !agenticMode {
-		supported, err := codexSupportsAutoApproveFlag(ctx, a.Command)
+		supported, err := codexSupportsSandboxFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
 		}

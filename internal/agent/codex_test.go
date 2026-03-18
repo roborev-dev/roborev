@@ -108,7 +108,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 
 func TestCodexReviewUsesReadOnlySandbox(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
-		HelpOutput:  "usage " + codexAutoApproveFlag,
+		HelpOutput:  "usage --sandbox",
 		CaptureArgs: true,
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
@@ -131,7 +131,7 @@ func TestCodexReviewUsesReadOnlySandbox(t *testing.T) {
 
 func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
-		HelpOutput:  "usage " + codexAutoApproveFlag,
+		HelpOutput:  "usage --sandbox",
 		CaptureArgs: true,
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
@@ -160,7 +160,7 @@ func TestCodexReviewTimeoutClosesStdoutPipe(t *testing.T) {
 
 	cmdPath := writeTempCommand(t, `#!/bin/sh
 if [ "$1" = "--help" ]; then
-  echo "usage `+codexAutoApproveFlag+`"
+  echo "usage --sandbox"
   exit 0
 fi
 (sleep 0.2) &
@@ -319,7 +319,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
-		HelpOutput:   "usage " + codexAutoApproveFlag,
+		HelpOutput:   "usage --sandbox",
 		CaptureStdin: true,
 		StdoutLines: []string{
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
@@ -337,7 +337,7 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 	a, _ := setupMockCodex(t, false, MockCLIOpts{
-		HelpOutput:  "usage " + codexAutoApproveFlag,
+		HelpOutput:  "usage --sandbox",
 		StdoutLines: []string{"plain text output"},
 	})
 

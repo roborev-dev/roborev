@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -29,7 +28,7 @@ func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	// processes running in the background contend with the user's own
 	// git operations (staging, committing, etc.).
 	if cmd.Env == nil {
-		cmd.Env = os.Environ()
+		cmd.Env = cmd.Environ()
 	}
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
 

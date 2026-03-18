@@ -156,6 +156,20 @@ func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {
 		"configureSubprocess should preserve existing env and add GIT_OPTIONAL_LOCKS=0")
 }
 
+func TestConfigureSubprocessPreservesPWD(t *testing.T) {
+	skipIfWindows(t)
+
+	dir := t.TempDir()
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $PWD")
+	cmd.Dir = dir
+	configureSubprocess(cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, dir+"\n", string(out),
+		"configureSubprocess should preserve PWD matching cmd.Dir")
+}
+
 func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testing.T) {
 	skipIfWindows(t)
 
