@@ -165,7 +165,7 @@ func WriteRuntime(ep DaemonEndpoint, version string) error
 5. For Unix: `os.Chmod(socketPath, 0600)` after bind
 6. `WriteRuntime(ep, version)` -- persist with network field
 
-`FindAvailablePort` remains TCP-only. Not called for Unix endpoints.
+`FindAvailablePort` remains TCP-only. Not called for Unix endpoints. For TCP, `FindAvailablePort` returns a resolved `addr, port` (potentially with an incremented port); a new `DaemonEndpoint` is constructed from this resolved address for the rest of the `Start()` flow.
 
 `validateDaemonBindAddr` is replaced by validation inside `ParseEndpoint`.
 
@@ -289,7 +289,7 @@ func getDaemonEndpoint() DaemonEndpoint {
 
 Uses `getDaemonEndpoint()` for both the stream URL and the HTTP client (to get the right transport).
 
-**All other CLI command files** (`analyze.go`, `compact.go`, `review.go`, `run.go`, `fix.go`, `list.go`, `summary.go`, `status.go`, `show.go`, `wait.go`, `comment.go`, `sync.go`, `remap.go`, `postcommit.go`, `job_helpers.go`): Replace `getDaemonAddr()` + raw `&http.Client{}` with `getDaemonEndpoint().BaseURL()` + `getDaemonHTTPClient(timeout)`. These are mechanical changes. Notable special cases:
+**All other CLI command files** (`analyze.go`, `compact.go`, `review.go`, `run.go`, `fix.go`, `list.go`, `summary.go`, `status.go`, `show.go`, `wait.go`, `comment.go`, `sync.go`, `remap.go`, `postcommit.go`, `refine.go`, `job_helpers.go`): Replace `getDaemonAddr()` + raw `&http.Client{}` with `getDaemonEndpoint().BaseURL()` + `getDaemonHTTPClient(timeout)`. These are mechanical changes. Notable special cases:
 
 - `review.go` and `run.go` use bare `http.Post(serverAddr+...)` with the global variable directly -- these change to `getDaemonHTTPClient(timeout).Post(getDaemonEndpoint().BaseURL()+...)`.
 - `postcommit.go` has a package-level `var hookHTTPClient = &http.Client{...}` which cannot be initialized at package load time (the endpoint isn't parsed yet). Change to lazy initialization: `hookHTTPClient` becomes a function `getHookHTTPClient()` that calls `getDaemonHTTPClient(3 * time.Second)` on first use.
