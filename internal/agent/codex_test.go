@@ -36,8 +36,8 @@ func TestCodex_buildArgs(t *testing.T) {
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
 			autoApprove:      true,
-			wantFlags:        []string{codexAutoApproveFlag, "--json"},
-			wantMissingFlags: []string{codexDangerousFlag},
+			wantFlags:        []string{"--sandbox", "read-only", "-a", "never", "--json"},
+			wantMissingFlags: []string{codexDangerousFlag, codexAutoApproveFlag},
 		},
 		{
 			name:             "AgenticNoAutoApprove",
@@ -106,7 +106,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support")
 }
 
-func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
+func TestCodexReviewUsesReadOnlySandbox(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage " + codexAutoApproveFlag,
 		CaptureArgs: true,
@@ -120,7 +120,13 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 
 	args, err := os.ReadFile(mock.ArgsFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(args), codexAutoApproveFlag, "expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+	argsStr := string(args)
+	assert.Contains(t, argsStr, "--sandbox read-only",
+		"expected --sandbox read-only in args, got %s", strings.TrimSpace(argsStr))
+	assert.Contains(t, argsStr, "-a never",
+		"expected -a never in args, got %s", strings.TrimSpace(argsStr))
+	assert.NotContains(t, argsStr, codexAutoApproveFlag,
+		"expected no %s in review mode, got %s", codexAutoApproveFlag, strings.TrimSpace(argsStr))
 }
 
 func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {

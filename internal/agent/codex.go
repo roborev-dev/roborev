@@ -140,7 +140,10 @@ func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) [
 		args = append(args, codexDangerousFlag)
 	}
 	if autoApprove {
-		args = append(args, codexAutoApproveFlag)
+		// Use read-only sandbox for review mode instead of --full-auto
+		// (which implies --sandbox workspace-write). Background review
+		// jobs run in the user's repo and must not take index.lock.
+		args = append(args, "--sandbox", "read-only", "-a", "never")
 	}
 	args = append(args,
 		"-C", repoPath,
@@ -202,8 +205,9 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		}
 	}
 
-	// When piping stdin, codex needs --full-auto to run non-interactively.
-	// Agentic mode uses --dangerously-bypass-approvals-and-sandbox which implies auto-approve.
+	// Non-agentic review mode uses --sandbox read-only -a never for
+	// non-interactive execution without writing to the working tree.
+	// Probe for --full-auto as a proxy for non-interactive support.
 	autoApprove := false
 	if !agenticMode {
 		supported, err := codexSupportsAutoApproveFlag(ctx, a.Command)
@@ -211,7 +215,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 			return "", err
 		}
 		if !supported {
-			return "", fmt.Errorf("codex requires %s for stdin input; upgrade codex or use --agentic", codexAutoApproveFlag)
+			return "", fmt.Errorf("codex version too old for non-interactive execution; upgrade codex or use --agentic")
 		}
 		autoApprove = true
 	}
