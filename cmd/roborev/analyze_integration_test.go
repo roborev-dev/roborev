@@ -95,7 +95,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			review, err := waitForAnalysisJob(ctx, ts.URL, testJobID)
+			review, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), testJobID)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -132,7 +132,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	err := runAnalyzeAndFix(cmd, ts.URL, repo.Dir, 99, analysisType, opts)
+	err := runAnalyzeAndFix(cmd, mustParseEndpoint(t, ts.URL), repo.Dir, 99, analysisType, opts)
 	require.NoError(t, err, "runAnalyzeAndFix failed: %v")
 
 	// Verify the workflow was executed

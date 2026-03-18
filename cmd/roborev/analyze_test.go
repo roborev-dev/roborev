@@ -247,7 +247,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := waitForAnalysisJob(ctx, ts.URL, 42)
+	_, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), 42)
 	require.Error(t, err, "expected timeout error")
 	require.ErrorContains(t, err, "context deadline exceeded", "expected context deadline error")
 }
@@ -411,7 +411,7 @@ func TestPerFileAnalysis(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	analysisType := analyze.GetType("refactor")
-	err = runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
+	err = runPerFileAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
 	require.NoError(t, err, "runPerFileAnalysis")
 
 	// Should have created 3 jobs (one per file)
@@ -440,7 +440,7 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		},
 	})
 
-	job, err := enqueueAnalysisJob(ts.URL, "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
+	job, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, int64(42), job.ID, "job.ID")
@@ -470,7 +470,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("no branch flag uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{})
+		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -478,7 +478,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -486,7 +486,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("named branch overrides current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(ts.URL, repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "feature-xyz", *gotBranch, "expected branch 'feature-xyz'")
 	})
@@ -611,7 +611,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 
 		cmd, output := newTestCmd(t)
 
-		err := runSingleAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		err := runSingleAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		require.NoError(t, err, "runSingleAnalysis: %v")
 
 		var result AnalyzeResult
@@ -638,7 +638,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 
 		cmd, output := newTestCmd(t)
 
-		err := runPerFileAnalysis(cmd, ts.URL, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		err := runPerFileAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		require.NoError(t, err, "runPerFileAnalysis")
 
 		var result AnalyzeResult

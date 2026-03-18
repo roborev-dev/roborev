@@ -16,6 +16,9 @@ func main() {
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
 		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Pi)",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return validateServerFlag()
+		},
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "daemon server address (e.g. 127.0.0.1:7373 or unix://)")

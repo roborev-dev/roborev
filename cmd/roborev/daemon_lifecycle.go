@@ -64,16 +64,32 @@ var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)
 // ErrJobNotFound indicates a job ID was not found during polling
 var ErrJobNotFound = fmt.Errorf("job not found")
 
+// parsedServerEndpoint caches the validated endpoint from the --server flag.
+// Set once by validateServerFlag, read by getDaemonEndpoint.
+var parsedServerEndpoint *daemon.DaemonEndpoint
+
+// validateServerFlag parses and validates the --server flag value.
+// Called from PersistentPreRunE so invalid values fail fast.
+func validateServerFlag() error {
+	ep, err := daemon.ParseEndpoint(serverAddr)
+	if err != nil {
+		return fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
+	}
+	parsedServerEndpoint = &ep
+	return nil
+}
+
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
 	if info, err := getAnyRunningDaemon(); err == nil {
 		return info.Endpoint()
 	}
+	if parsedServerEndpoint != nil {
+		return *parsedServerEndpoint
+	}
+	// Fallback: parse at call time (e.g., if called before PersistentPreRunE)
 	ep, err := daemon.ParseEndpoint(serverAddr)
 	if err != nil {
-		if serverAddr != "" {
-			fmt.Fprintf(os.Stderr, "Warning: invalid --server address %q: %v (using default)\n", serverAddr, err)
-		}
 		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 	}
 	return ep

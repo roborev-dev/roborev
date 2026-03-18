@@ -295,19 +295,19 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	cfg, _ := config.LoadGlobal()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 
-	addr := getDaemonEndpoint().BaseURL()
+	ep := getDaemonEndpoint()
 
 	// Per-file mode: create one job per file
 	if opts.perFile {
-		return runPerFileAnalysis(cmd, addr, repoRoot, analysisType, files, opts, maxPromptSize)
+		return runPerFileAnalysis(cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
 	}
 
 	// Standard mode: all files in one job
-	return runSingleAnalysis(cmd, addr, repoRoot, analysisType, files, opts, maxPromptSize)
+	return runSingleAnalysis(cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
 }
 
 // runSingleAnalysis creates a single analysis job for all files
-func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runSingleAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	if !opts.quiet && !opts.jsonOutput {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
@@ -341,7 +341,7 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 	}
 
 	// Enqueue the job
-	job, err := enqueueAnalysisJob(serverAddr, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+	job, err := enqueueAnalysisJob(ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 	if err != nil {
 		return err
 	}
@@ -364,15 +364,11 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 
 	// If --fix, we need to wait for analysis, run fixer, then mark closed
 	if opts.fix {
-		return runAnalyzeAndFix(cmd, serverAddr, repoRoot, job.ID, analysisType, opts)
+		return runAnalyzeAndFix(cmd, ep, repoRoot, job.ID, analysisType, opts)
 	}
 
 	// If --wait, poll until job completes and show result
 	if opts.wait {
-		ep, err := daemon.ParseEndpoint(serverAddr)
-		if err != nil {
-			return fmt.Errorf("parsing endpoint: %w", err)
-		}
 		return waitForPromptJob(cmd, ep, job.ID, opts.quiet, promptPollInterval)
 	}
 
@@ -380,7 +376,7 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 }
 
 // runPerFileAnalysis creates one analysis job per file
-func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runPerFileAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	// Sort files for deterministic order
 	fileNames := make([]string, 0, len(files))
 	for name := range files {
@@ -416,7 +412,7 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 			}
 		}
 
-		job, err := enqueueAnalysisJob(serverAddr, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+		job, err := enqueueAnalysisJob(ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -457,7 +453,7 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 			if !opts.quiet {
 				cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			if err := runAnalyzeAndFix(cmd, serverAddr, repoRoot, info.ID, analysisType, opts); err != nil {
+			if err := runAnalyzeAndFix(cmd, ep, repoRoot, info.ID, analysisType, opts); err != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: fix for job %d failed: %v\n", info.ID, err)
 				}
@@ -469,10 +465,6 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 
 	// If --wait with per-file, wait for all jobs
 	if opts.wait {
-		ep, err := daemon.ParseEndpoint(serverAddr)
-		if err != nil {
-			return fmt.Errorf("parsing endpoint: %w", err)
-		}
 		if !opts.quiet {
 			cmd.Println("\nWaiting for all jobs to complete...")
 		}
@@ -506,7 +498,7 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 }
 
 // enqueueAnalysisJob sends a job to the daemon
-func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
+func enqueueAnalysisJob(ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	branch := git.GetCurrentBranch(repoRoot)
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch
@@ -524,7 +516,7 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -548,7 +540,7 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
-func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
+func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -562,7 +554,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 	ctx, cancel := context.WithTimeout(ctx, analyzeJobTimeout)
 	defer cancel()
 
-	review, err := waitForAnalysisJob(ctx, serverAddr, jobID)
+	review, err := waitForAnalysisJob(ctx, ep, jobID)
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
@@ -653,14 +645,14 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 	// Ensure the fix commit gets a review enqueued
 	if commitCreated {
 		if head, err := git.ResolveSHA(repoRoot, "HEAD"); err == nil {
-			if err := enqueueIfNeeded(ctx, serverAddr, repoRoot, head); err != nil && !opts.quiet {
+			if err := enqueueIfNeeded(ctx, ep.BaseURL(), repoRoot, head); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 			}
 		}
 	}
 
 	// Close the analysis job
-	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
+	if err := markJobClosed(ctx, ep.BaseURL(), jobID); err != nil {
 		// Non-fatal - the fixes were applied, just couldn't update status
 		if !opts.quiet {
 			cmd.Printf("\nWarning: could not close job: %v\n", err)
@@ -674,8 +666,9 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 
 // waitForAnalysisJob polls until the job completes and returns the review.
 // The context controls the maximum wait time.
-func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
-	client := getDaemonHTTPClient(30 * time.Second)
+func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64) (*storage.Review, error) {
+	client := ep.HTTPClient(30 * time.Second)
+	baseURL := ep.BaseURL()
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 
@@ -687,7 +680,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 		default:
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID), nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", baseURL, jobID), nil)
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
@@ -720,7 +713,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 		switch job.Status {
 		case storage.JobStatusDone:
 			// Fetch the review
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
+			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", baseURL, jobID), nil)
 			if err != nil {
 				return nil, fmt.Errorf("create review request: %w", err)
 			}
