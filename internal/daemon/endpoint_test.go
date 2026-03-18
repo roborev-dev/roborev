@@ -137,3 +137,32 @@ func TestDaemonEndpoint_HTTPClient_UnixRoundTrip(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+func TestDaemonEndpoint_HTTPClient_UnixIgnoresProxy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
+	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-test-%d.sock", os.Getpid()))
+	t.Cleanup(func() { os.Remove(sockPath) })
+
+	ln, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	// Set proxy env vars that would break the request if honored
+	t.Setenv("HTTP_PROXY", "http://nonexistent-proxy.invalid:9999")
+	t.Setenv("HTTPS_PROXY", "http://nonexistent-proxy.invalid:9999")
+
+	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
+	client := ep.HTTPClient(2 * time.Second)
+	resp, err := client.Get(ep.BaseURL() + "/test")
+	require.NoError(t, err, "Unix socket client should bypass HTTP_PROXY")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}

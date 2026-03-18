@@ -107,6 +107,7 @@ func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 					return (&net.Dialer{}).DialContext(ctx, "unix", e.Address)
 				},
 				DisableKeepAlives: true,
+				Proxy:             nil, // Unix sockets are local; never proxy
 			},
 		}
 	}
