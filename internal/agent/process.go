@@ -21,15 +21,22 @@ type subprocessTracker struct {
 func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	cmd.WaitDelay = subprocessWaitDelay
 	tracker := &subprocessTracker{}
-	if cmd.Cancel != nil {
-		cancel := cmd.Cancel
+	// Ensure Cancel is always set. Go's exec.CommandContext only provides a
+	// default Kill cancel when both Cancel==nil and WaitDelay==0. Since we
+	// set WaitDelay above, the default is suppressed and context cancellation
+	// would never signal the process without this.
+	if cmd.Cancel == nil {
 		cmd.Cancel = func() error {
-			err := cancel()
-			if err == nil {
-				tracker.canceledByContext.Store(true)
-			}
-			return err
+			return cmd.Process.Kill()
 		}
+	}
+	cancel := cmd.Cancel
+	cmd.Cancel = func() error {
+		err := cancel()
+		if err == nil {
+			tracker.canceledByContext.Store(true)
+		}
+		return err
 	}
 	return tracker
 }
