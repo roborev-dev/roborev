@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -28,8 +27,8 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
-			addr := getDaemonAddr()
-			client := &http.Client{Timeout: 2 * time.Second}
+			addr := getDaemonEndpoint().BaseURL()
+			client := getDaemonHTTPClient(2 * time.Second)
 			resp, err := client.Get(addr + "/api/status")
 			if err != nil {
 				fmt.Println("Daemon: not running")

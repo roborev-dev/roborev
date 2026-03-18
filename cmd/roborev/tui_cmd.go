@@ -38,7 +38,7 @@ to the current branch. Use = syntax for explicit values:
 			}
 
 			if addr == "" {
-				addr = getDaemonAddr()
+				addr = getDaemonEndpoint().BaseURL()
 			} else if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
 				addr = "http://" + addr
 			}

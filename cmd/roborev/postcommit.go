@@ -16,9 +16,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// hookHTTPClient is used for hook HTTP requests. Short timeout
+// hookHTTPClient returns an HTTP client for hook requests. Short timeout
 // ensures hooks never block commits if the daemon stalls.
-var hookHTTPClient = &http.Client{Timeout: 3 * time.Second}
+// Tests can override this variable to inject custom transports.
+var hookHTTPClient = func() *http.Client {
+	return getDaemonHTTPClient(3 * time.Second)
+}
 
 // hookLogPath can be overridden in tests.
 var hookLogPath = ""
@@ -77,8 +80,8 @@ func postCommitCmd() *cobra.Command {
 				Branch:   branchName,
 			})
 
-			resp, err := hookHTTPClient.Post(
-				serverAddr+"/api/enqueue",
+			resp, err := hookHTTPClient().Post(
+				getDaemonEndpoint().BaseURL()+"/api/enqueue",
 				"application/json",
 				bytes.NewReader(reqBody),
 			)

@@ -104,11 +104,7 @@ new commits. Called automatically by the post-rewrite hook.`,
 				return nil
 			}
 
-			addr := getDaemonAddr()
-			ep, err := daemon.ParseEndpoint(addr)
-			if err != nil {
-				return fmt.Errorf("remap: parse daemon addr: %w", err)
-			}
+			ep := getDaemonEndpoint()
 			client := daemon.NewHTTPClient(ep)
 
 			result, err := client.Remap(daemon.RemapRequest{

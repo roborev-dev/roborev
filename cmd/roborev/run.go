@@ -154,7 +154,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		Agentic:      agentic,
 	})
 
-	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := getDaemonHTTPClient(10*time.Second).Post(getDaemonEndpoint().BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -180,7 +180,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// If --wait, poll until job completes and show result
 	if wait {
-		return waitForPromptJob(cmd, serverAddr, job.ID, quiet, promptPollInterval)
+		return waitForPromptJob(cmd, getDaemonEndpoint().BaseURL(), job.ID, quiet, promptPollInterval)
 	}
 
 	return nil
@@ -194,7 +194,7 @@ var promptPollInterval = 500 * time.Millisecond
 // Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
 // jobs don't have PASS/FAIL verdicts.
 func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, pollInterval time.Duration) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := getDaemonHTTPClient(5 * time.Second)
 
 	if pollInterval <= 0 {
 		pollInterval = promptPollInterval
@@ -283,7 +283,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 // Unlike showReview, this doesn't apply verdict-based exit codes.
 // The doneMsg parameter is printed before the result on success (used for "done!" message).
 func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, doneMsg string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := getDaemonHTTPClient(5 * time.Second)
 	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
 	if err != nil {
 		return fmt.Errorf("failed to fetch result: %w", err)

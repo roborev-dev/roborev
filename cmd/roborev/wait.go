@@ -138,7 +138,7 @@ Examples:
 				jobID = job.ID
 			}
 
-			addr := getDaemonAddr()
+			addr := getDaemonEndpoint().BaseURL()
 			err := waitForJob(cmd, addr, jobID, quiet)
 			if err != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
@@ -246,7 +246,7 @@ func waitMultiple(
 		jobIDs = append(jobIDs, job.ID)
 	}
 
-	addr := getDaemonAddr()
+	addr := getDaemonEndpoint().BaseURL()
 
 	// Wait for all jobs concurrently.
 	// Always poll in quiet mode to avoid interleaved output from

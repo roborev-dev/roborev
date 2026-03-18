@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/spf13/cobra"
@@ -134,8 +135,8 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqData)
 
-			addr := getDaemonAddr()
-			resp, err := http.Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+			addr := getDaemonEndpoint().BaseURL()
+			resp, err := getDaemonHTTPClient(5*time.Second).Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -191,8 +192,8 @@ func closeCmd() *cobra.Command {
 				"closed": closed,
 			})
 
-			addr := getDaemonAddr()
-			resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+			addr := getDaemonEndpoint().BaseURL()
+			resp, err := getDaemonHTTPClient(5*time.Second).Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}

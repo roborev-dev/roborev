@@ -64,12 +64,21 @@ var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)
 // ErrJobNotFound indicates a job ID was not found during polling
 var ErrJobNotFound = fmt.Errorf("job not found")
 
-// getDaemonAddr returns the daemon address from runtime file or default
-func getDaemonAddr() string {
+// getDaemonEndpoint returns the daemon endpoint from runtime file or config.
+func getDaemonEndpoint() daemon.DaemonEndpoint {
 	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
-		return fmt.Sprintf("http://%s", info.Addr)
+		return info.Endpoint()
 	}
-	return serverAddr
+	ep, err := daemon.ParseEndpoint(serverAddr)
+	if err != nil {
+		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	}
+	return ep
+}
+
+// getDaemonHTTPClient returns an HTTP client configured for the daemon endpoint.
+func getDaemonHTTPClient(timeout time.Duration) *http.Client {
+	return getDaemonEndpoint().HTTPClient(timeout)
 }
 
 // registerRepoError is a server-side error from the register endpoint
@@ -110,8 +119,8 @@ func registerRepo(repoPath string) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	client := getDaemonHTTPClient(5 * time.Second)
+	resp, err := client.Post(getDaemonEndpoint().BaseURL()+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err // connection error (*url.Error wrapping net.Error)
 	}
@@ -155,13 +164,13 @@ func ensureDaemon() error {
 			}
 		}
 
-		serverAddr = fmt.Sprintf("http://%s", info.Addr)
 		return nil
 	}
 
 	// Try the configured default address for manual/legacy daemon runs that do
 	// not have a runtime file yet.
-	if probe, err := probeDaemonServerURL(serverAddr, 2*time.Second); err == nil {
+	ep := getDaemonEndpoint()
+	if probe, err := daemon.ProbeDaemon(ep, 2*time.Second); err == nil {
 		if !skipVersionCheck {
 			if probe.Version == "" {
 				if verbose {
@@ -212,24 +221,12 @@ func startDaemon() error {
 	// Wait for daemon to publish a responsive runtime entry.
 	for range 30 {
 		time.Sleep(100 * time.Millisecond)
-		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
-			serverAddr = fmt.Sprintf("http://%s", info.Addr)
+		if _, err := daemon.GetAnyRunningDaemon(); err == nil {
 			return nil
 		}
 	}
 
 	return fmt.Errorf("daemon failed to start")
-}
-
-func probeDaemonServerURL(serverURL string, timeout time.Duration) (*daemon.PingInfo, error) {
-	parsed, err := url.Parse(serverURL)
-	if err != nil {
-		return nil, err
-	}
-	if parsed.Host == "" {
-		return nil, fmt.Errorf("invalid daemon server address %q", serverURL)
-	}
-	return daemon.ProbeDaemon(daemon.DaemonEndpoint{Network: "tcp", Address: parsed.Host}, timeout)
 }
 
 // stopDaemon stops any running daemons.

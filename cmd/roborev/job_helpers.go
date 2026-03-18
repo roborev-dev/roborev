@@ -16,7 +16,7 @@ import (
 // waitForJobCompletion polls a job until it completes, streaming output if provided.
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := getDaemonHTTPClient(30 * time.Second)
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 	lastOutputLen := 0

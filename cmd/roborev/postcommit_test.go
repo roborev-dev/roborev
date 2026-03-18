@@ -275,9 +275,11 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 
 	rt := &stallingRoundTripper{hit: make(chan struct{}, 1)}
 	orig := hookHTTPClient
-	hookHTTPClient = &http.Client{
-		Timeout:   50 * time.Millisecond,
-		Transport: rt,
+	hookHTTPClient = func() *http.Client {
+		return &http.Client{
+			Timeout:   50 * time.Millisecond,
+			Transport: rt,
+		}
 	}
 	t.Cleanup(func() { hookHTTPClient = orig })
 

@@ -610,7 +610,7 @@ func queryOpenJobs(
 	ctx context.Context,
 	repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
-	jobs, err := withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.ReviewJob, error) {
+	jobs, err := withFixDaemonRetryContext(ctx, getDaemonEndpoint().BaseURL(), func(addr string) ([]storage.ReviewJob, error) {
 		queryURL := fmt.Sprintf(
 			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
 			addr, url.QueryEscape(repoRoot),
@@ -716,12 +716,13 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	cmd.Printf("Found %d open job(s):\n\n", len(jobIDs))
 
 	for _, id := range jobIDs {
-		job, err := fetchJob(ctx, serverAddr, id)
+		listAddr := getDaemonEndpoint().BaseURL()
+		job, err := fetchJob(ctx, listAddr, id)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not fetch job %d: %v\n", id, err)
 			continue
 		}
-		review, err := fetchReview(ctx, serverAddr, id)
+		review, err := fetchReview(ctx, listAddr, id)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not fetch review for job %d: %v\n", id, err)
 			continue
@@ -816,7 +817,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Fetch the job to check status
-	job, err := fetchJob(ctx, serverAddr, jobID)
+	job, err := fetchJob(ctx, getDaemonEndpoint().BaseURL(), jobID)
 	if err != nil {
 		return fmt.Errorf("fetch job: %w", err)
 	}
@@ -826,7 +827,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Fetch the review/analysis output
-	review, err := fetchReview(ctx, serverAddr, jobID)
+	review, err := fetchReview(ctx, getDaemonEndpoint().BaseURL(), jobID)
 	if err != nil {
 		return fmt.Errorf("fetch review: %w", err)
 	}
@@ -836,7 +837,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
-		if err := markJobClosed(ctx, serverAddr, jobID); err != nil && !opts.quiet {
+		if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), jobID); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 		return nil
@@ -914,7 +915,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	// Enqueue review for fix commit
 	if result.CommitCreated {
-		if err := enqueueIfNeeded(ctx, serverAddr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
+		if err := enqueueIfNeeded(ctx, getDaemonEndpoint().BaseURL(), repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 		}
 	}
@@ -925,13 +926,13 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 	}
 
-	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
+	if err := addJobResponse(ctx, getDaemonEndpoint().BaseURL(), jobID, "roborev-fix", responseText); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not add response to job: %v\n", err)
 		}
 	}
 
-	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
+	if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), jobID); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not close job: %v\n", err)
 		}
@@ -1008,7 +1009,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	// Fetch all jobs and reviews
 	var entries []batchEntry
 	for _, id := range jobIDs {
-		job, err := fetchJob(ctx, serverAddr, id)
+		job, err := fetchJob(ctx, getDaemonEndpoint().BaseURL(), id)
 		if err != nil {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
@@ -1021,7 +1022,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			continue
 		}
-		review, err := fetchReview(ctx, serverAddr, id)
+		review, err := fetchReview(ctx, getDaemonEndpoint().BaseURL(), id)
 		if err != nil {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
@@ -1032,7 +1033,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			if err := markJobClosed(ctx, serverAddr, id); err != nil && !opts.quiet {
+			if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), id); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
 			}
 			continue
@@ -1135,7 +1136,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 
 		// Enqueue review for fix commit
 		if result.CommitCreated {
-			if enqErr := enqueueIfNeeded(ctx, serverAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
+			if enqErr := enqueueIfNeeded(ctx, getDaemonEndpoint().BaseURL(), repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}
 		}
@@ -1146,10 +1147,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
-			if addErr := addJobResponse(ctx, serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
+			if addErr := addJobResponse(ctx, getDaemonEndpoint().BaseURL(), e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
 			}
-			if markErr := markJobClosed(ctx, serverAddr, e.jobID); markErr != nil {
+			if markErr := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), e.jobID); markErr != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
 				}
@@ -1241,7 +1242,7 @@ func formatJobIDs(ids []int64) string {
 // fetchJob retrieves a job from the daemon
 func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.ReviewJob, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.ReviewJob, error) {
-		client := &http.Client{Timeout: 30 * time.Second}
+		client := getDaemonHTTPClient(30 * time.Second)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID), nil)
 		if err != nil {
@@ -1277,7 +1278,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 // fetchReview retrieves the review output for a job
 func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) (*storage.Review, error) {
-		client := &http.Client{Timeout: 30 * time.Second}
+		client := getDaemonHTTPClient(30 * time.Second)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID), nil)
 		if err != nil {
@@ -1469,15 +1470,15 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 
 func refreshFixDaemonAddr(ctx context.Context) (string, error) {
 	if shouldStopFixDaemonRetry(ctx) {
-		return serverAddr, ctx.Err()
+		return getDaemonEndpoint().BaseURL(), ctx.Err()
 	}
 	if err := fixDaemonEnsure(); err != nil {
-		return serverAddr, err
+		return getDaemonEndpoint().BaseURL(), err
 	}
 	if shouldStopFixDaemonRetry(ctx) {
-		return serverAddr, ctx.Err()
+		return getDaemonEndpoint().BaseURL(), ctx.Err()
 	}
-	return serverAddr, nil
+	return getDaemonEndpoint().BaseURL(), nil
 }
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
@@ -1585,21 +1586,21 @@ func waitForFixDaemonRecovery(ctx context.Context) (string, error) {
 	var lastErr error
 	for {
 		if ctx != nil && ctx.Err() != nil {
-			return serverAddr, ctx.Err()
+			return getDaemonEndpoint().BaseURL(), ctx.Err()
 		}
 		if err := fixDaemonEnsure(); err == nil {
-			return serverAddr, nil
+			return getDaemonEndpoint().BaseURL(), nil
 		} else {
 			lastErr = err
 		}
 		if time.Now().After(deadline) {
 			if lastErr != nil {
-				return serverAddr, lastErr
+				return getDaemonEndpoint().BaseURL(), lastErr
 			}
-			return serverAddr, fmt.Errorf("daemon recovery timed out")
+			return getDaemonEndpoint().BaseURL(), fmt.Errorf("daemon recovery timed out")
 		}
 		if ctx != nil && ctx.Err() != nil {
-			return serverAddr, ctx.Err()
+			return getDaemonEndpoint().BaseURL(), ctx.Err()
 		}
 		fixDaemonSleep(fixDaemonRecoveryPoll)
 	}

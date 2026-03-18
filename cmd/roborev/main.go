@@ -18,7 +18,7 @@ func main() {
 		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Pi)",
 	}
 
-	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "http://127.0.0.1:7373", "daemon server address")
+	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "daemon server address (e.g. 127.0.0.1:7373 or unix://)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 
 	rootCmd.AddCommand(initCmd())

@@ -295,13 +295,15 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	cfg, _ := config.LoadGlobal()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 
+	addr := getDaemonEndpoint().BaseURL()
+
 	// Per-file mode: create one job per file
 	if opts.perFile {
-		return runPerFileAnalysis(cmd, serverAddr, repoRoot, analysisType, files, opts, maxPromptSize)
+		return runPerFileAnalysis(cmd, addr, repoRoot, analysisType, files, opts, maxPromptSize)
 	}
 
 	// Standard mode: all files in one job
-	return runSingleAnalysis(cmd, serverAddr, repoRoot, analysisType, files, opts, maxPromptSize)
+	return runSingleAnalysis(cmd, addr, repoRoot, analysisType, files, opts, maxPromptSize)
 }
 
 // runSingleAnalysis creates a single analysis job for all files
@@ -514,7 +516,7 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
-	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := getDaemonHTTPClient(10*time.Second).Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -665,7 +667,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 // waitForAnalysisJob polls until the job completes and returns the review.
 // The context controls the maximum wait time.
 func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := getDaemonHTTPClient(30 * time.Second)
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 

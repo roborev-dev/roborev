@@ -46,7 +46,7 @@ Examples:
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			addr := getDaemonAddr()
+			addr := getDaemonEndpoint().BaseURL()
 
 			// Auto-resolve repo from cwd when not specified (unless --all)
 			if !allRepos && repoPath == "" {
@@ -75,7 +75,7 @@ Examples:
 				params.Set("all", "true")
 			}
 
-			client := &http.Client{Timeout: 10 * time.Second}
+			client := getDaemonHTTPClient(10 * time.Second)
 			resp, err := client.Get(addr + "/api/summary?" + params.Encode())
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
