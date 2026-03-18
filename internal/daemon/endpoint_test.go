@@ -1,0 +1,139 @@
+package daemon
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseEndpoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		network string
+		wantErr string
+	}{
+		{"empty defaults to TCP", "", "tcp", ""},
+		{"bare host:port", "127.0.0.1:7373", "tcp", ""},
+		{"ipv6 loopback", "[::1]:7373", "tcp", ""},
+		{"localhost", "localhost:7373", "tcp", ""},
+		{"http prefix stripped", "http://127.0.0.1:7373", "tcp", ""},
+		{"unix auto", "unix://", "unix", ""},
+		{"unix explicit path", "unix:///tmp/test.sock", "unix", ""},
+		{"non-loopback rejected", "192.168.1.1:7373", "", "loopback"},
+		{"relative unix rejected", "unix://relative.sock", "", "absolute"},
+		{"http non-loopback rejected", "http://192.168.1.1:7373", "", "loopback"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ep, err := ParseEndpoint(tt.input)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.network, ep.Network)
+			if tt.network == "tcp" {
+				assert.NotEmpty(t, ep.Address)
+			}
+		})
+	}
+}
+
+func TestParseEndpoint_UnixPathTooLong(t *testing.T) {
+	long := "unix:///" + strings.Repeat("a", MaxUnixPathLen)
+	_, err := ParseEndpoint(long)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+func TestParseEndpoint_UnixNullByte(t *testing.T) {
+	_, err := ParseEndpoint("unix:///tmp/bad\x00.sock")
+	require.Error(t, err)
+}
+
+func TestDefaultSocketPath(t *testing.T) {
+	path := DefaultSocketPath()
+	assert.True(t, len(path) < MaxUnixPathLen,
+		"default socket path %q (%d bytes) exceeds limit %d", path, len(path), MaxUnixPathLen)
+	assert.Contains(t, path, "roborev-")
+	assert.True(t, strings.HasSuffix(path, "daemon.sock"))
+}
+
+func TestDaemonEndpoint_BaseURL(t *testing.T) {
+	assert := assert.New(t)
+
+	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	assert.Equal("http://127.0.0.1:7373", tcp.BaseURL())
+
+	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/test.sock"}
+	assert.Equal("http://localhost", unix.BaseURL())
+}
+
+func TestDaemonEndpoint_String(t *testing.T) {
+	assert := assert.New(t)
+
+	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	assert.Equal("tcp:127.0.0.1:7373", tcp.String())
+
+	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/test.sock"}
+	assert.Equal("unix:/tmp/test.sock", unix.String())
+}
+
+func TestDaemonEndpoint_Listener_TCP(t *testing.T) {
+	ep := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:0"}
+	ln, err := ep.Listener()
+	require.NoError(t, err)
+	defer ln.Close()
+	assert.Contains(t, ln.Addr().String(), "127.0.0.1:")
+}
+
+func TestDaemonEndpoint_Listener_Unix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
+	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-test-%d.sock", os.Getpid()))
+	t.Cleanup(func() { os.Remove(sockPath) })
+
+	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
+	ln, err := ep.Listener()
+	require.NoError(t, err)
+	defer ln.Close()
+	assert.Equal(t, sockPath, ln.Addr().String())
+}
+
+func TestDaemonEndpoint_HTTPClient_UnixRoundTrip(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
+	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-test-%d.sock", os.Getpid()))
+	t.Cleanup(func() { os.Remove(sockPath) })
+
+	ln, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
+	client := ep.HTTPClient(2 * time.Second)
+	resp, err := client.Get(ep.BaseURL() + "/test")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
