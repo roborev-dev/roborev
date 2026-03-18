@@ -344,7 +344,7 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 			helpOutput := ""
 			jsonOutput := `{"type": "result", "result": "review result"}`
 			if tt.name == "codex" {
-				helpOutput = "--sandbox"
+				helpOutput = "--sandbox --ask-for-approval"
 				jsonOutput = `{"type": "item.completed", "item": {"type": "agent_message", "text": "review result"}}`
 			}
 

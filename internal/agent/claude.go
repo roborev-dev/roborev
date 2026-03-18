@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -194,13 +193,15 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	// Strip CLAUDECODE to prevent nested-session detection (#270),
 	// and handle API key (configured key or subscription auth).
-	// Set env before configureSubprocess so GIT_OPTIONAL_LOCKS=0
-	// is appended to the final environment, not overwritten.
+	// Use cmd.Environ() (not os.Environ()) so PWD=<cmd.Dir> is
+	// synthesized correctly. Set env before configureSubprocess so
+	// GIT_OPTIONAL_LOCKS=0 is appended to the final environment.
 	stripKeys := []string{"ANTHROPIC_API_KEY", "CLAUDECODE"}
+	baseEnv := cmd.Environ()
 	if apiKey := AnthropicAPIKey(); apiKey != "" {
-		cmd.Env = append(filterEnv(os.Environ(), stripKeys...), "ANTHROPIC_API_KEY="+apiKey)
+		cmd.Env = append(filterEnv(baseEnv, stripKeys...), "ANTHROPIC_API_KEY="+apiKey)
 	} else {
-		cmd.Env = filterEnv(os.Environ(), stripKeys...)
+		cmd.Env = filterEnv(baseEnv, stripKeys...)
 	}
 	// Suppress sounds from Claude Code (notification/completion sounds)
 	cmd.Env = append(cmd.Env, "CLAUDE_NO_SOUND=1")
