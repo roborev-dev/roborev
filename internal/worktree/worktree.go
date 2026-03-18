@@ -233,7 +233,7 @@ func repoUsesFileProtocolSubmodules(repoPath string) (bool, error) {
 	for _, gitmodulesPath := range gitmodulesPaths {
 		usesFileProtocol, err := gitmodulesUsesFileProtocol(gitmodulesPath)
 		if err != nil {
-			return false, err
+			continue // best-effort: skip unreadable .gitmodules files
 		}
 		if usesFileProtocol {
 			return true, nil
@@ -289,7 +289,7 @@ func findGitmodulesPaths(repoPath string) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return nil // best-effort: skip unreadable paths
 		}
 		if d.IsDir() && d.Name() == ".git" {
 			return filepath.SkipDir
