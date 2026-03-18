@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -273,60 +274,91 @@ func TestRepoUsesFileProtocolSubmodulesNested(t *testing.T) {
 	require.True(t, usesFileProtocol)
 }
 
+// skipIfChmodIneffective skips tests that rely on chmod 0000 blocking
+// access. This is not effective on Windows or when running as root.
+func skipIfChmodIneffective(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict access on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("chmod does not restrict access for root")
+	}
+}
+
+// requireUnreadable verifies that path is actually unreadable after chmod,
+// skipping the test if the filesystem ignores permissions.
+func requireUnreadable(t *testing.T, path string) {
+	t.Helper()
+	_, err := os.Open(path)
+	if err == nil {
+		t.Skip("filesystem does not enforce chmod permissions")
+	}
+}
+
 func TestFindGitmodulesPathsSkipsUnreadableNestedDir(t *testing.T) {
+	skipIfChmodIneffective(t)
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, ".gitmodules", "[submodule]\n")
 
 	nested := filepath.Join(dir, "sub", "deep")
 	require.NoError(t, os.MkdirAll(nested, 0755))
 	writeTestFile(t, dir, "sub/deep/.gitmodules", "[submodule]\n")
-	// Make the nested directory unreadable so WalkDir fails on it.
 	require.NoError(t, os.Chmod(nested, 0000))
 	t.Cleanup(func() { os.Chmod(nested, 0755) })
+	requireUnreadable(t, nested)
 
 	paths, err := findGitmodulesPaths(dir)
 	require.NoError(t, err)
-	// The top-level .gitmodules is found; the unreadable nested one is skipped.
 	require.Equal(t, []string{filepath.Join(dir, ".gitmodules")}, paths)
 }
 
 func TestFindGitmodulesPathsErrorsOnUnreadableRoot(t *testing.T) {
+	skipIfChmodIneffective(t)
+
 	dir := t.TempDir()
 	inner := filepath.Join(dir, "repo")
 	require.NoError(t, os.MkdirAll(inner, 0755))
 	require.NoError(t, os.Chmod(inner, 0000))
 	t.Cleanup(func() { os.Chmod(inner, 0755) })
+	requireUnreadable(t, inner)
 
 	_, err := findGitmodulesPaths(inner)
 	require.Error(t, err)
 }
 
 func TestRepoUsesFileProtocolSkipsUnreadableNestedGitmodules(t *testing.T) {
+	skipIfChmodIneffective(t)
+
 	tpl := "[submodule \"test\"]\n\tpath = test\n\turl = %s\n"
 	dir := t.TempDir()
 	writeTestFile(t, dir, ".gitmodules",
 		fmt.Sprintf(tpl, "https://example.com/repo.git"))
 
-	// Create a nested .gitmodules that is unreadable.
 	nested := filepath.Join(dir, "sub")
 	require.NoError(t, os.MkdirAll(nested, 0755))
 	nestedFile := filepath.Join(nested, ".gitmodules")
-	require.NoError(t, os.WriteFile(nestedFile, []byte("junk"), 0644))
+	require.NoError(t, os.WriteFile(nestedFile,
+		fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0644))
 	require.NoError(t, os.Chmod(nestedFile, 0000))
 	t.Cleanup(func() { os.Chmod(nestedFile, 0644) })
+	requireUnreadable(t, nestedFile)
 
-	// Should succeed — the unreadable nested file is skipped.
 	usesFileProtocol, err := repoUsesFileProtocolSubmodules(dir)
 	require.NoError(t, err)
 	require.False(t, usesFileProtocol)
 }
 
 func TestRepoUsesFileProtocolErrorsOnUnreadableTopLevel(t *testing.T) {
+	skipIfChmodIneffective(t)
+
 	dir := t.TempDir()
 	topLevel := filepath.Join(dir, ".gitmodules")
 	require.NoError(t, os.WriteFile(topLevel, []byte("[submodule]\n"), 0644))
 	require.NoError(t, os.Chmod(topLevel, 0000))
 	t.Cleanup(func() { os.Chmod(topLevel, 0644) })
+	requireUnreadable(t, topLevel)
 
 	_, err := repoUsesFileProtocolSubmodules(dir)
 	require.Error(t, err)
