@@ -84,14 +84,43 @@ func (w *Worktree) initSubmodules() error {
 	if err := runSubmoduleUpdate(w.Dir, allowFileProtocol, false); err != nil {
 		return err
 	}
-	// Only suppress file-protocol denials in the recursive pass. Other
-	// failures (broken URLs, auth errors, missing commits) still surface.
-	if err := runSubmoduleUpdate(w.Dir, false, true); err != nil {
-		if !isFileProtocolError(err) {
-			return err
+	return w.recurseSubmodules()
+}
+
+// recurseSubmodules runs recursive submodule init per top-level submodule
+// so that a file-protocol denial in one does not block or mask failures in
+// others. Only file-protocol denials are suppressed; all other errors are
+// returned immediately.
+func (w *Worktree) recurseSubmodules() error {
+	paths, err := listSubmodulePaths(w.Dir)
+	if err != nil || len(paths) == 0 {
+		return err
+	}
+	for _, subPath := range paths {
+		absPath := filepath.Join(w.Dir, subPath)
+		if err := runSubmoduleUpdate(absPath, false, true); err != nil {
+			if !isFileProtocolError(err) {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// listSubmodulePaths returns the registered submodule paths for a repo.
+func listSubmodulePaths(repoPath string) ([]string, error) {
+	stdout, stderr, err := runGitCommand(
+		repoPath, nil,
+		"submodule", "foreach", "--quiet", "echo $sm_path",
+	)
+	if err != nil {
+		return nil, gitCommandError("git submodule foreach", err, stderr)
+	}
+	out := strings.TrimSpace(string(stdout))
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
 }
 
 // isFileProtocolError reports whether err is a git "transport 'file' not

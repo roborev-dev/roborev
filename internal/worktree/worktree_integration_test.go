@@ -207,3 +207,71 @@ func TestCreateWorktreeFailsOnBrokenNestedSubmodule(t *testing.T) {
 	assert.NotContains(t, err.Error(), "transport 'file' not allowed",
 		"failure should not be a file-protocol denial")
 }
+
+// TestCreateWorktreeMixedNestedSubmodules verifies that a blocked local nested
+// submodule in one top-level submodule does not prevent a valid remote nested
+// submodule in a sibling from being initialized.
+func TestCreateWorktreeMixedNestedSubmodules(t *testing.T) {
+	requireGitAvailable(t)
+
+	// leafRepo: a valid nested submodule target (local, but referenced via
+	// file:// from within a top-level submodule — should be blocked).
+	leafRepo := testutil.NewTestRepo(t)
+	leafRepo.RunGit("init")
+	leafRepo.SymbolicRef("HEAD", "refs/heads/main")
+	leafRepo.Config("user.email", testutil.GitUserEmail)
+	leafRepo.Config("user.name", testutil.GitUserName)
+	leafRepo.CommitFile("leaf.txt", "leaf", "leaf commit")
+
+	// subWithLocal: top-level submodule that has a nested local submodule
+	// (will be blocked by file-protocol restriction).
+	subWithLocal := testutil.NewTestRepo(t)
+	subWithLocal.RunGit("init")
+	subWithLocal.SymbolicRef("HEAD", "refs/heads/main")
+	subWithLocal.Config("user.email", testutil.GitUserEmail)
+	subWithLocal.Config("user.name", testutil.GitUserName)
+	subWithLocal.CommitFile("local.txt", "local", "local commit")
+	subWithLocal.Config("protocol.file.allow", "always")
+	leafURL, err := filepath.Rel(subWithLocal.Root, leafRepo.Root)
+	require.NoError(t, err)
+	subWithLocal.RunGit("-c", "protocol.file.allow=always",
+		"submodule", "add", leafURL, "deps/leaf")
+	subWithLocal.RunGit("commit", "-m", "add nested local submodule")
+
+	// subClean: top-level submodule with no nested submodules (should
+	// always succeed).
+	subClean := testutil.NewTestRepo(t)
+	subClean.RunGit("init")
+	subClean.SymbolicRef("HEAD", "refs/heads/main")
+	subClean.Config("user.email", testutil.GitUserEmail)
+	subClean.Config("user.name", testutil.GitUserName)
+	subClean.CommitFile("clean.txt", "clean", "clean commit")
+
+	// Main repo references both top-level submodules via file://.
+	mainRepo := testutil.NewTestRepo(t)
+	mainRepo.RunGit("init")
+	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
+	mainRepo.Config("user.email", testutil.GitUserEmail)
+	mainRepo.Config("user.name", testutil.GitUserName)
+	mainRepo.Config("protocol.file.allow", "always")
+	mainRepo.RunGit("-c", "protocol.file.allow=always",
+		"submodule", "add", subWithLocal.Root, "deps/with-local")
+	mainRepo.RunGit("-c", "protocol.file.allow=always",
+		"submodule", "add", subClean.Root, "deps/clean")
+	mainRepo.RunGit("commit", "-m", "add both submodules")
+
+	wt, err := worktree.Create(mainRepo.Root, "HEAD")
+	require.NoError(t, err)
+	defer wt.Close()
+
+	// Both top-level submodules are initialized.
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "with-local", "local.txt"))
+	require.NoError(t, err, "subWithLocal top-level content should exist")
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "clean", "clean.txt"))
+	require.NoError(t, err, "subClean top-level content should exist")
+
+	// The nested local submodule inside subWithLocal is blocked.
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "with-local", "deps", "leaf", "leaf.txt"))
+	require.ErrorIs(t, err, os.ErrNotExist,
+		"nested local submodule should be blocked by file-protocol restriction")
+}
