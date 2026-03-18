@@ -325,31 +325,6 @@ func probeLegacyDaemonStatus(client *http.Client, baseURL string) (*PingInfo, er
 	}, nil
 }
 
-func validateDaemonBindAddr(addr string) error {
-	if addr == "" {
-		return nil
-	}
-
-	host, _, err := parseDaemonBindAddr(addr)
-	if err != nil {
-		return err
-	}
-	if host == "" {
-		return fmt.Errorf(
-			"daemon server address %q must use an explicit loopback host (127.0.0.1, localhost, or [::1])",
-			addr,
-		)
-	}
-	if !isLoopbackAddr(addr) {
-		return fmt.Errorf(
-			"daemon server address %q must use a loopback host (127.0.0.1, localhost, or [::1])",
-			addr,
-		)
-	}
-
-	return nil
-}
-
 func parseDaemonBindAddr(addr string) (string, int, error) {
 	if addr == "" {
 		return "127.0.0.1", 7373, nil
