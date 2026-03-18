@@ -66,7 +66,7 @@ var ErrJobNotFound = fmt.Errorf("job not found")
 
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
-	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
+	if info, err := getAnyRunningDaemon(); err == nil {
 		return info.Endpoint()
 	}
 	ep, err := daemon.ParseEndpoint(serverAddr)

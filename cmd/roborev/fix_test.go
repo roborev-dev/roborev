@@ -25,8 +25,10 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/roborev-dev/roborev/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -578,6 +580,10 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
+			// Simulate daemon death: remove runtime file so
+			// getDaemonEndpoint falls back to serverAddr, then
+			// point serverAddr at a dead address.
+			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 		}).
 		Build()
@@ -1167,6 +1173,8 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		case "/api/review/close":
 			w.WriteHeader(http.StatusOK)
+		case "/api/ping":
+			writeJSON(w, daemon.PingInfo{Service: "roborev", Version: version.Version})
 		default:
 			http.NotFound(w, r)
 		}
@@ -1209,6 +1217,10 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		}).
 		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
+			// Simulate daemon death: remove runtime file so
+			// getDaemonEndpoint falls back to serverAddr, then
+			// point serverAddr at a dead address.
+			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 		}).
 		Build()
@@ -2315,6 +2327,10 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 					Agent:  "test",
 				}},
 			})
+			// Simulate daemon death: remove runtime file so
+			// getDaemonEndpoint falls back to serverAddr, then
+			// point serverAddr at a dead address.
+			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 		}).
 		Build()
