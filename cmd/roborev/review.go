@@ -288,7 +288,8 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqFields)
 
-			resp, err := getDaemonHTTPClient(10*time.Second).Post(getDaemonEndpoint().BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+			ep := getDaemonEndpoint()
+			resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -327,7 +328,7 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
-				err := waitForJob(cmd, getDaemonEndpoint().BaseURL(), job.ID, quiet)
+				err := waitForJob(cmd, ep, job.ID, quiet)
 				// Only silence Cobra's error output for exitError (verdict-based exit codes)
 				// Keep error output for actual failures (network errors, job not found, etc.)
 				if _, isExitErr := err.(*exitError); isExitErr {

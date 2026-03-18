@@ -18,8 +18,9 @@ import (
 
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
-func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) error {
-	client := getDaemonHTTPClient(5 * time.Second)
+func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
+	serverAddr := ep.BaseURL()
+	client := ep.HTTPClient(5 * time.Second)
 
 	if !quiet {
 		cmd.Printf("Waiting for review to complete...")
@@ -65,7 +66,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 				cmd.Printf(" done!\n\n")
 			}
 			// Fetch and display the review
-			return showReview(cmd, serverAddr, jobID, quiet)
+			return showReview(cmd, ep, jobID, quiet)
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -109,9 +110,9 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 
 // showReview fetches and displays a review by job ID
 // When quiet is true, suppresses output but still returns exit code based on verdict.
-func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error {
-	client := getDaemonHTTPClient(5 * time.Second)
-	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
+func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
+	client := ep.HTTPClient(5 * time.Second)
+	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", ep.BaseURL(), jobID))
 	if err != nil {
 		return fmt.Errorf("failed to fetch review: %w", err)
 	}
@@ -148,8 +149,9 @@ func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error 
 
 // findJobForCommit finds a job for the given commit SHA in the specified repo
 func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
-	addr := getDaemonEndpoint().BaseURL()
-	client := getDaemonHTTPClient(5 * time.Second)
+	ep := getDaemonEndpoint()
+	addr := ep.BaseURL()
+	client := ep.HTTPClient(5 * time.Second)
 
 	// Normalize repo path to handle symlinks/relative paths consistently
 	normalizedRepo := repoPath
@@ -232,8 +234,9 @@ func waitForReview(jobID int64) (*storage.Review, error) {
 }
 
 func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
-	addr := getDaemonEndpoint().BaseURL()
-	client := getDaemonHTTPClient(10 * time.Second)
+	ep := getDaemonEndpoint()
+	addr := ep.BaseURL()
+	client := ep.HTTPClient(10 * time.Second)
 
 	for {
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
@@ -288,7 +291,8 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 
 // enqueueReview enqueues a review job and returns the job ID
 func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
-	addr := getDaemonEndpoint().BaseURL()
+	ep := getDaemonEndpoint()
+	addr := ep.BaseURL()
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath: repoPath,
@@ -296,7 +300,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 		Agent:    agentName,
 	})
 
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.HTTPClient(10*time.Second).Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -317,8 +321,9 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 
 // getCommentsForJob fetches comments for a job
 func getCommentsForJob(jobID int64) ([]storage.Response, error) {
-	addr := getDaemonEndpoint().BaseURL()
-	client := getDaemonHTTPClient(5 * time.Second)
+	ep := getDaemonEndpoint()
+	addr := ep.BaseURL()
+	client := ep.HTTPClient(5 * time.Second)
 
 	resp, err := client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID))
 	if err != nil {

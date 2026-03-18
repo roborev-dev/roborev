@@ -154,7 +154,8 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		Agentic:      agentic,
 	})
 
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(getDaemonEndpoint().BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	ep := getDaemonEndpoint()
+	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -180,7 +181,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// If --wait, poll until job completes and show result
 	if wait {
-		return waitForPromptJob(cmd, getDaemonEndpoint().BaseURL(), job.ID, quiet, promptPollInterval)
+		return waitForPromptJob(cmd, ep.BaseURL(), job.ID, quiet, promptPollInterval)
 	}
 
 	return nil

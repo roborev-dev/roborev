@@ -44,8 +44,8 @@ Examples:
 			}
 
 			// Build URL with optional repo filter
-			addr := getDaemonEndpoint().BaseURL()
-			streamURL := addr + "/api/stream/events"
+			ep := getDaemonEndpoint()
+			streamURL := ep.BaseURL() + "/api/stream/events"
 			if repoFilter != "" {
 				streamURL += "?" + url.Values{"repo": {repoFilter}}.Encode()
 			}
@@ -70,7 +70,7 @@ Examples:
 			}()
 
 			// Make request
-			client := getDaemonEndpoint().HTTPClient(0) // No timeout for streaming
+			client := ep.HTTPClient(0) // No timeout for streaming
 			resp, err := client.Do(req)
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)

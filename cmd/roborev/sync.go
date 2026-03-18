@@ -133,9 +133,10 @@ func syncNowCmd() *cobra.Command {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			addr := getDaemonEndpoint().BaseURL()
+			ep := getDaemonEndpoint()
+			addr := ep.BaseURL()
 			// Use longer timeout since sync operations can take up to 5 minutes
-			client := getDaemonHTTPClient(6 * time.Minute)
+			client := ep.HTTPClient(6 * time.Minute)
 
 			// Use streaming endpoint to show progress
 			resp, err := client.Post(addr+"/api/sync/now?stream=1", "application/json", nil)

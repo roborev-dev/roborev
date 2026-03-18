@@ -715,8 +715,8 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 
 	cmd.Printf("Found %d open job(s):\n\n", len(jobIDs))
 
+	listAddr := getDaemonEndpoint().BaseURL()
 	for _, id := range jobIDs {
-		listAddr := getDaemonEndpoint().BaseURL()
 		job, err := fetchJob(ctx, listAddr, id)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not fetch job %d: %v\n", id, err)
@@ -816,7 +816,8 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		ctx = context.Background()
 	}
 
-	// Fetch the job to check status
+	// Fetch the job to check status (re-resolve endpoint each call
+	// so daemon recovery works if the daemon dies between calls)
 	job, err := fetchJob(ctx, getDaemonEndpoint().BaseURL(), jobID)
 	if err != nil {
 		return fmt.Errorf("fetch job: %w", err)
@@ -1007,9 +1008,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	}
 
 	// Fetch all jobs and reviews
+	batchAddr := getDaemonEndpoint().BaseURL()
 	var entries []batchEntry
 	for _, id := range jobIDs {
-		job, err := fetchJob(ctx, getDaemonEndpoint().BaseURL(), id)
+		job, err := fetchJob(ctx, batchAddr, id)
 		if err != nil {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
@@ -1022,7 +1024,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			continue
 		}
-		review, err := fetchReview(ctx, getDaemonEndpoint().BaseURL(), id)
+		review, err := fetchReview(ctx, batchAddr, id)
 		if err != nil {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
@@ -1033,7 +1035,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), id); err != nil && !opts.quiet {
+			if err := markJobClosed(ctx, batchAddr, id); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
 			}
 			continue
@@ -1136,7 +1138,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 
 		// Enqueue review for fix commit
 		if result.CommitCreated {
-			if enqErr := enqueueIfNeeded(ctx, getDaemonEndpoint().BaseURL(), repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
+			if enqErr := enqueueIfNeeded(ctx, batchAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}
 		}
@@ -1147,10 +1149,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
-			if addErr := addJobResponse(ctx, getDaemonEndpoint().BaseURL(), e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
+			if addErr := addJobResponse(ctx, batchAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
 			}
-			if markErr := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), e.jobID); markErr != nil {
+			if markErr := markJobClosed(ctx, batchAddr, e.jobID); markErr != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
 				}

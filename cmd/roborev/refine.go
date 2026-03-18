@@ -758,8 +758,9 @@ func runRefineList(
 
 	cmd.Printf("Found %d failed review(s) to refine:\n\n", len(failed))
 
+	refineListAddr := getDaemonEndpoint().BaseURL()
 	for _, job := range failed {
-		review, err := fetchReview(ctx, getDaemonEndpoint().BaseURL(), job.ID)
+		review, err := fetchReview(ctx, refineListAddr, job.ID)
 		if err != nil {
 			fmt.Fprintf(
 				cmd.ErrOrStderr(),

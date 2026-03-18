@@ -80,8 +80,9 @@ func postCommitCmd() *cobra.Command {
 				Branch:   branchName,
 			})
 
+			ep := getDaemonEndpoint()
 			resp, err := hookHTTPClient().Post(
-				getDaemonEndpoint().BaseURL()+"/api/enqueue",
+				ep.BaseURL()+"/api/enqueue",
 				"application/json",
 				bytes.NewReader(reqBody),
 			)

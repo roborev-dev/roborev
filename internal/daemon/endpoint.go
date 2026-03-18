@@ -57,7 +57,8 @@ func parseUnixEndpoint(raw string) (DaemonEndpoint, error) {
 	path := strings.TrimPrefix(raw, "unix://")
 
 	if path == "" {
-		return DaemonEndpoint{Network: "unix", Address: DefaultSocketPath()}, nil
+		path = DefaultSocketPath()
+		// Fall through to validate the auto-generated path too
 	}
 
 	if !filepath.IsAbs(path) {
@@ -106,6 +107,7 @@ func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 					return (&net.Dialer{}).DialContext(ctx, "unix", e.Address)
 				},
+				DisableKeepAlives: true,
 			},
 		}
 	}

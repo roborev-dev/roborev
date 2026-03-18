@@ -71,6 +71,9 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 	}
 	ep, err := daemon.ParseEndpoint(serverAddr)
 	if err != nil {
+		if serverAddr != "" {
+			fmt.Fprintf(os.Stderr, "Warning: invalid --server address %q: %v (using default)\n", serverAddr, err)
+		}
 		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 	}
 	return ep

@@ -135,8 +135,9 @@ Examples:
 
 			reqBody, _ := json.Marshal(reqData)
 
-			addr := getDaemonEndpoint().BaseURL()
-			resp, err := getDaemonHTTPClient(5*time.Second).Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+			ep := getDaemonEndpoint()
+			addr := ep.BaseURL()
+			resp, err := ep.HTTPClient(5*time.Second).Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -192,8 +193,9 @@ func closeCmd() *cobra.Command {
 				"closed": closed,
 			})
 
-			addr := getDaemonEndpoint().BaseURL()
-			resp, err := getDaemonHTTPClient(5*time.Second).Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+			ep := getDaemonEndpoint()
+			addr := ep.BaseURL()
+			resp, err := ep.HTTPClient(5*time.Second).Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}

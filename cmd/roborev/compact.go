@@ -183,13 +183,14 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 		return nil, fmt.Errorf("marshal batch request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", getDaemonEndpoint().BaseURL()+"/api/jobs/batch", bytes.NewReader(reqBody))
+	ep := getDaemonEndpoint()
+	req, err := http.NewRequestWithContext(ctx, "POST", ep.BaseURL()+"/api/jobs/batch", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("create batch request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := getDaemonHTTPClient(30 * time.Second)
+	client := ep.HTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("batch fetch: %w", err)
@@ -550,7 +551,8 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)
 	}
 
-	resp, err := getDaemonHTTPClient(10*time.Second).Post(getDaemonEndpoint().BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	ep := getDaemonEndpoint()
+	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon: %w", err)
 	}

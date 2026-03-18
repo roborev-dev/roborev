@@ -27,8 +27,9 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
-			addr := getDaemonEndpoint().BaseURL()
-			client := getDaemonHTTPClient(2 * time.Second)
+			ep := getDaemonEndpoint()
+			addr := ep.BaseURL()
+			client := ep.HTTPClient(2 * time.Second)
 			resp, err := client.Get(addr + "/api/status")
 			if err != nil {
 				fmt.Println("Daemon: not running")

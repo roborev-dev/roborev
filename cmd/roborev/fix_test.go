@@ -552,6 +552,8 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		case "/api/comment":
 			commentCount.Add(1)
 			w.WriteHeader(http.StatusCreated)
+		case "/api/comments":
+			writeJSON(w, map[string]any{"responses": []any{}})
 		case "/api/review/close":
 			closeCount.Add(1)
 			w.WriteHeader(http.StatusOK)
@@ -2327,11 +2329,14 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 					Agent:  "test",
 				}},
 			})
-			// Simulate daemon death: remove runtime file so
-			// getDaemonEndpoint falls back to serverAddr, then
-			// point serverAddr at a dead address.
+			// Simulate daemon death: remove runtime file and override
+			// getAnyRunningDaemon so getDaemonEndpoint() falls back to
+			// serverAddr (which points to a dead address).
 			removeAllDaemonFiles(t)
 			serverAddr = deadURL
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				return nil, os.ErrNotExist
+			}
 		}).
 		Build()
 

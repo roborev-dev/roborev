@@ -138,8 +138,8 @@ Examples:
 				jobID = job.ID
 			}
 
-			addr := getDaemonEndpoint().BaseURL()
-			err := waitForJob(cmd, addr, jobID, quiet)
+			ep := getDaemonEndpoint()
+			err := waitForJob(cmd, ep, jobID, quiet)
 			if err != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -246,7 +246,7 @@ func waitMultiple(
 		jobIDs = append(jobIDs, job.ID)
 	}
 
-	addr := getDaemonEndpoint().BaseURL()
+	ep := getDaemonEndpoint()
 
 	// Wait for all jobs concurrently.
 	// Always poll in quiet mode to avoid interleaved output from
@@ -261,7 +261,7 @@ func waitMultiple(
 		wg.Add(1)
 		go func(idx int, jobID int64) {
 			defer wg.Done()
-			err := waitForJob(cmd, addr, jobID, true)
+			err := waitForJob(cmd, ep, jobID, true)
 			results[idx] = result{jobID: jobID, err: err}
 		}(i, id)
 	}

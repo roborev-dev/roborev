@@ -49,7 +49,8 @@ Examples:
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			addr := getDaemonEndpoint().BaseURL()
+			ep := getDaemonEndpoint()
+			addr := ep.BaseURL()
 
 			// Auto-resolve repo from cwd when not specified.
 			// Use worktree root for branch detection, main repo root for API queries
@@ -105,7 +106,7 @@ Examples:
 			}
 			params.Set("limit", strconv.Itoa(limit))
 
-			client := getDaemonHTTPClient(5 * time.Second)
+			client := ep.HTTPClient(5 * time.Second)
 			resp, err := client.Get(addr + "/api/jobs?" + params.Encode())
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")

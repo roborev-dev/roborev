@@ -161,9 +161,17 @@ func (s *Server) Start(ctx context.Context) error {
 	var listener net.Listener
 	if ep.IsUnix() {
 		socketPath := ep.Address
-		if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+		socketDir := filepath.Dir(socketPath)
+		if err := os.MkdirAll(socketDir, 0700); err != nil {
 			s.configWatcher.Stop()
 			return fmt.Errorf("create socket directory: %w", err)
+		}
+		// Verify the parent directory has safe permissions (owner-only)
+		if fi, err := os.Lstat(socketDir); err == nil {
+			if perm := fi.Mode().Perm(); perm&0077 != 0 {
+				s.configWatcher.Stop()
+				return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)
+			}
 		}
 		// Remove stale socket from a previous run
 		os.Remove(socketPath)
