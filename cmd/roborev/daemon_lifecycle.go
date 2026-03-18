@@ -138,8 +138,8 @@ func registerRepo(repoPath string) error {
 	if err != nil {
 		return err
 	}
-	client := getDaemonHTTPClient(5 * time.Second)
-	resp, err := client.Post(getDaemonEndpoint().BaseURL()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	ep := getDaemonEndpoint()
+	resp, err := ep.HTTPClient(5*time.Second).Post(ep.BaseURL()+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err // connection error (*url.Error wrapping net.Error)
 	}
