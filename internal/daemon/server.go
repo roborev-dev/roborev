@@ -167,7 +167,7 @@ func (s *Server) Start(ctx context.Context) error {
 			return fmt.Errorf("create socket directory: %w", err)
 		}
 		// Verify the parent directory has safe permissions (owner-only)
-		if fi, err := os.Lstat(socketDir); err == nil {
+		if fi, err := os.Stat(socketDir); err == nil {
 			if perm := fi.Mode().Perm(); perm&0077 != 0 {
 				s.configWatcher.Stop()
 				return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)

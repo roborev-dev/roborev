@@ -181,7 +181,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// If --wait, poll until job completes and show result
 	if wait {
-		return waitForPromptJob(cmd, ep.BaseURL(), job.ID, quiet, promptPollInterval)
+		return waitForPromptJob(cmd, ep, job.ID, quiet, promptPollInterval)
 	}
 
 	return nil
@@ -194,8 +194,9 @@ var promptPollInterval = 500 * time.Millisecond
 // waitForPromptJob waits for a prompt job to complete and displays the result.
 // Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
 // jobs don't have PASS/FAIL verdicts.
-func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, pollInterval time.Duration) error {
-	client := getDaemonHTTPClient(5 * time.Second)
+func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool, pollInterval time.Duration) error {
+	serverAddr := ep.BaseURL()
+	client := ep.HTTPClient(5 * time.Second)
 
 	if pollInterval <= 0 {
 		pollInterval = promptPollInterval

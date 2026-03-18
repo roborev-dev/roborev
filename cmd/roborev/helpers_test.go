@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -115,6 +116,15 @@ func patchServerAddr(t *testing.T, newURL string) {
 	old := serverAddr
 	serverAddr = newURL
 	t.Cleanup(func() { serverAddr = old })
+}
+
+// mustParseEndpoint parses a server URL into a DaemonEndpoint, failing the
+// test if parsing fails. Useful for converting httptest.Server.URL to an endpoint.
+func mustParseEndpoint(t *testing.T, serverURL string) daemon.DaemonEndpoint {
+	t.Helper()
+	ep, err := daemon.ParseEndpoint(serverURL)
+	require.NoError(t, err, "parse endpoint %q", serverURL)
+	return ep
 }
 
 // createTestRepo creates a temporary git repository with the given files
