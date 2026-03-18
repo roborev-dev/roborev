@@ -1,13 +1,19 @@
 package review
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
 
 func assertContainsAll(t *testing.T, got string, wants []string) {
 	t.Helper()

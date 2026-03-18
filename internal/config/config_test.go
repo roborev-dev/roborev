@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Condition(t, func() bool {

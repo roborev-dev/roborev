@@ -12,9 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunIsolatedMain(m))
+}
 
 func TestAgentRegistry(t *testing.T) {
 	// Check that all agents are registered
