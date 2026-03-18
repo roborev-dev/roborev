@@ -281,7 +281,7 @@ func skipIfChmodIneffective(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod does not restrict access on Windows")
 	}
-	if os.Getuid() == 0 {
+	if isRoot() {
 		t.Skip("chmod does not restrict access for root")
 	}
 }
