@@ -1623,5 +1623,5 @@ func doFixDaemonRequest(ctx context.Context, method, requestURL string, body []b
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return http.DefaultClient.Do(req)
+	return getDaemonHTTPClient(30 * time.Second).Do(req)
 }
