@@ -72,17 +72,17 @@ func newWorktree(repoPath, ref string) (*Worktree, error) {
 }
 
 func (w *Worktree) initSubmodules() error {
+	// Scan BEFORE any submodule checkout so the decision is based only on
+	// content the repo owner controls (the top-level .gitmodules), not on
+	// .gitmodules files inside submodules that may be attacker-controlled.
+	// Reuse this result for both the non-recursive and recursive passes to
+	// avoid the escalation path described in CVE-2022-39253.
 	allowFileProtocol, err := repoUsesFileProtocolSubmodules(w.Dir)
 	if err != nil {
 		return fmt.Errorf("detect submodule protocol requirements: %w", err)
 	}
 	if err := runSubmoduleUpdate(w.Dir, allowFileProtocol, false); err != nil {
 		return err
-	}
-
-	allowFileProtocol, err = repoUsesFileProtocolSubmodules(w.Dir)
-	if err != nil {
-		return fmt.Errorf("detect recursive submodule protocol requirements: %w", err)
 	}
 	return runSubmoduleUpdate(w.Dir, allowFileProtocol, true)
 }
