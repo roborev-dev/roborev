@@ -369,7 +369,10 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 
 	// If --wait, poll until job completes and show result
 	if opts.wait {
-		ep, _ := daemon.ParseEndpoint(serverAddr)
+		ep, err := daemon.ParseEndpoint(serverAddr)
+		if err != nil {
+			return fmt.Errorf("parsing endpoint: %w", err)
+		}
 		return waitForPromptJob(cmd, ep, job.ID, opts.quiet, promptPollInterval)
 	}
 
@@ -466,6 +469,10 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 
 	// If --wait with per-file, wait for all jobs
 	if opts.wait {
+		ep, err := daemon.ParseEndpoint(serverAddr)
+		if err != nil {
+			return fmt.Errorf("parsing endpoint: %w", err)
+		}
 		if !opts.quiet {
 			cmd.Println("\nWaiting for all jobs to complete...")
 		}
@@ -473,7 +480,6 @@ func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, 
 			if !opts.quiet {
 				cmd.Printf("\n=== Job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			ep, _ := daemon.ParseEndpoint(serverAddr)
 			if err := waitForPromptJob(cmd, ep, info.ID, opts.quiet, promptPollInterval); err != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: job %d failed: %v\n", info.ID, err)
