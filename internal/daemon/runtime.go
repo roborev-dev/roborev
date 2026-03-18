@@ -221,7 +221,7 @@ func GetAnyRunningDaemon() (*RuntimeInfo, error) {
 
 	// Only return a daemon that's actually responding
 	for _, info := range runtimes {
-		if IsDaemonAlive(info.Addr) {
+		if IsDaemonAlive(info.Endpoint()) {
 			return info, nil
 		}
 	}
@@ -229,32 +229,30 @@ func GetAnyRunningDaemon() (*RuntimeInfo, error) {
 	return nil, os.ErrNotExist
 }
 
-// ProbeDaemon validates that a loopback address is serving the roborev daemon.
+// ProbeDaemon validates that a daemon endpoint is serving the roborev daemon.
 // It prefers the lightweight /api/ping endpoint and falls back to /api/status
 // for older daemon versions that do not implement /api/ping yet.
-func ProbeDaemon(addr string, timeout time.Duration) (*PingInfo, error) {
-	if addr == "" {
+func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
-
-	if !isLoopbackAddr(addr) {
-		return nil, fmt.Errorf("non-loopback daemon address: %s", addr)
+	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-
-	client := &http.Client{Timeout: timeout}
-	if info, shouldFallback, err := probeDaemonPing(client, addr); !shouldFallback {
+	client := ep.HTTPClient(timeout)
+	baseURL := ep.BaseURL()
+	if info, shouldFallback, err := probeDaemonPing(client, baseURL); !shouldFallback {
 		return info, err
 	}
-
-	return probeLegacyDaemonStatus(client, addr)
+	return probeLegacyDaemonStatus(client, baseURL)
 }
 
-// IsDaemonAlive checks if a daemon at the given address is actually responding.
+// IsDaemonAlive checks if a daemon at the given endpoint is actually responding.
 // This is more reliable than checking PID and works cross-platform.
-// Only allows loopback addresses to prevent SSRF via malicious runtime files.
+// Only allows loopback addresses (for TCP) to prevent SSRF via malicious runtime files.
 // Uses retry logic to avoid misclassifying a slow or transiently failing daemon.
-func IsDaemonAlive(addr string) bool {
-	if addr == "" {
+func IsDaemonAlive(ep DaemonEndpoint) bool {
+	if ep.Address == "" {
 		return false
 	}
 
@@ -263,15 +261,15 @@ func IsDaemonAlive(addr string) bool {
 		if attempt > 0 {
 			time.Sleep(200 * time.Millisecond)
 		}
-		if _, err := ProbeDaemon(addr, 1*time.Second); err == nil {
+		if _, err := ProbeDaemon(ep, 1*time.Second); err == nil {
 			return true
 		}
 	}
 	return false
 }
 
-func probeDaemonPing(client *http.Client, addr string) (*PingInfo, bool, error) {
-	resp, err := client.Get(fmt.Sprintf("http://%s/api/ping", addr))
+func probeDaemonPing(client *http.Client, baseURL string) (*PingInfo, bool, error) {
+	resp, err := client.Get(baseURL + "/api/ping")
 	if err != nil {
 		return nil, false, err
 	}
@@ -294,8 +292,8 @@ func probeDaemonPing(client *http.Client, addr string) (*PingInfo, bool, error) 
 	}
 }
 
-func probeLegacyDaemonStatus(client *http.Client, addr string) (*PingInfo, error) {
-	resp, err := client.Get(fmt.Sprintf("http://%s/api/status", addr))
+func probeLegacyDaemonStatus(client *http.Client, baseURL string) (*PingInfo, error) {
+	resp, err := client.Get(baseURL + "/api/status")
 	if err != nil {
 		return nil, err
 	}
@@ -408,8 +406,14 @@ func KillDaemon(info *RuntimeInfo) bool {
 		return true
 	}
 
-	// Helper to remove the runtime file using SourcePath if available, otherwise by PID
+	ep := info.Endpoint()
+
+	// Helper to remove the runtime file using SourcePath if available, otherwise by PID.
+	// Also cleans up Unix domain sockets.
 	removeRuntimeFile := func() {
+		if ep.IsUnix() {
+			os.Remove(ep.Address)
+		}
 		if info.SourcePath != "" {
 			os.Remove(info.SourcePath)
 		} else if info.PID > 0 {
@@ -417,16 +421,16 @@ func KillDaemon(info *RuntimeInfo) bool {
 		}
 	}
 
-	// First try graceful HTTP shutdown (only for loopback addresses)
-	if info.Addr != "" && isLoopbackAddr(info.Addr) {
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Post(fmt.Sprintf("http://%s/api/shutdown", info.Addr), "application/json", nil)
+	// First try graceful HTTP shutdown
+	if ep.Address != "" {
+		client := ep.HTTPClient(2 * time.Second)
+		resp, err := client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
 		if err == nil {
 			resp.Body.Close()
 			// Wait for graceful shutdown
 			for range 10 {
 				time.Sleep(200 * time.Millisecond)
-				if !IsDaemonAlive(info.Addr) {
+				if !IsDaemonAlive(ep) {
 					removeRuntimeFile()
 					return true
 				}
@@ -446,7 +450,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 	}
 
 	// No valid PID, just check if it's still alive
-	if info.Addr != "" && !IsDaemonAlive(info.Addr) {
+	if ep.Address != "" && !IsDaemonAlive(ep) {
 		removeRuntimeFile()
 		return true
 	}
@@ -464,8 +468,23 @@ func CleanupZombieDaemons() int {
 
 	cleaned := 0
 	for _, info := range runtimes {
+		ep := info.Endpoint()
+
+		// For Unix sockets, check PID liveness first to avoid slow HTTP probes
+		// against sockets whose owner process is already dead.
+		if ep.IsUnix() && info.PID > 0 && !isProcessAlive(info.PID) {
+			os.Remove(ep.Address)
+			if info.SourcePath != "" {
+				os.Remove(info.SourcePath)
+			} else {
+				RemoveRuntimeForPID(info.PID)
+			}
+			cleaned++
+			continue
+		}
+
 		// Skip responsive daemons
-		if IsDaemonAlive(info.Addr) {
+		if IsDaemonAlive(ep) {
 			continue
 		}
 
@@ -483,7 +502,7 @@ func CleanupZombieDaemons() int {
 		if data, err := os.ReadFile(legacyPath); err == nil {
 			var info RuntimeInfo
 			if json.Unmarshal(data, &info) == nil {
-				if !IsDaemonAlive(info.Addr) {
+				if !IsDaemonAlive(info.Endpoint()) {
 					// Legacy file points to dead daemon, remove it
 					os.Remove(legacyPath)
 				}

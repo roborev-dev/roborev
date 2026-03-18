@@ -401,7 +401,7 @@ func TestProbeDaemonPrefersPing(t *testing.T) {
 		})
 	})
 
-	info, err := ProbeDaemon(addr, time.Second)
+	info, err := ProbeDaemon(DaemonEndpoint{Network: "tcp", Address: addr}, time.Second)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -428,7 +428,7 @@ func TestProbeDaemonFallsBackToLegacyStatus(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-legacy"})
 	})
 
-	info, err := ProbeDaemon(addr, time.Second)
+	info, err := ProbeDaemon(DaemonEndpoint{Network: "tcp", Address: addr}, time.Second)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -482,7 +482,7 @@ func TestIsDaemonAliveLegacyStatusCodes(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-legacy"})
 				}
 			})
-			got := IsDaemonAlive(addr)
+			got := IsDaemonAlive(DaemonEndpoint{Network: "tcp", Address: addr})
 			if got != tt.wantAlive {
 				assert.Condition(t, func() bool {
 					return false

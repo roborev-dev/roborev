@@ -171,6 +171,11 @@ func looksLikeFlagValue(token string) bool {
 	return false
 }
 
+// isProcessAlive checks whether a process with the given PID exists.
+func isProcessAlive(pid int) bool {
+	return processExists(pid)
+}
+
 // killProcess kills a process by PID on Windows.
 // Returns true only if the process is confirmed dead.
 // Verifies the process is a roborev daemon before killing to prevent

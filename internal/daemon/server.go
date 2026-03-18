@@ -138,7 +138,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Check if a responsive daemon is still running after cleanup
-	if info, err := GetAnyRunningDaemon(); err == nil && IsDaemonAlive(info.Addr) {
+	if info, err := GetAnyRunningDaemon(); err == nil && IsDaemonAlive(info.Endpoint()) {
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
 	}
 
@@ -180,7 +180,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 
-	ready, serveExited, err := waitForServerReady(ctx, addr, 2*time.Second, serveErrCh)
+	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: addr}, 2*time.Second, serveErrCh)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -233,7 +233,7 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-func waitForServerReady(ctx context.Context, addr string, timeout time.Duration, serveErrCh <-chan error) (bool, bool, error) {
+func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error) (bool, bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -252,7 +252,7 @@ func waitForServerReady(ctx context.Context, addr string, timeout time.Duration,
 			return false, true, err
 		default:
 		}
-		if _, err := ProbeDaemon(addr, 200*time.Millisecond); err == nil {
+		if _, err := ProbeDaemon(ep, 200*time.Millisecond); err == nil {
 			return true, false, nil
 		} else {
 			lastErr = err
@@ -277,7 +277,7 @@ func waitForServerReady(ctx context.Context, addr string, timeout time.Duration,
 	if lastErr == nil {
 		lastErr = fmt.Errorf("server did not respond before timeout")
 	}
-	return false, false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", addr, timeout, lastErr)
+	return false, false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", ep, timeout, lastErr)
 }
 
 func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) error {

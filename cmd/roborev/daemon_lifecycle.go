@@ -133,7 +133,7 @@ func ensureDaemon() error {
 	// First check runtime files for any running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
 		if !skipVersionCheck {
-			probe, err := daemon.ProbeDaemon(info.Addr, 2*time.Second)
+			probe, err := daemon.ProbeDaemon(info.Endpoint(), 2*time.Second)
 			if err != nil {
 				if verbose {
 					fmt.Printf("Daemon probe failed, restarting...\n")
@@ -229,7 +229,7 @@ func probeDaemonServerURL(serverURL string, timeout time.Duration) (*daemon.Ping
 	if parsed.Host == "" {
 		return nil, fmt.Errorf("invalid daemon server address %q", serverURL)
 	}
-	return daemon.ProbeDaemon(parsed.Host, timeout)
+	return daemon.ProbeDaemon(daemon.DaemonEndpoint{Network: "tcp", Address: parsed.Host}, timeout)
 }
 
 // stopDaemon stops any running daemons.

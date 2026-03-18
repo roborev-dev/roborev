@@ -154,7 +154,7 @@ func waitForDaemonReady(t *testing.T, timeout time.Duration, pid int) bool {
 		runtimes, err := daemon.ListAllRuntimes()
 		if err == nil {
 			for _, rt := range runtimes {
-				if rt.PID == pid && daemon.IsDaemonAlive(rt.Addr) {
+				if rt.PID == pid && daemon.IsDaemonAlive(rt.Endpoint()) {
 					return true
 				}
 			}
