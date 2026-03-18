@@ -105,7 +105,11 @@ new commits. Called automatically by the post-rewrite hook.`,
 			}
 
 			addr := getDaemonAddr()
-			client := daemon.NewHTTPClient(addr)
+			ep, err := daemon.ParseEndpoint(addr)
+			if err != nil {
+				return fmt.Errorf("remap: parse daemon addr: %w", err)
+			}
+			client := daemon.NewHTTPClient(ep)
 
 			result, err := client.Remap(daemon.RemapRequest{
 				RepoPath: repoRoot,

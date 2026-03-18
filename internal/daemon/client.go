@@ -54,16 +54,16 @@ var DefaultPollInterval = 2 * time.Second
 
 // HTTPClient is the default HTTP-based implementation of Client
 type HTTPClient struct {
-	addr         string
+	baseURL      string
 	httpClient   *http.Client
 	pollInterval time.Duration
 }
 
 // NewHTTPClient creates a new HTTP daemon client
-func NewHTTPClient(addr string) *HTTPClient {
+func NewHTTPClient(ep DaemonEndpoint) *HTTPClient {
 	return &HTTPClient{
-		addr:         addr,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		baseURL:      ep.BaseURL(),
+		httpClient:   ep.HTTPClient(10 * time.Second),
 		pollInterval: DefaultPollInterval,
 	}
 }
@@ -74,7 +74,7 @@ func NewHTTPClientFromRuntime() (*HTTPClient, error) {
 	for range 5 {
 		info, err := GetAnyRunningDaemon()
 		if err == nil {
-			return NewHTTPClient(fmt.Sprintf("http://%s", info.Addr)), nil
+			return NewHTTPClient(info.Endpoint()), nil
 		}
 		lastErr = err
 		time.Sleep(100 * time.Millisecond)
@@ -88,7 +88,7 @@ func (c *HTTPClient) SetPollInterval(interval time.Duration) {
 }
 
 func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?sha=%s", c.addr, sha))
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?sha=%s", c.baseURL, sha))
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 }
 
 func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?job_id=%d", c.addr, jobID))
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?job_id=%d", c.baseURL, jobID))
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
 		"closed": true,
 	})
 
-	resp, err := c.httpClient.Post(c.addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.httpClient.Post(c.baseURL+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 		"comment":   comment,
 	})
 
-	resp, err := c.httpClient.Post(c.addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.httpClient.Post(c.baseURL+"/api/comment", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 		Agent:    agentName,
 	})
 
-	resp, err := c.httpClient.Post(c.addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.httpClient.Post(c.baseURL+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -203,7 +203,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
 	missingReviewAttempts := 0
 	for {
-		resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/jobs?id=%d", c.addr, jobID))
+		resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/jobs?id=%d", c.baseURL, jobID))
 		if err != nil {
 			return nil, fmt.Errorf("polling job %d: %w", jobID, err)
 		}
@@ -267,7 +267,7 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
 	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
-		c.addr, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
+		c.baseURL, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
 
 	resp, err := c.httpClient.Get(queryURL)
 	if err != nil {
@@ -293,7 +293,7 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 	// Fallback: if repo filter yielded no results, try git_ref only.
 	// This handles worktrees where daemon stores the main repo root path
 	// but the caller uses the worktree path.
-	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", c.addr, url.QueryEscape(sha))
+	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", c.baseURL, url.QueryEscape(sha))
 	fallbackResp, err := c.httpClient.Get(fallbackURL)
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
@@ -347,7 +347,7 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 	// Query for queued first, then running - this avoids pagination issues.
 	for _, status := range []string{"queued", "running"} {
 		queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&status=%s&limit=1",
-			c.addr, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo), status)
+			c.baseURL, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo), status)
 
 		resp, err := c.httpClient.Get(queryURL)
 		if err != nil {
@@ -377,7 +377,7 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 }
 
 func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/comments?job_id=%d", c.addr, jobID))
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/comments?job_id=%d", c.baseURL, jobID))
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +412,7 @@ func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
 	}
 
 	resp, err := c.httpClient.Post(
-		c.addr+"/api/remap", "application/json",
+		c.baseURL+"/api/remap", "application/json",
 		bytes.NewReader(reqBody),
 	)
 	if err != nil {

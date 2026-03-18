@@ -47,7 +47,9 @@ func mockAPI(t *testing.T, handler http.HandlerFunc) *HTTPClient {
 	t.Helper()
 	s := httptest.NewServer(handler)
 	t.Cleanup(s.Close)
-	return NewHTTPClient(s.URL)
+	ep, err := ParseEndpoint(s.URL)
+	require.NoError(t, err, "ParseEndpoint")
+	return NewHTTPClient(ep)
 }
 
 func assertRequest(t *testing.T, r *http.Request, method, path string) {
