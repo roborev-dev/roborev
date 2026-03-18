@@ -39,5 +39,6 @@ REPORT.md
 .zed
 .superset
 
-# Claude Code worktrees
+# Claude Code
 .claude/worktrees/
+.claude/settings.local.json

@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(rmdir /home/cloud/src/github.com/roborev/.claude/worktrees/witty-dancing-crystal/docs/superpowers/specs)",
-      "Bash(rmdir /home/cloud/src/github.com/roborev/.claude/worktrees/witty-dancing-crystal/docs/superpowers)"
-    ]
-  }
-}
