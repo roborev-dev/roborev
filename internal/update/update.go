@@ -22,10 +22,9 @@ import (
 )
 
 const (
-	githubAPIURL     = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
-	cacheFileName    = "update_check.json"
-	cacheDuration    = 1 * time.Hour
-	devCacheDuration = 15 * time.Minute // Shorter cache for dev builds
+	githubAPIURL  = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
+	cacheFileName = "update_check.json"
+	cacheDuration = 1 * time.Hour
 )
 
 // Release represents a GitHub release
@@ -79,27 +78,20 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	currentVersion := strings.TrimPrefix(version.Version, "v")
 	isDevBuild := isDevBuildVersion(currentVersion)
 
-	// Check cache first (unless forced)
-	// Use shorter cache for dev builds so they learn about releases sooner
-	cacheWindow := cacheDuration
-	if isDevBuild {
-		cacheWindow = devCacheDuration
+	// Don't nag on dev builds — if you're building from source you can
+	// manage your own updates.  Explicit `roborev update` (forceCheck)
+	// still works.
+	if isDevBuild && !forceCheck {
+		return nil, nil
 	}
+
+	// Check cache first (unless forced)
 	if !forceCheck {
 		if cached, err := loadCache(); err == nil {
-			if time.Since(cached.CheckedAt) < cacheWindow {
+			if time.Since(cached.CheckedAt) < cacheDuration {
 				latestVersion := strings.TrimPrefix(cached.Version, "v")
-				if !isDevBuild && !isNewer(latestVersion, currentVersion) {
+				if !isNewer(latestVersion, currentVersion) {
 					return nil, nil // Up to date (cached)
-				}
-				// For dev builds, return cached version (notification only needs version)
-				// Full download info is fetched when actually updating (forceCheck=true)
-				if isDevBuild {
-					return &UpdateInfo{
-						CurrentVersion: version.Version,
-						LatestVersion:  cached.Version,
-						IsDevBuild:     true,
-					}, nil
 				}
 				// Cache says update available, fetch fresh info for download URLs
 			}
@@ -117,8 +109,8 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
-	// For dev builds, always notify about the latest release
-	// For regular builds, only notify if there's a newer version
+	// For dev builds (forceCheck only), always show the latest release.
+	// For regular builds, only notify if there's a newer version.
 	if !isDevBuild && !isNewer(latestVersion, currentVersion) {
 		return nil, nil // Up to date
 	}
