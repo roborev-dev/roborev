@@ -27,8 +27,8 @@ func TestParseEndpoint(t *testing.T) {
 		{"ipv6 loopback", "[::1]:7373", "tcp", ""},
 		{"localhost", "localhost:7373", "tcp", ""},
 		{"http prefix stripped", "http://127.0.0.1:7373", "tcp", ""},
-		{"unix auto", "unix://", "unix", ""},
-		{"unix explicit path", "unix:///tmp/test.sock", "unix", ""},
+		{"unix auto", "unix://", "unix", ""},                        // skipped on Windows (no os.Getuid)
+		{"unix explicit path", "unix:///tmp/test.sock", "unix", ""}, // skipped on Windows (not absolute)
 		{"non-loopback rejected", "192.168.1.1:7373", "", "loopback"},
 		{"relative unix rejected", "unix://relative.sock", "", "absolute"},
 		{"http non-loopback rejected", "http://192.168.1.1:7373", "", "loopback"},
@@ -36,6 +36,9 @@ func TestParseEndpoint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.HasPrefix(tt.input, "unix://") {
+				t.Skip("Unix sockets not supported on Windows")
+			}
 			ep, err := ParseEndpoint(tt.input)
 			if tt.wantErr != "" {
 				require.Error(t, err)
@@ -52,6 +55,9 @@ func TestParseEndpoint(t *testing.T) {
 }
 
 func TestParseEndpoint_UnixPathTooLong(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
 	long := "unix:///" + strings.Repeat("a", MaxUnixPathLen)
 	_, err := ParseEndpoint(long)
 	require.Error(t, err)
@@ -59,11 +65,17 @@ func TestParseEndpoint_UnixPathTooLong(t *testing.T) {
 }
 
 func TestParseEndpoint_UnixNullByte(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
 	_, err := ParseEndpoint("unix:///tmp/bad\x00.sock")
 	require.Error(t, err)
 }
 
 func TestDefaultSocketPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
 	path := DefaultSocketPath()
 	assert.Less(t, len(path), MaxUnixPathLen,
 		"default socket path %q (%d bytes) exceeds limit %d", path, len(path), MaxUnixPathLen)
