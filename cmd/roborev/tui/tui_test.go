@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,26 @@ import (
 )
 
 const testServerAddr = "http://test.invalid:9999"
+
+// testEndpoint is a DaemonEndpoint parsed from testServerAddr.
+var testEndpoint = testEndpointFromURL(testServerAddr)
+
+// localhostEndpoint is a convenience DaemonEndpoint for tests using "http://localhost".
+var localhostEndpoint = daemon.DaemonEndpoint{Network: "tcp", Address: "localhost"}
+
+// testEndpointFromURL parses a URL string into a DaemonEndpoint for tests.
+// It strips the http:// prefix and uses the host:port as the TCP address.
+func testEndpointFromURL(rawURL string) daemon.DaemonEndpoint {
+	ep, err := daemon.ParseEndpoint(rawURL)
+	if err != nil {
+		// Fallback for test URLs that ParseEndpoint may reject
+		// (e.g. non-loopback hosts like test.invalid)
+		addr := strings.TrimPrefix(rawURL, "https://")
+		addr = strings.TrimPrefix(addr, "http://")
+		return daemon.DaemonEndpoint{Network: "tcp", Address: addr}
+	}
+	return ep
+}
 
 // setupTuiTestEnv isolates the test from the production roborev environment
 // by setting ROBOREV_DATA_DIR to a temp directory. This prevents tests from
@@ -63,7 +84,7 @@ func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	t.Helper()
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts, newModel(ts.URL, withExternalIODisabled())
+	return ts, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 }
 
 // pressKey simulates pressing a rune key and returns the updated model.
@@ -233,7 +254,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 }
 
 func TestTUIGetVisibleJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -296,7 +317,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(testServerAddr, withExternalIODisabled())
+			m := newModel(testEndpoint, withExternalIODisabled())
 			m.jobs = jobs
 			m.selectedIdx = tt.selectedIdx
 			if tt.filter != nil {
@@ -313,7 +334,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 }
 
 func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -331,7 +352,7 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
-	m := newModel("http://localhost")
+	m := newModel(testEndpointFromURL("http://localhost"))
 	m.loadingJobs = false
 	m.loadingMore = false
 
@@ -389,7 +410,7 @@ func TestTUITickInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(testServerAddr, withExternalIODisabled())
+			m := newModel(testEndpoint, withExternalIODisabled())
 			m.statusFetchedOnce = tt.statusFetchedOnce
 			m.status.RunningJobs = tt.runningJobs
 			m.status.QueuedJobs = tt.queuedJobs
@@ -405,7 +426,7 @@ func TestTUITickInterval(t *testing.T) {
 }
 
 func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.loadingJobs = true
@@ -426,7 +447,7 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	// Set up with loadingJobs true (shouldn't normally happen with append, but test the logic)
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -449,7 +470,7 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 
 func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 	// newModel should initialize loadingJobs to true since Init() calls fetchJobs
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	if !m.loadingJobs {
 		assert.Condition(t, func() bool {
 			return false
@@ -458,7 +479,7 @@ func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 }
 
 func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.loadingJobs = true
 
 	// Simulate job fetch error
@@ -488,7 +509,7 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 		}, "write malformed config: %v", err)
 	}
 
-	m := newModel(testServerAddr)
+	m := newModel(testEndpoint)
 	m.currentView = viewQueue
 
 	// Toggle hide closed ON
@@ -524,7 +545,7 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 }
 
 func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 
 	// Job with Closed=false but pendingClosed=true should be hidden
@@ -565,7 +586,7 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationInQueueView(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
 	m.height = 24
@@ -600,7 +621,7 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationDevBuild(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
 	m.height = 24
@@ -621,7 +642,7 @@ func TestTUIUpdateNotificationDevBuild(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.width = 80
 	m.height = 24
@@ -640,7 +661,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	_ = setupTuiTestEnv(t)
 
 	t.Run("detects version mismatch", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Simulate receiving status with different version
 		status := statusMsg(storage.DaemonStatus{
@@ -662,7 +683,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("no mismatch when versions match", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Simulate receiving status with same version as TUI
 		status := statusMsg(storage.DaemonStatus{
@@ -679,7 +700,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("displays error banner in queue view when mismatched", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
 		m.currentView = viewQueue
@@ -706,7 +727,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("does not display daemon status in review view when mismatched", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
 		m.currentView = viewReview
@@ -738,7 +759,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("review flash still renders when mismatch is present", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
 		m.currentView = viewReview
@@ -778,7 +799,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 func TestTUIConfigReloadFlash(t *testing.T) {
 	_ = setupTuiTestEnv(t)
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
 		// First status fetch with a ConfigReloadCounter should NOT flash
@@ -808,7 +829,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash on config reload after first fetch", func(t *testing.T) {
 		// Start with a model that has already fetched status once
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -834,7 +855,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash when ConfigReloadCounter changes from zero to non-zero", func(t *testing.T) {
 		// Model has fetched status once but daemon hadn't reloaded yet
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 0 // No reload had occurred
 
@@ -854,7 +875,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 	})
 
 	t.Run("no flash when ConfigReloadCounter unchanged", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -886,7 +907,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		wantErrors        int
 		wantReconnecting  bool
 		wantCmd           bool
-		wantServerAddr    string
+		wantBaseURL       string
 		wantDaemonVersion string
 		wantErrNil        bool
 	}
@@ -969,11 +990,11 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			initialErrors:     0,
 			reconnecting:      true,
 			initialErr:        errors.New("connection refused"),
-			msg:               reconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"},
+			msg:               reconnectMsg{endpoint: testEndpointFromURL("http://127.0.0.1:7374"), version: "2.0.0"},
 			wantErrors:        0,
 			wantReconnecting:  false,
 			wantCmd:           true,
-			wantServerAddr:    "http://127.0.0.1:7374",
+			wantBaseURL:       "http://127.0.0.1:7374",
 			wantDaemonVersion: "2.0.0",
 			wantErrNil:        true,
 		},
@@ -981,11 +1002,11 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			name:             "handles reconnection to same address",
 			initialErrors:    3,
 			reconnecting:     true,
-			msg:              reconnectMsg{newAddr: testServerAddr},
+			msg:              reconnectMsg{endpoint: testEndpoint},
 			wantErrors:       3,
 			wantReconnecting: false,
 			wantCmd:          false,
-			wantServerAddr:   testServerAddr,
+			wantBaseURL:      testEndpoint.BaseURL(),
 		},
 		{
 			name:             "handles failed reconnection",
@@ -1000,7 +1021,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(testServerAddr, withExternalIODisabled())
+			m := newModel(testEndpoint, withExternalIODisabled())
 			m.consecutiveErrors = tt.initialErrors
 			m.reconnecting = tt.reconnecting
 			m.err = tt.initialErr
@@ -1022,10 +1043,10 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 					return false
 				}, "cmd returned = %v, want %v", cmd != nil, tt.wantCmd)
 			}
-			if tt.wantServerAddr != "" && m2.serverAddr != tt.wantServerAddr {
+			if tt.wantBaseURL != "" && m2.endpoint.BaseURL() != tt.wantBaseURL {
 				assert.Condition(t, func() bool {
 					return false
-				}, "serverAddr = %q, want %q", m2.serverAddr, tt.wantServerAddr)
+				}, "endpoint.BaseURL() = %q, want %q", m2.endpoint.BaseURL(), tt.wantBaseURL)
 			}
 			if tt.wantDaemonVersion != "" && m2.daemonVersion != tt.wantDaemonVersion {
 				assert.Condition(t, func() bool {
@@ -1043,7 +1064,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 
 func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	// Test that the queue view renders status correctly
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.width = 200
 	m.height = 30
 	m.currentView = viewQueue
@@ -1075,7 +1096,7 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 }
 
 func TestHandleFixKeyRejectsFixJob(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.tasksEnabled = true
 	m.jobs = []storage.ReviewJob{
@@ -1113,7 +1134,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 
 func TestTUIFixTriggerResultMsg(t *testing.T) {
 	t.Run("warning shows flash and triggers refresh", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewTasks
 		m.width = 80
 		m.height = 24
@@ -1144,7 +1165,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("success shows enqueued flash and triggers refresh", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewTasks
 		m.width = 80
 		m.height = 24
@@ -1169,7 +1190,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("error shows failure flash with no refresh", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewTasks
 		m.width = 80
 		m.height = 24
@@ -1197,7 +1218,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 	setupTuiTestEnv(t)
 
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -1266,7 +1287,7 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 	setupTuiTestEnv(t)
 
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -1349,7 +1370,7 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 	setupTuiTestEnv(t)
 
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 120
 	m.height = 20
@@ -1431,7 +1452,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 		}, "write config: %v", err)
 	}
 
-	m := newModel(testServerAddr)
+	m := newModel(testEndpoint)
 	if m.mouseEnabled {
 		require.Condition(t, func() bool {
 			return false
@@ -1445,7 +1466,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 }
 func TestTUISelection(t *testing.T) {
 	t.Run("MaintainedOnInsert", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Initial state with 3 jobs, select the middle one (ID=2)
 		m.jobs = []storage.ReviewJob{
@@ -1466,7 +1487,7 @@ func TestTUISelection(t *testing.T) {
 
 	})
 	t.Run("ClampsOnRemoval", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Initial state with 3 jobs, select the last one (ID=1)
 		m.jobs = []storage.ReviewJob{
@@ -1487,7 +1508,7 @@ func TestTUISelection(t *testing.T) {
 
 	})
 	t.Run("FirstJobOnEmpty", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// No prior selection (empty jobs list, zero selectedJobID)
 		m.jobs = []storage.ReviewJob{}
@@ -1506,7 +1527,7 @@ func TestTUISelection(t *testing.T) {
 
 	})
 	t.Run("EmptyList", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Had jobs, now empty
 		m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -1522,7 +1543,7 @@ func TestTUISelection(t *testing.T) {
 
 	})
 	t.Run("MaintainedOnLargeBatch", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 
 		// Initial state with 1 job selected
 		m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -1555,7 +1576,7 @@ func TestTUIHideClosed(t *testing.T) {
 			}, "write config: %v", err)
 		}
 
-		m := newModel(testServerAddr)
+		m := newModel(testEndpoint)
 		if !m.hideClosed {
 			assert.Condition(t, func() bool {
 				return false
@@ -1564,7 +1585,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("Toggle", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 
 		// Initial state: hideClosed is false (TestMain isolates from real config)
@@ -1594,7 +1615,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("FiltersJobs", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true
 
@@ -1648,7 +1669,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("SelectionMovesToVisible", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 
 		m.jobs = []storage.ReviewJob{
@@ -1669,7 +1690,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("RefreshRevalidatesSelection", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true
 
@@ -1695,7 +1716,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("NavigationSkipsHidden", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true
 
@@ -1715,7 +1736,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("withRepoFilter", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true
 		m.activeRepoFilter = []string{"/repo/a"}
@@ -1744,7 +1765,7 @@ func TestTUIHideClosed(t *testing.T) {
 	t.Run("ClearRepoFilterRefetches", func(t *testing.T) {
 		// Scenario: hide closed enabled, then filter by repo, then press escape
 		// to clear the repo filter. Should trigger a refetch to show all open reviews.
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true
 		m.activeRepoFilter = []string{"/repo/a"}
@@ -1804,7 +1825,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("EnableTriggersRefetch", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = false
 
@@ -1833,7 +1854,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 	})
 	t.Run("DisableRefetches", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.hideClosed = true // Already enabled
 
@@ -1873,7 +1894,7 @@ func TestTUIHideClosed(t *testing.T) {
 			}, "write config: %v", err)
 		}
 
-		m := newModel(testServerAddr)
+		m := newModel(testEndpoint)
 		m.currentView = viewQueue
 
 		// Verify the default was loaded
@@ -1917,7 +1938,7 @@ func TestTUIHideClosed(t *testing.T) {
 
 func TestTUIFlashMessage(t *testing.T) {
 	t.Run("AppearsInQueueView", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
 		m.width = 80
 		m.height = 24
@@ -1934,7 +1955,7 @@ func TestTUIFlashMessage(t *testing.T) {
 
 	})
 	t.Run("NotShownInDifferentView", func(t *testing.T) {
-		m := newModel(testServerAddr, withExternalIODisabled())
+		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewReview
 		m.width = 80
 		m.height = 24
@@ -2038,7 +2059,7 @@ func TestNewTuiModelOptions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newModel(testServerAddr, tc.opts...)
+			m := newModel(testEndpoint, tc.opts...)
 
 			if !reflect.DeepEqual(m.activeRepoFilter, tc.expectedRepoFilter) {
 				assert.Condition(t, func() bool {

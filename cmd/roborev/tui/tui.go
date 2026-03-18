@@ -254,7 +254,7 @@ func sanitizeForDisplay(s string) string {
 }
 
 type model struct {
-	serverAddr       string
+	endpoint         daemon.DaemonEndpoint
 	daemonVersion    string
 	client           *http.Client
 	glamourStyle     gansi.StyleConfig // detected once at init
@@ -438,7 +438,7 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-func newModel(serverAddr string, opts ...option) model {
+func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var opt options
 	for _, o := range opts {
 		o(&opt)
@@ -528,9 +528,9 @@ func newModel(serverAddr string, opts ...option) model {
 	}
 
 	return model{
-		serverAddr:          serverAddr,
+		endpoint:            ep,
 		daemonVersion:       daemonVersion,
-		client:              &http.Client{Timeout: 10 * time.Second},
+		client:              ep.HTTPClient(10 * time.Second),
 		glamourStyle:        streamfmt.GlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
@@ -855,7 +855,7 @@ func (m model) View() string {
 
 // Config holds resolved parameters for running the TUI.
 type Config struct {
-	ServerAddr    string
+	Endpoint      daemon.DaemonEndpoint
 	RepoFilter    string
 	BranchFilter  string
 	ControlSocket string // Unix socket path for external control (default: auto)
@@ -904,7 +904,7 @@ func Run(cfg Config) error {
 		}
 	}
 
-	m := newModel(cfg.ServerAddr, opts...)
+	m := newModel(cfg.Endpoint, opts...)
 	p := tea.NewProgram(
 		m,
 		programOptionsForModel(m)...,
@@ -951,7 +951,7 @@ func Run(cfg Config) error {
 			})
 
 			rtInfo := buildTUIRuntimeInfo(
-				socketPath, cfg.ServerAddr,
+				socketPath, cfg.Endpoint.BaseURL(),
 			)
 			if err := WriteTUIRuntime(rtInfo); err != nil {
 				log.Printf(

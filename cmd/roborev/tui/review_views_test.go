@@ -9,7 +9,7 @@ import (
 )
 
 func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.hideClosed = true
 	m.loadingJobs = false
@@ -40,7 +40,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
 }
 
 func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.hideClosed = false
 	m.loadingJobs = false
@@ -71,7 +71,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
 
 func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (queue)
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1, withRef("abc123"))}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -105,7 +105,7 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 
 func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (review)
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))
 	m.jobs = []storage.ReviewJob{j}
 	m.currentReview = makeReview(1, &j)
@@ -126,7 +126,7 @@ func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 
 func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	// Test that pressing 'q' in commit message view also returns to originating view
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewCommitMsg
 	m.commitMsgFromView = viewReview
 	m.commitMsgContent = "test message"
@@ -198,7 +198,7 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
 	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	tests := []struct {
 		name        string
@@ -350,7 +350,7 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 
 func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	// Test that '?' opens help from queue and pressing '?' again returns to queue
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
 	// Press '?' to open help
@@ -379,7 +379,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 
 func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	// Test that '?' opens help from review and escape returns to review
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))
 	m.currentReview = makeReview(1, &j)
 	m.currentView = viewReview

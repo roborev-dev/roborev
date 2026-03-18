@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"testing"
 )
@@ -46,7 +47,7 @@ func withFilterTree(nodes []treeFilterNode) testModelOption {
 }
 
 func initTestModel(opts ...testModelOption) model {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(daemon.DaemonEndpoint{Network: "tcp", Address: "localhost"}, withExternalIODisabled())
 	for _, opt := range opts {
 		opt(&m)
 	}

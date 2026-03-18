@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/roborev-dev/roborev/cmd/roborev/tui"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -37,10 +37,15 @@ to the current branch. Use = syntax for explicit values:
 				return fmt.Errorf("daemon error: %w", err)
 			}
 
+			var ep daemon.DaemonEndpoint
 			if addr == "" {
-				addr = getDaemonEndpoint().BaseURL()
-			} else if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
-				addr = "http://" + addr
+				ep = getDaemonEndpoint()
+			} else {
+				var err error
+				ep, err = daemon.ParseEndpoint(addr)
+				if err != nil {
+					return fmt.Errorf("--addr: %w", err)
+				}
 			}
 
 			if cmd.Flags().Changed("repo") {
@@ -65,7 +70,7 @@ to the current branch. Use = syntax for explicit values:
 			}
 
 			return tui.Run(tui.Config{
-				ServerAddr:    addr,
+				Endpoint:      ep,
 				RepoFilter:    repoFilter,
 				BranchFilter:  branchFilter,
 				ControlSocket: controlSocket,

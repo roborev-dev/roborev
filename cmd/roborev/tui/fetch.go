@@ -100,7 +100,7 @@ func (m model) fetchJobs() tea.Cmd {
 			params.Set("limit", fmt.Sprintf("%d", limit))
 		}
 
-		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
+		url := fmt.Sprintf("%s/api/jobs?%s", m.endpoint.BaseURL(), params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
 			return jobsErrMsg{err: err, seq: seq}
@@ -144,7 +144,7 @@ func (m model) fetchMoreJobs() tea.Cmd {
 			params.Set("closed", "false")
 		}
 		params.Set("exclude_job_type", "fix")
-		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
+		url := fmt.Sprintf("%s/api/jobs?%s", m.endpoint.BaseURL(), params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
 			return paginationErrMsg{err: err, seq: seq}
@@ -194,8 +194,7 @@ func (m model) tryReconnect() tea.Cmd {
 		if err != nil {
 			return reconnectMsg{err: err}
 		}
-		newAddr := fmt.Sprintf("http://%s", info.Addr)
-		return reconnectMsg{newAddr: newAddr, version: info.Version}
+		return reconnectMsg{endpoint: info.Endpoint(), version: info.Version}
 	}
 }
 
@@ -203,10 +202,10 @@ func (m model) tryReconnect() tea.Cmd {
 // display-name-to-root-paths mapping for control socket resolution.
 func (m model) fetchRepoNames() tea.Cmd {
 	client := m.client
-	serverAddr := m.serverAddr
+	baseURL := m.endpoint.BaseURL()
 
 	return func() tea.Msg {
-		resp, err := client.Get(serverAddr + "/api/repos")
+		resp, err := client.Get(baseURL + "/api/repos")
 		if err != nil {
 			return repoNamesMsg{} // non-fatal; map stays nil
 		}
@@ -240,13 +239,13 @@ func (m model) fetchRepoNames() tea.Cmd {
 func (m model) fetchRepos() tea.Cmd {
 	// Capture values for use in goroutine
 	client := m.client
-	serverAddr := m.serverAddr
+	baseURL := m.endpoint.BaseURL()
 	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
 
 	return func() tea.Msg {
 		// Build URL with optional branch filter (URL-encoded)
 		// Skip sending branch for branchNone sentinel - it's a client-side filter
-		reposURL := serverAddr + "/api/repos"
+		reposURL := baseURL + "/api/repos"
 		if activeBranchFilter != "" && activeBranchFilter != branchNone {
 			params := neturl.Values{}
 			params.Set("branch", activeBranchFilter)
@@ -314,7 +313,7 @@ func (m model) fetchBranchesForRepo(
 	rootPaths []string, repoIdx int, expand bool, searchSeq int,
 ) tea.Cmd {
 	client := m.client
-	serverAddr := m.serverAddr
+	baseURL := m.endpoint.BaseURL()
 
 	errMsg := func(err error) repoBranchesMsg {
 		return repoBranchesMsg{
@@ -327,7 +326,7 @@ func (m model) fetchBranchesForRepo(
 	}
 
 	return func() tea.Msg {
-		branchURL := serverAddr + "/api/branches"
+		branchURL := baseURL + "/api/branches"
 		if len(rootPaths) > 0 {
 			params := neturl.Values{}
 			for _, repoPath := range rootPaths {
@@ -385,13 +384,13 @@ func (m model) backfillBranches() tea.Cmd {
 	// Capture values for use in goroutine
 	machineID := m.status.MachineID
 	client := m.client
-	serverAddr := m.serverAddr
+	baseURL := m.endpoint.BaseURL()
 
 	return func() tea.Msg {
 		var backfillCount int
 
 		// First, check if there are any NULL branches via the API
-		resp, err := client.Get(serverAddr + "/api/branches")
+		resp, err := client.Get(baseURL + "/api/branches")
 		if err != nil {
 			return errMsg(err)
 		}
@@ -410,7 +409,7 @@ func (m model) backfillBranches() tea.Cmd {
 
 		// If there are NULL branches, fetch all jobs to backfill
 		if checkResult.NullsRemaining > 0 {
-			resp, err := client.Get(serverAddr + "/api/jobs")
+			resp, err := client.Get(baseURL + "/api/jobs")
 			if err != nil {
 				return errMsg(err)
 			}
@@ -466,7 +465,7 @@ func (m model) backfillBranches() tea.Cmd {
 					"job_id": bf.id,
 					"branch": bf.branch,
 				})
-				resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+				resp, err := client.Post(baseURL+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
 				if err == nil {
 					if resp.StatusCode == http.StatusOK {
 						var updateResult struct {
@@ -589,7 +588,7 @@ func (m model) fetchReviewForPrompt(jobID int64) tea.Cmd {
 // Uses incremental fetching: only new bytes since logOffset are
 // downloaded and rendered, reusing the persistent logFmtr state.
 func (m model) fetchJobLog(jobID int64) tea.Cmd {
-	addr := m.serverAddr
+	baseURL := m.endpoint.BaseURL()
 	width := m.width
 	client := m.client
 	style := m.glamourStyle
@@ -599,7 +598,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		url := fmt.Sprintf(
 			"%s/api/job/log?job_id=%d&offset=%d",
-			addr, jobID, offset,
+			baseURL, jobID, offset,
 		)
 		resp, err := client.Get(url)
 		if err != nil {
@@ -810,7 +809,7 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 }
 func (m model) fetchPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
-		url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
+		url := m.endpoint.BaseURL() + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
 		resp, err := m.client.Get(url)
 		if err != nil {
 			return patchMsg{jobID: jobID, err: err}

@@ -104,7 +104,7 @@ func newTestProgramUnix(t *testing.T) *tea.Program {
 		},
 	))
 	t.Cleanup(ts.Close)
-	m := newModel(ts.URL, withExternalIODisabled())
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 	p := tea.NewProgram(m, tea.WithoutRenderer())
 	go func() { _, _ = p.Run() }()
 	t.Cleanup(func() { p.Kill() })

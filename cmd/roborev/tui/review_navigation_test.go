@@ -134,7 +134,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.jobs = tt.initialJobs
 			m.selectedIdx = tt.initialIdx
 			m.selectedJobID = tt.initialID
@@ -178,7 +178,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 
 func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 	// Test that stale review responses are ignored (race condition fix)
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -204,7 +204,7 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 
 func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 	// Test that review responses with matching job ID are accepted
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -228,7 +228,7 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 
 func TestTUISelectionSyncInReviewView(t *testing.T) {
 	// Test that selectedIdx syncs with currentReview.Job.ID when jobs refresh
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Initial state: viewing review for job 2
 	m.jobs = []storage.ReviewJob{
@@ -261,7 +261,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	// This tests the race condition fix: user navigates to job 3, but jobs refresh
 	// arrives before the review loads. Selection should stay on job 3, not revert
 	// to the currently displayed review's job (job 2).
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -310,7 +310,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	// Test that transient empty jobs refresh doesn't break selection
 	// when viewing a review. Selection should restore to displayed review
 	// when jobs repopulate.
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -347,7 +347,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 	// Test that if selectedJobID somehow becomes 0 while viewing a review,
 	// it gets seeded from the current review when jobs repopulate
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{}
 	m.selectedIdx = 0

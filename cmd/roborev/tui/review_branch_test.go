@@ -10,7 +10,7 @@ import (
 )
 
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
 	}
@@ -81,7 +81,7 @@ func TestReviewBranchName(t *testing.T) {
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123..def456")),
 	}
@@ -103,7 +103,7 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	// Test that navigating from a successful review with branch to a failed job clears the branch
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
 	m.currentView = viewReview
@@ -131,7 +131,7 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 
 func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	// Test that pressing Enter on a failed job clears the branch
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
 	m.currentView = viewQueue
@@ -156,7 +156,7 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 	// Test that renderQueueView doesn't panic when branch filter is active
 	// but repo filter is empty (regression test for index out of range)
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
 	m.currentView = viewQueue

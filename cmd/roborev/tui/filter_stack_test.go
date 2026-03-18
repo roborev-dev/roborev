@@ -10,7 +10,7 @@ import (
 )
 
 func TestTUIFilterClearWithEsc(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -31,7 +31,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 
 func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -56,7 +56,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
 func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
@@ -74,7 +74,7 @@ func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -100,7 +100,7 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -223,7 +223,7 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 
 func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("feature")),
@@ -247,7 +247,7 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("develop")),
@@ -267,7 +267,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 }
 
 func TestTUIRemoveFilterFromStack(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.filterStack = []string{"repo", "branch", "other"}
 
@@ -282,7 +282,7 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 // daemon reconnect clears fetchFailed and retriggers branch
 // fetches when search is active.
 func TestTUIReconnectClearsFetchFailed(t *testing.T) {
-	m := newModel("http://localhost:7373", withExternalIODisabled())
+	m := newModel(testEndpointFromURL("http://localhost:7373"), withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
@@ -292,7 +292,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 	m.filterTree[0].fetchFailed = true
 
 	m2, cmd := updateModel(t, m, reconnectMsg{
-		newAddr: "http://localhost:7374",
+		endpoint: testEndpointFromURL("http://localhost:7374"),
 	})
 
 	assert.False(t, m2.filterTree[0].fetchFailed)
@@ -300,7 +300,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 
 	assert.True(t, m2.filterTree[0].loading)
 
-	m3 := newModel("http://localhost:7373", withExternalIODisabled())
+	m3 := newModel(testEndpointFromURL("http://localhost:7373"), withExternalIODisabled())
 	m3.currentView = viewFilter
 	setupFilterTree(&m3, []treeFilterNode{
 		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
@@ -308,7 +308,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 	m3.filterTree[0].fetchFailed = true
 
 	m4, _ := updateModel(t, m3, reconnectMsg{
-		newAddr: "http://localhost:7374",
+		endpoint: testEndpointFromURL("http://localhost:7374"),
 	})
 
 	assert.False(t, m4.filterTree[0].fetchFailed)
@@ -367,7 +367,7 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("r"), withRepoPath("/r"), withBranch("b")),

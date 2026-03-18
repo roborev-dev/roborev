@@ -140,7 +140,7 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -441,7 +441,7 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
@@ -471,7 +471,7 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
 	m2, _ := updateModel(t, m, branchesMsg{
@@ -483,7 +483,7 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
 	m2, _ := updateModel(t, m, branchesMsg{
@@ -495,7 +495,7 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
 	m2, _ := updateModel(t, m, branchesMsg{
@@ -513,7 +513,7 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 
 func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = true
 
 	m2, _ := updateModel(t, m, branchesMsg{
@@ -524,7 +524,7 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 }
 
 func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
@@ -549,7 +549,7 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 }
 
 func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.cwdRepoRoot = "/path/to/repo-b"
@@ -569,7 +569,7 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 }
 
 func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -592,7 +592,7 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 }
 
 func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -606,7 +606,7 @@ func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
 }
 
 func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.cwdRepoRoot = "/path/to/repo-a"
 	m.cwdBranch = "feature"
@@ -635,7 +635,7 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{

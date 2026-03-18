@@ -40,7 +40,7 @@ func mouseWheelUp() tea.MouseMsg {
 }
 
 func newTuiModel(serverAddr string) model {
-	return newModel(serverAddr, withExternalIODisabled())
+	return newModel(testEndpointFromURL(serverAddr), withExternalIODisabled())
 }
 
 const (
@@ -596,7 +596,7 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 	widths := []int{80, 100, 120, 200}
 	for _, w := range widths {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.width = w
 			m.height = 30
 			m.jobs = []storage.ReviewJob{
@@ -639,7 +639,7 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.width = 200
 			m.height = 30
 
@@ -676,7 +676,7 @@ func TestStatusColumnAutoWidth(t *testing.T) {
 }
 
 func TestTUIPaginationAppendMode(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	initialJobs := make([]storage.ReviewJob, 50)
 	for i := range 50 {
@@ -705,7 +705,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	jobs := make([]storage.ReviewJob, 100)
 	for i := range 100 {
@@ -730,7 +730,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.loadingMore = true
 
 	errMsg := paginationErrMsg{err: fmt.Errorf("network error")}
@@ -742,7 +742,7 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.loadingMore = true
 
 	errMsg := errMsg(fmt.Errorf("some other error"))
@@ -754,7 +754,7 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = true
 	m.hasMore = true
@@ -771,7 +771,7 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = false
 	m.hasMore = true
@@ -788,7 +788,7 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.loadingJobs = true
 	m.hasMore = true
@@ -807,7 +807,7 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.height = 15
@@ -965,7 +965,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.height = 29
@@ -994,7 +994,7 @@ func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.height = 29
@@ -1024,7 +1024,7 @@ func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -1041,7 +1041,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -1058,7 +1058,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -1073,7 +1073,7 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -1087,7 +1087,7 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
 
@@ -1418,7 +1418,7 @@ func withQueueTestFlags(hasMore, loadingMore, loadingJobs bool) queueTestModelOp
 }
 
 func newQueueTestModel(opts ...queueTestModelOption) model {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	for _, opt := range opts {
 		opt(&m)
@@ -1437,7 +1437,7 @@ func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
 
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.width = w
 			m.height = 20
 			m.jobs = []storage.ReviewJob{
@@ -1453,7 +1453,7 @@ func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
 
 func TestTUIQueueLongCellContent(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 	m.height = 20
 	m.jobs = []storage.ReviewJob{
@@ -1480,7 +1480,7 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 
 func TestTUIQueueLongAgentName(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{
@@ -1506,7 +1506,7 @@ func TestTUIQueueLongAgentName(t *testing.T) {
 
 func TestTUIQueueWideCharacterWidth(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{
@@ -1533,7 +1533,7 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 
 func TestTUIQueueAgentColumnCapped(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 120
 	m.height = 20
 	longAgent := strings.Repeat("x", 30)
@@ -1608,7 +1608,7 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.width = tt.width
 			m.height = 20
 			m.jobs = []storage.ReviewJob{
@@ -1636,7 +1636,7 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 
 func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 120
 	m.height = 20
 	m.jobs = []storage.ReviewJob{

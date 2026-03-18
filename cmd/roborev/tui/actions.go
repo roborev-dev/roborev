@@ -312,7 +312,7 @@ func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 // fetchPatchAndJob fetches the patch content and job details for a fix job.
 // Returns nil msg on success; a non-nil msg should be returned to the TUI immediately.
 func (m model) fetchPatchAndJob(jobID int64) (string, *storage.ReviewJob, *applyPatchResultMsg) {
-	url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
+	url := m.endpoint.BaseURL() + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
 	resp, err := m.client.Get(url)
 	if err != nil {
 		return "", nil, &applyPatchResultMsg{jobID: jobID, err: err}

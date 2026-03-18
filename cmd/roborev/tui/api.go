@@ -36,7 +36,7 @@ func readErrorBody(body io.Reader, status string) string {
 // getJSON performs a GET request and decodes the JSON response into out.
 // Returns errNotFound for 404 responses. Other errors include the server's message.
 func (m model) getJSON(path string, out any) error {
-	url := m.serverAddr + path
+	url := m.endpoint.BaseURL() + path
 	resp, err := m.client.Get(url)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (m model) postJSON(path string, in any, out any) error {
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := m.client.Post(m.serverAddr+path, "application/json", bytes.NewReader(body))
+	resp, err := m.client.Post(m.endpoint.BaseURL()+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

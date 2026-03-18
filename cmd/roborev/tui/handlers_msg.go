@@ -706,8 +706,9 @@ func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.
 // handleReconnectMsg processes daemon reconnection attempts.
 func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconnecting = false
-	if msg.err == nil && msg.newAddr != "" && msg.newAddr != m.serverAddr {
-		m.serverAddr = msg.newAddr
+	if msg.err == nil && msg.endpoint != m.endpoint {
+		m.endpoint = msg.endpoint
+		m.client = msg.endpoint.HTTPClient(10 * time.Second)
 		m.consecutiveErrors = 0
 		m.err = nil
 		if msg.version != "" {
@@ -717,7 +718,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		// new daemon address after reconnect.
 		if m.controlSocket != "" {
 			rtInfo := buildTUIRuntimeInfo(
-				m.controlSocket, m.serverAddr,
+				m.controlSocket, m.endpoint.BaseURL(),
 			)
 			if err := WriteTUIRuntime(rtInfo); err != nil {
 				log.Printf(

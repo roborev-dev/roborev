@@ -27,7 +27,7 @@ func (m *mockClipboard) WriteText(text string) error {
 func TestTUIYankCopyFromReviewView(t *testing.T) {
 	mock := &mockClipboard{}
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.clipboard = mock
 	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("This is the review content to copy"))
@@ -47,7 +47,7 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 	m.width = 80
@@ -66,7 +66,7 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
 	m, _ = updateModel(t, m, clipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: viewQueue})
@@ -78,7 +78,7 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
 	m.height = 24
@@ -95,7 +95,7 @@ func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 }
 
 func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusRunning)),

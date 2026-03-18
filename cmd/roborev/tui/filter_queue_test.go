@@ -82,7 +82,7 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 20
 	m.daemonVersion = "test"
 
@@ -108,7 +108,7 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 
 func TestTUIBranchFilterApplied(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withBranch("main")),
@@ -131,7 +131,7 @@ func TestTUIBranchFilterApplied(t *testing.T) {
 
 func TestTUIBranchFilterNone(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withBranch("main")),
@@ -153,7 +153,7 @@ func TestTUIBranchFilterNone(t *testing.T) {
 
 func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main")),
@@ -175,7 +175,7 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 
 func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
 	m.selectedIdx = 0
@@ -193,7 +193,7 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
 	m.selectedIdx = 0
@@ -211,7 +211,7 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
 	m.selectedIdx = 0
@@ -230,7 +230,7 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.currentView = viewQueue
 	m.activeBranchFilter = "feature"
@@ -246,7 +246,7 @@ func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 }
 
 func TestTUIQueueNavigationWithFilter(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -276,7 +276,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 }
 
 func TestTUIJobsRefreshWithFilter(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -310,7 +310,7 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 }
 
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -330,7 +330,7 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -352,7 +352,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIBKeyOpensBranchFilter(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoName("repo-a"))}
 	m.selectedIdx = 0
@@ -365,7 +365,7 @@ func TestTUIBKeyOpensBranchFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.branchBackfillDone = false
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -378,7 +378,7 @@ func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
 }
 
 func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.cwdRepoRoot = "/path/to/repo-b"
 
@@ -398,7 +398,7 @@ func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterNoCwdNoReorder(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 
 	repos := []repoFilterItem{
@@ -416,7 +416,7 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 }
 
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 
 	m2, cmd := pressKey(m, 'b')

@@ -41,7 +41,7 @@ func hasMsgType(msgs []tea.Msg, typeName string) bool {
 
 func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 30
 	m.logJobID = 1
 
@@ -60,7 +60,7 @@ func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 
 func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
 	m.height = 20
@@ -99,7 +99,7 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 
 func TestTUILogPagingNoHeader(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
 	m.height = 20
@@ -127,7 +127,7 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 
 func TestTUILogLoadingGuard(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
 	m.logStreaming = true
@@ -142,7 +142,7 @@ func TestTUILogLoadingGuard(t *testing.T) {
 
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.logFetchSeq = 3
 	m.logLoading = true
@@ -160,7 +160,7 @@ func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 
 func TestTUILogViewLookupFixJob(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
 	m.logFromView = viewTasks
@@ -185,7 +185,7 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 
 func TestTUILogCancelFixJob(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
 	m.logFromView = viewTasks
@@ -210,7 +210,7 @@ func TestTUILogCancelFixJob(t *testing.T) {
 
 func TestTUILogVisibleLinesFixJob(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
 	m.logFromView = viewTasks
@@ -243,7 +243,7 @@ func TestTUILogVisibleLinesFixJob(t *testing.T) {
 
 func TestTUILogNavFromTasks(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 20
 	m.logFromView = viewTasks
@@ -469,7 +469,7 @@ func TestTUILogOutputTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.currentView = tt.initialView
 			m.logJobID = 42
 			m.logFromView = viewQueue
@@ -576,7 +576,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 
 		if tc.enterKey != 0 {
 			t.Run(tc.name+" enter disables mouse", func(t *testing.T) {
-				m := newModel("http://localhost", withExternalIODisabled())
+				m := newModel(localhostEndpoint, withExternalIODisabled())
 				m.currentView = viewQueue
 				m.height = 30
 				m.width = 80
@@ -608,7 +608,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 		}
 
 		t.Run(tc.name+" exit enables mouse", func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
+			m := newModel(localhostEndpoint, withExternalIODisabled())
 			m.currentView = tc.view
 			m.height = 30
 			m.width = 80
@@ -652,7 +652,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 
 func TestMouseNotToggledWithinContentViews(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.height = 30
 	m.width = 80

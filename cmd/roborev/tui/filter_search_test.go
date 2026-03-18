@@ -361,7 +361,7 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 // session. Scenario: type "f" → clear → type "m" → old error
 // arrives with stale searchSeq.
 func TestTUIStaleSearchErrorIgnored(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
@@ -395,7 +395,7 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 // search text before repos have loaded, fetchUnloadedBranches is
 // triggered once repos arrive via reposMsg.
 func TestTUISearchBeforeReposLoad(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 
 	m, _ = pressKey(m, 'f')
@@ -426,7 +426,7 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 // text (non-empty → non-empty) clears fetchFailed so previously
 // failed repos are retried with the new search.
 func TestTUISearchEditClearsFetchFailed(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},

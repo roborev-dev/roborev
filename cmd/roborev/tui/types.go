@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
@@ -215,9 +216,9 @@ type commitMsgMsg struct {
 	err     error
 }
 type reconnectMsg struct {
-	newAddr string // New daemon address if found, empty if not found
-	version string // Daemon version (to avoid sync call in Update)
-	err     error
+	endpoint daemon.DaemonEndpoint // New daemon endpoint if found
+	version  string                // Daemon version (to avoid sync call in Update)
+	err      error
 }
 
 type fixJobsMsg struct {

@@ -80,7 +80,7 @@ func TestIsControlCommand(t *testing.T) {
 // --- Unit tests for query handlers ---
 
 func TestBuildStateResponse(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoPath("/a")),
 		makeJob(2, withRepoPath("/b")),
@@ -99,7 +99,7 @@ func TestBuildStateResponse(t *testing.T) {
 }
 
 func TestBuildFilterResponse(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
 	m.lockedRepoFilter = true
@@ -110,7 +110,7 @@ func TestBuildFilterResponse(t *testing.T) {
 }
 
 func TestBuildJobsResponse(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAgent("claude-code"), withRepoPath("/r")),
 		makeJob(2, withAgent("codex"), withRepoPath("/r")),
@@ -126,7 +126,7 @@ func TestBuildJobsResponse(t *testing.T) {
 }
 
 func TestBuildSelectedResponse_NoSelection(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.selectedIdx = -1
 
 	resp := m.buildSelectedResponse()
@@ -136,7 +136,7 @@ func TestBuildSelectedResponse_NoSelection(t *testing.T) {
 }
 
 func TestBuildSelectedResponse_WithSelection(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(42, withAgent("codex"), withClosed(boolPtr(false))),
 	}
@@ -154,7 +154,7 @@ func TestBuildSelectedResponse_WithSelection(t *testing.T) {
 // --- Unit tests for mutation handlers ---
 
 func TestHandleCtrlSetFilter(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	repo := "/test/repo"
 	branch := "feature"
 
@@ -170,7 +170,7 @@ func TestHandleCtrlSetFilter(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"msgvault": {"/home/user/projects/msgvault"},
 		"roborev":  {"/home/user/projects/roborev"},
@@ -187,7 +187,7 @@ func TestHandleCtrlSetFilter_DisplayName(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"backend": {
 			"/home/user/work/backend",
@@ -209,7 +209,7 @@ func TestHandleCtrlSetFilter_DisplayNameMultiplePaths(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate: jobs are loaded for "roborev" but "msgvault" has no
 	// visible jobs. repoNames (from /api/repos) knows about both.
 	m.jobs = []storage.ReviewJob{
@@ -231,7 +231,7 @@ func TestHandleCtrlSetFilter_DisplayNameNotInJobs(t *testing.T) {
 }
 
 func TestRepoNamesNotClobberedByBranchFilteredModal(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate init fetch: repoNames knows both repos.
 	m.repoNames = map[string][]string{
 		"msgvault": {"/home/user/projects/msgvault"},
@@ -282,7 +282,7 @@ func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
 	))
 	defer ts.Close()
 
-	m := newModel(ts.URL, withExternalIODisabled())
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 	m.activeBranchFilter = branchNone
 
 	cmd := m.fetchRepos()
@@ -294,7 +294,7 @@ func TestFetchRepos_BranchNoneIsUnfiltered(t *testing.T) {
 }
 
 func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.repoNames = map[string][]string{
 		"roborev": {"/home/user/projects/roborev"},
 	}
@@ -317,7 +317,7 @@ func TestRepoNamesRefreshedByUnfilteredModal(t *testing.T) {
 }
 
 func TestSetFilterFallbackWhenRepoNamesEmpty(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	// Simulate startup fetch failure: repoNames is nil.
 	m.repoNames = nil
 
@@ -330,7 +330,7 @@ func TestSetFilterFallbackWhenRepoNamesEmpty(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedRepoFilter = true
 
 	params, _ := json.Marshal(map[string]string{"repo": "/test/repo"})
@@ -340,7 +340,7 @@ func TestHandleCtrlSetFilter_LockedRepo(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 
 	params, _ := json.Marshal(map[string]string{"branch": "main"})
@@ -349,7 +349,7 @@ func TestHandleCtrlSetFilter_LockedBranch(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_LockedBranchNoRepoMutation(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 	m.activeRepoFilter = []string{"/original"}
 
@@ -365,7 +365,7 @@ func TestHandleCtrlSetFilter_LockedBranchNoRepoMutation(t *testing.T) {
 }
 
 func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/old"}
 	m.filterStack = []string{"repo"}
 
@@ -377,7 +377,7 @@ func TestHandleCtrlSetFilter_ClearRepo(t *testing.T) {
 }
 
 func TestHandleCtrlClearFilter(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
 	m.filterStack = []string{"repo", "branch"}
@@ -392,7 +392,7 @@ func TestHandleCtrlClearFilter(t *testing.T) {
 }
 
 func TestHandleCtrlClearFilter_LockedBranchNoRepoMutation(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.lockedBranchFilter = true
 	m.activeRepoFilter = []string{"/repo"}
 	m.activeBranchFilter = "main"
@@ -413,7 +413,7 @@ func TestHandleCtrlClearFilter_LockedBranchNoRepoMutation(t *testing.T) {
 }
 
 func TestHandleCtrlSetHideClosed(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = false
 
 	params, _ := json.Marshal(map[string]bool{"hide_closed": true})
@@ -423,7 +423,7 @@ func TestHandleCtrlSetHideClosed(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(10), makeJob(20), makeJob(30),
 	}
@@ -436,7 +436,7 @@ func TestHandleCtrlSelectJob(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 999})
@@ -445,7 +445,7 @@ func TestHandleCtrlSelectJob_NotFound(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(10, withRepoPath("/visible")),
 		makeJob(20, withRepoPath("/hidden")),
@@ -458,7 +458,7 @@ func TestHandleCtrlSelectJob_HiddenByFilter(t *testing.T) {
 }
 
 func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
 		makeJob(10, withClosed(boolPtr(false))),
@@ -471,7 +471,7 @@ func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
 }
 
 func TestHandleCtrlSetView(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
 	params, _ := json.Marshal(map[string]string{"view": "queue"})
@@ -481,7 +481,7 @@ func TestHandleCtrlSetView(t *testing.T) {
 }
 
 func TestHandleCtrlSetView_Invalid(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	params, _ := json.Marshal(map[string]string{"view": "review"})
 	_, resp, _ := m.handleCtrlSetView(params)
@@ -489,7 +489,7 @@ func TestHandleCtrlSetView_Invalid(t *testing.T) {
 }
 
 func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.tasksEnabled = false
 
 	params, _ := json.Marshal(map[string]string{"view": "tasks"})
@@ -499,7 +499,7 @@ func TestHandleCtrlSetView_TasksDisabled(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	closed := false
 	m.jobs = []storage.ReviewJob{
 		makeJob(5, withClosed(&closed)),
@@ -516,7 +516,7 @@ func TestHandleCtrlCloseReview(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	closed := false
 	m.jobs = []storage.ReviewJob{
@@ -541,7 +541,7 @@ func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(5, withStatus(storage.JobStatusRunning)),
 	}
@@ -552,7 +552,7 @@ func TestHandleCtrlCloseReview_NoReview(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	// Only one visible job — closing it leaves no visible jobs.
 	m.jobs = []storage.ReviewJob{
@@ -574,7 +574,7 @@ func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withClosed(boolPtr(false))),
@@ -603,7 +603,7 @@ func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(7, withStatus(storage.JobStatusRunning)),
 	}
@@ -616,7 +616,7 @@ func TestHandleCtrlCancelJob(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withClosed(boolPtr(false))),
@@ -637,7 +637,7 @@ func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	// Only one visible job — canceling it hides it under hideClosed.
 	m.jobs = []storage.ReviewJob{
@@ -656,7 +656,7 @@ func TestHandleCtrlCancelJob_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_RollbackRestoresSelection(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusRunning)),
@@ -683,7 +683,7 @@ func TestHandleCtrlCancelJob_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(7, withStatus(storage.JobStatusDone)),
 	}
@@ -694,7 +694,7 @@ func TestHandleCtrlCancelJob_WrongStatus(t *testing.T) {
 }
 
 func TestHandleCancelKey_ClearsSelectionWhenNoneVisible(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -714,7 +714,7 @@ func TestHandleCancelKey_ClearsSelectionWhenNoneVisible(t *testing.T) {
 }
 
 func TestHandleCancelKey_RollbackRestoresSelection(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -740,7 +740,7 @@ func TestHandleCancelKey_RollbackRestoresSelection(t *testing.T) {
 }
 
 func TestHandleCtrlRerunJob(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(8, withStatus(storage.JobStatusFailed)),
 	}
@@ -754,7 +754,7 @@ func TestHandleCtrlRerunJob(t *testing.T) {
 
 func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
 	verdict := "FAIL"
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
 		makeJob(8,
@@ -780,7 +780,7 @@ func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
 }
 
 func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(8, withStatus(storage.JobStatusRunning)),
 	}
@@ -792,7 +792,7 @@ func TestHandleCtrlRerunJob_WrongStatus(t *testing.T) {
 
 func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
 	verdict := "FAIL"
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
@@ -819,7 +819,7 @@ func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
 func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
 	verdict := "FAIL"
 	closed := true
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(10, withStatus(storage.JobStatusQueued)),
 	}
@@ -845,7 +845,7 @@ func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
 }
 
 func TestHandleCtrlQuit(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 
 	updated, resp, cmd := m.handleCtrlQuit()
 	assert.True(t, resp.OK, "expected OK response")
@@ -854,7 +854,7 @@ func TestHandleCtrlQuit(t *testing.T) {
 }
 
 func TestNoQuit_QKeyInQueueView(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
 	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -865,7 +865,7 @@ func TestNoQuit_QKeyInQueueView(t *testing.T) {
 }
 
 func TestNoQuit_CtrlCStillQuits(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -874,7 +874,7 @@ func TestNoQuit_CtrlCStillQuits(t *testing.T) {
 }
 
 func TestNoQuit_QStillClosesModal(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewReview
 	m.currentReview = &storage.Review{Agent: "test", Output: "test"}
 
@@ -885,8 +885,8 @@ func TestNoQuit_QStillClosesModal(t *testing.T) {
 }
 
 func TestNoQuit_QueueHelpOmitsQuit(t *testing.T) {
-	normal := newModel(testServerAddr, withExternalIODisabled())
-	noQuit := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	normal := newModel(testEndpoint, withExternalIODisabled())
+	noQuit := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 
 	normalRows := normal.queueHelpRows()
 	noQuitRows := noQuit.queueHelpRows()
@@ -928,12 +928,12 @@ func TestNoQuit_HelpViewOmitsQuit(t *testing.T) {
 }
 
 func TestNoQuit_TasksEmptyHelpOmitsQuit(t *testing.T) {
-	normal := newModel(testServerAddr, withExternalIODisabled())
+	normal := newModel(testEndpoint, withExternalIODisabled())
 	normal.currentView = viewTasks
 	normal.tasksEnabled = true
 	normal.fixJobs = nil // empty tasks view
 
-	noQuitM := newModel(testServerAddr, withExternalIODisabled(), withNoQuit())
+	noQuitM := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	noQuitM.currentView = viewTasks
 	noQuitM.tasksEnabled = true
 	noQuitM.fixJobs = nil
@@ -950,7 +950,7 @@ func TestNoQuit_TasksEmptyHelpOmitsQuit(t *testing.T) {
 // --- Control message routing through Update() ---
 
 func TestUpdateRoutesControlQuery(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 
 	respCh := make(chan controlResponse, 1)
@@ -972,7 +972,7 @@ func TestUpdateRoutesControlQuery(t *testing.T) {
 }
 
 func TestUpdateRoutesControlMutation(t *testing.T) {
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2)}
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 2})
@@ -1004,7 +1004,7 @@ func TestControlSocketRoundtrip(t *testing.T) {
 
 	ts := controlTestServer(t)
 
-	m := newModel(ts.URL, withExternalIODisabled())
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 
 	// Provide a pipe for stdin so the program doesn't block on TTY.
 	r, w, _ := os.Pipe()
@@ -1117,7 +1117,7 @@ func newTestProgram(t *testing.T) *tea.Program {
 		},
 	))
 	t.Cleanup(ts.Close)
-	m := newModel(ts.URL, withExternalIODisabled())
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 	p := tea.NewProgram(m, tea.WithoutRenderer())
 	go func() { _, _ = p.Run() }()
 	t.Cleanup(func() { p.Kill() })

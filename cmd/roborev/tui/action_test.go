@@ -482,7 +482,7 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 }
 
 func TestTUISetJobClosedHelper(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(100),
@@ -719,7 +719,7 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 }
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
 
@@ -755,7 +755,7 @@ func containsRune(s string, r rune) bool {
 }
 
 func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
 	m.width = 30
@@ -789,7 +789,7 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 }
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewKindComment
 	m.commentJobID = 1
 	m.width = 40
@@ -880,7 +880,7 @@ func TestClosedKeyUpdatesStatsFromReviewView(t *testing.T) {
 }
 
 func setupTestModel(jobs []storage.ReviewJob, opts ...func(*model)) model {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.jobs = jobs
 	for _, opt := range opts {
 		opt(&m)

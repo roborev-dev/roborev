@@ -11,7 +11,7 @@ import (
 
 // Helper function to initialize model for filter tests
 func initFilterModel(nodes []treeFilterNode) model {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	if nodes != nil {
 		setupFilterTree(&m, nodes)
@@ -29,7 +29,7 @@ func makeNode(name string, count int) treeFilterNode {
 }
 
 func TestTUIFilterOpenModal(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
@@ -291,7 +291,7 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 
 func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
 	m.hasMore = true
@@ -313,7 +313,7 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 }
 
 func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 
@@ -330,7 +330,7 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 }
 
 func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/to/repo-b"}
@@ -350,7 +350,7 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/a", "/path/b"}
@@ -370,7 +370,7 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.branchBackfillDone = true
 	m.jobs = []storage.ReviewJob{makeJob(1)}

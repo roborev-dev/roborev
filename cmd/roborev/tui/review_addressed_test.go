@@ -10,7 +10,7 @@ import (
 )
 
 func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Initial state with review view showing an open review
 	m.currentView = viewReview
@@ -39,7 +39,7 @@ func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
 }
 
 func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Initial state with review view
 	m.currentView = viewReview
@@ -64,7 +64,7 @@ func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
 }
 
 func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Setup: jobs in queue with closed=false
 	addrA := false
@@ -108,7 +108,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 }
 
 func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Setup: job in queue with closed=false
 	addr := false
@@ -134,7 +134,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	// Test that review-view errors without jobID are still handled if
 	// pendingReviewClosed matches
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Review without an associated job (Job is nil)
 	m.currentView = viewReview
@@ -170,7 +170,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 
 func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	// Test that stale review-view errors without jobID are ignored
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Review without an associated job
 	m.currentView = viewReview
@@ -209,7 +209,7 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 	// Test: true (seq 1) -> false (seq 2) -> true (seq 3), with late error from first true
 	// The late error has newState=true which matches current pending newState,
 	// but sequence numbers now distinguish same-state toggles.
-	m := newModel("http://localhost", withExternalIODisabled())
+	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	// Review without an associated job
 	m.currentView = viewReview

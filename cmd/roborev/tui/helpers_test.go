@@ -519,7 +519,7 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 }
 
 func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
-	disabled := newModel(testServerAddr, withExternalIODisabled()).queueHelpRows()
+	disabled := newModel(testEndpoint, withExternalIODisabled()).queueHelpRows()
 	assert.NotEmpty(t, disabled, "expected queue help rows")
 	for _, row := range disabled {
 		for _, item := range row {
@@ -527,7 +527,7 @@ func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
 		}
 	}
 
-	m := newModel(testServerAddr, withExternalIODisabled())
+	m := newModel(testEndpoint, withExternalIODisabled())
 	m.tasksEnabled = true
 	enabled := m.queueHelpRows()
 	foundF := false
