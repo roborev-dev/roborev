@@ -38,7 +38,6 @@ type Server struct {
 	errorLog      *ErrorLog
 	activityLog   *ActivityLog
 	startTime     time.Time
-	endpointMu    sync.Mutex
 	endpoint      DaemonEndpoint
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -206,9 +205,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.httpServer.Addr = ep.Address
 	}
 
-	s.endpointMu.Lock()
 	s.endpoint = ep
-	s.endpointMu.Unlock()
 
 	serveErrCh := make(chan error, 1)
 	log.Printf("Starting HTTP server on %s", ep)
@@ -360,20 +357,18 @@ func (s *Server) Stop() error {
 	// Remove runtime info
 	RemoveRuntime()
 
-	// Clean up Unix domain socket
-	s.endpointMu.Lock()
-	ep := s.endpoint
-	s.endpointMu.Unlock()
-	if ep.IsUnix() {
-		os.Remove(ep.Address)
-	}
-
 	// Stop config watcher
 	s.configWatcher.Stop()
 
 	// Stop HTTP server
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	// Clean up Unix domain socket (after Shutdown so Start() has
+	// finished writing s.endpoint — no synchronization needed)
+	if s.endpoint.IsUnix() {
+		os.Remove(s.endpoint.Address)
 	}
 
 	// Stop CI poller
