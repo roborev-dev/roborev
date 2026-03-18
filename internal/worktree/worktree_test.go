@@ -363,3 +363,14 @@ func TestRepoUsesFileProtocolErrorsOnUnreadableTopLevel(t *testing.T) {
 	_, err := repoUsesFileProtocolSubmodules(dir)
 	require.Error(t, err)
 }
+
+func TestIsFileProtocolError(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(isFileProtocolError(fmt.Errorf(
+		"git submodule update: fatal: transport 'file' not allowed")))
+	assert.True(isFileProtocolError(fmt.Errorf(
+		"clone failed: transport 'file' not allowed\nretry failed")))
+	assert.False(isFileProtocolError(fmt.Errorf("auth failed")))
+	assert.False(isFileProtocolError(fmt.Errorf("broken URL")))
+	assert.False(isFileProtocolError(nil))
+}

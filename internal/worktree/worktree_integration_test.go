@@ -165,3 +165,45 @@ func TestCreateWorktreeBlocksNestedLocalSubmodules(t *testing.T) {
 	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "deps", "leaf", "leaf.txt"))
 	require.ErrorIs(t, err, os.ErrNotExist, "nested local submodule should be blocked")
 }
+
+// TestCreateWorktreeFailsOnBrokenNestedSubmodule verifies that non-file-
+// protocol recursive submodule failures (e.g. broken URLs) still cause
+// Create to fail, rather than being silently swallowed.
+func TestCreateWorktreeFailsOnBrokenNestedSubmodule(t *testing.T) {
+	requireGitAvailable(t)
+
+	// Create a submodule repo that itself references a nonexistent submodule.
+	brokenSub := testutil.NewTestRepo(t)
+	brokenSub.RunGit("init")
+	brokenSub.SymbolicRef("HEAD", "refs/heads/main")
+	brokenSub.Config("user.email", testutil.GitUserEmail)
+	brokenSub.Config("user.name", testutil.GitUserName)
+	brokenSub.CommitFile("sub.txt", "sub", "sub commit")
+
+	// Manually write a .gitmodules pointing to a nonexistent HTTPS repo
+	// and create a fake gitlink so git treats it as a registered submodule.
+	brokenSub.RunGit("config", "--file", ".gitmodules",
+		"submodule.broken.path", "deps/broken")
+	brokenSub.RunGit("config", "--file", ".gitmodules",
+		"submodule.broken.url", "https://localhost:1/nonexistent.git")
+	// Use an arbitrary valid SHA for the gitlink entry.
+	brokenSub.RunGit("update-index", "--add", "--cacheinfo",
+		"160000,"+testutil.GetHeadSHA(t, brokenSub.Root)+",deps/broken")
+	brokenSub.RunGit("add", ".gitmodules")
+	brokenSub.RunGit("commit", "-m", "add broken nested submodule")
+
+	mainRepo := testutil.NewTestRepo(t)
+	mainRepo.RunGit("init")
+	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
+	mainRepo.Config("user.email", testutil.GitUserEmail)
+	mainRepo.Config("user.name", testutil.GitUserName)
+	mainRepo.Config("protocol.file.allow", "always")
+	mainRepo.RunGit("-c", "protocol.file.allow=always",
+		"submodule", "add", brokenSub.Root, "deps/sub")
+	mainRepo.RunGit("commit", "-m", "add submodule with broken nested ref")
+
+	_, err := worktree.Create(mainRepo.Root, "HEAD")
+	require.Error(t, err, "broken nested submodule should fail worktree creation")
+	assert.NotContains(t, err.Error(), "transport 'file' not allowed",
+		"failure should not be a file-protocol denial")
+}

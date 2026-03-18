@@ -84,10 +84,21 @@ func (w *Worktree) initSubmodules() error {
 	if err := runSubmoduleUpdate(w.Dir, allowFileProtocol, false); err != nil {
 		return err
 	}
-	// Best-effort: nested submodules that require file transport will fail
-	// here, but the worktree is still usable for review without them.
-	_ = runSubmoduleUpdate(w.Dir, false, true)
+	// Only suppress file-protocol denials in the recursive pass. Other
+	// failures (broken URLs, auth errors, missing commits) still surface.
+	if err := runSubmoduleUpdate(w.Dir, false, true); err != nil {
+		if !isFileProtocolError(err) {
+			return err
+		}
+	}
 	return nil
+}
+
+// isFileProtocolError reports whether err is a git "transport 'file' not
+// allowed" denial, which we intentionally cause by not passing
+// protocol.file.allow=always on the recursive submodule pass.
+func isFileProtocolError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "transport 'file' not allowed")
 }
 
 func runSubmoduleUpdate(repoPath string, allowFileProtocol, recursive bool) error {
