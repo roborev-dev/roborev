@@ -79,6 +79,11 @@ func (w *Worktree) initSubmodules() error {
 	if err := runSubmoduleUpdate(w.Dir, allowFileProtocol, false); err != nil {
 		return err
 	}
+
+	allowFileProtocol, err = repoUsesFileProtocolSubmodules(w.Dir)
+	if err != nil {
+		return fmt.Errorf("detect recursive submodule protocol requirements: %w", err)
+	}
 	return runSubmoduleUpdate(w.Dir, allowFileProtocol, true)
 }
 

@@ -88,6 +88,8 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 }
 
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
+	requireGitAvailable(t)
+
 	subRepo := testutil.NewTestRepo(t)
 	subRepo.RunGit("init")
 	subRepo.SymbolicRef("HEAD", "refs/heads/main")
@@ -109,5 +111,43 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	defer wt.Close()
 
 	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt"))
+	require.NoError(t, err)
+}
+
+func TestCreateTempWorktreeInitializesNestedLocalSubmodules(t *testing.T) {
+	requireGitAvailable(t)
+
+	leafRepo := testutil.NewTestRepo(t)
+	leafRepo.RunGit("init")
+	leafRepo.SymbolicRef("HEAD", "refs/heads/main")
+	leafRepo.Config("user.email", testutil.GitUserEmail)
+	leafRepo.Config("user.name", testutil.GitUserName)
+	leafRepo.CommitFile("leaf.txt", "leaf", "leaf commit")
+
+	subRepo := testutil.NewTestRepo(t)
+	subRepo.RunGit("init")
+	subRepo.SymbolicRef("HEAD", "refs/heads/main")
+	subRepo.Config("user.email", testutil.GitUserEmail)
+	subRepo.Config("user.name", testutil.GitUserName)
+	subRepo.Config("protocol.file.allow", "always")
+	leafRepoURL, err := filepath.Rel(subRepo.Root, leafRepo.Root)
+	require.NoError(t, err)
+	subRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", leafRepoURL, "deps/leaf")
+	subRepo.RunGit("commit", "-m", "add nested submodule")
+
+	mainRepo := testutil.NewTestRepo(t)
+	mainRepo.RunGit("init")
+	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
+	mainRepo.Config("user.email", testutil.GitUserEmail)
+	mainRepo.Config("user.name", testutil.GitUserName)
+	mainRepo.Config("protocol.file.allow", "always")
+	mainRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Root, "deps/sub")
+	mainRepo.RunGit("commit", "-m", "add top-level submodule")
+
+	wt, err := worktree.Create(mainRepo.Root, "HEAD")
+	require.NoError(t, err)
+	defer wt.Close()
+
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "deps", "leaf", "leaf.txt"))
 	require.NoError(t, err)
 }
