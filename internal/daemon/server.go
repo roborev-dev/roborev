@@ -38,6 +38,7 @@ type Server struct {
 	errorLog      *ErrorLog
 	activityLog   *ActivityLog
 	startTime     time.Time
+	endpoint      DaemonEndpoint
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -121,7 +122,9 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
 	cfg := s.configWatcher.Config()
-	if err := validateDaemonBindAddr(cfg.ServerAddr); err != nil {
+
+	ep, err := ParseEndpoint(cfg.ServerAddr)
+	if err != nil {
 		return err
 	}
 
@@ -153,26 +156,51 @@ func (s *Server) Start(ctx context.Context) error {
 		// Continue without hot-reloading - not a fatal error
 	}
 
-	// Find available port
-	addr, _, err := FindAvailablePort(cfg.ServerAddr)
-	if err != nil {
-		s.configWatcher.Stop()
-		return fmt.Errorf("find available port: %w", err)
-	}
-	s.httpServer.Addr = addr
-
 	// Bind the listener before publishing runtime metadata so concurrent CLI
 	// invocations cannot race a half-started daemon and kill it as a zombie.
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		s.configWatcher.Stop()
-		return fmt.Errorf("listen on %s: %w", addr, err)
+	var listener net.Listener
+	if ep.IsUnix() {
+		socketPath := ep.Address
+		if err := os.MkdirAll(filepath.Dir(socketPath), 0700); err != nil {
+			s.configWatcher.Stop()
+			return fmt.Errorf("create socket directory: %w", err)
+		}
+		// Remove stale socket from a previous run
+		os.Remove(socketPath)
+		listener, err = ep.Listener()
+		if err != nil {
+			s.configWatcher.Stop()
+			return fmt.Errorf("listen on %s: %w", ep, err)
+		}
+		if err := os.Chmod(socketPath, 0600); err != nil {
+			_ = listener.Close()
+			s.configWatcher.Stop()
+			return fmt.Errorf("chmod socket: %w", err)
+		}
+	} else {
+		// TCP: find an available port first
+		addr, _, err := FindAvailablePort(ep.Address)
+		if err != nil {
+			s.configWatcher.Stop()
+			return fmt.Errorf("find available port: %w", err)
+		}
+		ep = DaemonEndpoint{Network: "tcp", Address: addr}
+		s.httpServer.Addr = addr
+
+		listener, err = ep.Listener()
+		if err != nil {
+			s.configWatcher.Stop()
+			return fmt.Errorf("listen on %s: %w", ep, err)
+		}
+		// Update ep with actual bound address
+		ep = DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
+		s.httpServer.Addr = ep.Address
 	}
-	addr = listener.Addr().String()
-	s.httpServer.Addr = addr
+
+	s.endpoint = ep
 
 	serveErrCh := make(chan error, 1)
-	log.Printf("Starting HTTP server on %s", addr)
+	log.Printf("Starting HTTP server on %s", ep)
 	go func() {
 		serveErrCh <- s.httpServer.Serve(listener)
 	}()
@@ -180,7 +208,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 
-	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: addr}, 2*time.Second, serveErrCh)
+	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh)
 	if err != nil {
 		_ = listener.Close()
 		s.configWatcher.Stop()
@@ -197,7 +225,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(DaemonEndpoint{Network: "tcp", Address: addr}, version.Version); err != nil {
+	if err := WriteRuntime(ep, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 
@@ -206,11 +234,11 @@ func (s *Server) Start(ctx context.Context) error {
 		binary, _ := os.Executable()
 		s.activityLog.Log(
 			"daemon.started", "server",
-			fmt.Sprintf("daemon started on %s", addr),
+			fmt.Sprintf("daemon started on %s", ep),
 			map[string]string{
 				"version": version.Version,
 				"binary":  binary,
-				"addr":    addr,
+				"addr":    ep.Address,
 				"pid":     strconv.Itoa(os.Getpid()),
 				"workers": strconv.Itoa(cfg.MaxWorkers),
 			},
@@ -320,6 +348,11 @@ func (s *Server) Stop() error {
 
 	// Remove runtime info
 	RemoveRuntime()
+
+	// Clean up Unix domain socket
+	if s.endpoint.IsUnix() {
+		os.Remove(s.endpoint.Address)
+	}
 
 	// Stop config watcher
 	s.configWatcher.Stop()
