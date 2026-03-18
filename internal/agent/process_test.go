@@ -130,6 +130,32 @@ func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) 
 	}
 }
 
+func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
+	skipIfWindows(t)
+
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $GIT_OPTIONAL_LOCKS")
+	configureSubprocess(cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, "0\n", string(out),
+		"configureSubprocess should set GIT_OPTIONAL_LOCKS=0")
+}
+
+func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {
+	skipIfWindows(t)
+
+	cmd := exec.CommandContext(context.Background(),
+		"sh", "-c", "echo $MY_TEST_VAR:$GIT_OPTIONAL_LOCKS")
+	cmd.Env = append(os.Environ(), "MY_TEST_VAR=hello")
+	configureSubprocess(cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, "hello:0\n", string(out),
+		"configureSubprocess should preserve existing env and add GIT_OPTIONAL_LOCKS=0")
+}
+
 func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testing.T) {
 	skipIfWindows(t)
 

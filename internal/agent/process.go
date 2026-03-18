@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -20,6 +21,18 @@ type subprocessTracker struct {
 
 func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	cmd.WaitDelay = subprocessWaitDelay
+
+	// Prevent agents from taking .git/index.lock in the user's repo.
+	// Git 2.15+ honours GIT_OPTIONAL_LOCKS=0: read-only commands like
+	// "git status" and "git diff" skip the optional index lock they
+	// normally take to refresh cached stat data. Without this, agent
+	// processes running in the background contend with the user's own
+	// git operations (staging, committing, etc.).
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
+
 	tracker := &subprocessTracker{}
 	// Ensure Cancel is always set. Go's exec.CommandContext only provides a
 	// default Kill cancel when both Cancel==nil and WaitDelay==0. Since we
