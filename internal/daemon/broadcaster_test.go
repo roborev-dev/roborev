@@ -72,6 +72,7 @@ func TestBroadcaster_BroadcastAndSubscribe(t *testing.T) {
 }
 
 func TestStreamEventsWithRepoFilter(t *testing.T) {
+	t.Parallel()
 	broadcaster := NewBroadcaster()
 
 	_, eventCh := broadcaster.Subscribe("/path/to/repo1")
@@ -108,6 +109,7 @@ func TestStreamMultipleEvents(t *testing.T) {
 }
 
 func TestBroadcaster_MultiSubscriber(t *testing.T) {
+	t.Parallel()
 	broadcaster := NewBroadcaster()
 
 	_, chAll := broadcaster.Subscribe("")

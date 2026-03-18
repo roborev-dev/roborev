@@ -938,6 +938,7 @@ command = "`+touchCmd(markerFile)+`"
 }
 
 func TestHookRunnerStopUnsubscribes(t *testing.T) {
+	t.Parallel()
 	broadcaster := NewBroadcaster()
 	cfg := &config.Config{}
 
@@ -1038,6 +1039,7 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 }
 
 func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
+	t.Parallel()
 	// A dedicated stress test proving WaitUntilIdle waits past the event-processing boundary
 	// under timing races and concurrent broadcasts.
 

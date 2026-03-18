@@ -270,6 +270,7 @@ func TestAwaitServeExitOnUnreadyStartupReturnsImmediatelyWhenServeAlreadyExited(
 }
 
 func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
+	t.Parallel()
 	serveErrCh := make(chan error)
 	done := make(chan error, 1)
 	go func() {

@@ -131,6 +131,7 @@ func parseInsecureJWT(t *testing.T, token string) (map[string]any, map[string]an
 }
 
 func TestParsePrivateKey_PKCS1(t *testing.T) {
+	t.Parallel()
 	_, pemData := testKey(t)
 	key, err := parsePrivateKey([]byte(pemData))
 	if err != nil {
@@ -146,6 +147,7 @@ func TestParsePrivateKey_PKCS1(t *testing.T) {
 }
 
 func TestParsePrivateKey_PKCS8(t *testing.T) {
+	t.Parallel()
 	_, pemData := generateTestKeyPKCS8(t)
 	key, err := parsePrivateKey([]byte(pemData))
 	if err != nil {

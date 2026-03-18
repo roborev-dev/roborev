@@ -269,6 +269,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 }
 
 func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
+	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -787,6 +788,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 }
 
 func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T) {
+	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -1019,6 +1021,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 }
 
 func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
+	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -2484,6 +2487,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 }
 
 func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
+	t.Parallel()
 	// When the requested agent differs from config default, the generic
 	// default_model should be skipped. When they match (even via alias),
 	// default_model should apply.

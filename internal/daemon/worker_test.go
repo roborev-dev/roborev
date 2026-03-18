@@ -156,6 +156,7 @@ func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
 }
 
 func TestWorkerPoolConcurrency(t *testing.T) {
+	t.Parallel()
 	tc := newWorkerTestContext(t, 4)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
