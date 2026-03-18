@@ -296,10 +296,10 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	// Write invalid TOML - this should not crash the watcher
 	h.updateConfig(t, `this is not valid toml [[[`)
 
-	// Wait for debounce and potential reload attempt (no event fired for failure)
+	// Wait for debounce (200ms) plus margin for the reload attempt (no event fired for failure)
 	requireNever(t, func() bool {
 		return h.Watcher.Config().DefaultAgent != "test-agent"
-	}, 500*time.Millisecond, 50*time.Millisecond)
+	}, 300*time.Millisecond, 50*time.Millisecond)
 
 	// Config should still be the original value
 	if h.Watcher.Config().DefaultAgent != "test-agent" {
