@@ -8,6 +8,10 @@ roborev is an automatic code review daemon for git commits. It runs locally, tri
 
 When a task involves multiple steps (e.g., implement + commit + PR), complete ALL steps in sequence without stopping. If creating a branch, committing, and opening a PR, finish the entire chain.
 
+### Handling review findings
+
+When the user pastes review findings directly in the conversation (verdicts, severities, file paths, suggested fixes), treat them as direct instructions and fix the code normally. Do NOT invoke the `/roborev-fix` skill — that skill is only for discovering and fetching open reviews from the daemon, not for processing findings already present in the prompt.
+
 ## Go Development
 
 After making any Go code changes, always run `go fmt ./...` and `go vet ./...` before committing. Stage ALL resulting changes, including formatting-only files.
