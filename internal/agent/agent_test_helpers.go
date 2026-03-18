@@ -195,7 +195,7 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0644); err != nil {
 			t.Fatalf("write help output file: %v", err)
 		}
-		script.WriteString(fmt.Sprintf(`if [ "$1" = "--help" ]; then cat %q; exit 0; fi`, helpFile) + "\n")
+		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
 	}
 
 	// Capture args

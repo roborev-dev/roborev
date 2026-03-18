@@ -116,7 +116,7 @@ func (a *CodexAgent) CommandLine() string {
 	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	} else {
-		args = append(args, "--sandbox", "read-only", "-a", "never")
+		args = append(args, "--sandbox", "read-only")
 	}
 	if a.Model != "" {
 		args = append(args, "-m", a.Model)
@@ -143,7 +143,7 @@ func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) [
 		// Use read-only sandbox for review mode instead of --full-auto
 		// (which implies --sandbox workspace-write). Background review
 		// jobs run in the user's repo and must not take index.lock.
-		args = append(args, "--sandbox", "read-only", "-a", "never")
+		args = append(args, "--sandbox", "read-only")
 	}
 	args = append(args,
 		"-C", repoPath,
@@ -177,19 +177,17 @@ func codexSupportsDangerousFlag(ctx context.Context, command string) (bool, erro
 	return supported, nil
 }
 
-// codexSupportsNonInteractive checks that codex supports the flags
-// needed for non-agentic review mode: --sandbox and -a (approval mode).
+// codexSupportsNonInteractive checks that codex supports --sandbox,
+// needed for non-agentic review mode (--sandbox read-only).
 func codexSupportsNonInteractive(ctx context.Context, command string) (bool, error) {
 	if cached, ok := codexAutoApproveSupport.Load(command); ok {
 		return cached.(bool), nil
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
+	cmd := exec.CommandContext(ctx, command, "exec", "--help")
 	output, err := cmd.CombinedOutput()
-	helpText := string(output)
-	supported := strings.Contains(helpText, "--sandbox") &&
-		strings.Contains(helpText, "--ask-for-approval")
+	supported := strings.Contains(string(output), "--sandbox")
 	if err != nil && !supported {
-		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
 	}
 	codexAutoApproveSupport.Store(command, supported)
 	return supported, nil
@@ -209,7 +207,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		}
 	}
 
-	// Non-agentic review mode uses --sandbox read-only -a never for
+	// Non-agentic review mode uses --sandbox read-only for
 	// non-interactive execution without writing to the working tree.
 	autoApprove := false
 	if !agenticMode {
