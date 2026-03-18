@@ -272,3 +272,62 @@ func TestRepoUsesFileProtocolSubmodulesNested(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, usesFileProtocol)
 }
+
+func TestFindGitmodulesPathsSkipsUnreadableNestedDir(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, ".gitmodules", "[submodule]\n")
+
+	nested := filepath.Join(dir, "sub", "deep")
+	require.NoError(t, os.MkdirAll(nested, 0755))
+	writeTestFile(t, dir, "sub/deep/.gitmodules", "[submodule]\n")
+	// Make the nested directory unreadable so WalkDir fails on it.
+	require.NoError(t, os.Chmod(nested, 0000))
+	t.Cleanup(func() { os.Chmod(nested, 0755) })
+
+	paths, err := findGitmodulesPaths(dir)
+	require.NoError(t, err)
+	// The top-level .gitmodules is found; the unreadable nested one is skipped.
+	require.Equal(t, []string{filepath.Join(dir, ".gitmodules")}, paths)
+}
+
+func TestFindGitmodulesPathsErrorsOnUnreadableRoot(t *testing.T) {
+	dir := t.TempDir()
+	inner := filepath.Join(dir, "repo")
+	require.NoError(t, os.MkdirAll(inner, 0755))
+	require.NoError(t, os.Chmod(inner, 0000))
+	t.Cleanup(func() { os.Chmod(inner, 0755) })
+
+	_, err := findGitmodulesPaths(inner)
+	require.Error(t, err)
+}
+
+func TestRepoUsesFileProtocolSkipsUnreadableNestedGitmodules(t *testing.T) {
+	tpl := "[submodule \"test\"]\n\tpath = test\n\turl = %s\n"
+	dir := t.TempDir()
+	writeTestFile(t, dir, ".gitmodules",
+		fmt.Sprintf(tpl, "https://example.com/repo.git"))
+
+	// Create a nested .gitmodules that is unreadable.
+	nested := filepath.Join(dir, "sub")
+	require.NoError(t, os.MkdirAll(nested, 0755))
+	nestedFile := filepath.Join(nested, ".gitmodules")
+	require.NoError(t, os.WriteFile(nestedFile, []byte("junk"), 0644))
+	require.NoError(t, os.Chmod(nestedFile, 0000))
+	t.Cleanup(func() { os.Chmod(nestedFile, 0644) })
+
+	// Should succeed — the unreadable nested file is skipped.
+	usesFileProtocol, err := repoUsesFileProtocolSubmodules(dir)
+	require.NoError(t, err)
+	require.False(t, usesFileProtocol)
+}
+
+func TestRepoUsesFileProtocolErrorsOnUnreadableTopLevel(t *testing.T) {
+	dir := t.TempDir()
+	topLevel := filepath.Join(dir, ".gitmodules")
+	require.NoError(t, os.WriteFile(topLevel, []byte("[submodule]\n"), 0644))
+	require.NoError(t, os.Chmod(topLevel, 0000))
+	t.Cleanup(func() { os.Chmod(topLevel, 0644) })
+
+	_, err := repoUsesFileProtocolSubmodules(dir)
+	require.Error(t, err)
+}

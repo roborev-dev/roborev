@@ -230,10 +230,14 @@ func repoUsesFileProtocolSubmodules(repoPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	topLevel := filepath.Join(repoPath, ".gitmodules")
 	for _, gitmodulesPath := range gitmodulesPaths {
 		usesFileProtocol, err := gitmodulesUsesFileProtocol(gitmodulesPath)
 		if err != nil {
-			continue // best-effort: skip unreadable .gitmodules files
+			if gitmodulesPath == topLevel {
+				return false, err // top-level .gitmodules must be readable
+			}
+			continue // best-effort: skip unreadable nested .gitmodules
 		}
 		if usesFileProtocol {
 			return true, nil
@@ -289,7 +293,10 @@ func findGitmodulesPaths(repoPath string) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // best-effort: skip unreadable paths
+			if path == repoPath {
+				return err // root target must be readable
+			}
+			return nil // best-effort: skip unreadable nested paths
 		}
 		if d.IsDir() && d.Name() == ".git" {
 			return filepath.SkipDir
