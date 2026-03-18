@@ -3,20 +3,27 @@
 package worktree_test
 
 import (
-	"github.com/roborev-dev/roborev/internal/testutil"
-	"github.com/roborev-dev/roborev/internal/worktree"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/roborev-dev/roborev/internal/worktree"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestWorktreeCleanupBetweenIterations(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
+func requireGitAvailable(t *testing.T) {
+	t.Helper()
+	_, err := exec.LookPath("git")
+	if err != nil {
 		t.Skip("git not available")
 	}
+}
+
+func TestWorktreeCleanupBetweenIterations(t *testing.T) {
+	requireGitAvailable(t)
 
 	repo := testutil.InitTestRepo(t)
 
@@ -25,27 +32,17 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	var prevPath string
 	for i := range 3 {
 		wt, err := worktree.Create(repo.Root, "HEAD")
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "iteration %d: worktree.Create failed: %v", i, err)
-		}
+		require.NoError(t, err, "iteration %d", i)
 
 		// Verify previous worktree was cleaned up
 		if prevPath != "" {
-			if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-				require.Condition(t, func() bool {
-					return false
-				}, "iteration %d: previous worktree %s still exists after cleanup", i, prevPath)
-			}
+			_, err = os.Stat(prevPath)
+			require.ErrorIs(t, err, os.ErrNotExist, "iteration %d", i)
 		}
 
 		// Verify current worktree exists
-		if _, err := os.Stat(wt.Dir); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "iteration %d: worktree %s should exist: %v", i, wt.Dir, err)
-		}
+		_, err = os.Stat(wt.Dir)
+		require.NoError(t, err, "iteration %d", i)
 
 		// Simulate the explicit cleanup call (as done on error/no-change paths)
 		wt.Close()
@@ -53,17 +50,12 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	}
 
 	// Verify the last worktree was also cleaned up
-	if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
-		require.Condition(t, func() bool {
-			return false
-		}, "last worktree %s still exists after cleanup", prevPath)
-	}
+	_, err := os.Stat(prevPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	requireGitAvailable(t)
 
 	repo := testutil.InitTestRepo(t)
 
@@ -82,32 +74,17 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 
 	// worktree.Create should succeed because it suppresses hooks
 	wt, err := worktree.Create(repo.Root, "HEAD")
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "worktree.Create should succeed with failing hook: %v", err)
-	}
+	require.NoError(t, err)
 	defer wt.Close()
 
 	// Verify the worktree directory exists and has the file from the repo
-	if _, err := os.Stat(wt.Dir); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "worktree directory should exist: %v", err)
-	}
+	_, err = os.Stat(wt.Dir)
+	require.NoError(t, err)
 
 	baseFile := filepath.Join(wt.Dir, "base.txt")
 	content, err := os.ReadFile(baseFile)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected base.txt in worktree: %v", err)
-	}
-	if string(content) != "base" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected content 'base', got %q", string(content))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "base", string(content))
 }
 
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
@@ -128,16 +105,9 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	mainRepo.RunGit("commit", "-m", "add submodule")
 
 	wt, err := worktree.Create(mainRepo.Root, "HEAD")
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "worktree.Create failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer wt.Close()
 
-	if _, err := os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt")); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected submodule file in worktree: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt"))
+	require.NoError(t, err)
 }

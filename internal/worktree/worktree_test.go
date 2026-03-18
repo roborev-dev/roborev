@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 	os.Exit(testenv.RunIsolatedMain(m))
 }
 
-func runGit(t *testing.T, dir string, args ...string) string {
+func runTestGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(),
@@ -31,9 +31,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 
 func writeTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
-		require.NoError(t, err, "failed to write %s: %v", name, err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644), "failed to write %s", name)
 }
 
 // setupGitRepo creates a minimal git repo with one commit and returns its path.
@@ -43,54 +41,49 @@ func setupGitRepo(t *testing.T) string {
 		t.Skip("git not available")
 	}
 	dir := t.TempDir()
-	runGit(t, dir, "init")
-	runGit(t, dir, "config", "user.email", "test@test.com")
-	runGit(t, dir, "config", "user.name", "test")
+	runTestGit(t, dir, "init")
+	runTestGit(t, dir, "config", "user.email", "test@test.com")
+	runTestGit(t, dir, "config", "user.name", "test")
 	writeTestFile(t, dir, "hello.txt", "hello")
-	runGit(t, dir, "add", "hello.txt")
-	runGit(t, dir, "commit", "-m", "initial")
+	runTestGit(t, dir, "add", "hello.txt")
+	runTestGit(t, dir, "commit", "-m", "initial")
 	return dir
 }
 
-func TestCreateAndClose(t *testing.T) {
+func setupRepoAndWorktree(t *testing.T) (string, *Worktree) {
+	t.Helper()
 	repo := setupGitRepo(t)
-
 	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	require.NoError(t, err)
+	return repo, wt
+}
+
+func TestCreateAndClose(t *testing.T) {
+	_, wt := setupRepoAndWorktree(t)
 
 	// Worktree dir should exist and contain the file
-	if _, err := os.Stat(filepath.Join(wt.Dir, "hello.txt")); err != nil {
-		require.NoError(t, err, "expected hello.txt in worktree: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(wt.Dir, "hello.txt"))
+	require.NoError(t, err)
 
 	wtDir := wt.Dir
 	wt.Close()
 
 	// After Close, the directory should be removed
-	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
-		require.NoError(t, err, "worktree dir should be removed after Close, got: %v", err)
-	}
+	_, err = os.Stat(wtDir)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestCapturePatchNoChanges(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	_, wt := setupRepoAndWorktree(t)
 	defer wt.Close()
 
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
-	if patch != "" {
-		require.NoError(t, err, "expected empty patch for unchanged worktree, got %d bytes", len(patch))
-	}
+	require.NoError(t, err)
+	require.Empty(t, patch)
 }
 
 func TestCapturePatchWithChanges(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	_, wt := setupRepoAndWorktree(t)
 	defer wt.Close()
 
 	// Modify a file and add a new one
@@ -98,132 +91,102 @@ func TestCapturePatchWithChanges(t *testing.T) {
 	writeTestFile(t, wt.Dir, "new.txt", "new file")
 
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
-	if patch == "" {
-		require.NoError(t, err)
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, patch)
 	assert.Contains(t, patch, "hello.txt", "patch should reference hello.txt")
 	assert.Contains(t, patch, "new.txt", "patch should reference new.txt")
 }
 
 func TestCapturePatchCommittedChanges(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	_, wt := setupRepoAndWorktree(t)
 	defer wt.Close()
 
 	// Simulate an agent that commits changes (instead of just staging)
 	writeTestFile(t, wt.Dir, "hello.txt", "committed-change")
-	runGit(t, wt.Dir, "add", "-A")
-	runGit(t, wt.Dir, "commit", "-m", "agent commit")
+	runTestGit(t, wt.Dir, "add", "-A")
+	runTestGit(t, wt.Dir, "commit", "-m", "agent commit")
 
 	// CapturePatch should still capture the committed changes
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
-	if patch == "" {
-		require.NoError(t, err)
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, patch)
 	assert.Contains(t, patch, "hello.txt", "patch should reference hello.txt")
 	assert.Contains(t, patch, "committed-change", "patch should contain the committed content")
 }
 
 func TestApplyPatchEmpty(t *testing.T) {
 	// Empty patch should be a no-op
-	if err := ApplyPatch("/nonexistent", ""); err != nil {
-		require.NoError(t, err, "ApplyPatch with empty patch should succeed: %v", err)
-	}
+	require.NoError(t, ApplyPatch("/nonexistent", ""))
 }
 
 func TestApplyPatchRoundTrip(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	repo, wt := setupRepoAndWorktree(t)
 
 	// Make changes in worktree
 	writeTestFile(t, wt.Dir, "hello.txt", "changed")
 	writeTestFile(t, wt.Dir, "added.txt", "added")
 
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
+	require.NoError(t, err)
 	wt.Close()
 
 	// Apply the patch back to the original repo
-	if err := ApplyPatch(repo, patch); err != nil {
-		require.NoError(t, err, "ApplyPatch failed: %v", err)
-	}
+	require.NoError(t, ApplyPatch(repo, patch))
 
 	// Verify the changes were applied
 	content, err := os.ReadFile(filepath.Join(repo, "hello.txt"))
-	require.NoError(t, err, "failed to read hello.txt: %v", err)
-	if string(content) != "changed" {
-		assert.Equalf(t, "changed", string(content), "expected 'changed', got %q", string(content))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "changed", string(content))
 	content, err = os.ReadFile(filepath.Join(repo, "added.txt"))
-	require.NoError(t, err, "failed to read added.txt: %v", err)
-	assert.Equalf(t, "added", string(content), "expected 'added', got %q", string(content))
+	require.NoError(t, err)
+	assert.Equal(t, "added", string(content))
 }
 
 func TestCheckPatchClean(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	repo, wt := setupRepoAndWorktree(t)
 	writeTestFile(t, wt.Dir, "hello.txt", "changed")
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
+	require.NoError(t, err)
 	wt.Close()
 
 	// Check should pass on unmodified repo
-	if err := CheckPatch(repo, patch); err != nil {
-		require.NoError(t, err, "CheckPatch should succeed on clean repo: %v", err)
-	}
+	require.NoError(t, CheckPatch(repo, patch))
 }
 
 func TestCheckPatchEmpty(t *testing.T) {
-	if err := CheckPatch("/nonexistent", ""); err != nil {
-		require.NoError(t, err, "CheckPatch with empty patch should succeed: %v", err)
-	}
+	require.NoError(t, CheckPatch("/nonexistent", ""))
 }
 
 func TestCheckPatchConflict(t *testing.T) {
-	repo := setupGitRepo(t)
+	repo, wt := setupRepoAndWorktree(t)
 
 	// Create a patch that modifies hello.txt
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
 	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
+	require.NoError(t, err)
 	wt.Close()
 
 	// Now modify hello.txt in the original repo to create a conflict
 	writeTestFile(t, repo, "hello.txt", "conflicting-change")
 
-	// CheckPatch should fail
-	if err := CheckPatch(repo, patch); err == nil {
-		require.NoError(t, err)
-	}
+	var conflictErr *PatchConflictError
+	err = CheckPatch(repo, patch)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &conflictErr)
 }
 
 func TestApplyPatchConflictFails(t *testing.T) {
-	repo := setupGitRepo(t)
-
-	wt, err := Create(repo, "HEAD")
-	require.NoError(t, err, "Create failed: %v", err)
+	repo, wt := setupRepoAndWorktree(t)
 	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
 	patch, err := wt.CapturePatch()
-	require.NoError(t, err, "CapturePatch failed: %v", err)
+	require.NoError(t, err)
 	wt.Close()
 
 	// Create a conflict
 	writeTestFile(t, repo, "hello.txt", "different")
 
 	// ApplyPatch should fail
-	if err := ApplyPatch(repo, patch); err == nil {
-		require.NoError(t, err)
-	}
+	require.Error(t, ApplyPatch(repo, patch))
 }
 
 func TestCreateEmptyRef(t *testing.T) {
@@ -237,12 +200,12 @@ func TestCreateWithSpecificSHA(t *testing.T) {
 	repo := setupGitRepo(t)
 
 	// Record the SHA of the initial commit
-	initialSHA := runGit(t, repo, "rev-parse", "HEAD")
+	initialSHA := runTestGit(t, repo, "rev-parse", "HEAD")
 
 	// Add a second commit that changes hello.txt
 	writeTestFile(t, repo, "hello.txt", "updated")
-	runGit(t, repo, "add", "hello.txt")
-	runGit(t, repo, "commit", "-m", "second commit")
+	runTestGit(t, repo, "add", "hello.txt")
+	runTestGit(t, repo, "commit", "-m", "second commit")
 
 	// HEAD now has "updated", but create worktree at the initial SHA
 	wt, err := Create(repo, initialSHA)
@@ -255,7 +218,7 @@ func TestCreateWithSpecificSHA(t *testing.T) {
 	assert.Equal(t, "hello", string(content), "expected 'hello' at initial SHA, got %q", string(content))
 }
 
-func TestSubmoduleRequiresFileProtocol(t *testing.T) {
+func TestGitmodulesUsesFileProtocol(t *testing.T) {
 	tpl := `[submodule "test"]
 	path = test
 	%s = %s
@@ -281,15 +244,17 @@ func TestSubmoduleRequiresFileProtocol(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			gitmodules := ".gitmodules"
-			writeTestFile(t, dir, gitmodules, string(fmt.Appendf(nil, tpl, tc.key, tc.url)))
-			require.Equal(t, tc.expected, submoduleRequiresFileProtocol(dir), "expected %v", tc.expected)
+			gitmodulesPath := filepath.Join(t.TempDir(), ".gitmodules")
+			require.NoError(t, os.WriteFile(gitmodulesPath, fmt.Appendf(nil, tpl, tc.key, tc.url), 0644))
+
+			usesFileProtocol, err := gitmodulesUsesFileProtocol(gitmodulesPath)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, usesFileProtocol)
 		})
 	}
 }
 
-func TestSubmoduleRequiresFileProtocolNested(t *testing.T) {
+func TestRepoUsesFileProtocolSubmodulesNested(t *testing.T) {
 	tpl := `[submodule "test"]
 	path = test
 	url = %s
@@ -303,5 +268,7 @@ func TestSubmoduleRequiresFileProtocolNested(t *testing.T) {
 	}
 	writeTestFile(t, dir, "sub/.gitmodules", string(fmt.Appendf(nil, tpl, "file:///tmp/repo")))
 
-	require.True(t, submoduleRequiresFileProtocol(dir), "expected nested file URL to require file protocol")
+	usesFileProtocol, err := repoUsesFileProtocolSubmodules(dir)
+	require.NoError(t, err)
+	require.True(t, usesFileProtocol)
 }
