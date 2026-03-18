@@ -65,7 +65,7 @@ func TestParseEndpoint_UnixNullByte(t *testing.T) {
 
 func TestDefaultSocketPath(t *testing.T) {
 	path := DefaultSocketPath()
-	assert.True(t, len(path) < MaxUnixPathLen,
+	assert.Less(t, len(path), MaxUnixPathLen,
 		"default socket path %q (%d bytes) exceeds limit %d", path, len(path), MaxUnixPathLen)
 	assert.Contains(t, path, "roborev-")
 	assert.True(t, strings.HasSuffix(path, "daemon.sock"))

@@ -33,9 +33,8 @@ func ParseEndpoint(serverAddr string) (DaemonEndpoint, error) {
 		return DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}, nil
 	}
 
-	if strings.HasPrefix(serverAddr, "http://") {
-		serverAddr = strings.TrimPrefix(serverAddr, "http://")
-		return parseTCPEndpoint(serverAddr)
+	if after, ok := strings.CutPrefix(serverAddr, "http://"); ok {
+		return parseTCPEndpoint(after)
 	}
 
 	if strings.HasPrefix(serverAddr, "unix://") {
@@ -134,6 +133,6 @@ func (e DaemonEndpoint) Port() int {
 		return 0
 	}
 	port := 0
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 	return port
 }

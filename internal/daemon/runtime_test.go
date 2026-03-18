@@ -518,7 +518,7 @@ func TestRuntimeInfo_BackwardsCompat_NoNetworkField(t *testing.T) {
 	data := []byte(`{"pid": 1234, "addr": "127.0.0.1:7373", "port": 7373, "version": "0.47.0"}`)
 	var info RuntimeInfo
 	require.NoError(t, json.Unmarshal(data, &info))
-	assert.Equal(t, "", info.Network)
+	assert.Empty(t, info.Network)
 	ep := info.Endpoint()
 	assert.Equal(t, "tcp", ep.Network)
 	assert.Equal(t, "127.0.0.1:7373", ep.Address)
