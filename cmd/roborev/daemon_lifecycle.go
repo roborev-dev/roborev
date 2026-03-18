@@ -80,19 +80,28 @@ func validateServerFlag() error {
 }
 
 // getDaemonEndpoint returns the daemon endpoint from runtime file or config.
+// An explicit --server flag takes precedence over auto-discovered daemons.
 func getDaemonEndpoint() daemon.DaemonEndpoint {
+	// Explicit --server flag takes precedence over auto-discovery
+	if serverAddr != "" {
+		if parsedServerEndpoint != nil {
+			return *parsedServerEndpoint
+		}
+		ep, err := daemon.ParseEndpoint(serverAddr)
+		if err != nil {
+			return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+		}
+		return ep
+	}
+	// No explicit flag: discover running daemon
 	if info, err := getAnyRunningDaemon(); err == nil {
 		return info.Endpoint()
 	}
+	// Nothing running: use default
 	if parsedServerEndpoint != nil {
 		return *parsedServerEndpoint
 	}
-	// Fallback: parse at call time (e.g., if called before PersistentPreRunE)
-	ep, err := daemon.ParseEndpoint(serverAddr)
-	if err != nil {
-		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
-	}
-	return ep
+	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 }
 
 // getDaemonHTTPClient returns an HTTP client configured for the daemon endpoint.

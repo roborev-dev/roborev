@@ -570,8 +570,25 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		return nil
 	})
 
+	var daemonDead atomic.Bool
+	hijackAndClose := func(w http.ResponseWriter) {
+		hj, ok := w.(http.Hijacker)
+		if ok {
+			conn, _, _ := hj.Hijack()
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	}
+	deadHandler := func(w http.ResponseWriter, r *http.Request) {
+		hijackAndClose(w)
+	}
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			if daemonDead.Load() {
+				hijackAndClose(w)
+				return
+			}
 			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     99,
@@ -582,12 +599,15 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, storage.Review{Output: "## Issues\n- Found minor issue"})
-			// Simulate daemon death: remove runtime file so
-			// getDaemonEndpoint falls back to serverAddr, then
-			// point serverAddr at a dead address.
+			// Simulate daemon death after responding
+			daemonDead.Store(true)
 			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 		}).
+		WithHandler("/api/enqueue", deadHandler).
+		WithHandler("/api/comment", deadHandler).
+		WithHandler("/api/comments", deadHandler).
+		WithHandler("/api/review/close", deadHandler).
 		Build()
 
 	cmd, output := newTestCmd(t)
@@ -2320,8 +2340,20 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 	})
 
 	deadURL := "http://127.0.0.1:1"
+	var daemonDead atomic.Bool
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			if daemonDead.Load() {
+				// Simulate dead daemon: hijack connection and close it
+				hj, ok := w.(http.Hijacker)
+				if ok {
+					conn, _, _ := hj.Hijack()
+					if conn != nil {
+						conn.Close()
+					}
+				}
+				return
+			}
 			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     10,
@@ -2329,13 +2361,22 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 					Agent:  "test",
 				}},
 			})
-			// Simulate daemon death: remove runtime file and override
-			// getAnyRunningDaemon so getDaemonEndpoint() falls back to
-			// serverAddr (which points to a dead address).
+			// Simulate daemon death after responding
+			daemonDead.Store(true)
 			removeAllDaemonFiles(t)
 			serverAddr = deadURL
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 				return nil, os.ErrNotExist
+			}
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			// Daemon is dead — hijack and close connection
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				if conn != nil {
+					conn.Close()
+				}
 			}
 		}).
 		Build()

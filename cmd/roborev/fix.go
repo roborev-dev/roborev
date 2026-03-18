@@ -816,9 +816,13 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		ctx = context.Background()
 	}
 
-	// Fetch the job to check status (re-resolve endpoint each call
-	// so daemon recovery works if the daemon dies between calls)
-	job, err := fetchJob(ctx, getDaemonEndpoint().BaseURL(), jobID)
+	// Snapshot the daemon address once for the entire operation.
+	// The retry helpers (withFixDaemonRetryContext) handle re-resolution
+	// internally if a connection error triggers daemon recovery.
+	addr := getDaemonEndpoint().BaseURL()
+
+	// Fetch the job to check status
+	job, err := fetchJob(ctx, addr, jobID)
 	if err != nil {
 		return fmt.Errorf("fetch job: %w", err)
 	}
@@ -828,7 +832,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Fetch the review/analysis output
-	review, err := fetchReview(ctx, getDaemonEndpoint().BaseURL(), jobID)
+	review, err := fetchReview(ctx, addr, jobID)
 	if err != nil {
 		return fmt.Errorf("fetch review: %w", err)
 	}
@@ -838,7 +842,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
-		if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), jobID); err != nil && !opts.quiet {
+		if err := markJobClosed(ctx, addr, jobID); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 		return nil
@@ -916,7 +920,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	// Enqueue review for fix commit
 	if result.CommitCreated {
-		if err := enqueueIfNeeded(ctx, getDaemonEndpoint().BaseURL(), repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
+		if err := enqueueIfNeeded(ctx, addr, repoRoot, result.NewCommitSHA); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 		}
 	}
@@ -927,13 +931,13 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 	}
 
-	if err := addJobResponse(ctx, getDaemonEndpoint().BaseURL(), jobID, "roborev-fix", responseText); err != nil {
+	if err := addJobResponse(ctx, addr, jobID, "roborev-fix", responseText); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not add response to job: %v\n", err)
 		}
 	}
 
-	if err := markJobClosed(ctx, getDaemonEndpoint().BaseURL(), jobID); err != nil {
+	if err := markJobClosed(ctx, addr, jobID); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not close job: %v\n", err)
 		}
