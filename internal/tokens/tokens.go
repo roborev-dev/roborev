@@ -63,19 +63,9 @@ var versionRe = regexp.MustCompile(
 	`agentsview v(\d+)\.(\d+)\.(\d+)`,
 )
 
-// checkVersion returns true if agentsview at binPath reports a
-// version >= minVersion. Returns false on any error.
-func checkVersion(ctx context.Context, binPath string) bool {
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(
-		cmdCtx, binPath, "version",
-	).Output()
-	if err != nil {
-		return false
-	}
-
+// parseVersionOK returns true if the output of `agentsview version`
+// contains a semver >= minVersion.
+func parseVersionOK(out []byte) bool {
 	m := versionRe.FindSubmatch(out)
 	if m == nil {
 		return false
@@ -95,34 +85,85 @@ func checkVersion(ctx context.Context, binPath string) bool {
 	return true // equal
 }
 
+// checkVersion runs `agentsview version` and returns true if the
+// reported version is >= minVersion. Returns false on any error.
+func checkVersion(ctx context.Context, binPath string) bool {
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		cmdCtx, binPath, "version",
+	).Output()
+	if err != nil {
+		return false
+	}
+	return parseVersionOK(out)
+}
+
+// versionState tracks the cached probe result.
+type versionState int
+
+const (
+	versionUnchecked versionState = iota
+	versionOK
+	versionTooOld
+)
+
 var (
-	versionOnce   sync.Once
-	versionOK     bool
-	cachedBinPath string
+	versionMu    sync.Mutex
+	versionProbe versionState
+	cachedBin    string
 )
 
 // ResetVersionCache clears the cached version check result.
 // Exposed for testing only.
 func ResetVersionCache() {
-	versionOnce = sync.Once{}
-	versionOK = false
-	cachedBinPath = ""
+	versionMu.Lock()
+	defer versionMu.Unlock()
+	versionProbe = versionUnchecked
+	cachedBin = ""
 }
 
-// resolveAgentsview checks once whether agentsview is installed and
-// new enough. Returns the binary path and true, or ("", false).
+// resolveAgentsview checks whether agentsview is installed and new
+// enough. Caches positive results and definitive "too old" results
+// permanently. Transient failures (binary not found, timeout,
+// exec error) leave the cache unchecked so the next call retries.
 func resolveAgentsview(ctx context.Context) (string, bool) {
-	versionOnce.Do(func() {
-		bin, err := exec.LookPath("agentsview")
-		if err != nil {
-			return
-		}
-		if checkVersion(ctx, bin) {
-			cachedBinPath = bin
-			versionOK = true
-		}
-	})
-	return cachedBinPath, versionOK
+	versionMu.Lock()
+	defer versionMu.Unlock()
+
+	switch versionProbe {
+	case versionOK:
+		return cachedBin, true
+	case versionTooOld:
+		return "", false
+	}
+
+	bin, err := exec.LookPath("agentsview")
+	if err != nil {
+		// Not installed — transient (could be installed later).
+		return "", false
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		cmdCtx, bin, "version",
+	).Output()
+	if err != nil {
+		// Exec/timeout error — don't cache, retry next time.
+		return "", false
+	}
+
+	if parseVersionOK(out) {
+		versionProbe = versionOK
+		cachedBin = bin
+		return bin, true
+	}
+	// Definitively too old — cache permanently.
+	versionProbe = versionTooOld
+	return "", false
 }
 
 // FetchForSession calls `agentsview token-use <sessionID>` to get

@@ -181,6 +181,65 @@ exit 99
 	assert.Nil(t, usage)
 }
 
+func TestResolveAgentsviewRetriesAfterTransientFailure(t *testing.T) {
+	ResetVersionCache()
+	t.Cleanup(ResetVersionCache)
+
+	// First call: agentsview not on PATH → transient failure.
+	t.Setenv("PATH", t.TempDir())
+	_, ok := resolveAgentsview(context.Background())
+	assert.False(t, ok, "should fail when binary is absent")
+
+	// Install a valid agentsview and retry — should succeed.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agentsview")
+	script := `#!/bin/sh
+if [ "$1" = "version" ]; then
+  echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
+  exit 0
+fi
+if [ "$1" = "token-use" ]; then
+  echo '{"session_id":"s","agent":"a","project":"p","total_output_tokens":100,"peak_context_tokens":200}'
+  exit 0
+fi
+`
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+":"+origPath)
+
+	path, ok := resolveAgentsview(context.Background())
+	assert.True(t, ok, "should succeed after binary appears")
+	assert.Equal(t, bin, path)
+}
+
+func TestResolveAgentsviewCachesTooOldPermanently(t *testing.T) {
+	ResetVersionCache()
+	t.Cleanup(ResetVersionCache)
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agentsview")
+	script := `#!/bin/sh
+echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
+`
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+":"+origPath)
+
+	_, ok := resolveAgentsview(context.Background())
+	assert.False(t, ok)
+
+	// Even if we "upgrade" the script, the too-old result is cached.
+	script2 := `#!/bin/sh
+echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
+`
+	require.NoError(t, os.WriteFile(bin, []byte(script2), 0o755))
+
+	_, ok = resolveAgentsview(context.Background())
+	assert.False(t, ok, "too-old should be cached permanently")
+}
+
 func TestToJSON(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
 		assert.Empty(t, ToJSON(nil))
