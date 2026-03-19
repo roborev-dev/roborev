@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -51,9 +54,80 @@ func formatCount(n int64) string {
 	}
 }
 
+// minVersion is the minimum agentsview version that supports
+// the token-use subcommand (0.15.0).
+var minVersion = [3]int{0, 15, 0}
+
+// versionRe extracts major.minor.patch from "agentsview vX.Y.Z...".
+var versionRe = regexp.MustCompile(
+	`agentsview v(\d+)\.(\d+)\.(\d+)`,
+)
+
+// checkVersion returns true if agentsview at binPath reports a
+// version >= minVersion. Returns false on any error.
+func checkVersion(ctx context.Context, binPath string) bool {
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		cmdCtx, binPath, "version",
+	).Output()
+	if err != nil {
+		return false
+	}
+
+	m := versionRe.FindSubmatch(out)
+	if m == nil {
+		return false
+	}
+	var ver [3]int
+	for i := range 3 {
+		ver[i], _ = strconv.Atoi(string(m[i+1]))
+	}
+	for i := range 3 {
+		if ver[i] > minVersion[i] {
+			return true
+		}
+		if ver[i] < minVersion[i] {
+			return false
+		}
+	}
+	return true // equal
+}
+
+var (
+	versionOnce   sync.Once
+	versionOK     bool
+	cachedBinPath string
+)
+
+// ResetVersionCache clears the cached version check result.
+// Exposed for testing only.
+func ResetVersionCache() {
+	versionOnce = sync.Once{}
+	versionOK = false
+	cachedBinPath = ""
+}
+
+// resolveAgentsview checks once whether agentsview is installed and
+// new enough. Returns the binary path and true, or ("", false).
+func resolveAgentsview(ctx context.Context) (string, bool) {
+	versionOnce.Do(func() {
+		bin, err := exec.LookPath("agentsview")
+		if err != nil {
+			return
+		}
+		if checkVersion(ctx, bin) {
+			cachedBinPath = bin
+			versionOK = true
+		}
+	})
+	return cachedBinPath, versionOK
+}
+
 // FetchForSession calls `agentsview token-use <sessionID>` to get
-// token usage. Returns nil (no error) if agentsview is not installed
-// or the session data is unavailable.
+// token usage. Returns nil (no error) if agentsview is not installed,
+// is too old (< 0.15.0), or the session data is unavailable.
 func FetchForSession(
 	ctx context.Context, sessionID string,
 ) (*Usage, error) {
@@ -61,8 +135,8 @@ func FetchForSession(
 		return nil, nil
 	}
 
-	binPath, err := exec.LookPath("agentsview")
-	if err != nil {
+	binPath, ok := resolveAgentsview(ctx)
+	if !ok {
 		return nil, nil
 	}
 

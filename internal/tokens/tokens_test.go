@@ -1,6 +1,10 @@
 package tokens
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,6 +71,114 @@ func TestParseJSON(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		assert.Nil(t, ParseJSON(`{invalid`))
 	})
+}
+
+func TestCheckVersion(t *testing.T) {
+	// Create a fake agentsview script that prints the given output.
+	makeScript := func(t *testing.T, output string) string {
+		t.Helper()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "agentsview")
+		script := "#!/bin/sh\necho '" + output + "'\n"
+		require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+		return bin
+	}
+
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			"exact minimum",
+			"agentsview v0.15.0 (commit abc, built 2026-01-01)",
+			true,
+		},
+		{
+			"newer patch",
+			"agentsview v0.15.1 (commit abc, built 2026-01-01)",
+			true,
+		},
+		{
+			"newer minor",
+			"agentsview v0.16.0 (commit abc, built 2026-01-01)",
+			true,
+		},
+		{
+			"newer major",
+			"agentsview v1.0.0 (commit abc, built 2026-01-01)",
+			true,
+		},
+		{
+			"dev suffix",
+			"agentsview v0.15.0-1-g891cb62 (commit 891cb62, built 2026-03-18)",
+			true,
+		},
+		{
+			"too old",
+			"agentsview v0.14.9 (commit abc, built 2026-01-01)",
+			false,
+		},
+		{
+			"very old",
+			"agentsview v0.10.0 (commit abc, built 2026-01-01)",
+			false,
+		},
+		{
+			"unparseable",
+			"something unexpected",
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := makeScript(t, tt.output)
+			got := checkVersion(context.Background(), bin)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("missing binary", func(t *testing.T) {
+		got := checkVersion(
+			context.Background(), "/nonexistent/agentsview",
+		)
+		assert.False(t, got)
+	})
+}
+
+func TestFetchForSessionSkipsOldVersion(t *testing.T) {
+	// Verify FetchForSession returns nil when agentsview is too old,
+	// rather than invoking token-use (which could spawn a server).
+	ResetVersionCache()
+	t.Cleanup(ResetVersionCache)
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agentsview")
+	// Script that prints old version for "version", and would fail
+	// loudly for any other subcommand.
+	script := `#!/bin/sh
+if [ "$1" = "version" ]; then
+  echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
+  exit 0
+fi
+echo "ERROR: should not be called" >&2
+exit 99
+`
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+":"+origPath)
+
+	// Confirm our fake is found.
+	_, err := exec.LookPath("agentsview")
+	require.NoError(t, err)
+
+	usage, err := FetchForSession(
+		context.Background(), "test-session-id",
+	)
+	require.NoError(t, err)
+	assert.Nil(t, usage)
 }
 
 func TestToJSON(t *testing.T) {
