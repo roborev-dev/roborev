@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -51,9 +54,133 @@ func formatCount(n int64) string {
 	}
 }
 
+// minVersion is the minimum agentsview version that supports
+// the token-use subcommand (0.15.0).
+var minVersion = [3]int{0, 15, 0}
+
+// versionRe extracts major.minor.patch from "agentsview vX.Y.Z...".
+var versionRe = regexp.MustCompile(
+	`agentsview v(\d+)\.(\d+)\.(\d+)`,
+)
+
+// parseVersion checks whether the output of `agentsview version`
+// contains a semver >= minVersion. Returns (supported, parsed):
+// supported is true when the version meets the minimum; parsed is
+// true when a version string was found at all (regardless of
+// whether it is new enough).
+func parseVersion(out []byte) (supported, parsed bool) {
+	m := versionRe.FindSubmatch(out)
+	if m == nil {
+		return false, false
+	}
+	var ver [3]int
+	for i := range 3 {
+		ver[i], _ = strconv.Atoi(string(m[i+1]))
+	}
+	for i := range 3 {
+		if ver[i] > minVersion[i] {
+			return true, true
+		}
+		if ver[i] < minVersion[i] {
+			return false, true
+		}
+	}
+	return true, true // equal
+}
+
+// versionState tracks the cached probe result.
+type versionState int
+
+const (
+	versionUnchecked versionState = iota
+	versionOK
+	versionTooOld
+)
+
+var (
+	versionMu    sync.Mutex
+	versionProbe versionState
+	cachedBin    string
+)
+
+// ResetVersionCache clears the cached version check result.
+// Exposed for testing only.
+func ResetVersionCache() {
+	versionMu.Lock()
+	defer versionMu.Unlock()
+	versionProbe = versionUnchecked
+	cachedBin = ""
+}
+
+// resolveAgentsview checks whether agentsview is installed and new
+// enough. The result is cached keyed to the resolved binary path,
+// so an upgrade, downgrade, or PATH change triggers a fresh probe.
+// Transient failures (binary not found, timeout, exec error,
+// unparseable output) leave the cache unchecked so the next call
+// retries.
+func resolveAgentsview(ctx context.Context) (string, bool) {
+	// LookPath is cheap (PATH scan, no exec) — always run it so we
+	// detect installs, upgrades, and PATH changes.
+	bin, err := exec.LookPath("agentsview")
+	if err != nil {
+		return "", false
+	}
+
+	versionMu.Lock()
+	if cachedBin == bin {
+		switch versionProbe {
+		case versionOK:
+			versionMu.Unlock()
+			return bin, true
+		case versionTooOld:
+			versionMu.Unlock()
+			return "", false
+		}
+	}
+	versionMu.Unlock()
+
+	// Exec runs without holding the lock so concurrent callers are
+	// not blocked by the 5 s command timeout.
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		cmdCtx, bin, "version",
+	).Output()
+	if err != nil {
+		return "", false
+	}
+
+	supported, parsed := parseVersion(out)
+
+	versionMu.Lock()
+	defer versionMu.Unlock()
+
+	// Re-check: another goroutine may have updated the cache.
+	if cachedBin == bin {
+		switch versionProbe {
+		case versionOK:
+			return bin, true
+		case versionTooOld:
+			return "", false
+		}
+	}
+
+	if supported {
+		versionProbe = versionOK
+		cachedBin = bin
+		return bin, true
+	}
+	if parsed {
+		versionProbe = versionTooOld
+		cachedBin = bin
+	}
+	return "", false
+}
+
 // FetchForSession calls `agentsview token-use <sessionID>` to get
-// token usage. Returns nil (no error) if agentsview is not installed
-// or the session data is unavailable.
+// token usage. Returns nil (no error) if agentsview is not installed,
+// is too old (< 0.15.0), or the session data is unavailable.
 func FetchForSession(
 	ctx context.Context, sessionID string,
 ) (*Usage, error) {
@@ -61,8 +188,8 @@ func FetchForSession(
 		return nil, nil
 	}
 
-	binPath, err := exec.LookPath("agentsview")
-	if err != nil {
+	binPath, ok := resolveAgentsview(ctx)
+	if !ok {
 		return nil, nil
 	}
 
