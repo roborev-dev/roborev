@@ -1,7 +1,9 @@
 package testutil
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,4 +35,37 @@ func TestMockExecutableIsolated(t *testing.T) {
 
 	_, err = exec.LookPath(baseline)
 	require.Error(t, err, "expected %q to be absent from isolated PATH", baseline)
+}
+
+func TestMockBinaryHelpersRestorePath(t *testing.T) {
+	origPath := os.Getenv("PATH")
+
+	cleanup := MockBinaryInPath(t, "test-script", "#!/bin/sh\nexit 0\n")
+
+	_, err := exec.LookPath("test-script")
+	require.NoError(t, err, "expected mocked binary in PATH")
+
+	cleanup()
+
+	require.Equal(t, origPath, os.Getenv("PATH"))
+}
+
+func TestCommitFileCreatesParentDirectories(t *testing.T) {
+	repo := InitTestRepo(t)
+
+	sha := repo.CommitFile(filepath.Join("nested", "dir", "file.txt"), "hello", "add nested file")
+
+	require.Equal(t, repo.HeadSHA(), sha)
+
+	content, err := os.ReadFile(filepath.Join(repo.Root, "nested", "dir", "file.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "hello", string(content))
+}
+
+func TestNewGitRepoReturnsResolvedPath(t *testing.T) {
+	repo := NewGitRepo(t)
+
+	resolved, err := filepath.EvalSymlinks(repo.Root)
+	require.NoError(t, err)
+	require.Equal(t, resolved, repo.Path())
 }

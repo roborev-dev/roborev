@@ -20,7 +20,7 @@ import (
 type remapContext struct {
 	server  *Server
 	db      *storage.DB
-	repo    *testutil.GitHelper
+	repo    *testutil.TestRepo
 	oldSHA  string
 	patchID string
 	jobID   int64

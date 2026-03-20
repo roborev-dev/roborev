@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,132 +21,6 @@ const (
 	GitUserName  = "Test"
 	GitUserEmail = "test@test.com"
 )
-
-// TestRepo encapsulates a temporary git repository for tests.
-type TestRepo struct {
-	Root     string
-	GitDir   string
-	HooksDir string
-	HookPath string
-	t        *testing.T
-}
-
-// NewTestRepo creates a temporary git repository.
-func NewTestRepo(t *testing.T) *TestRepo {
-	t.Helper()
-	tmpDir := t.TempDir()
-
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-
-	return &TestRepo{
-		Root:     tmpDir,
-		GitDir:   filepath.Join(tmpDir, ".git"),
-		HooksDir: filepath.Join(tmpDir, ".git", "hooks"),
-		HookPath: filepath.Join(tmpDir, ".git", "hooks", "post-commit"),
-		t:        t,
-	}
-}
-
-// NewTestRepoWithCommit creates a temporary git repository with a file and
-// initial commit, suitable for tests that need a valid git history.
-func NewTestRepoWithCommit(t *testing.T) *TestRepo {
-	t.Helper()
-	repo := NewTestRepo(t)
-
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo.Root
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME="+GitUserName,
-			"GIT_AUTHOR_EMAIL="+GitUserEmail,
-			"GIT_COMMITTER_NAME="+GitUserName,
-			"GIT_COMMITTER_EMAIL="+GitUserEmail,
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("config", "user.email", GitUserEmail)
-	runGit("config", "user.name", GitUserName)
-
-	if err := os.WriteFile(filepath.Join(repo.Root, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	runGit("add", "main.go")
-	runGit("commit", "-m", "initial commit")
-
-	return repo
-}
-
-// InitTestRepo creates a standard test repository with an initial commit on the main branch.
-func InitTestRepo(t *testing.T) *TestRepo {
-	t.Helper()
-	repo := NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", GitUserEmail)
-	repo.Config("user.name", GitUserName)
-	repo.CommitFile("base.txt", "base", "base commit")
-	return repo
-}
-
-// RunGit runs a git command in the repo directory.
-func (r *TestRepo) RunGit(args ...string) {
-	r.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
-	}
-}
-
-// RevParse runs git rev-parse and returns the trimmed output.
-func (r *TestRepo) RevParse(args ...string) string {
-	r.t.Helper()
-	cmd := exec.Command("git", append([]string{"rev-parse"}, args...)...)
-	cmd.Dir = r.Root
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("git rev-parse %v failed: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// CommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
-func (r *TestRepo) CommitFile(filename, content, msg string) string {
-	r.t.Helper()
-	if err := os.WriteFile(filepath.Join(r.Root, filename), []byte(content), 0644); err != nil {
-		r.t.Fatal(err)
-	}
-	r.RunGit("add", filename)
-	r.RunGit("commit", "-m", msg)
-	return r.RevParse("HEAD")
-}
-
-// Config sets a git config value.
-func (r *TestRepo) Config(key, value string) {
-	r.t.Helper()
-	r.RunGit("config", key, value)
-}
-
-// Checkout runs git checkout.
-func (r *TestRepo) Checkout(args ...string) {
-	r.t.Helper()
-	allArgs := append([]string{"checkout"}, args...)
-	r.RunGit(allArgs...)
-}
-
-// SymbolicRef runs git symbolic-ref.
-func (r *TestRepo) SymbolicRef(ref, target string) {
-	r.t.Helper()
-	r.RunGit("symbolic-ref", ref, target)
-}
 
 // Chdir changes the working directory to the repo root and returns a
 // restore function. The caller should defer the returned function.
@@ -200,78 +72,75 @@ func (r *TestRepo) RemoveHooksDir() {
 	}
 }
 
-// MockExecutable creates a fake executable in PATH that exits with the given code.
-// Returns a cleanup function.
-func MockExecutable(t *testing.T, binName string, exitCode int) func() {
-	t.Helper()
-	tmpBin := t.TempDir()
-	var path string
-	var content []byte
+type pathMode int
 
-	if runtime.GOOS == "windows" {
-		path = filepath.Join(tmpBin, binName+".bat")
-		content = fmt.Appendf(nil, "@exit /b %d\r\n", exitCode)
-	} else {
-		path = filepath.Join(tmpBin, binName)
-		content = fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode)
+const (
+	pathPrepend pathMode = iota
+	pathIsolate
+)
+
+func executableName(binName string) string {
+	if runtime.GOOS == "windows" && filepath.Ext(binName) == "" {
+		return binName + ".bat"
 	}
+	return binName
+}
 
+func mockScriptInPath(t *testing.T, binName, scriptContent string, mode pathMode) func() {
+	t.Helper()
+
+	tmpBin := t.TempDir()
+
+	path := filepath.Join(tmpBin, executableName(binName))
+	content := []byte(scriptContent)
 	if err := os.WriteFile(path, content, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	origPath := os.Getenv("PATH")
-	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
+	switch mode {
+	case pathIsolate:
+		os.Setenv("PATH", tmpBin)
+	default:
+		os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
+	}
 
 	return func() {
 		os.Setenv("PATH", origPath)
 	}
+}
+
+func mockExitCodeExecutable(t *testing.T, binName string, exitCode int, mode pathMode) func() {
+	t.Helper()
+
+	var scriptContent string
+	if runtime.GOOS == "windows" {
+		scriptContent = fmt.Sprintf("@exit /b %d\r\n", exitCode)
+	} else {
+		scriptContent = fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
+	}
+
+	return mockScriptInPath(t, binName, scriptContent, mode)
+}
+
+// MockExecutable creates a fake executable in PATH that exits with the given code.
+// Returns a cleanup function.
+func MockExecutable(t *testing.T, binName string, exitCode int) func() {
+	t.Helper()
+	return mockExitCodeExecutable(t, binName, exitCode, pathPrepend)
 }
 
 // MockExecutableIsolated creates a fake executable in a new directory and sets PATH to ONLY that directory.
 // Returns a cleanup function.
 func MockExecutableIsolated(t *testing.T, binName string, exitCode int) func() {
 	t.Helper()
-	tmpBin := t.TempDir()
-	var path string
-	var content []byte
-
-	if runtime.GOOS == "windows" {
-		path = filepath.Join(tmpBin, binName+".bat")
-		content = fmt.Appendf(nil, "@exit /b %d\r\n", exitCode)
-	} else {
-		path = filepath.Join(tmpBin, binName)
-		content = fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode)
-	}
-
-	if err := os.WriteFile(path, content, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	origPath := os.Getenv("PATH")
-	os.Setenv("PATH", tmpBin)
-
-	return func() {
-		os.Setenv("PATH", origPath)
-	}
+	return mockExitCodeExecutable(t, binName, exitCode, pathIsolate)
 }
 
 // MockBinaryInPath creates a fake executable in PATH and returns a cleanup function.
 func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 	t.Helper()
-	tmpBin := t.TempDir()
-
-	path := filepath.Join(tmpBin, binName)
-	if err := os.WriteFile(path, []byte(scriptContent), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	origPath := os.Getenv("PATH")
-	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
-
-	return func() {
-		os.Setenv("PATH", origPath)
-	}
+	return mockScriptInPath(t, binName, scriptContent, pathPrepend)
 }
 
 // OpenTestDB creates a test database in a temporary directory.
@@ -370,53 +239,6 @@ func CreateTestJobWithSHA(t *testing.T, db *storage.DB, repo *storage.Repo, sha,
 	}
 
 	return job
-}
-
-// InitTestGitRepo initializes a git repository with a commit in the given directory.
-// Creates the directory if it doesn't exist, runs git init, configures user, creates
-// a test file, and makes an initial commit.
-func InitTestGitRepo(t *testing.T, dir string) {
-	t.Helper()
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatalf("Failed to create repo dir: %v", err)
-	}
-
-	cmds := [][]string{
-		{"git", "-C", dir, "init"},
-		{"git", "-C", dir, "config", "user.email", GitUserEmail},
-		{"git", "-C", dir, "config", "user.name", GitUserName},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	testFile := filepath.Join(dir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	addCmd := exec.Command("git", "-C", dir, "add", ".")
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
-	}
-	commitCmd := exec.Command("git", "-C", dir, "commit", "-m", "initial commit")
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
-	}
-}
-
-// GetHeadSHA returns the HEAD commit SHA for the git repo at dir.
-func GetHeadSHA(t *testing.T, dir string) string {
-	t.Helper()
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git rev-parse HEAD failed: %v", err)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // MakeJSONRequest creates an HTTP request with the given body marshaled as JSON.
