@@ -193,6 +193,31 @@ func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
+func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\nnext\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+
+	msgPath := filepath.Join(r.dir, "commit-message.txt")
+	message := strings.Repeat("s", subjectLen) + "\n"
+	require.NoError(t, os.WriteFile(msgPath, []byte(message), 0o644))
+	r.git("commit", "-F", msgPath)
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
 func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)

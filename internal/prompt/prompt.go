@@ -400,11 +400,12 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	var currentRequired strings.Builder
 	currentRequired.WriteString("## Current Commit\n\n")
 	fmt.Fprintf(&currentRequired, "**Commit:** %s\n", shortSHA)
-	fmt.Fprintf(&currentRequired, "**Author:** %s\n", info.Author)
-	fmt.Fprintf(&currentRequired, "**Subject:** %s\n", info.Subject)
 	currentRequired.WriteString("\n")
 
 	var currentOverflow strings.Builder
+	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", info.Subject)
+	currentOverflow.WriteString("\n")
 	if info.Body != "" {
 		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
 	}

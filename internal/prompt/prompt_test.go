@@ -601,6 +601,18 @@ func TestBuildPromptCodexOversizedDiffWithLargeCommitBodyStaysWithinMaxPromptSiz
 	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
 }
 
+func TestBuildPromptCodexOversizedDiffWithLargeCommitSubjectStaysWithinMaxPromptSize(t *testing.T) {
+	repoPath, sha := setupLargeCommitSubjectRepo(t, MaxPromptSize)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large commit metadata to still stay within the prompt cap")
+	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit subject metadata is oversized")
+	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
+}
+
 func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
 	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
 	probeRangeRef := probeSHA + "~1.." + probeSHA
