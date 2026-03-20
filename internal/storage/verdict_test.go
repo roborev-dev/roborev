@@ -535,6 +535,11 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "PassPhraseWins/explicit fail label before later pass phrase is still pass",
+		output: "**Verdict**: FAIL\n\nNo issues found.",
+		want:   VerdictPass,
+	},
+	{
 		name:   "PassPhraseWins/caveat prose after pass phrase is still pass",
 		output: "No issues found, but consider refactoring.",
 		want:   VerdictPass,

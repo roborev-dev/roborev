@@ -62,6 +62,9 @@ func ParseVerdict(output string) string {
 
 	for line := range strings.SplitSeq(output, "\n") {
 		normalized := normalizeVerdictLine(line)
+		// Historical reviews sometimes include a stale "Verdict: Fail" header
+		// before a later "No issues found." summary. Preserve the existing rule
+		// that a later clear pass phrase wins over contradictory narration.
 		if isExplicitVerdictValue(normalized, "pass") {
 			return verdictPass
 		}
