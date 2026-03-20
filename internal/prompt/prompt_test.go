@@ -575,16 +575,28 @@ func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testin
 }
 
 func TestBuildPromptCodexOversizedDiffKeepsCurrentCommitMetadataWhenTrimming(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	shortestFallback := shortestCodexCommitFallback(probeSHA)
 	repoPath, sha := singleCommitNearCapRepo(t, 1)
+	shortestFallback := shortestCodexCommitFallback(sha)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
-	assert.Contains(t, prompt, truncateUTF8(shortestFallback, 1), "expected a diff-omitted marker even when only one byte remained before trimming")
+	assert.Contains(t, prompt, shortestFallback, "expected the shortest fallback to be preserved after trimming earlier context")
+	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
+	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
+}
+
+func TestBuildPromptCodexOversizedDiffWithLargeCommitBodyStaysWithinMaxPromptSize(t *testing.T) {
+	repoPath, sha := setupLargeCommitBodyRepo(t, MaxPromptSize)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large commit metadata to still stay within the prompt cap")
+	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
 }
@@ -606,20 +618,31 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 }
 
 func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	probeRangeRef := probeSHA + "~1.." + probeSHA
-	shortestFallback := shortestCodexRangeFallback(probeRangeRef)
 	repoPath, sha := rangeNearCapRepo(t, 1)
 	rangeRef := sha + "~1.." + sha
+	shortestFallback := shortestCodexRangeFallback(rangeRef)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
-	assert.Contains(t, prompt, truncateUTF8(shortestFallback, 1), "expected a diff-omitted marker even when only one byte remained before trimming")
+	assert.Contains(t, prompt, shortestFallback, "expected the shortest range fallback to be preserved after trimming earlier context")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "- "+gitpkg.ShortSHA(sha)+" large change", "expected the current range entry to remain intact")
+}
+
+func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxPromptSize(t *testing.T) {
+	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 4096)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large range metadata to still stay within the prompt cap")
+	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to remain present when range metadata is oversized")
+	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
+	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
 }
 
 func TestLoadGuidelines(t *testing.T) {

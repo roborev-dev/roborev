@@ -167,6 +167,58 @@ func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, s
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
+func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\nnext\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+
+	msgPath := filepath.Join(r.dir, "commit-message.txt")
+	body := strings.Repeat("body line\n", max(1, bodyLen/len("body line\n")))
+	message := "large change\n\n" + body
+	require.NoError(t, os.WriteFile(msgPath, []byte(message), 0o644))
+	r.git("commit", "-F", msgPath)
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
+func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	startSHA := r.git("rev-parse", "HEAD")
+	subject := strings.Repeat("s", subjectLen)
+	for i := range commitCount {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(r.dir, "base.txt"),
+			[]byte(strings.Repeat("x\n", i+2)), 0o644,
+		))
+		r.git("add", "base.txt")
+		r.git("commit", "-m", subject)
+	}
+
+	endSHA := r.git("rev-parse", "HEAD")
+	return r.dir, startSHA + ".." + endSHA
+}
+
 func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {
 	t.Helper()
 	db := testutil.OpenTestDB(t)

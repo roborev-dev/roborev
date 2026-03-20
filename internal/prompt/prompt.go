@@ -256,7 +256,7 @@ func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 }
 
 func buildPromptPreservingCurrentSection(
-	requiredPrefix, optionalContext, currentSection string,
+	requiredPrefix, optionalContext, currentRequired, currentOverflow string,
 	limit int,
 	variants ...string,
 ) string {
@@ -264,15 +264,26 @@ func buildPromptPreservingCurrentSection(
 	if len(variants) > 0 {
 		shortestLen = len(variants[len(variants)-1])
 	}
-	optionalLimit := max(0, limit-len(requiredPrefix)-len(currentSection)-shortestLen)
-	if len(optionalContext) > optionalLimit {
-		optionalContext = truncateUTF8(optionalContext, optionalLimit)
+	softBudget := max(0, limit-len(requiredPrefix)-len(currentRequired)-shortestLen)
+	softLen := len(optionalContext) + len(currentOverflow)
+	if softLen > softBudget {
+		overflow := softLen - softBudget
+		if overflow > 0 && len(optionalContext) > 0 {
+			originalLen := len(optionalContext)
+			trimmedLen := max(0, len(optionalContext)-overflow)
+			optionalContext = truncateUTF8(optionalContext, trimmedLen)
+			overflow -= originalLen - len(optionalContext)
+		}
+		if overflow > 0 && len(currentOverflow) > 0 {
+			currentOverflow = truncateUTF8(currentOverflow, max(0, len(currentOverflow)-overflow))
+		}
 	}
 
 	var sb strings.Builder
 	sb.WriteString(requiredPrefix)
 	sb.WriteString(optionalContext)
-	sb.WriteString(currentSection)
+	sb.WriteString(currentRequired)
+	sb.WriteString(currentOverflow)
 	writeLongestFitting(&sb, limit, variants...)
 	return sb.String()
 }
@@ -386,15 +397,17 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	var currentSection strings.Builder
-	currentSection.WriteString("## Current Commit\n\n")
-	fmt.Fprintf(&currentSection, "**Commit:** %s\n", shortSHA)
-	fmt.Fprintf(&currentSection, "**Author:** %s\n", info.Author)
-	fmt.Fprintf(&currentSection, "**Subject:** %s\n", info.Subject)
+	var currentRequired strings.Builder
+	currentRequired.WriteString("## Current Commit\n\n")
+	fmt.Fprintf(&currentRequired, "**Commit:** %s\n", shortSHA)
+	fmt.Fprintf(&currentRequired, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&currentRequired, "**Subject:** %s\n", info.Subject)
+	currentRequired.WriteString("\n")
+
+	var currentOverflow strings.Builder
 	if info.Body != "" {
-		fmt.Fprintf(&currentSection, "\n**Message:**\n%s\n", info.Body)
+		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
 	}
-	currentSection.WriteString("\n")
 
 	// Get and include the diff
 	diff, err := git.GetDiff(repoPath, sha, b.resolveExcludes(repoPath, reviewType)...)
@@ -413,13 +426,14 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
-	baseLen := len(requiredPrefix) + optionalContext.Len() + currentSection.Len()
+	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
 	if baseLen+diffSection.Len() > MaxPromptSize {
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
-				currentSection.String(),
+				currentRequired.String(),
+				currentOverflow.String(),
 				MaxPromptSize,
 				codexCommitInspectionFallbackVariants(sha)...,
 			), nil
@@ -428,7 +442,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 			var sb strings.Builder
 			sb.WriteString(requiredPrefix)
 			sb.WriteString(optionalContext.String())
-			sb.WriteString(currentSection.String())
+			sb.WriteString(currentRequired.String())
+			sb.WriteString(currentOverflow.String())
 			sb.WriteString("### Diff\n\n")
 			sb.WriteString("(Diff too large to include - please review the commit directly)\n")
 			fmt.Fprintf(&sb, "View with: git show %s\n", sha)
@@ -439,7 +454,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	var sb strings.Builder
 	sb.WriteString(requiredPrefix)
 	sb.WriteString(optionalContext.String())
-	sb.WriteString(currentSection.String())
+	sb.WriteString(currentRequired.String())
+	sb.WriteString(currentOverflow.String())
 	sb.WriteString(diffSection.String())
 	return sb.String(), nil
 }
@@ -482,20 +498,21 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 
 	// Commit range section
-	var currentSection strings.Builder
-	currentSection.WriteString("## Commit Range\n\n")
-	fmt.Fprintf(&currentSection, "Reviewing %d commits:\n\n", len(commits))
+	var currentRequired strings.Builder
+	currentRequired.WriteString("## Commit Range\n\n")
+	fmt.Fprintf(&currentRequired, "Reviewing %d commits:\n\n", len(commits))
 
+	var currentOverflow strings.Builder
 	for _, sha := range commits {
 		info, err := git.GetCommitInfo(repoPath, sha)
 		shortSHA := git.ShortSHA(sha)
 		if err == nil {
-			fmt.Fprintf(&currentSection, "- %s %s\n", shortSHA, info.Subject)
+			fmt.Fprintf(&currentOverflow, "- %s %s\n", shortSHA, info.Subject)
 		} else {
-			fmt.Fprintf(&currentSection, "- %s\n", shortSHA)
+			fmt.Fprintf(&currentOverflow, "- %s\n", shortSHA)
 		}
 	}
-	currentSection.WriteString("\n")
+	currentOverflow.WriteString("\n")
 
 	// Get and include the combined diff for the range
 	diff, err := git.GetRangeDiff(repoPath, rangeRef, b.resolveExcludes(repoPath, reviewType)...)
@@ -514,13 +531,14 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
-	baseLen := len(requiredPrefix) + optionalContext.Len() + currentSection.Len()
+	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
 	if baseLen+diffSection.Len() > MaxPromptSize {
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
-				currentSection.String(),
+				currentRequired.String(),
+				currentOverflow.String(),
 				MaxPromptSize,
 				codexRangeInspectionFallbackVariants(rangeRef)...,
 			), nil
@@ -529,7 +547,8 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 			var sb strings.Builder
 			sb.WriteString(requiredPrefix)
 			sb.WriteString(optionalContext.String())
-			sb.WriteString(currentSection.String())
+			sb.WriteString(currentRequired.String())
+			sb.WriteString(currentOverflow.String())
 			sb.WriteString("### Combined Diff\n\n")
 			sb.WriteString("(Diff too large to include - please review the commits directly)\n")
 			fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
@@ -540,7 +559,8 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	var sb strings.Builder
 	sb.WriteString(requiredPrefix)
 	sb.WriteString(optionalContext.String())
-	sb.WriteString(currentSection.String())
+	sb.WriteString(currentRequired.String())
+	sb.WriteString(currentOverflow.String())
 	sb.WriteString(diffSection.String())
 	return sb.String(), nil
 }
