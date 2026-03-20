@@ -2,17 +2,28 @@ package version
 
 import (
 	"runtime/debug"
-	"strings"
 )
+
+const (
+	defaultVersion  = "dev"
+	develVersion    = "(devel)"
+	settingRevision = "vcs.revision"
+	settingModified = "vcs.modified"
+	settingVCSTime  = "vcs.time"
+	shortHashLen    = 7
+	dirtySuffix     = "-dirty"
+)
+
+var readBuildInfo = debug.ReadBuildInfo
 
 // Version is the build version. Set via -ldflags for releases,
 // otherwise falls back to git commit hash from VCS info.
 // For dev builds with git describe version, use: make install
-var Version = "dev"
+var Version = defaultVersion
 
 func init() {
 	// If Version was set via ldflags, use it
-	if Version != "dev" {
+	if Version != defaultVersion {
 		return
 	}
 
@@ -21,40 +32,29 @@ func init() {
 }
 
 func getVersionFromVCS() string {
-	info, ok := debug.ReadBuildInfo()
+	info, ok := readBuildInfo()
 	if !ok {
-		return "dev"
+		return defaultVersion
 	}
 
 	// Use module version when installed via `go install pkg@version`
-	if v := info.Main.Version; v != "" && v != "(devel)" {
+	if v := info.Main.Version; v != "" && v != develVersion {
 		return v
 	}
 
-	var revision string
-	var modified bool
-
-	for _, setting := range info.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			revision = setting.Value
-		case "vcs.modified":
-			modified = setting.Value == "true"
-		}
-	}
-
+	revision := buildSetting(info, settingRevision)
 	if revision == "" {
-		return "dev"
+		return defaultVersion
 	}
 
 	// Use short hash
-	if len(revision) > 7 {
-		revision = revision[:7]
+	if len(revision) > shortHashLen {
+		revision = revision[:shortHashLen]
 	}
 
 	// Mark dirty builds
-	if modified {
-		revision += "-dirty"
+	if buildSetting(info, settingModified) == "true" {
+		revision += dirtySuffix
 	}
 
 	return revision
@@ -62,20 +62,25 @@ func getVersionFromVCS() string {
 
 // Full returns the full version string with additional build info
 func Full() string {
-	info, ok := debug.ReadBuildInfo()
+	info, ok := readBuildInfo()
 	if !ok {
-		return "dev"
+		return Version
 	}
 
-	var parts []string
-	parts = append(parts, Version)
+	vcsTime := buildSetting(info, settingVCSTime)
+	if vcsTime == "" {
+		return Version
+	}
 
+	return Version + " " + vcsTime
+}
+
+func buildSetting(info *debug.BuildInfo, key string) string {
 	for _, setting := range info.Settings {
-		if setting.Key == "vcs.time" {
-			parts = append(parts, setting.Value)
-			break
+		if setting.Key == key {
+			return setting.Value
 		}
 	}
 
-	return strings.Join(parts, " ")
+	return ""
 }
