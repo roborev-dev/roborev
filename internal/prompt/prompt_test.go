@@ -574,6 +574,21 @@ func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testin
 	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to be preserved by trimming earlier context")
 }
 
+func TestBuildPromptCodexOversizedDiffKeepsCurrentCommitMetadataWhenTrimming(t *testing.T) {
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	shortestFallback := shortestCodexCommitFallback(probeSHA)
+	repoPath, sha := singleCommitNearCapRepo(t, 1)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assert.Contains(t, prompt, truncateUTF8(shortestFallback, 1), "expected a diff-omitted marker even when only one byte remained before trimming")
+	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
+	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
+}
+
 func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
 	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
 	probeRangeRef := probeSHA + "~1.." + probeSHA
@@ -588,6 +603,23 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
 	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to be preserved by trimming earlier context")
+}
+
+func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming(t *testing.T) {
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	probeRangeRef := probeSHA + "~1.." + probeSHA
+	shortestFallback := shortestCodexRangeFallback(probeRangeRef)
+	repoPath, sha := rangeNearCapRepo(t, 1)
+	rangeRef := sha + "~1.." + sha
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assert.Contains(t, prompt, truncateUTF8(shortestFallback, 1), "expected a diff-omitted marker even when only one byte remained before trimming")
+	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
+	assertContains(t, prompt, "- "+gitpkg.ShortSHA(sha)+" large change", "expected the current range entry to remain intact")
 }
 
 func TestLoadGuidelines(t *testing.T) {

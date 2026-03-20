@@ -242,15 +242,6 @@ func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 		return
 	}
 	shortest := variants[len(variants)-1]
-	if len(shortest) > limit {
-		shortest = truncateUTF8(shortest, limit)
-	}
-	roomForShortest := max(0, limit-len(shortest))
-	if sb.Len() > roomForShortest {
-		current := truncateUTF8(sb.String(), roomForShortest)
-		sb.Reset()
-		sb.WriteString(current)
-	}
 	remaining := limit - sb.Len()
 	if remaining <= 0 {
 		return
@@ -262,6 +253,28 @@ func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 		}
 	}
 	sb.WriteString(truncateUTF8(shortest, remaining))
+}
+
+func buildPromptPreservingCurrentSection(
+	requiredPrefix, optionalContext, currentSection string,
+	limit int,
+	variants ...string,
+) string {
+	shortestLen := 0
+	if len(variants) > 0 {
+		shortestLen = len(variants[len(variants)-1])
+	}
+	optionalLimit := max(0, limit-len(requiredPrefix)-len(currentSection)-shortestLen)
+	if len(optionalContext) > optionalLimit {
+		optionalContext = truncateUTF8(optionalContext, optionalLimit)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(requiredPrefix)
+	sb.WriteString(optionalContext)
+	sb.WriteString(currentSection)
+	writeLongestFitting(&sb, limit, variants...)
+	return sb.String()
 }
 
 func truncateUTF8(s string, maxBytes int) string {
@@ -305,10 +318,6 @@ func codexCommitInspectionFallbackVariants(sha string) []string {
 	}
 }
 
-func writeCodexCommitInspectionFallback(sb *strings.Builder, sha string) {
-	writeLongestFitting(sb, MaxPromptSize, codexCommitInspectionFallbackVariants(sha)...)
-}
-
 func codexRangeInspectionFallbackVariants(rangeRef string) []string {
 	return []string{
 		fmt.Sprintf("### Combined Diff\n\n"+
@@ -337,14 +346,8 @@ func codexRangeInspectionFallbackVariants(rangeRef string) []string {
 	}
 }
 
-func writeCodexRangeInspectionFallback(sb *strings.Builder, rangeRef string) {
-	writeLongestFitting(sb, MaxPromptSize, codexRangeInspectionFallbackVariants(rangeRef)...)
-}
-
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
-	var sb strings.Builder
-
 	// Start with system prompt
 	promptType := "review"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -353,11 +356,12 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	sb.WriteString(GetSystemPrompt(agentName, promptType))
-	sb.WriteString("\n")
+	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+
+	var optionalContext strings.Builder
 
 	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&optionalContext, loadGuidelines(repoPath))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -366,12 +370,12 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 			// Log but don't fail - previous reviews are nice-to-have context
 			// Just continue without them
 		} else if len(contexts) > 0 {
-			b.writePreviousReviews(&sb, contexts)
+			b.writePreviousReviews(&optionalContext, contexts)
 		}
 	}
 
 	// Include previous review attempts for this same commit (for re-reviews)
-	b.writePreviousAttemptsForGitRef(&sb, sha)
+	b.writePreviousAttemptsForGitRef(&optionalContext, sha)
 
 	// Current commit section
 	shortSHA := git.ShortSHA(sha)
@@ -382,14 +386,15 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	sb.WriteString("## Current Commit\n\n")
-	fmt.Fprintf(&sb, "**Commit:** %s\n", shortSHA)
-	fmt.Fprintf(&sb, "**Author:** %s\n", info.Author)
-	fmt.Fprintf(&sb, "**Subject:** %s\n", info.Subject)
+	var currentSection strings.Builder
+	currentSection.WriteString("## Current Commit\n\n")
+	fmt.Fprintf(&currentSection, "**Commit:** %s\n", shortSHA)
+	fmt.Fprintf(&currentSection, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&currentSection, "**Subject:** %s\n", info.Subject)
 	if info.Body != "" {
-		fmt.Fprintf(&sb, "\n**Message:**\n%s\n", info.Body)
+		fmt.Fprintf(&currentSection, "\n**Message:**\n%s\n", info.Body)
 	}
-	sb.WriteString("\n")
+	currentSection.WriteString("\n")
 
 	// Get and include the diff
 	diff, err := git.GetDiff(repoPath, sha, b.resolveExcludes(repoPath, reviewType)...)
@@ -408,26 +413,39 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
-	if sb.Len()+diffSection.Len() > MaxPromptSize {
+	baseLen := len(requiredPrefix) + optionalContext.Len() + currentSection.Len()
+	if baseLen+diffSection.Len() > MaxPromptSize {
 		if isCodexReviewAgent(agentName) {
-			writeCodexCommitInspectionFallback(&sb, sha)
+			return buildPromptPreservingCurrentSection(
+				requiredPrefix,
+				optionalContext.String(),
+				currentSection.String(),
+				MaxPromptSize,
+				codexCommitInspectionFallbackVariants(sha)...,
+			), nil
 		} else {
 			// Fall back to just commit info without diff
+			var sb strings.Builder
+			sb.WriteString(requiredPrefix)
+			sb.WriteString(optionalContext.String())
+			sb.WriteString(currentSection.String())
 			sb.WriteString("### Diff\n\n")
 			sb.WriteString("(Diff too large to include - please review the commit directly)\n")
 			fmt.Fprintf(&sb, "View with: git show %s\n", sha)
+			return sb.String(), nil
 		}
-	} else {
-		sb.WriteString(diffSection.String())
 	}
 
+	var sb strings.Builder
+	sb.WriteString(requiredPrefix)
+	sb.WriteString(optionalContext.String())
+	sb.WriteString(currentSection.String())
+	sb.WriteString(diffSection.String())
 	return sb.String(), nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
-	var sb strings.Builder
-
 	// Start with system prompt for ranges
 	promptType := "range"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -436,11 +454,12 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	sb.WriteString(GetSystemPrompt(agentName, promptType))
-	sb.WriteString("\n")
+	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+
+	var optionalContext strings.Builder
 
 	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&optionalContext, loadGuidelines(repoPath))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -448,13 +467,13 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, startSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				b.writePreviousReviews(&sb, contexts)
+				b.writePreviousReviews(&optionalContext, contexts)
 			}
 		}
 	}
 
 	// Include previous review attempts for this same range (for re-reviews)
-	b.writePreviousAttemptsForGitRef(&sb, rangeRef)
+	b.writePreviousAttemptsForGitRef(&optionalContext, rangeRef)
 
 	// Get commits in range
 	commits, err := git.GetRangeCommits(repoPath, rangeRef)
@@ -463,19 +482,20 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 
 	// Commit range section
-	sb.WriteString("## Commit Range\n\n")
-	fmt.Fprintf(&sb, "Reviewing %d commits:\n\n", len(commits))
+	var currentSection strings.Builder
+	currentSection.WriteString("## Commit Range\n\n")
+	fmt.Fprintf(&currentSection, "Reviewing %d commits:\n\n", len(commits))
 
 	for _, sha := range commits {
 		info, err := git.GetCommitInfo(repoPath, sha)
 		shortSHA := git.ShortSHA(sha)
 		if err == nil {
-			fmt.Fprintf(&sb, "- %s %s\n", shortSHA, info.Subject)
+			fmt.Fprintf(&currentSection, "- %s %s\n", shortSHA, info.Subject)
 		} else {
-			fmt.Fprintf(&sb, "- %s\n", shortSHA)
+			fmt.Fprintf(&currentSection, "- %s\n", shortSHA)
 		}
 	}
-	sb.WriteString("\n")
+	currentSection.WriteString("\n")
 
 	// Get and include the combined diff for the range
 	diff, err := git.GetRangeDiff(repoPath, rangeRef, b.resolveExcludes(repoPath, reviewType)...)
@@ -494,19 +514,34 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
-	if sb.Len()+diffSection.Len() > MaxPromptSize {
+	baseLen := len(requiredPrefix) + optionalContext.Len() + currentSection.Len()
+	if baseLen+diffSection.Len() > MaxPromptSize {
 		if isCodexReviewAgent(agentName) {
-			writeCodexRangeInspectionFallback(&sb, rangeRef)
+			return buildPromptPreservingCurrentSection(
+				requiredPrefix,
+				optionalContext.String(),
+				currentSection.String(),
+				MaxPromptSize,
+				codexRangeInspectionFallbackVariants(rangeRef)...,
+			), nil
 		} else {
 			// Fall back to just commit info without diff
+			var sb strings.Builder
+			sb.WriteString(requiredPrefix)
+			sb.WriteString(optionalContext.String())
+			sb.WriteString(currentSection.String())
 			sb.WriteString("### Combined Diff\n\n")
 			sb.WriteString("(Diff too large to include - please review the commits directly)\n")
 			fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
+			return sb.String(), nil
 		}
-	} else {
-		sb.WriteString(diffSection.String())
 	}
 
+	var sb strings.Builder
+	sb.WriteString(requiredPrefix)
+	sb.WriteString(optionalContext.String())
+	sb.WriteString(currentSection.String())
+	sb.WriteString(diffSection.String())
 	return sb.String(), nil
 }
 
