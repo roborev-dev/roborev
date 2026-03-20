@@ -664,7 +664,7 @@ func (u *Updater) fetchChecksumFromFile(url, assetName string) (string, error) {
 }
 
 func extractChecksum(releaseBody, assetName string) string {
-	for _, line := range strings.Split(releaseBody, "\n") {
+	for line := range strings.SplitSeq(releaseBody, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.Contains(line, assetName) {
 			continue
@@ -732,10 +732,7 @@ func parseVersion(raw string) parsedVersion {
 }
 
 func (v parsedVersion) Compare(other parsedVersion) int {
-	maxLen := len(v.parts)
-	if len(other.parts) > maxLen {
-		maxLen = len(other.parts)
-	}
+	maxLen := max(len(other.parts), len(v.parts))
 	for i := range maxLen {
 		var left, right int
 		if i < len(v.parts) {
