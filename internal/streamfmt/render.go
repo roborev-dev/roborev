@@ -263,13 +263,3 @@ func RenderMarkdownLines(
 	}
 	return lines
 }
-
-// renderMarkdownLines is the package-private alias used by Formatter.
-func renderMarkdownLines(
-	text string, wrapWidth, maxWidth int,
-	glamourStyle gansi.StyleConfig, tabWidth int,
-) []string {
-	return RenderMarkdownLines(
-		text, wrapWidth, maxWidth, glamourStyle, tabWidth,
-	)
-}

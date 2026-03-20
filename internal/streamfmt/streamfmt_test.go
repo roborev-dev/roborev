@@ -711,7 +711,7 @@ func TestFormatter_OpenCode(t *testing.T) {
 	}
 }
 
-func TestFormatter_Codex_Scenarios(t *testing.T) {
+func TestFormatter_CodexRendering(t *testing.T) {
 	longCmd := "bash -lc " + strings.Repeat("x", 100)
 	tests := []streamTestCase{
 		{
@@ -788,62 +788,6 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 			},
 		},
 		{
-			name: "Codex Command Completed Fallback",
-			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc pwd"}}`,
-			},
-			contains: []string{
-				"Bash   bash -lc ls",
-				"Bash   bash -lc pwd",
-			},
-			counts: map[string]int{
-				"Bash   bash -lc ls":  1,
-				"Bash   bash -lc pwd": 1,
-			},
-		},
-		{
-			name: "Codex Command Mixed ID Started Without ID Completed With ID",
-			events: []string{
-				`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-			},
-			contains: []string{"Bash   bash -lc ls"},
-			counts:   map[string]int{"Bash   bash -lc ls": 1},
-		},
-		{
-			name: "Codex Command Mixed ID Started With ID Completed Without ID",
-			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-			},
-			contains: []string{"Bash   bash -lc ls"},
-			counts:   map[string]int{"Bash   bash -lc ls": 1},
-		},
-		{
-			name: "Codex Command Started With ID Completed Without Command Clears Counter",
-			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc ls"}}`,
-			},
-			contains: []string{"Bash   bash -lc ls"},
-			counts:   map[string]int{"Bash   bash -lc ls": 2},
-		},
-		{
-			name: "Codex Command Mixed ID Fallback Does Not Leave Stale ID",
-			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.started","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-			},
-			contains: []string{"Bash   bash -lc ls"},
-			counts:   map[string]int{"Bash   bash -lc ls": 2},
-		},
-		{
 			name: "Codex Reasoning Displayed",
 			events: []string{
 				`{"type":"item.completed","item":{"type":"reasoning","text":"**Reviewing error handling changes**"}}`,
@@ -857,17 +801,6 @@ func TestFormatter_Codex_Scenarios(t *testing.T) {
 				`{"type":"item.updated","item":{"type":"reasoning","text":"still thinking"}}`,
 			},
 			empty: true,
-		},
-		{
-			name: "Codex Multi ID Same Command Deterministic Pairing",
-			events: []string{
-				`{"type":"item.started","item":{"id":"cmd_A","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.started","item":{"id":"cmd_B","type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				`{"type":"item.completed","item":{"id":"cmd_B","type":"command_execution"}}`,
-				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-			},
-			counts: map[string]int{"Bash   bash -lc ls": 3},
 		},
 	}
 

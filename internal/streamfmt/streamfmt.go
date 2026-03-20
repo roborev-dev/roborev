@@ -60,15 +60,7 @@ type Formatter struct {
 
 	// Tracks opencode tool call IDs that have already been rendered.
 	opencodeRenderedToolIDs map[string]struct{}
-
-	// Tracks codex command_execution items that have already been rendered.
-	codexRenderedCommandIDs map[string]struct{}
-	// Track started command text to suppress duplicate completed echoes, including mixed-ID pairs.
-	codexStartedCommands map[string]int
-	// Track started command text by ID so completed events missing command can clear started state.
-	codexStartedCommandsByID map[string]string
-	// Track started IDs per command in FIFO order for deterministic pairing.
-	codexStartedIDsByCommand map[string][]string
+	codexCommands           codexCommandTracker
 }
 
 // New creates a Formatter that writes to w. When isTTY is true,
@@ -301,7 +293,11 @@ func (f *Formatter) processCodexItem(eventType string, item *codexItem) {
 		f.writeText(SanitizeControlKeepNewlines(item.Text))
 	case "command_execution":
 		cmd := strings.TrimSpace(sanitizeControl(item.Command))
-		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
+		cmd, render := f.codexCommands.Observe(eventType, codexItem{
+			ID:      item.ID,
+			Command: cmd,
+		})
+		if !render {
 			return
 		}
 		if len(cmd) > 80 {
@@ -314,143 +310,6 @@ func (f *Formatter) processCodexItem(eventType string, item *codexItem) {
 		}
 		f.writeTool("Edit", "")
 	}
-}
-
-func (f *Formatter) shouldRenderCodexCommand(eventType string, item *codexItem, cmd string) bool {
-	if eventType != "item.started" && eventType != "item.completed" {
-		return false
-	}
-	id := strings.TrimSpace(item.ID)
-	if eventType == "item.started" {
-		if cmd == "" {
-			return false
-		}
-		if id != "" {
-			if f.codexRenderedCommandIDs == nil {
-				f.codexRenderedCommandIDs = make(map[string]struct{})
-			}
-			if _, seen := f.codexRenderedCommandIDs[id]; seen {
-				return false
-			}
-			f.codexRenderedCommandIDs[id] = struct{}{}
-			if f.codexStartedCommandsByID == nil {
-				f.codexStartedCommandsByID = make(map[string]string)
-			}
-			f.codexStartedCommandsByID[id] = cmd
-			if f.codexStartedIDsByCommand == nil {
-				f.codexStartedIDsByCommand = make(map[string][]string)
-			}
-			f.codexStartedIDsByCommand[cmd] = append(f.codexStartedIDsByCommand[cmd], id)
-		}
-		if f.codexStartedCommands == nil {
-			f.codexStartedCommands = make(map[string]int)
-		}
-		f.codexStartedCommands[cmd]++
-		return true
-	}
-
-	if cmd == "" {
-		if id != "" {
-			if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
-				f.decrementCodexStartedCommand(startedCmd)
-				f.removeCodexStartedIDFromQueue(startedCmd, id)
-				delete(f.codexStartedCommandsByID, id)
-			}
-		}
-		return false
-	}
-
-	if id != "" {
-		if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
-			f.decrementCodexStartedCommand(startedCmd)
-			f.removeCodexStartedIDFromQueue(startedCmd, id)
-			delete(f.codexStartedCommandsByID, id)
-			if startedCmd == cmd {
-				if f.codexRenderedCommandIDs == nil {
-					f.codexRenderedCommandIDs = make(map[string]struct{})
-				}
-				f.codexRenderedCommandIDs[id] = struct{}{}
-				return false
-			}
-		}
-	}
-
-	// Completed events should be suppressed when we've already rendered the paired
-	// started event for the same command text, even if ID presence changed.
-	if count := f.codexStartedCommands[cmd]; count > 0 {
-		f.decrementCodexStartedCommand(cmd)
-		if id == "" {
-			// Keep ID->command tracking in sync when a completion is matched by command only.
-			f.consumeCodexStartedCommandIDForCommand(cmd)
-		}
-		if id != "" {
-			if f.codexRenderedCommandIDs == nil {
-				f.codexRenderedCommandIDs = make(map[string]struct{})
-			}
-			f.codexRenderedCommandIDs[id] = struct{}{}
-		}
-		return false
-	}
-
-	if id != "" {
-		if f.codexRenderedCommandIDs == nil {
-			f.codexRenderedCommandIDs = make(map[string]struct{})
-		}
-		if _, seen := f.codexRenderedCommandIDs[id]; seen {
-			return false
-		}
-		f.codexRenderedCommandIDs[id] = struct{}{}
-		return true
-	}
-
-	return true
-}
-
-func (f *Formatter) consumeCodexStartedCommandIDForCommand(cmd string) {
-	if cmd == "" {
-		return
-	}
-	ids := f.codexStartedIDsByCommand[cmd]
-	if len(ids) == 0 {
-		return
-	}
-	// Pop the oldest ID (FIFO) for deterministic pairing.
-	consumed := ids[0]
-	if len(ids) == 1 {
-		delete(f.codexStartedIDsByCommand, cmd)
-	} else {
-		f.codexStartedIDsByCommand[cmd] = ids[1:]
-	}
-	delete(f.codexStartedCommandsByID, consumed)
-}
-
-// removeCodexStartedIDFromQueue removes a specific ID from the per-command FIFO.
-func (f *Formatter) removeCodexStartedIDFromQueue(cmd, id string) {
-	ids := f.codexStartedIDsByCommand[cmd]
-	for i, v := range ids {
-		if v == id {
-			f.codexStartedIDsByCommand[cmd] = append(ids[:i], ids[i+1:]...)
-			if len(f.codexStartedIDsByCommand[cmd]) == 0 {
-				delete(f.codexStartedIDsByCommand, cmd)
-			}
-			return
-		}
-	}
-}
-
-func (f *Formatter) decrementCodexStartedCommand(cmd string) {
-	if cmd == "" {
-		return
-	}
-	count := f.codexStartedCommands[cmd]
-	if count <= 0 {
-		return
-	}
-	if count == 1 {
-		delete(f.codexStartedCommands, cmd)
-		return
-	}
-	f.codexStartedCommands[cmd] = count - 1
 }
 
 func (f *Formatter) processOpenCodePart(
@@ -599,7 +458,7 @@ func (f *Formatter) writeText(text string) {
 		f.writef("%s\n", text)
 		return
 	}
-	lines := renderMarkdownLines(
+	lines := RenderMarkdownLines(
 		text, f.width, f.width, f.glamourStyle, 2,
 	)
 	for _, line := range lines {
@@ -663,7 +522,7 @@ func PrintMarkdownOrPlain(w io.Writer, text string) {
 	}
 	width := TerminalWidth(w)
 	style := GlamourStyle()
-	lines := renderMarkdownLines(text, width, width, style, 2)
+	lines := RenderMarkdownLines(text, width, width, style, 2)
 	for _, line := range lines {
 		fmt.Fprintln(w, line)
 	}
