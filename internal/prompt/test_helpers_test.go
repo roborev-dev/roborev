@@ -193,6 +193,20 @@ func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
+func commitWithIdentity(t *testing.T, repoDir, messageFile, authorName string) {
+	t.Helper()
+	cmd := exec.Command("git", "commit", "-F", messageFile)
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME="+authorName,
+		"GIT_AUTHOR_EMAIL="+testGitEmail,
+		"GIT_COMMITTER_NAME="+authorName,
+		"GIT_COMMITTER_EMAIL="+testGitEmail,
+	)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git commit with identity failed\n%s", out)
+}
+
 func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
@@ -214,6 +228,30 @@ func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) 
 	message := strings.Repeat("s", subjectLen) + "\n"
 	require.NoError(t, os.WriteFile(msgPath, []byte(message), 0o644))
 	r.git("commit", "-F", msgPath)
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
+func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\nnext\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+
+	msgPath := filepath.Join(r.dir, "commit-message.txt")
+	require.NoError(t, os.WriteFile(msgPath, []byte("large change\n"), 0o644))
+	commitWithIdentity(t, r.dir, msgPath, strings.Repeat("a", authorLen))
 
 	return r.dir, r.git("rev-parse", "HEAD")
 }

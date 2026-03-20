@@ -403,8 +403,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	currentRequired.WriteString("\n")
 
 	var currentOverflow strings.Builder
-	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
 	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", info.Subject)
+	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
 	currentOverflow.WriteString("\n")
 	if info.Body != "" {
 		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
