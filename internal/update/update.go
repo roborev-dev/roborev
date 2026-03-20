@@ -27,6 +27,12 @@ const (
 	cacheDuration = 1 * time.Hour
 )
 
+var (
+	gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
+	checksumPattern    = regexp.MustCompile(`(?i)[a-f0-9]{64}`)
+	semverBasePattern  = regexp.MustCompile(`^\d+(?:\.\d+)+`)
+)
+
 // Release represents a GitHub release
 type Release struct {
 	TagName string  `json:"tag_name"`
@@ -52,203 +58,70 @@ type UpdateInfo struct {
 	IsDevBuild     bool   // True if running a dev build (hash version)
 }
 
-// findAssets locates the platform-specific binary and checksums file from release assets
-func findAssets(assets []Asset, assetName string) (asset *Asset, checksumsAsset *Asset) {
-	for i := range assets {
-		a := &assets[i]
-		if a.Name == assetName {
-			asset = a
-		}
-		if a.Name == "SHA256SUMS" || a.Name == "checksums.txt" {
-			checksumsAsset = a
-		}
-	}
-	return asset, checksumsAsset
+// Reporter handles user-facing update progress.
+type Reporter interface {
+	Stepf(format string, args ...any)
+	Progress(downloaded, total int64)
 }
 
-// cachedCheck stores the last update check result
+// Deps holds environment and process dependencies for updater operations.
+type Deps struct {
+	Client     *http.Client
+	Now        func() time.Time
+	Version    string
+	GOOS       string
+	GOARCH     string
+	CacheDir   func() string
+	Executable func() (string, error)
+	MkdirTemp  func(dir, pattern string) (string, error)
+}
+
+// Updater coordinates release checks and installs using injected dependencies.
+type Updater struct {
+	deps Deps
+}
+
 type cachedCheck struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Version   string    `json:"version"`
 }
 
-// CheckForUpdate checks if a newer version is available
-// Uses a 1-hour cache to avoid hitting GitHub API too often
-func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
-	currentVersion := strings.TrimPrefix(version.Version, "v")
-	isDevBuild := isDevBuildVersion(currentVersion)
-
-	// Don't nag on dev builds — if you're building from source you can
-	// manage your own updates.  Explicit `roborev update` (forceCheck)
-	// still works.
-	if isDevBuild && !forceCheck {
-		return nil, nil
-	}
-
-	// Check cache first (unless forced)
-	if !forceCheck {
-		if cached, err := loadCache(); err == nil {
-			if time.Since(cached.CheckedAt) < cacheDuration {
-				latestVersion := strings.TrimPrefix(cached.Version, "v")
-				if !isNewer(latestVersion, currentVersion) {
-					return nil, nil // Up to date (cached)
-				}
-				// Cache says update available, fetch fresh info for download URLs
-			}
-		}
-	}
-
-	// Fetch latest release from GitHub
-	release, err := fetchLatestRelease()
-	if err != nil {
-		return nil, fmt.Errorf("check for updates: %w", err)
-	}
-
-	// Save to cache
-	saveCache(release.TagName)
-
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-
-	// For dev builds (forceCheck only), always show the latest release.
-	// For regular builds, only notify if there's a newer version.
-	if !isDevBuild && !isNewer(latestVersion, currentVersion) {
-		return nil, nil // Up to date
-	}
-
-	// Find the right asset for this platform
-	// Asset naming: roborev_<version>_<os>_<arch>.tar.gz (e.g., roborev_0.3.0_darwin_arm64.tar.gz)
-	assetName := fmt.Sprintf("roborev_%s_%s_%s.tar.gz", latestVersion, runtime.GOOS, runtime.GOARCH)
-	asset, checksumsAsset := findAssets(release.Assets, assetName)
-	if asset == nil {
-		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
-
-	// Get checksum - first try checksums file, then release body
-	var checksum string
-	if checksumsAsset != nil {
-		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
-	}
-	if checksum == "" {
-		// Fall back to release body
-		checksum = extractChecksum(release.Body, assetName)
-	}
-
-	return &UpdateInfo{
-		CurrentVersion: version.Version,
-		LatestVersion:  release.TagName,
-		DownloadURL:    asset.BrowserDownloadURL,
-		AssetName:      asset.Name,
-		Size:           asset.Size,
-		Checksum:       checksum,
-		IsDevBuild:     isDevBuild,
-	}, nil
+type platformInfo struct {
+	goos   string
+	goarch string
 }
 
-// PerformUpdate downloads and installs the update
+type buildInfo struct {
+	raw     string
+	version parsedVersion
+}
+
+type parsedVersion struct {
+	raw   string
+	base  string
+	parts []int
+	dev   bool
+}
+
+type stdoutReporter struct {
+	out        io.Writer
+	progressFn func(downloaded, total int64)
+}
+
+type nopReporter struct{}
+
+// CheckForUpdate checks if a newer version is available.
+// Uses a 1-hour cache to avoid hitting GitHub API too often.
+func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
+	return defaultUpdater().CheckForUpdate(forceCheck)
+}
+
+// PerformUpdate downloads and installs the update.
 func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) error {
-	// Security: require checksum verification
-	if info.Checksum == "" {
-		return fmt.Errorf("no checksum available for %s - refusing to install unverified binary", info.AssetName)
-	}
-
-	// 1. Download to temp file
-	fmt.Printf("Downloading %s...\n", info.AssetName)
-	tempDir, err := os.MkdirTemp("", "roborev-update-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	archivePath := filepath.Join(tempDir, info.AssetName)
-	checksum, err := downloadFile(info.DownloadURL, archivePath, info.Size, progressFn)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-
-	// 2. Verify checksum (required)
-	fmt.Printf("Verifying checksum... ")
-	if !strings.EqualFold(checksum, info.Checksum) {
-		fmt.Println("FAILED")
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
-	}
-	fmt.Println("OK")
-
-	// 3. Extract archive
-	fmt.Println("Extracting...")
-	extractDir := filepath.Join(tempDir, "extracted")
-	if err := extractTarGz(archivePath, extractDir); err != nil {
-		return fmt.Errorf("extract: %w", err)
-	}
-
-	// 4. Find current binary locations
-	currentExe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("find current executable: %w", err)
-	}
-	currentExe, err = filepath.EvalSymlinks(currentExe)
-	if err != nil {
-		return fmt.Errorf("resolve symlinks: %w", err)
-	}
-	binDir := filepath.Dir(currentExe)
-
-	// 5. Install new binary
-	binaries := []string{"roborev"}
-	if runtime.GOOS == "windows" {
-		binaries = []string{"roborev.exe"}
-	}
-
-	for _, binary := range binaries {
-		srcPath := filepath.Join(extractDir, binary)
-		dstPath := filepath.Join(binDir, binary)
-		backupPath := dstPath + ".old"
-
-		// Check if source exists
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			continue // Skip if not in archive
-		}
-
-		fmt.Printf("Installing %s... ", binary)
-
-		// Clean up any old backup from previous update
-		os.Remove(backupPath)
-
-		// Backup existing
-		if _, err := os.Stat(dstPath); err == nil {
-			if err := os.Rename(dstPath, backupPath); err != nil {
-				// On Windows, renaming a running executable may fail
-				if runtime.GOOS == "windows" {
-					return fmt.Errorf("cannot update %s while it is running - please stop the daemon and try again: %w", binary, err)
-				}
-				return fmt.Errorf("backup %s: %w", binary, err)
-			}
-		}
-
-		// Copy new binary
-		if err := copyFile(srcPath, dstPath); err != nil {
-			// Try to restore backup
-			if _, err := os.Stat(backupPath); err == nil {
-				if err := os.Rename(backupPath, dstPath); err != nil {
-					return fmt.Errorf("restore backup for %s: %w", binary, err)
-				}
-			}
-			return fmt.Errorf("install %s: %w", binary, err)
-		}
-
-		// Set executable permission (no-op on Windows)
-		if runtime.GOOS != "windows" {
-			if err := os.Chmod(dstPath, 0755); err != nil {
-				return fmt.Errorf("chmod %s: %w", binary, err)
-			}
-		}
-
-		// Try to remove backup (may fail on Windows if daemon was running)
-		// The .old file will be cleaned up on next update
-		os.Remove(backupPath)
-
-		fmt.Println("OK")
-	}
-
-	return nil
+	return defaultUpdater().PerformUpdate(info, stdoutReporter{
+		out:        os.Stdout,
+		progressFn: progressFn,
+	})
 }
 
 // RestartDaemon stops and starts the daemon
@@ -263,35 +136,347 @@ func GetCacheDir() string {
 	return config.DataDir()
 }
 
-func fetchLatestRelease() (*Release, error) {
-	req, err := http.NewRequest("GET", githubAPIURL, nil)
+// NewUpdater returns an updater with defaults filled for any missing dependencies.
+func NewUpdater(deps Deps) *Updater {
+	if deps.Client == nil {
+		deps.Client = &http.Client{Timeout: 30 * time.Second}
+	}
+	if deps.Now == nil {
+		deps.Now = time.Now
+	}
+	if deps.Version == "" {
+		deps.Version = version.Version
+	}
+	if deps.GOOS == "" {
+		deps.GOOS = runtime.GOOS
+	}
+	if deps.GOARCH == "" {
+		deps.GOARCH = runtime.GOARCH
+	}
+	if deps.CacheDir == nil {
+		deps.CacheDir = config.DataDir
+	}
+	if deps.Executable == nil {
+		deps.Executable = os.Executable
+	}
+	if deps.MkdirTemp == nil {
+		deps.MkdirTemp = os.MkdirTemp
+	}
+	return &Updater{deps: deps}
+}
+
+func defaultUpdater() *Updater {
+	return NewUpdater(Deps{})
+}
+
+// CheckForUpdate checks if a newer version is available.
+func (u *Updater) CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
+	build := u.currentBuild()
+
+	// Don't nag on dev builds. Explicit `roborev update` still works.
+	if build.version.dev && !forceCheck {
+		return nil, nil
+	}
+
+	if cached, handled, err := u.cachedUpdate(build, forceCheck); err != nil {
+		return nil, err
+	} else if handled {
+		return cached, nil
+	}
+
+	return u.fetchReleaseInfo(build)
+}
+
+// PerformUpdate downloads and installs the update.
+func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
+	reporter = normalizeReporter(reporter)
+
+	if info.Checksum == "" {
+		return fmt.Errorf("no checksum available for %s - refusing to install unverified binary", info.AssetName)
+	}
+
+	tempDir, err := u.deps.MkdirTemp("", "roborev-update-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	archivePath, checksum, err := u.downloadArchive(tempDir, info, reporter)
+	if err != nil {
+		return err
+	}
+	if err := verifyChecksum(checksum, info.Checksum, reporter); err != nil {
+		return err
+	}
+
+	extractDir, err := u.extractArchive(tempDir, archivePath, reporter)
+	if err != nil {
+		return err
+	}
+
+	installDir, err := u.installDir()
+	if err != nil {
+		return err
+	}
+
+	return u.installBinaries(extractDir, installDir, reporter)
+}
+
+func (u *Updater) currentBuild() buildInfo {
+	return buildInfo{
+		raw:     u.deps.Version,
+		version: parseVersion(u.deps.Version),
+	}
+}
+
+func (u *Updater) cachedUpdate(build buildInfo, forceCheck bool) (*UpdateInfo, bool, error) {
+	if forceCheck {
+		return nil, false, nil
+	}
+
+	cached, err := u.loadCache()
+	if err != nil {
+		return nil, false, nil
+	}
+	if u.deps.Now().Sub(cached.CheckedAt) >= cacheDuration {
+		return nil, false, nil
+	}
+
+	latest := parseVersion(cached.Version)
+	if !latest.newerThan(build.version) {
+		return nil, true, nil
+	}
+
+	return nil, false, nil
+}
+
+func (u *Updater) fetchReleaseInfo(build buildInfo) (*UpdateInfo, error) {
+	release, err := u.fetchLatestRelease()
+	if err != nil {
+		return nil, fmt.Errorf("check for updates: %w", err)
+	}
+
+	// Cache failures should not block update checks.
+	_ = u.saveCache(release.TagName)
+
+	latest := parseVersion(release.TagName)
+	if !build.version.dev && !latest.newerThan(build.version) {
+		return nil, nil
+	}
+
+	assetVersion := strings.TrimPrefix(release.TagName, "v")
+	asset, checksumsAsset, err := resolveAsset(release.Assets, platformInfo{
+		goos:   u.deps.GOOS,
+		goarch: u.deps.GOARCH,
+	}, assetVersion)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "roborev/"+version.Version)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	checksum, _ := u.resolveChecksum(release, asset.Name, checksumsAsset)
+
+	return &UpdateInfo{
+		CurrentVersion: build.raw,
+		LatestVersion:  release.TagName,
+		DownloadURL:    asset.BrowserDownloadURL,
+		AssetName:      asset.Name,
+		Size:           asset.Size,
+		Checksum:       checksum,
+		IsDevBuild:     build.version.dev,
+	}, nil
+}
+
+func (u *Updater) downloadArchive(tempDir string, info *UpdateInfo, reporter Reporter) (string, string, error) {
+	reporter.Stepf("Downloading %s...\n", info.AssetName)
+
+	archivePath := filepath.Join(tempDir, info.AssetName)
+	checksum, err := u.downloadFile(info.DownloadURL, archivePath, info.Size, reporter.Progress)
+	if err != nil {
+		return "", "", fmt.Errorf("download: %w", err)
+	}
+
+	return archivePath, checksum, nil
+}
+
+func verifyChecksum(actual, expected string, reporter Reporter) error {
+	reporter = normalizeReporter(reporter)
+	reporter.Stepf("Verifying checksum... ")
+	if !strings.EqualFold(actual, expected) {
+		reporter.Stepf("FAILED\n")
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	reporter.Stepf("OK\n")
+	return nil
+}
+
+func (u *Updater) extractArchive(tempDir, archivePath string, reporter Reporter) (string, error) {
+	reporter.Stepf("Extracting...\n")
+
+	extractDir := filepath.Join(tempDir, "extracted")
+	if err := extractTarGz(archivePath, extractDir); err != nil {
+		return "", fmt.Errorf("extract: %w", err)
+	}
+
+	return extractDir, nil
+}
+
+func (u *Updater) installDir() (string, error) {
+	currentExe, err := u.deps.Executable()
+	if err != nil {
+		return "", fmt.Errorf("find current executable: %w", err)
+	}
+
+	currentExe, err = filepath.EvalSymlinks(currentExe)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlinks: %w", err)
+	}
+
+	return filepath.Dir(currentExe), nil
+}
+
+func (u *Updater) installBinaries(extractDir, installDir string, reporter Reporter) error {
+	for _, binary := range u.binaryNames() {
+		srcPath := filepath.Join(extractDir, binary)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+
+		dstPath := filepath.Join(installDir, binary)
+		reporter.Stepf("Installing %s... ", binary)
+		if err := u.installBinary(srcPath, dstPath); err != nil {
+			return err
+		}
+		reporter.Stepf("OK\n")
+	}
+
+	return nil
+}
+
+func (u *Updater) installBinary(srcPath, dstPath string) error {
+	backupPath := dstPath + ".old"
+	_ = os.Remove(backupPath)
+
+	if _, err := os.Stat(dstPath); err == nil {
+		if err := os.Rename(dstPath, backupPath); err != nil {
+			binary := filepath.Base(dstPath)
+			if u.deps.GOOS == "windows" {
+				return fmt.Errorf("cannot update %s while it is running - please stop the daemon and try again: %w", binary, err)
+			}
+			return fmt.Errorf("backup %s: %w", binary, err)
+		}
+	}
+
+	if err := copyFile(srcPath, dstPath); err != nil {
+		if _, statErr := os.Stat(backupPath); statErr == nil {
+			if restoreErr := os.Rename(backupPath, dstPath); restoreErr != nil {
+				return fmt.Errorf("restore backup for %s: %w", filepath.Base(dstPath), restoreErr)
+			}
+		}
+		return fmt.Errorf("install %s: %w", filepath.Base(dstPath), err)
+	}
+
+	if u.deps.GOOS != "windows" {
+		if err := os.Chmod(dstPath, 0755); err != nil {
+			return fmt.Errorf("chmod %s: %w", filepath.Base(dstPath), err)
+		}
+	}
+
+	_ = os.Remove(backupPath)
+	return nil
+}
+
+func (u *Updater) binaryNames() []string {
+	if u.deps.GOOS == "windows" {
+		return []string{"roborev.exe"}
+	}
+	return []string{"roborev"}
+}
+
+func resolveAsset(assets []Asset, platform platformInfo, version string) (*Asset, *Asset, error) {
+	assetName := fmt.Sprintf("roborev_%s_%s_%s.tar.gz", version, platform.goos, platform.goarch)
+	asset, checksumsAsset := findAssets(assets, assetName)
+	if asset == nil {
+		return nil, nil, fmt.Errorf("no release asset found for %s/%s", platform.goos, platform.goarch)
+	}
+	return asset, checksumsAsset, nil
+}
+
+func (u *Updater) resolveChecksum(release *Release, assetName string, checksumsAsset *Asset) (string, error) {
+	if checksumsAsset != nil {
+		checksum, err := u.fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
+		if checksum != "" {
+			return checksum, nil
+		}
+		if checksum = extractChecksum(release.Body, assetName); checksum != "" {
+			return checksum, nil
+		}
+		return "", err
+	}
+
+	return extractChecksum(release.Body, assetName), nil
+}
+
+// findAssets locates the platform-specific binary and checksums file from release assets.
+func findAssets(assets []Asset, assetName string) (asset *Asset, checksumsAsset *Asset) {
+	for i := range assets {
+		a := &assets[i]
+		if a.Name == assetName {
+			asset = a
+		}
+		if a.Name == "SHA256SUMS" || a.Name == "checksums.txt" {
+			checksumsAsset = a
+		}
+	}
+	return asset, checksumsAsset
+}
+
+func (u *Updater) fetchLatestRelease() (*Release, error) {
+	var release Release
+	if err := u.fetchJSON(githubAPIURL, &release); err != nil {
+		return nil, err
+	}
+	return &release, nil
+}
+
+func (u *Updater) newRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
+	}
+	req.Header.Set("User-Agent", "roborev/"+u.deps.Version)
+	return req, nil
+}
+
+func (u *Updater) get(url string) (*http.Response, error) {
+	req, err := u.newRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return u.deps.Client.Do(req)
+}
+
+func (u *Updater) fetchJSON(url string, dst any) error {
+	req, err := u.newRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := u.deps.Client.Do(req)
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %s", resp.Status)
+		return fmt.Errorf("GitHub API returned %s", resp.Status)
 	}
 
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-
-	return &release, nil
+	return json.NewDecoder(resp.Body).Decode(dst)
 }
 
-func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded, total int64)) (string, error) {
-	resp, err := http.Get(url)
+func (u *Updater) downloadFile(url, dest string, totalSize int64, progressFn func(downloaded, total int64)) (string, error) {
+	resp, err := u.get(url)
 	if err != nil {
 		return "", err
 	}
@@ -307,18 +492,15 @@ func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded,
 	}
 	defer out.Close()
 
-	// Calculate checksum while downloading
 	hasher := sha256.New()
 	writer := io.MultiWriter(out, hasher)
 
-	// Download with progress
 	var downloaded int64
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			_, writeErr := writer.Write(buf[:n])
-			if writeErr != nil {
+			if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
 				return "", writeErr
 			}
 			downloaded += int64(n)
@@ -342,7 +524,6 @@ func extractTarGz(archivePath, destDir string) error {
 		return err
 	}
 
-	// Get absolute path of destDir for security checks
 	absDestDir, err := filepath.Abs(destDir)
 	if err != nil {
 		return fmt.Errorf("resolve dest dir: %w", err)
@@ -369,72 +550,64 @@ func extractTarGz(archivePath, destDir string) error {
 		if err != nil {
 			return err
 		}
-
-		// Security: sanitize and validate the path
-		target, err := sanitizeTarPath(absDestDir, header.Name)
-		if err != nil {
-			return fmt.Errorf("invalid tar entry %q: %w", header.Name, err)
-		}
-
-		// Security: skip symlinks and hardlinks to prevent attacks
-		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
-			continue
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			// Ensure parent directory exists
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return err
-			}
-			outFile, err := os.Create(target)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(outFile, tr); err != nil {
-				outFile.Close()
-				return err
-			}
-			outFile.Close()
-			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil {
-				return err
-			}
+		if err := extractTarEntry(tr, header, absDestDir); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal
+func extractTarEntry(tr *tar.Reader, header *tar.Header, destDir string) error {
+	target, err := sanitizeTarPath(destDir, header.Name)
+	if err != nil {
+		return fmt.Errorf("invalid tar entry %q: %w", header.Name, err)
+	}
+
+	if isTarLink(header) {
+		return nil
+	}
+
+	switch header.Typeflag {
+	case tar.TypeDir:
+		return os.MkdirAll(target, 0755)
+	case tar.TypeReg:
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		outFile, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		defer outFile.Close()
+		if _, err := io.Copy(outFile, tr); err != nil {
+			return err
+		}
+		return os.Chmod(target, os.FileMode(header.Mode))
+	default:
+		return nil
+	}
+}
+
+func isTarLink(header *tar.Header) bool {
+	return header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink
+}
+
+// sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal.
 func sanitizeTarPath(destDir, name string) (string, error) {
-	// Reject Unix-style absolute paths explicitly (before Clean converts / to \\ on Windows)
-	// This ensures consistent behavior across platforms for tar entries created on Unix
 	if strings.HasPrefix(name, "/") {
 		return "", fmt.Errorf("absolute path not allowed")
 	}
 
-	// Clean the path to remove . and .. components
 	cleanName := filepath.Clean(name)
-
-	// Reject absolute paths (Windows drive letters, UNC paths, etc.)
 	if filepath.IsAbs(cleanName) {
 		return "", fmt.Errorf("absolute path not allowed")
 	}
-
-	// Reject paths that try to escape with ..
 	if strings.HasPrefix(cleanName, "..") || strings.Contains(cleanName, string(filepath.Separator)+"..") {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 
-	// Build the target path
 	target := filepath.Join(destDir, cleanName)
-
-	// Final check: ensure the target is within destDir
-	// This catches any edge cases the above checks might miss
 	absTarget, err := filepath.Abs(target)
 	if err != nil {
 		return "", err
@@ -450,7 +623,7 @@ func sanitizeTarPath(destDir, name string) (string, error) {
 	return target, nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -461,19 +634,18 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if closeErr := out.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-
-	return out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
-// fetchChecksumFromFile downloads a checksums file and extracts the checksum for assetName
-func fetchChecksumFromFile(url, assetName string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
+func (u *Updater) fetchChecksumFromFile(url, assetName string) (string, error) {
+	resp, err := u.get(url)
 	if err != nil {
 		return "", err
 	}
@@ -492,28 +664,25 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 }
 
 func extractChecksum(releaseBody, assetName string) string {
-	// Look for checksum in release notes or checksums file
-	// Format: "checksum  assetname" (standard sha256sum output) or "assetname: checksum"
-	lines := strings.Split(releaseBody, "\n")
-	// Case-insensitive regex for SHA256 hex (64 chars)
-	re := regexp.MustCompile(`(?i)[a-f0-9]{64}`)
-	for _, line := range lines {
+	for _, line := range strings.Split(releaseBody, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, assetName) {
-			if match := re.FindString(line); match != "" {
-				return strings.ToLower(match) // Normalize to lowercase
-			}
+		if !strings.Contains(line, assetName) {
+			continue
+		}
+		if match := checksumPattern.FindString(line); match != "" {
+			return strings.ToLower(match)
 		}
 	}
 	return ""
 }
 
-func loadCache() (*cachedCheck, error) {
-	cachePath := filepath.Join(GetCacheDir(), cacheFileName)
+func (u *Updater) loadCache() (*cachedCheck, error) {
+	cachePath := filepath.Join(u.deps.CacheDir(), cacheFileName)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		return nil, err
 	}
+
 	var cached cachedCheck
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, err
@@ -521,123 +690,123 @@ func loadCache() (*cachedCheck, error) {
 	return &cached, nil
 }
 
-func saveCache(version string) {
+func (u *Updater) saveCache(version string) error {
 	cached := cachedCheck{
-		CheckedAt: time.Now(),
+		CheckedAt: u.deps.Now(),
 		Version:   version,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
-		return
+		return err
 	}
-	cachePath := filepath.Join(GetCacheDir(), cacheFileName)
+
+	cachePath := filepath.Join(u.deps.CacheDir(), cacheFileName)
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
-		return
+		return err
 	}
-	if err := os.WriteFile(cachePath, data, 0644); err != nil {
-		return
+	return os.WriteFile(cachePath, data, 0644)
+}
+
+func parseVersion(raw string) parsedVersion {
+	trimmed := strings.TrimPrefix(raw, "v")
+	base := semverBasePattern.FindString(trimmed)
+	version := parsedVersion{
+		raw:  raw,
+		base: base,
+		dev:  base == "" || gitDescribePattern.MatchString(trimmed),
 	}
+	if base == "" {
+		return version
+	}
+
+	parts := strings.Split(base, ".")
+	version.parts = make([]int, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return parsedVersion{raw: raw, dev: true}
+		}
+		version.parts = append(version.parts, n)
+	}
+	return version
+}
+
+func (v parsedVersion) Compare(other parsedVersion) int {
+	maxLen := len(v.parts)
+	if len(other.parts) > maxLen {
+		maxLen = len(other.parts)
+	}
+	for i := range maxLen {
+		var left, right int
+		if i < len(v.parts) {
+			left = v.parts[i]
+		}
+		if i < len(other.parts) {
+			right = other.parts[i]
+		}
+		if left > right {
+			return 1
+		}
+		if left < right {
+			return -1
+		}
+	}
+	return 0
+}
+
+func (v parsedVersion) newerThan(other parsedVersion) bool {
+	if len(v.parts) == 0 || len(other.parts) == 0 {
+		return false
+	}
+	return v.Compare(other) > 0
 }
 
 // extractBaseSemver extracts the base semver from a version string.
-// Handles formats like:
-//   - "0.4.0" -> "0.4.0"
-//   - "v0.4.0" -> "0.4.0"
-//   - "0.4.0-5-gabcdef" -> "0.4.0" (git describe format)
-//   - "0.4.0-dev" -> "0.4.0"
-//   - "abc1234" -> "" (no semver)
-//   - "dev" -> "" (no semver)
 func extractBaseSemver(v string) string {
-	v = strings.TrimPrefix(v, "v")
-	if len(v) == 0 || v[0] < '0' || v[0] > '9' {
-		return ""
-	}
-	if !strings.Contains(v, ".") {
-		return ""
-	}
-	// Extract up to the first hyphen (for git describe or prerelease tags)
-	if idx := strings.Index(v, "-"); idx > 0 {
-		v = v[:idx]
-	}
-	// Strip build metadata (+meta per semver spec)
-	if idx := strings.Index(v, "+"); idx > 0 {
-		v = v[:idx]
-	}
-	return v
+	return parseVersion(v).base
 }
-
-// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty
-// The -N-gHASH suffix indicates N commits after the tag, with optional -dirty suffix
-var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
 
 // isDevBuildVersion returns true if the version is a dev build.
-// Dev builds are either:
-// - Pure hashes with no semver (e.g., "9c2baf2", "dev")
-// - Git describe format with commits after tag (e.g., "v0.16.1-2-gabcdef")
 func isDevBuildVersion(v string) bool {
-	v = strings.TrimPrefix(v, "v")
-	// Pure hash or "dev" - no semver base
-	if extractBaseSemver(v) == "" {
-		return true
-	}
-	// Git describe format: has commits after a tag
-	return gitDescribePattern.MatchString(v)
+	return parseVersion(v).dev
 }
 
-// isNewer returns true if v1 is newer than v2
-// Assumes semver format: major.minor.patch
-// Handles git describe format (v0.4.0-5-gabcdef) by extracting base version.
-// Returns false for pure dev builds (hashes like "9c2baf2") since we can't
-// determine their relationship to releases - skip update notifications for these.
+// isNewer returns true if v1 is newer than v2.
 func isNewer(v1, v2 string) bool {
-	base1 := extractBaseSemver(v1)
-	base2 := extractBaseSemver(v2)
-
-	// If current version has no semver base (pure hash dev build), skip update notification
-	// We can't determine if they're ahead or behind releases
-	if base2 == "" {
-		return false
-	}
-	// If release version has no semver base, something is wrong - not newer
-	if base1 == "" {
-		return false
-	}
-
-	parts1 := strings.Split(base1, ".")
-	parts2 := strings.Split(base2, ".")
-
-	parsePart := func(part string) int {
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			return 0
-		}
-		return n
-	}
-
-	for i := range 3 {
-		var n1, n2 int
-		if i < len(parts1) {
-			n1 = parsePart(parts1[i])
-		}
-		if i < len(parts2) {
-			n2 = parsePart(parts2[i])
-		}
-		if n1 > n2 {
-			return true
-		}
-		if n1 < n2 {
-			return false
-		}
-	}
-	return false
+	return parseVersion(v1).newerThan(parseVersion(v2))
 }
 
-// FormatSize formats bytes as human-readable string
+func normalizeReporter(reporter Reporter) Reporter {
+	if reporter == nil {
+		return nopReporter{}
+	}
+	return reporter
+}
+
+func (r stdoutReporter) Stepf(format string, args ...any) {
+	if r.out == nil {
+		return
+	}
+	fmt.Fprintf(r.out, format, args...)
+}
+
+func (r stdoutReporter) Progress(downloaded, total int64) {
+	if r.progressFn != nil {
+		r.progressFn(downloaded, total)
+	}
+}
+
+func (nopReporter) Stepf(string, ...any) {}
+
+func (nopReporter) Progress(int64, int64) {}
+
+// FormatSize formats bytes as human-readable string.
 func FormatSize(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)
 	}
+
 	div, exp := int64(unit), 0
 	for n := bytes / unit; n >= unit; n /= unit {
 		div *= unit
