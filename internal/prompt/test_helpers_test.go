@@ -127,6 +127,46 @@ func setupLargeDiffRepo(t *testing.T) (string, string) {
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
+func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, string) {
+	t.Helper()
+	r := newTestRepoWithBranch(t, "main")
+
+	guidelines := strings.Repeat("g", guidelineLen)
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, ".roborev.toml"),
+		[]byte(toml), 0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", ".roborev.toml", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+	var content strings.Builder
+	for range 20000 {
+		content.WriteString("line ")
+		content.WriteString(strings.Repeat("x", 20))
+		content.WriteString(" ")
+		content.WriteString(strings.Repeat("y", 20))
+		content.WriteString("\n")
+	}
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "large.txt"),
+		[]byte(content.String()), 0o644,
+	))
+	r.git("add", "large.txt")
+	r.git("commit", "-m", "large change")
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
 func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {
 	t.Helper()
 	db := testutil.OpenTestDB(t)

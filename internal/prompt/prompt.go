@@ -236,28 +236,81 @@ func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
 }
 
+func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
+	remaining := limit - sb.Len()
+	if remaining <= 0 {
+		return
+	}
+	for _, variant := range variants {
+		if len(variant) <= remaining {
+			sb.WriteString(variant)
+			return
+		}
+	}
+}
+
+func codexCommitInspectionFallbackVariants(sha string) []string {
+	return []string{
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
+			"Use commands like:\n"+
+			"- `git show --stat --summary %s`\n"+
+			"- `git show --format=medium --unified=80 %s`\n"+
+			"- `git diff-tree --no-commit-id --name-only -r %s`\n"+
+			"- `git show %s:path/to/file`\n\n"+
+			"Review the actual diff before writing findings.\n",
+			sha, sha, sha, sha),
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex in read-only review mode, inspect the commit locally before writing findings.\n"+
+			"- `git show --stat --summary %s`\n"+
+			"- `git show --format=medium --unified=80 %s`\n",
+			sha, sha),
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex, inspect locally with `git show --format=medium --unified=80 %s`.\n",
+			sha),
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large; for Codex run `git show %s` locally.)\n",
+			sha),
+	}
+}
+
 func writeCodexCommitInspectionFallback(sb *strings.Builder, sha string) {
-	sb.WriteString("### Diff\n\n")
-	sb.WriteString("(Diff too large to include inline)\n\n")
-	sb.WriteString("For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n")
-	sb.WriteString("Use commands like:\n")
-	fmt.Fprintf(sb, "- `git show --stat --summary %s`\n", sha)
-	fmt.Fprintf(sb, "- `git show --format=medium --unified=80 %s`\n", sha)
-	fmt.Fprintf(sb, "- `git diff-tree --no-commit-id --name-only -r %s`\n", sha)
-	fmt.Fprintf(sb, "- `git show %s:path/to/file`\n", sha)
-	sb.WriteString("\nReview the actual diff before writing findings.\n")
+	writeLongestFitting(sb, MaxPromptSize, codexCommitInspectionFallbackVariants(sha)...)
+}
+
+func codexRangeInspectionFallbackVariants(rangeRef string) []string {
+	return []string{
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
+			"Use commands like:\n"+
+			"- `git log --oneline %s`\n"+
+			"- `git diff --stat %s`\n"+
+			"- `git diff --unified=80 %s`\n"+
+			"- `git diff --name-only %s`\n\n"+
+			"Review the actual diff before writing findings.\n",
+			rangeRef, rangeRef, rangeRef, rangeRef),
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex in read-only review mode, inspect the commit range locally before writing findings.\n"+
+			"- `git diff --stat %s`\n"+
+			"- `git diff --unified=80 %s`\n",
+			rangeRef, rangeRef),
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"For Codex, inspect locally with `git diff --unified=80 %s`.\n",
+			rangeRef),
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large; for Codex run `git diff %s` locally.)\n",
+			rangeRef),
+	}
 }
 
 func writeCodexRangeInspectionFallback(sb *strings.Builder, rangeRef string) {
-	sb.WriteString("### Combined Diff\n\n")
-	sb.WriteString("(Diff too large to include inline)\n\n")
-	sb.WriteString("For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n")
-	sb.WriteString("Use commands like:\n")
-	fmt.Fprintf(sb, "- `git log --oneline %s`\n", rangeRef)
-	fmt.Fprintf(sb, "- `git diff --stat %s`\n", rangeRef)
-	fmt.Fprintf(sb, "- `git diff --unified=80 %s`\n", rangeRef)
-	fmt.Fprintf(sb, "- `git diff --name-only %s`\n", rangeRef)
-	sb.WriteString("\nReview the actual diff before writing findings.\n")
+	writeLongestFitting(sb, MaxPromptSize, codexRangeInspectionFallbackVariants(rangeRef)...)
 }
 
 // buildSinglePrompt constructs a prompt for a single commit

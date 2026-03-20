@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -433,6 +434,126 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
 	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
+}
+
+func codexCommitFallback(sha string) string {
+	return codexCommitInspectionFallbackVariants(sha)[0]
+}
+
+func codexRangeFallback(rangeRef string) string {
+	return codexRangeInspectionFallbackVariants(rangeRef)[0]
+}
+
+func shortestCodexCommitFallback(sha string) string {
+	variants := codexCommitInspectionFallbackVariants(sha)
+	return variants[len(variants)-1]
+}
+
+func shortestCodexRangeFallback(rangeRef string) string {
+	variants := codexRangeInspectionFallbackVariants(rangeRef)
+	return variants[len(variants)-1]
+}
+
+func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
+	t.Helper()
+	var sb strings.Builder
+	b := NewBuilder(nil)
+	sb.WriteString(GetSystemPrompt("codex", "review"))
+	sb.WriteString("\n")
+	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+
+	info, err := gitpkg.GetCommitInfo(repoPath, sha)
+	require.NoError(t, err, "GetCommitInfo failed: %v", err)
+
+	sb.WriteString("## Current Commit\n\n")
+	fmt.Fprintf(&sb, "**Commit:** %s\n", gitpkg.ShortSHA(sha))
+	fmt.Fprintf(&sb, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&sb, "**Subject:** %s\n", info.Subject)
+	if info.Body != "" {
+		fmt.Fprintf(&sb, "\n**Message:**\n%s\n", info.Body)
+	}
+	sb.WriteString("\n")
+
+	return sb.Len()
+}
+
+func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
+	t.Helper()
+	var sb strings.Builder
+	b := NewBuilder(nil)
+	sb.WriteString(GetSystemPrompt("codex", "range"))
+	sb.WriteString("\n")
+	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+
+	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
+	require.NoError(t, err, "GetRangeCommits failed: %v", err)
+
+	sb.WriteString("## Commit Range\n\n")
+	fmt.Fprintf(&sb, "Reviewing %d commits:\n\n", len(commits))
+	for _, sha := range commits {
+		info, err := gitpkg.GetCommitInfo(repoPath, sha)
+		shortSHA := gitpkg.ShortSHA(sha)
+		if err == nil {
+			fmt.Fprintf(&sb, "- %s %s\n", shortSHA, info.Subject)
+		} else {
+			fmt.Fprintf(&sb, "- %s\n", shortSHA)
+		}
+	}
+	sb.WriteString("\n")
+
+	return sb.Len()
+}
+
+func findSingleCommitNearCapRepo(t *testing.T) (string, string) {
+	t.Helper()
+	for guidelineLen := 220 * 1024; guidelineLen < 250*1024; guidelineLen += 512 {
+		repoPath, sha := setupLargeDiffRepoWithGuidelines(t, guidelineLen)
+		baseLen := singleCommitPromptPrefixLen(t, repoPath, sha)
+		if baseLen+len(shortestCodexCommitFallback(sha)) <= MaxPromptSize &&
+			baseLen+len(codexCommitFallback(sha)) > MaxPromptSize {
+			return repoPath, sha
+		}
+	}
+	require.Fail(t, "expected to find a near-cap single-commit prompt fixture")
+	return "", ""
+}
+
+func findRangeNearCapRepo(t *testing.T) (string, string) {
+	t.Helper()
+	for guidelineLen := 220 * 1024; guidelineLen < 250*1024; guidelineLen += 512 {
+		repoPath, sha := setupLargeDiffRepoWithGuidelines(t, guidelineLen)
+		rangeRef := sha + "~1.." + sha
+		baseLen := rangePromptPrefixLen(t, repoPath, rangeRef)
+		if baseLen+len(shortestCodexRangeFallback(rangeRef)) <= MaxPromptSize &&
+			baseLen+len(codexRangeFallback(rangeRef)) > MaxPromptSize {
+			return repoPath, sha
+		}
+	}
+	require.Fail(t, "expected to find a near-cap range prompt fixture")
+	return "", ""
+}
+
+func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
+	repoPath, sha := findSingleCommitNearCapRepo(t)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assertContains(t, prompt, "git show", "expected fallback to retain local git inspection guidance")
+}
+
+func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
+	repoPath, sha := findRangeNearCapRepo(t)
+	rangeRef := sha + "~1.." + sha
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assertContains(t, prompt, "git diff", "expected fallback to retain local git inspection guidance")
 }
 
 func TestLoadGuidelines(t *testing.T) {
