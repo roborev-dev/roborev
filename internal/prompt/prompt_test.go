@@ -403,6 +403,38 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
+func TestBuildPromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
+	assertContains(t, prompt, "inspect the commit locally with read-only git commands", "expected Codex git inspection guidance")
+	assertContains(t, prompt, "git show --stat --summary "+sha, "expected commit stat command")
+	assertContains(t, prompt, "git show --format=medium --unified=80 "+sha, "expected full commit diff command")
+	assertContains(t, prompt, "git diff-tree --no-commit-id --name-only -r "+sha, "expected touched files command")
+	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
+}
+
+func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+	rangeRef := sha + "~1.." + sha
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
+	assertContains(t, prompt, "inspect the commit range locally with read-only git commands", "expected Codex range inspection guidance")
+	assertContains(t, prompt, "git log --oneline "+rangeRef, "expected range commit list command")
+	assertContains(t, prompt, "git diff --stat "+rangeRef, "expected range stat command")
+	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
+	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
+	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
+}
+
 func TestLoadGuidelines(t *testing.T) {
 	tests := []struct {
 		name             string

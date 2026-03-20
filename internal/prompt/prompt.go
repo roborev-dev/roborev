@@ -10,8 +10,8 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-// MaxPromptSize is the maximum size of a prompt in bytes (250KB)
-// If the prompt with diffs exceeds this, we fall back to just commit info
+// MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
+// New code should use Builder.maxPromptSize() which respects config.
 const MaxPromptSize = 250 * 1024
 
 // noSkillsInstruction tells agents not to delegate the review to external
@@ -232,6 +232,34 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	return sb.String(), nil
 }
 
+func isCodexReviewAgent(agentName string) bool {
+	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
+}
+
+func writeCodexCommitInspectionFallback(sb *strings.Builder, sha string) {
+	sb.WriteString("### Diff\n\n")
+	sb.WriteString("(Diff too large to include inline)\n\n")
+	sb.WriteString("For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n")
+	sb.WriteString("Use commands like:\n")
+	fmt.Fprintf(sb, "- `git show --stat --summary %s`\n", sha)
+	fmt.Fprintf(sb, "- `git show --format=medium --unified=80 %s`\n", sha)
+	fmt.Fprintf(sb, "- `git diff-tree --no-commit-id --name-only -r %s`\n", sha)
+	fmt.Fprintf(sb, "- `git show %s:path/to/file`\n", sha)
+	sb.WriteString("\nReview the actual diff before writing findings.\n")
+}
+
+func writeCodexRangeInspectionFallback(sb *strings.Builder, rangeRef string) {
+	sb.WriteString("### Combined Diff\n\n")
+	sb.WriteString("(Diff too large to include inline)\n\n")
+	sb.WriteString("For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n")
+	sb.WriteString("Use commands like:\n")
+	fmt.Fprintf(sb, "- `git log --oneline %s`\n", rangeRef)
+	fmt.Fprintf(sb, "- `git diff --stat %s`\n", rangeRef)
+	fmt.Fprintf(sb, "- `git diff --unified=80 %s`\n", rangeRef)
+	fmt.Fprintf(sb, "- `git diff --name-only %s`\n", rangeRef)
+	sb.WriteString("\nReview the actual diff before writing findings.\n")
+}
+
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	var sb strings.Builder
@@ -300,10 +328,14 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	// Check if adding the diff would exceed max prompt size
 	if sb.Len()+diffSection.Len() > MaxPromptSize {
-		// Fall back to just commit info without diff
-		sb.WriteString("### Diff\n\n")
-		sb.WriteString("(Diff too large to include - please review the commit directly)\n")
-		fmt.Fprintf(&sb, "View with: git show %s\n", sha)
+		if isCodexReviewAgent(agentName) {
+			writeCodexCommitInspectionFallback(&sb, sha)
+		} else {
+			// Fall back to just commit info without diff
+			sb.WriteString("### Diff\n\n")
+			sb.WriteString("(Diff too large to include - please review the commit directly)\n")
+			fmt.Fprintf(&sb, "View with: git show %s\n", sha)
+		}
 	} else {
 		sb.WriteString(diffSection.String())
 	}
@@ -382,10 +414,14 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Check if adding the diff would exceed max prompt size
 	if sb.Len()+diffSection.Len() > MaxPromptSize {
-		// Fall back to just commit info without diff
-		sb.WriteString("### Combined Diff\n\n")
-		sb.WriteString("(Diff too large to include - please review the commits directly)\n")
-		fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
+		if isCodexReviewAgent(agentName) {
+			writeCodexRangeInspectionFallback(&sb, rangeRef)
+		} else {
+			// Fall back to just commit info without diff
+			sb.WriteString("### Combined Diff\n\n")
+			sb.WriteString("(Diff too large to include - please review the commits directly)\n")
+			fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
+		}
 	} else {
 		sb.WriteString(diffSection.String())
 	}
