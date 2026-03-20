@@ -145,7 +145,10 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 - Integration tests: `go test -tags=integration ./...`
 - PostgreSQL tests: `go test -tags=postgres -v ./internal/storage/... -run Integration`
 - ACP smoke tests: use the `make test-acp-integration*` targets in `Makefile`
-- Useful build/install checks: `go build ./...`, `make install`, `make lint`
+- Pre-commit hooks in this repo are managed with `prek`; run `prek install` after cloning or `make install-hooks` as a wrapper.
+- The local pre-commit hook is a `prek` system hook that runs `make lint` with `always_run`, so it executes on every commit and may auto-fix files before the commit succeeds.
+- If the hook rewrites files, re-stage them and rerun the commit. Use `prek run --all-files` to execute the hook manually and `make lint-ci` for a non-mutating lint check.
+- Useful build/install checks: `go build ./...`, `make install`, `make lint`, `make lint-ci`, `prek run --all-files`
 
 Test conventions:
 

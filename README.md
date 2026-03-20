@@ -110,6 +110,24 @@ powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
 go install github.com/roborev-dev/roborev/cmd/roborev@latest
 ```
 
+## Developer Setup
+
+This repo uses [`prek`](https://prek.j178.dev/) for local pre-commit checks.
+The hook is a local system hook that runs `make lint`, so pre-commit can apply
+`golangci-lint --fix` automatically instead of using the upstream
+`golangci-lint` pre-commit repository. The hook is configured with
+`always_run = true`, so it runs on every commit, not just commits that touch
+Go files.
+
+```bash
+brew install prek     # or use your preferred prek install method
+prek install          # install the local git hook
+prek run --all-files  # run the configured checks manually
+```
+
+If the hook rewrites files, re-stage them and re-run `git commit`. Use
+`make lint-ci` when you want a non-mutating lint check.
+
 ## Commands
 
 | Command | Description |
@@ -174,6 +192,9 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Hooks](https://roborev.io/guides/hooks/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
+
+For local development in this repo, install hooks with `prek install` or run
+`make install-hooks` as a thin wrapper around `prek install`.
 
 ## License
 
