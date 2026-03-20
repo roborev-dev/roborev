@@ -504,37 +504,36 @@ func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
 	return sb.Len()
 }
 
-func findSingleCommitNearCapRepo(t *testing.T) (string, string) {
+func deterministicGuidelineLen(t *testing.T, prefixLenAtOne, targetPrefixLen int) int {
 	t.Helper()
-	for guidelineLen := 220 * 1024; guidelineLen < 250*1024; guidelineLen += 512 {
-		repoPath, sha := setupLargeDiffRepoWithGuidelines(t, guidelineLen)
-		baseLen := singleCommitPromptPrefixLen(t, repoPath, sha)
-		if baseLen+len(shortestCodexCommitFallback(sha)) <= MaxPromptSize &&
-			baseLen+len(codexCommitFallback(sha)) > MaxPromptSize {
-			return repoPath, sha
-		}
-	}
-	require.Fail(t, "expected to find a near-cap single-commit prompt fixture")
-	return "", ""
+	guidelineLen := targetPrefixLen - prefixLenAtOne + 1
+	require.GreaterOrEqual(t, guidelineLen, 1, "expected positive guideline length")
+	return guidelineLen
 }
 
-func findRangeNearCapRepo(t *testing.T) (string, string) {
+func singleCommitNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
 	t.Helper()
-	for guidelineLen := 220 * 1024; guidelineLen < 250*1024; guidelineLen += 512 {
-		repoPath, sha := setupLargeDiffRepoWithGuidelines(t, guidelineLen)
-		rangeRef := sha + "~1.." + sha
-		baseLen := rangePromptPrefixLen(t, repoPath, rangeRef)
-		if baseLen+len(shortestCodexRangeFallback(rangeRef)) <= MaxPromptSize &&
-			baseLen+len(codexRangeFallback(rangeRef)) > MaxPromptSize {
-			return repoPath, sha
-		}
-	}
-	require.Fail(t, "expected to find a near-cap range prompt fixture")
-	return "", ""
+	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 1)
+	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
+	targetPrefixLen := MaxPromptSize - remainingBudget
+	guidelineLen := deterministicGuidelineLen(t, prefixLen, targetPrefixLen)
+	return setupLargeDiffRepoWithGuidelines(t, guidelineLen)
+}
+
+func rangeNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
+	t.Helper()
+	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 1)
+	rangeRef := sha + "~1.." + sha
+	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
+	targetPrefixLen := MaxPromptSize - remainingBudget
+	guidelineLen := deterministicGuidelineLen(t, prefixLen, targetPrefixLen)
+	return setupLargeDiffRepoWithGuidelines(t, guidelineLen)
 }
 
 func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
-	repoPath, sha := findSingleCommitNearCapRepo(t)
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	remainingBudget := len(shortestCodexCommitFallback(probeSHA))
+	repoPath, sha := singleCommitNearCapRepo(t, remainingBudget)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
@@ -542,10 +541,14 @@ func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
 
 	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
 	assertContains(t, prompt, "git show", "expected fallback to retain local git inspection guidance")
+	assert.NotContains(t, prompt, codexCommitFallback(sha), "expected the full fallback to be downgraded when it would overflow")
 }
 
 func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
-	repoPath, sha := findRangeNearCapRepo(t)
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	probeRangeRef := probeSHA + "~1.." + probeSHA
+	remainingBudget := len(shortestCodexRangeFallback(probeRangeRef))
+	repoPath, sha := rangeNearCapRepo(t, remainingBudget)
 	rangeRef := sha + "~1.." + sha
 
 	b := NewBuilder(nil)
@@ -554,6 +557,37 @@ func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T
 
 	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "git diff", "expected fallback to retain local git inspection guidance")
+	assert.NotContains(t, prompt, codexRangeFallback(rangeRef), "expected the full range fallback to be downgraded when it would overflow")
+}
+
+func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	shortestFallback := shortestCodexCommitFallback(probeSHA)
+	repoPath, sha := singleCommitNearCapRepo(t, len(shortestFallback)-1)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
+	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to be preserved by trimming earlier context")
+}
+
+func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
+	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
+	probeRangeRef := probeSHA + "~1.." + probeSHA
+	shortestFallback := shortestCodexRangeFallback(probeRangeRef)
+	repoPath, sha := rangeNearCapRepo(t, len(shortestFallback)-1)
+	rangeRef := sha + "~1.." + sha
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err, "Build failed: %v", err)
+
+	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
+	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to be preserved by trimming earlier context")
 }
 
 func TestLoadGuidelines(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -237,6 +238,19 @@ func isCodexReviewAgent(agentName string) bool {
 }
 
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
+	if len(variants) == 0 || limit <= 0 {
+		return
+	}
+	shortest := variants[len(variants)-1]
+	if len(shortest) > limit {
+		shortest = truncateUTF8(shortest, limit)
+	}
+	roomForShortest := max(0, limit-len(shortest))
+	if sb.Len() > roomForShortest {
+		current := truncateUTF8(sb.String(), roomForShortest)
+		sb.Reset()
+		sb.WriteString(current)
+	}
 	remaining := limit - sb.Len()
 	if remaining <= 0 {
 		return
@@ -247,6 +261,20 @@ func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 			return
 		}
 	}
+	sb.WriteString(truncateUTF8(shortest, remaining))
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 func codexCommitInspectionFallbackVariants(sha string) []string {
