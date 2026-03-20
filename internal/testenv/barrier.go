@@ -10,144 +10,143 @@ import (
 	"time"
 )
 
+type fileSnapshot struct {
+	name string
+	path string
+	size int64
+}
+
+type runtimeSnapshot struct {
+	path   string
+	exists bool
+	size   int64
+	mtime  time.Time
+}
+
 // ProdLogBarrier records the state of production log files before
 // tests run, and provides a Check method that fails hard if any
 // test activity leaked into production logs.
 type ProdLogBarrier struct {
 	pid         int
-	realDataDir string
-	// Byte offsets at barrier creation time.
-	activitySize int64
-	errorsSize   int64
-	// Snapshot of daemon.<pid>.json at barrier creation time.
-	runtimeExisted bool
-	runtimeSize    int64
-	runtimeMtime   time.Time
+	prodDataDir string
+	logs        []fileSnapshot
+	runtime     runtimeSnapshot
 }
 
 // DefaultProdDataDir returns the default production data directory
 // (~/.roborev). This is resolved from the user's home directory,
 // ignoring ROBOREV_DATA_DIR so it always points to the real dir.
-func DefaultProdDataDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev")
+func DefaultProdDataDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".roborev"), nil
 }
 
 // NewProdLogBarrier snapshots the current production data directory
 // state. Call Check() after m.Run() to detect test pollution.
-// realDataDir should be the default data directory (e.g. ~/.roborev)
+// prodDataDir should be the default data directory (e.g. ~/.roborev)
 // resolved BEFORE ROBOREV_DATA_DIR is overridden for tests.
-func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
+func NewProdLogBarrier(prodDataDir string) *ProdLogBarrier {
 	b := &ProdLogBarrier{
 		pid:         os.Getpid(),
-		realDataDir: realDataDir,
+		prodDataDir: prodDataDir,
+		logs: []fileSnapshot{
+			newFileSnapshot("activity.log", filepath.Join(prodDataDir, "activity.log")),
+			newFileSnapshot("errors.log", filepath.Join(prodDataDir, "errors.log")),
+		},
 	}
-	b.activitySize = fileSize(
-		filepath.Join(realDataDir, "activity.log"),
-	)
-	b.errorsSize = fileSize(
-		filepath.Join(realDataDir, "errors.log"),
-	)
-	runtimePath := filepath.Join(
-		realDataDir,
-		fmt.Sprintf("daemon.%d.json", b.pid),
-	)
-	if info, err := os.Stat(runtimePath); err == nil {
-		b.runtimeExisted = true
-		b.runtimeSize = info.Size()
-		b.runtimeMtime = info.ModTime()
-	}
+	b.runtime = newRuntimeSnapshot(prodDataDir, b.pid)
 	return b
+}
+
+// Violations reports production data-dir writes caused by the current test
+// process. The returned strings are stable enough for direct test assertions.
+func (b *ProdLogBarrier) Violations() []string {
+	violations := b.checkRuntimeFile()
+	for _, log := range b.logs {
+		violations = append(violations, b.checkLogFile(log)...)
+	}
+	return violations
 }
 
 // Check verifies no test pollution reached production files.
 // Returns a non-empty error message if pollution is detected.
 func (b *ProdLogBarrier) Check() string {
-	var violations []string
+	return formatViolations(b.Violations())
+}
 
-	// 1. Check for daemon runtime file with our PID.
-	runtimePath := filepath.Join(
-		b.realDataDir,
-		fmt.Sprintf("daemon.%d.json", b.pid),
-	)
-	if info, err := os.Stat(runtimePath); err == nil {
-		if !b.runtimeExisted {
-			violations = append(violations,
+func (b *ProdLogBarrier) checkRuntimeFile() []string {
+	info, err := os.Stat(b.runtime.path)
+	if err == nil {
+		if !b.runtime.exists {
+			return []string{
 				fmt.Sprintf(
 					"test wrote daemon.%d.json to prod data dir",
 					b.pid,
 				),
-			)
-		} else if info.Size() != b.runtimeSize ||
-			!info.ModTime().Equal(b.runtimeMtime) {
-			violations = append(violations,
+			}
+		}
+		if info.Size() != b.runtime.size || !info.ModTime().Equal(b.runtime.mtime) {
+			return []string{
 				fmt.Sprintf(
 					"test modified daemon.%d.json in prod data dir"+
 						" (size %d→%d, mtime %s→%s)",
-					b.pid, b.runtimeSize, info.Size(),
-					b.runtimeMtime.Format(time.RFC3339Nano),
+					b.pid, b.runtime.size, info.Size(),
+					b.runtime.mtime.Format(time.RFC3339Nano),
 					info.ModTime().Format(time.RFC3339Nano),
 				),
-			)
+			}
 		}
-	} else if b.runtimeExisted {
-		violations = append(violations,
+		return nil
+	}
+	if b.runtime.exists {
+		return []string{
 			fmt.Sprintf(
 				"test deleted daemon.%d.json from prod data dir",
 				b.pid,
 			),
-		)
+		}
 	}
-
-	// 2. Scan new lines in activity.log for test markers.
-	if markers := b.scanNewLines(
-		filepath.Join(b.realDataDir, "activity.log"),
-		b.activitySize,
-	); len(markers) > 0 {
-		violations = append(violations,
-			fmt.Sprintf(
-				"test pollution in prod activity.log: %s",
-				strings.Join(markers, "; "),
-			),
-		)
-	}
-
-	// 3. Scan new lines in errors.log for test markers.
-	if markers := b.scanNewLines(
-		filepath.Join(b.realDataDir, "errors.log"),
-		b.errorsSize,
-	); len(markers) > 0 {
-		violations = append(violations,
-			fmt.Sprintf(
-				"test pollution in prod errors.log: %s",
-				strings.Join(markers, "; "),
-			),
-		)
-	}
-
-	if len(violations) == 0 {
-		return ""
-	}
-	return "PROD LOG BARRIER FAILED:\n  " +
-		strings.Join(violations, "\n  ")
+	return nil
 }
 
-// scanNewLines reads lines appended after startOffset and returns
-// descriptions of any lines that look like test pollution.
-func (b *ProdLogBarrier) scanNewLines(
-	path string, startOffset int64,
-) []string {
+func (b *ProdLogBarrier) checkLogFile(log fileSnapshot) []string {
+	markers, err := scanNewLinesBestEffort(log.path, log.size, b.pid)
+	if err != nil {
+		markers = append(markers,
+			fmt.Sprintf("scan error (barrier may be incomplete): %v", err))
+	}
+	if len(markers) == 0 {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf(
+			"test pollution in prod %s: %s",
+			log.name,
+			strings.Join(markers, "; "),
+		),
+	}
+}
+
+// scanNewLinesBestEffort reads appended lines and returns any detected test
+// markers. Open and seek failures are intentionally ignored; scanner failures
+// are returned so callers can report that the barrier result may be incomplete.
+func scanNewLinesBestEffort(
+	path string, startOffset int64, pid int,
+) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil // file gone or unreadable — not our problem
+		return nil, nil
 	}
 	defer f.Close()
 
 	if _, err := f.Seek(startOffset, 0); err != nil {
-		return nil
+		return nil, nil
 	}
 
-	pidStr := strconv.Itoa(b.pid)
+	pidStr := strconv.Itoa(pid)
 	var markers []string
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(f)
@@ -162,11 +161,41 @@ func (b *ProdLogBarrier) scanNewLines(
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		markers = append(markers,
-			fmt.Sprintf("scan error (barrier may be incomplete): %v", err))
-	}
-	return markers
+	return markers, scanner.Err()
+}
+
+type markerRule struct {
+	description func(pidStr string) string
+	match       func(line, pidStr string) bool
+}
+
+var markerRules = []markerRule{
+	{
+		description: func(pidStr string) string {
+			return "daemon.started with test PID " + pidStr
+		},
+		match: func(line, pidStr string) bool {
+			return strings.Contains(line, `"pid":"`+pidStr+`"`) &&
+				strings.Contains(line, "daemon.started")
+		},
+	},
+	{
+		description: func(string) string {
+			return `event:"test" entry`
+		},
+		match: func(line, _ string) bool {
+			return strings.Contains(line, `"event":"test"`)
+		},
+	},
+	{
+		description: func(string) string {
+			return `daemon.started with version:"dev"`
+		},
+		match: func(line, _ string) bool {
+			return strings.Contains(line, `"version":"dev"`) &&
+				strings.Contains(line, "daemon.started")
+		},
+	},
 }
 
 // testMarkers returns marker descriptions if the line looks like
@@ -174,25 +203,32 @@ func (b *ProdLogBarrier) scanNewLines(
 // test-generated log entries.
 func testMarkers(line, pidStr string) []string {
 	var out []string
-
-	// daemon.started with our PID
-	if strings.Contains(line, `"pid":"`+pidStr+`"`) &&
-		strings.Contains(line, "daemon.started") {
-		out = append(out, "daemon.started with test PID "+pidStr)
+	for _, rule := range markerRules {
+		if rule.match(line, pidStr) {
+			out = append(out, rule.description(pidStr))
+		}
 	}
-
-	// Explicit test event markers
-	if strings.Contains(line, `"event":"test"`) {
-		out = append(out, `event:"test" entry`)
-	}
-
-	// dev version daemon start
-	if strings.Contains(line, `"version":"dev"`) &&
-		strings.Contains(line, "daemon.started") {
-		out = append(out, `daemon.started with version:"dev"`)
-	}
-
 	return out
+}
+
+func newFileSnapshot(name, path string) fileSnapshot {
+	return fileSnapshot{
+		name: name,
+		path: path,
+		size: fileSize(path),
+	}
+}
+
+func newRuntimeSnapshot(prodDataDir string, pid int) runtimeSnapshot {
+	snapshot := runtimeSnapshot{
+		path: filepath.Join(prodDataDir, fmt.Sprintf("daemon.%d.json", pid)),
+	}
+	if info, err := os.Stat(snapshot.path); err == nil {
+		snapshot.exists = true
+		snapshot.size = info.Size()
+		snapshot.mtime = info.ModTime()
+	}
+	return snapshot
 }
 
 func fileSize(path string) int64 {
@@ -201,4 +237,12 @@ func fileSize(path string) int64 {
 		return 0
 	}
 	return info.Size()
+}
+
+func formatViolations(violations []string) string {
+	if len(violations) == 0 {
+		return ""
+	}
+	return "PROD LOG BARRIER FAILED:\n  " +
+		strings.Join(violations, "\n  ")
 }

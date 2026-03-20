@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,116 +20,168 @@ func appendToFile(t *testing.T, path, content string) {
 	require.NoError(t, err, "failed to write to file")
 }
 
-func TestBarrierDetectsTestEventPollution(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "activity.log")
+func TestProdLogBarrierViolations(t *testing.T) {
+	tests := []struct {
+		name               string
+		setup              func(t *testing.T, dir string)
+		mutate             func(t *testing.T, dir string)
+		wantViolations     []string
+		wantContains       []string
+		wantViolationCount int
+	}{
+		{
+			name: "detects activity test event pollution",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				logPath := filepath.Join(dir, "activity.log")
+				err := os.WriteFile(logPath, []byte(
+					`{"event":"job.completed","component":"worker"}`+"\n",
+				), 0644)
+				require.NoError(t, err, "failed to write initial file")
+			},
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				appendToFile(t, filepath.Join(dir, "activity.log"),
+					`{"event":"test","component":"test","message":"msg"}`)
+			},
+			wantViolations: []string{
+				`test pollution in prod activity.log: event:"test" entry`,
+			},
+		},
+		{
+			name: "detects dev daemon start",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				appendToFile(t, filepath.Join(dir, "activity.log"),
+					`{"event":"daemon.started","details":{"version":"dev","pid":"999"}}`)
+			},
+			wantViolations: []string{
+				`test pollution in prod activity.log: daemon.started with version:"dev"`,
+			},
+		},
+		{
+			name: "detects daemon runtime file creation",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				runtimePath := filepath.Join(dir,
+					fmt.Sprintf("daemon.%d.json", os.Getpid()))
+				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				require.NoError(t, err, "failed to write runtime file")
+			},
+			wantViolations: []string{
+				fmt.Sprintf("test wrote daemon.%d.json to prod data dir", os.Getpid()),
+			},
+		},
+		{
+			name: "detects errors log pollution",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				appendToFile(t, filepath.Join(dir, "errors.log"),
+					`{"event":"test","component":"test","message":"err"}`)
+			},
+			wantViolations: []string{
+				`test pollution in prod errors.log: event:"test" entry`,
+			},
+		},
+		{
+			name: "ignores pre-existing runtime file",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				runtimePath := filepath.Join(dir,
+					fmt.Sprintf("daemon.%d.json", os.Getpid()))
+				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				require.NoError(t, err, "failed to write initial runtime file")
+			},
+		},
+		{
+			name: "detects pre-existing runtime mutation",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				runtimePath := filepath.Join(dir,
+					fmt.Sprintf("daemon.%d.json", os.Getpid()))
+				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				require.NoError(t, err, "failed to write initial runtime file")
+			},
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				runtimePath := filepath.Join(dir,
+					fmt.Sprintf("daemon.%d.json", os.Getpid()))
+				err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
+				require.NoError(t, err, "failed to modify runtime file")
+			},
+			wantViolationCount: 1,
+			wantContains: []string{
+				"test modified daemon.",
+				"size 2→11",
+				"mtime ",
+			},
+		},
+		{
+			name: "passes when clean",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				logPath := filepath.Join(dir, "activity.log")
+				err := os.WriteFile(logPath, []byte(
+					`{"event":"job.completed","component":"worker"}`+"\n",
+				), 0644)
+				require.NoError(t, err, "failed to write initial file")
+			},
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				appendToFile(t, filepath.Join(dir, "activity.log"),
+					`{"event":"job.completed","component":"worker","details":{"job_id":"6638"}}`)
+			},
+		},
+	}
 
-	// Write a "pre-existing" prod entry.
-	err := os.WriteFile(logPath, []byte(
-		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644)
-	require.NoError(t, err, "failed to write initial file")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.setup != nil {
+				tt.setup(t, dir)
+			}
 
-	barrier := NewProdLogBarrier(dir)
+			barrier := NewProdLogBarrier(dir)
 
-	// Append a test event.
-	appendToFile(t, logPath, `{"event":"test","component":"test","message":"msg"}`)
+			if tt.mutate != nil {
+				tt.mutate(t, dir)
+			}
 
-	msg := barrier.Check()
-	require.NotEmpty(t, msg, "barrier should detect test event pollution")
+			violations := barrier.Violations()
+
+			if tt.wantViolations != nil {
+				assert.Equal(t, tt.wantViolations, violations)
+			}
+			if tt.wantViolationCount > 0 {
+				require.Len(t, violations, tt.wantViolationCount)
+			}
+			for _, want := range tt.wantContains {
+				require.NotEmpty(t, violations, "expected at least one violation")
+				assert.Contains(t, violations[0], want)
+			}
+			if tt.wantViolations == nil && tt.wantViolationCount == 0 {
+				assert.Empty(t, violations)
+			}
+		})
+	}
 }
 
-func TestBarrierDetectsDevDaemonStart(t *testing.T) {
+func TestProdLogBarrierCheckFormatsViolations(t *testing.T) {
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "activity.log")
+	appendToFile(t, filepath.Join(dir, "activity.log"),
+		`{"event":"test","component":"test","message":"msg"}`)
 
 	barrier := NewProdLogBarrier(dir)
+	appendToFile(t, filepath.Join(dir, "errors.log"),
+		`{"event":"test","component":"test","message":"err"}`)
 
-	appendToFile(t, logPath, `{"event":"daemon.started","details":{"version":"dev","pid":"999"}}`)
+	violations := barrier.Violations()
+	require.Equal(t, []string{
+		`test pollution in prod errors.log: event:"test" entry`,
+	}, violations)
 
-	msg := barrier.Check()
-	require.NotEmpty(t, msg, "barrier should detect dev daemon start")
-}
-
-func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
-	dir := t.TempDir()
-
-	barrier := NewProdLogBarrier(dir)
-
-	// Create a daemon.<our-pid>.json file.
-	runtimePath := filepath.Join(dir,
-		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
-	require.NoError(t, err, "failed to write initial file")
-
-	msg := barrier.Check()
-	require.NotEmpty(t, msg, "barrier should detect daemon runtime file")
-}
-
-func TestBarrierDetectsErrorsLogPollution(t *testing.T) {
-	dir := t.TempDir()
-	errPath := filepath.Join(dir, "errors.log")
-
-	barrier := NewProdLogBarrier(dir)
-
-	appendToFile(t, errPath, `{"event":"test","component":"test","message":"err"}`)
-
-	msg := barrier.Check()
-	require.NotEmpty(t, msg, "barrier should detect test pollution in errors.log")
-	assert.Contains(t, msg, "errors.log",
-		"message should mention errors.log, got: %s", msg)
-}
-
-func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create a daemon.<our-pid>.json BEFORE the barrier.
-	runtimePath := filepath.Join(dir,
-		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
-	require.NoError(t, err, "failed to write initial file")
-
-	barrier := NewProdLogBarrier(dir)
-
-	// File still exists but was there before tests.
-	msg := barrier.Check()
-	assert.Empty(t, msg, "barrier should ignore pre-existing runtime file, got: %s", msg)
-}
-
-func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create a daemon.<our-pid>.json BEFORE the barrier.
-	runtimePath := filepath.Join(dir,
-		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	err := os.WriteFile(runtimePath, []byte("{}"), 0644)
-	require.NoError(t, err, "failed to write initial file")
-
-	barrier := NewProdLogBarrier(dir)
-
-	// Modify the file after barrier creation.
-	err = os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
-	require.NoError(t, err, "failed to modify file")
-
-	msg := barrier.Check()
-	require.NotEmpty(t, msg, "barrier should detect modified runtime file")
-	assert.Contains(t, msg, "modified",
-		"message should mention modification, got: %s", msg)
-}
-
-func TestBarrierPassesWhenClean(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "activity.log")
-	err := os.WriteFile(logPath, []byte(
-		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644)
-	require.NoError(t, err, "failed to write initial file")
-
-	barrier := NewProdLogBarrier(dir)
-
-	// Append a legitimate prod entry (no test markers).
-	appendToFile(t, logPath, `{"event":"job.completed","component":"worker","details":{"job_id":"6638"}}`)
-
-	msg := barrier.Check()
-	assert.Empty(t, msg, "barrier should pass for clean logs, got: %s", msg)
+	assert.Equal(t,
+		"PROD LOG BARRIER FAILED:\n  "+strings.Join(violations, "\n  "),
+		barrier.Check(),
+	)
 }
