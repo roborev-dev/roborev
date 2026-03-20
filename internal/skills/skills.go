@@ -28,6 +28,25 @@ const (
 	AgentCodex  Agent = "codex"
 )
 
+type agentSpec struct {
+	agent         Agent
+	configDirName string
+	embedFS       fs.FS
+	embedDir      string
+}
+
+type embeddedSkill struct {
+	DirName     string
+	Name        string
+	Description string
+	Content     []byte
+}
+
+var supportedAgents = []agentSpec{
+	{agent: AgentClaude, configDirName: ".claude", embedFS: claudeSkills, embedDir: "claude"},
+	{agent: AgentCodex, configDirName: ".codex", embedFS: codexSkills, embedDir: "codex"},
+}
+
 // InstallResult contains the result of a skill installation
 type InstallResult struct {
 	Agent     Agent
@@ -39,22 +58,14 @@ type InstallResult struct {
 // Install installs skills for all supported agents whose config directories exist.
 // It is idempotent - running multiple times will update existing skills.
 func Install() ([]InstallResult, error) {
-	var results []InstallResult
-
-	// Install Claude skills
-	result, err := installClaude()
-	if err != nil {
-		return nil, fmt.Errorf("claude skills: %w", err)
+	results := make([]InstallResult, 0, len(supportedAgents))
+	for _, spec := range supportedAgents {
+		result, err := installAgent(spec)
+		if err != nil {
+			return nil, fmt.Errorf("%s skills: %w", spec.agent, err)
+		}
+		results = append(results, result)
 	}
-	results = append(results, result)
-
-	// Install Codex skills
-	result, err = installCodex()
-	if err != nil {
-		return nil, fmt.Errorf("codex skills: %w", err)
-	}
-	results = append(results, result)
-
 	return results, nil
 }
 
@@ -65,16 +76,13 @@ func IsInstalled(agent Agent) bool {
 		return false
 	}
 
-	var checkFiles []string
+	spec, ok := lookupAgent(agent)
+	if !ok {
+		return false
+	}
 
-	switch agent {
-	case AgentClaude:
-		skillsDir := filepath.Join(home, ".claude", "skills")
-		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
-	case AgentCodex:
-		skillsDir := filepath.Join(home, ".codex", "skills")
-		checkFiles = append(currentSkillChecks(skillsDir), legacySkillChecks(skillsDir)...)
-	default:
+	checkFiles, err := installedSkillFilePaths(home, spec)
+	if err != nil {
 		return false
 	}
 
@@ -93,47 +101,111 @@ var legacySkills = []string{
 	"roborev-address",
 }
 
-func currentSkillChecks(skillsDir string) []string {
-	names := []string{
-		"roborev-respond",
-		"roborev-fix",
-		"roborev-design-review",
-		"roborev-design-review-branch",
-		"roborev-review",
-		"roborev-review-branch",
+func lookupAgent(agent Agent) (agentSpec, bool) {
+	for _, spec := range supportedAgents {
+		if spec.agent == agent {
+			return spec, true
+		}
 	}
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+	return agentSpec{}, false
+}
+
+func agentConfigDir(home string, spec agentSpec) string {
+	return filepath.Join(home, spec.configDirName)
+}
+
+func agentSkillsDir(home string, spec agentSpec) string {
+	return filepath.Join(agentConfigDir(home, spec), "skills")
+}
+
+func skillInstallPath(skillsDir, skillName string) string {
+	return filepath.Join(skillsDir, skillName, "SKILL.md")
+}
+
+func embeddedSkillsForAgent(spec agentSpec) ([]embeddedSkill, error) {
+	entries, err := fs.ReadDir(spec.embedFS, spec.embedDir)
+	if err != nil {
+		return nil, fmt.Errorf("read embedded skills: %w", err)
+	}
+
+	skills := make([]embeddedSkill, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dirName := entry.Name()
+		content, err := fs.ReadFile(spec.embedFS, path.Join(spec.embedDir, dirName, "SKILL.md"))
+		if err != nil {
+			return nil, fmt.Errorf("read %s/SKILL.md: %w", dirName, err)
+		}
+
+		name, desc := parseFrontmatter(content)
+		if name == "" {
+			name = dirName
+		}
+		skills = append(skills, embeddedSkill{
+			DirName:     dirName,
+			Name:        name,
+			Description: desc,
+			Content:     content,
+		})
+	}
+	return skills, nil
+}
+
+func currentInstalledSkillFilePaths(home string, spec agentSpec) ([]string, error) {
+	skills, err := embeddedSkillsForAgent(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	skillsDir := agentSkillsDir(home, spec)
+	paths := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		paths = append(paths, skillInstallPath(skillsDir, skill.DirName))
+	}
+	return paths, nil
+}
+
+func legacyInstalledSkillFilePaths(skillsDir string) []string {
+	out := make([]string, len(legacySkills))
+	for i, n := range legacySkills {
+		out[i] = skillInstallPath(skillsDir, n)
 	}
 	return out
 }
 
-func legacySkillChecks(skillsDir string) []string {
-	out := make([]string, len(legacySkills))
-	for i, n := range legacySkills {
-		out[i] = filepath.Join(skillsDir, n, "SKILL.md")
+func installedSkillFilePaths(home string, spec agentSpec) ([]string, error) {
+	skillsDir := agentSkillsDir(home, spec)
+	current, err := currentInstalledSkillFilePaths(home, spec)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	return append(current, legacyInstalledSkillFilePaths(skillsDir)...), nil
 }
 
 // Update updates skills for agents that already have them installed
 // and removes legacy skills that are no longer shipped.
 func Update() ([]InstallResult, error) {
-	var results []InstallResult
-
-	if IsInstalled(AgentClaude) {
-		result, err := installClaude()
-		if err != nil {
-			return nil, fmt.Errorf("update claude skills: %w", err)
-		}
-		results = append(results, result)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get home dir: %w", err)
 	}
 
-	if IsInstalled(AgentCodex) {
-		result, err := installCodex()
+	var results []InstallResult
+	for _, spec := range supportedAgents {
+		installed, err := installedSkillFilePaths(home, spec)
 		if err != nil {
-			return nil, fmt.Errorf("update codex skills: %w", err)
+			return nil, fmt.Errorf("update %s skills: %w", spec.agent, err)
+		}
+		if !anyFileExists(installed) {
+			continue
+		}
+
+		result, err := installAgent(spec)
+		if err != nil {
+			return nil, fmt.Errorf("update %s skills: %w", spec.agent, err)
 		}
 		results = append(results, result)
 	}
@@ -143,22 +215,13 @@ func Update() ([]InstallResult, error) {
 
 // removeLegacySkills deletes skill directories that are no longer
 // embedded in the binary.
-func removeLegacySkills(agent Agent) error {
+func removeLegacySkills(spec agentSpec) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("get home dir: %w", err)
 	}
 
-	var skillsDir string
-	switch agent {
-	case AgentClaude:
-		skillsDir = filepath.Join(home, ".claude", "skills")
-	case AgentCodex:
-		skillsDir = filepath.Join(home, ".codex", "skills")
-	default:
-		return nil
-	}
-
+	skillsDir := agentSkillsDir(home, spec)
 	for _, name := range legacySkills {
 		dir := filepath.Join(skillsDir, name)
 		if err := os.RemoveAll(dir); err != nil {
@@ -168,122 +231,42 @@ func removeLegacySkills(agent Agent) error {
 	return nil
 }
 
-func installClaude() (InstallResult, error) {
-	result := InstallResult{Agent: AgentClaude}
+func installAgent(spec agentSpec) (InstallResult, error) {
+	result := InstallResult{Agent: spec.agent}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return result, fmt.Errorf("get home dir: %w", err)
 	}
 
-	// Check if ~/.claude exists
-	claudeDir := filepath.Join(home, ".claude")
-	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
+	configDir := agentConfigDir(home, spec)
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		result.Skipped = true
 		return result, nil
 	}
 
-	// Create skills directory
-	skillsDir := filepath.Join(claudeDir, "skills")
+	skillsDir := agentSkillsDir(home, spec)
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		return result, fmt.Errorf("create skills dir: %w", err)
 	}
 
-	// Install each skill directory
-	entries, err := fs.ReadDir(claudeSkills, "claude")
+	skills, err := embeddedSkillsForAgent(spec)
 	if err != nil {
-		return result, fmt.Errorf("read embedded skills: %w", err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		skillName := entry.Name()
-		skillDir := filepath.Join(skillsDir, skillName)
-
-		// Create skill directory
-		if err := os.MkdirAll(skillDir, 0755); err != nil {
-			return result, fmt.Errorf("create %s dir: %w", skillName, err)
-		}
-
-		// Read SKILL.md (use path.Join for embed FS - requires forward slashes)
-		content, err := claudeSkills.ReadFile(path.Join("claude", skillName, "SKILL.md"))
-		if err != nil {
-			return result, fmt.Errorf("read %s/SKILL.md: %w", skillName, err)
-		}
-
-		destPath := filepath.Join(skillDir, "SKILL.md")
-		existed := fileExists(destPath)
-
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return result, fmt.Errorf("write %s/SKILL.md: %w", skillName, err)
-		}
-
-		if existed {
-			result.Updated = append(result.Updated, skillName)
-		} else {
-			result.Installed = append(result.Installed, skillName)
-		}
-	}
-
-	if err := removeLegacySkills(AgentClaude); err != nil {
 		return result, err
 	}
-	return result, nil
-}
 
-func installCodex() (InstallResult, error) {
-	result := InstallResult{Agent: AgentCodex}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return result, fmt.Errorf("get home dir: %w", err)
-	}
-
-	// Check if ~/.codex exists
-	codexDir := filepath.Join(home, ".codex")
-	if _, err := os.Stat(codexDir); os.IsNotExist(err) {
-		result.Skipped = true
-		return result, nil
-	}
-
-	// Create skills directory
-	skillsDir := filepath.Join(codexDir, "skills")
-	if err := os.MkdirAll(skillsDir, 0755); err != nil {
-		return result, fmt.Errorf("create skills dir: %w", err)
-	}
-
-	// Install each skill directory
-	entries, err := fs.ReadDir(codexSkills, "codex")
-	if err != nil {
-		return result, fmt.Errorf("read embedded skills: %w", err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		skillName := entry.Name()
+	for _, skill := range skills {
+		skillName := skill.DirName
 		skillDir := filepath.Join(skillsDir, skillName)
 
-		// Create skill directory
 		if err := os.MkdirAll(skillDir, 0755); err != nil {
 			return result, fmt.Errorf("create %s dir: %w", skillName, err)
-		}
-
-		// Read SKILL.md (use path.Join for embed FS - requires forward slashes)
-		content, err := codexSkills.ReadFile(path.Join("codex", skillName, "SKILL.md"))
-		if err != nil {
-			return result, fmt.Errorf("read %s/SKILL.md: %w", skillName, err)
 		}
 
 		destPath := filepath.Join(skillDir, "SKILL.md")
 		existed := fileExists(destPath)
 
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
+		if err := os.WriteFile(destPath, skill.Content, 0644); err != nil {
 			return result, fmt.Errorf("write %s/SKILL.md: %w", skillName, err)
 		}
 
@@ -294,7 +277,7 @@ func installCodex() (InstallResult, error) {
 		}
 	}
 
-	if err := removeLegacySkills(AgentCodex); err != nil {
+	if err := removeLegacySkills(spec); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -323,27 +306,58 @@ type AgentStatus struct {
 	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-fix")
 }
 
-// ListSkills returns metadata for all embedded skills (from the Claude skill set).
+func embeddedSkillCatalog() (map[string]SkillInfo, error) {
+	catalog := make(map[string]SkillInfo)
+	for _, spec := range supportedAgents {
+		skills, err := embeddedSkillsForAgent(spec)
+		if err != nil {
+			return nil, err
+		}
+		for _, skill := range skills {
+			info := SkillInfo{
+				DirName:     skill.DirName,
+				Name:        skill.Name,
+				Description: skill.Description,
+			}
+
+			existing, ok := catalog[skill.DirName]
+			if !ok {
+				catalog[skill.DirName] = info
+				continue
+			}
+			if existing.Name == "" {
+				existing.Name = info.Name
+			}
+			if existing.Description == "" {
+				existing.Description = info.Description
+			}
+			catalog[skill.DirName] = existing
+		}
+	}
+	return catalog, nil
+}
+
+// ListSkills returns metadata for all embedded skills.
 func ListSkills() ([]SkillInfo, error) {
-	entries, err := fs.ReadDir(claudeSkills, "claude")
+	catalog, err := embeddedSkillCatalog()
 	if err != nil {
-		return nil, fmt.Errorf("read embedded skills: %w", err)
+		return nil, err
 	}
 
-	var out []SkillInfo
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		content, err := claudeSkills.ReadFile(path.Join("claude", entry.Name(), "SKILL.md"))
+	out := make([]SkillInfo, 0, len(catalog))
+	for _, spec := range supportedAgents {
+		skills, err := embeddedSkillsForAgent(spec)
 		if err != nil {
-			return nil, fmt.Errorf("read %s/SKILL.md: %w", entry.Name(), err)
+			return nil, err
 		}
-		name, desc := parseFrontmatter(content)
-		if name == "" {
-			name = entry.Name()
+		for _, skill := range skills {
+			info, ok := catalog[skill.DirName]
+			if !ok {
+				continue
+			}
+			out = append(out, info)
+			delete(catalog, skill.DirName)
 		}
-		out = append(out, SkillInfo{DirName: entry.Name(), Name: name, Description: desc})
 	}
 	return out, nil
 }
@@ -355,61 +369,40 @@ func Status() []AgentStatus {
 		return nil
 	}
 
-	type agentDef struct {
-		agent     Agent
-		configDir string
-		embedFS   embed.FS
-		embedDir  string
-	}
-
-	agents := []agentDef{
-		{AgentClaude, filepath.Join(home, ".claude"), claudeSkills, "claude"},
-		{AgentCodex, filepath.Join(home, ".codex"), codexSkills, "codex"},
-	}
-
 	var out []AgentStatus
-	for _, a := range agents {
+	for _, spec := range supportedAgents {
 		status := AgentStatus{
-			Agent:  a.agent,
+			Agent:  spec.agent,
 			Skills: make(map[string]SkillState),
 		}
 
-		if _, err := os.Stat(a.configDir); err != nil {
+		configDir := agentConfigDir(home, spec)
+		if _, err := os.Stat(configDir); err != nil {
 			out = append(out, status)
 			continue
 		}
 		status.Available = true
 
-		entries, err := fs.ReadDir(a.embedFS, a.embedDir)
+		skills, err := embeddedSkillsForAgent(spec)
 		if err != nil {
 			out = append(out, status)
 			continue
 		}
 
-		skillsDir := filepath.Join(a.configDir, "skills")
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			installedPath := filepath.Join(skillsDir, name, "SKILL.md")
+		skillsDir := agentSkillsDir(home, spec)
+		for _, skill := range skills {
+			installedPath := skillInstallPath(skillsDir, skill.DirName)
 
 			installedContent, err := os.ReadFile(installedPath)
 			if err != nil {
-				status.Skills[name] = SkillMissing
+				status.Skills[skill.DirName] = SkillMissing
 				continue
 			}
 
-			embeddedContent, err := a.embedFS.ReadFile(path.Join(a.embedDir, name, "SKILL.md"))
-			if err != nil {
-				status.Skills[name] = SkillMissing
-				continue
-			}
-
-			if bytes.Equal(installedContent, embeddedContent) {
-				status.Skills[name] = SkillCurrent
+			if bytes.Equal(installedContent, skill.Content) {
+				status.Skills[skill.DirName] = SkillCurrent
 			} else {
-				status.Skills[name] = SkillOutdated
+				status.Skills[skill.DirName] = SkillOutdated
 			}
 		}
 
@@ -442,4 +435,13 @@ func parseFrontmatter(data []byte) (name, description string) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func anyFileExists(paths []string) bool {
+	for _, p := range paths {
+		if fileExists(p) {
+			return true
+		}
+	}
+	return false
 }
