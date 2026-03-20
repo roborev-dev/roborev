@@ -113,31 +113,34 @@ func ResetVersionCache() {
 }
 
 // resolveAgentsview checks whether agentsview is installed and new
-// enough. Caches positive results and definitive "too old" results
-// permanently. Transient failures (binary not found, timeout,
-// exec error, unparseable output) leave the cache unchecked so the
-// next call retries.
+// enough. The result is cached keyed to the resolved binary path,
+// so an upgrade, downgrade, or PATH change triggers a fresh probe.
+// Transient failures (binary not found, timeout, exec error,
+// unparseable output) leave the cache unchecked so the next call
+// retries.
 func resolveAgentsview(ctx context.Context) (string, bool) {
-	versionMu.Lock()
-	switch versionProbe {
-	case versionOK:
-		bin := cachedBin
-		versionMu.Unlock()
-		return bin, true
-	case versionTooOld:
-		versionMu.Unlock()
+	// LookPath is cheap (PATH scan, no exec) — always run it so we
+	// detect installs, upgrades, and PATH changes.
+	bin, err := exec.LookPath("agentsview")
+	if err != nil {
 		return "", false
+	}
+
+	versionMu.Lock()
+	if cachedBin == bin {
+		switch versionProbe {
+		case versionOK:
+			versionMu.Unlock()
+			return bin, true
+		case versionTooOld:
+			versionMu.Unlock()
+			return "", false
+		}
 	}
 	versionMu.Unlock()
 
-	// LookPath and exec run without holding the lock so concurrent
-	// callers are not blocked by the 5 s command timeout.
-	bin, err := exec.LookPath("agentsview")
-	if err != nil {
-		// Not installed — transient (could be installed later).
-		return "", false
-	}
-
+	// Exec runs without holding the lock so concurrent callers are
+	// not blocked by the 5 s command timeout.
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -145,7 +148,6 @@ func resolveAgentsview(ctx context.Context) (string, bool) {
 		cmdCtx, bin, "version",
 	).Output()
 	if err != nil {
-		// Exec/timeout error — don't cache, retry next time.
 		return "", false
 	}
 
@@ -155,11 +157,13 @@ func resolveAgentsview(ctx context.Context) (string, bool) {
 	defer versionMu.Unlock()
 
 	// Re-check: another goroutine may have updated the cache.
-	switch versionProbe {
-	case versionOK:
-		return cachedBin, true
-	case versionTooOld:
-		return "", false
+	if cachedBin == bin {
+		switch versionProbe {
+		case versionOK:
+			return bin, true
+		case versionTooOld:
+			return "", false
+		}
 	}
 
 	if supported {
@@ -168,10 +172,9 @@ func resolveAgentsview(ctx context.Context) (string, bool) {
 		return bin, true
 	}
 	if parsed {
-		// Parsed a version that is definitively too old.
 		versionProbe = versionTooOld
+		cachedBin = bin
 	}
-	// Unparseable output — don't cache, allow retry.
 	return "", false
 }
 

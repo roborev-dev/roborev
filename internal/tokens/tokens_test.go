@@ -239,6 +239,39 @@ echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
 	assert.False(t, ok, "too-old should be cached permanently")
 }
 
+func TestResolveAgentsviewInvalidatesCacheOnPathChange(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+
+	ResetVersionCache()
+	t.Cleanup(ResetVersionCache)
+
+	// First call: agentsview at dir1 is too old → cached.
+	dir1 := t.TempDir()
+	bin1 := filepath.Join(dir1, "agentsview")
+	script1 := "#!/bin/sh\necho 'agentsview v0.14.0 (commit abc)'\n"
+	require.NoError(t, os.WriteFile(bin1, []byte(script1), 0o755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir1+string(os.PathListSeparator)+origPath)
+
+	_, ok := resolveAgentsview(context.Background())
+	assert.False(t, ok)
+
+	// "Upgrade" by placing a new binary earlier in PATH.
+	dir2 := t.TempDir()
+	bin2 := filepath.Join(dir2, "agentsview")
+	script2 := "#!/bin/sh\necho 'agentsview v0.15.0 (commit def)'\n"
+	require.NoError(t, os.WriteFile(bin2, []byte(script2), 0o755))
+
+	t.Setenv("PATH", dir2+string(os.PathListSeparator)+origPath)
+
+	path, ok := resolveAgentsview(context.Background())
+	assert.True(t, ok, "new path should trigger re-probe")
+	assert.Equal(t, bin2, path)
+}
+
 func TestResolveAgentsviewRetriesAfterUnparseableOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses shell scripts")
