@@ -63,12 +63,15 @@ var versionRe = regexp.MustCompile(
 	`agentsview v(\d+)\.(\d+)\.(\d+)`,
 )
 
-// parseVersionOK returns true if the output of `agentsview version`
-// contains a semver >= minVersion.
-func parseVersionOK(out []byte) bool {
+// parseVersion checks whether the output of `agentsview version`
+// contains a semver >= minVersion. Returns (supported, parsed):
+// supported is true when the version meets the minimum; parsed is
+// true when a version string was found at all (regardless of
+// whether it is new enough).
+func parseVersion(out []byte) (supported, parsed bool) {
 	m := versionRe.FindSubmatch(out)
 	if m == nil {
-		return false
+		return false, false
 	}
 	var ver [3]int
 	for i := range 3 {
@@ -76,28 +79,13 @@ func parseVersionOK(out []byte) bool {
 	}
 	for i := range 3 {
 		if ver[i] > minVersion[i] {
-			return true
+			return true, true
 		}
 		if ver[i] < minVersion[i] {
-			return false
+			return false, true
 		}
 	}
-	return true // equal
-}
-
-// checkVersion runs `agentsview version` and returns true if the
-// reported version is >= minVersion. Returns false on any error.
-func checkVersion(ctx context.Context, binPath string) bool {
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(
-		cmdCtx, binPath, "version",
-	).Output()
-	if err != nil {
-		return false
-	}
-	return parseVersionOK(out)
+	return true, true // equal
 }
 
 // versionState tracks the cached probe result.
@@ -127,18 +115,23 @@ func ResetVersionCache() {
 // resolveAgentsview checks whether agentsview is installed and new
 // enough. Caches positive results and definitive "too old" results
 // permanently. Transient failures (binary not found, timeout,
-// exec error) leave the cache unchecked so the next call retries.
+// exec error, unparseable output) leave the cache unchecked so the
+// next call retries.
 func resolveAgentsview(ctx context.Context) (string, bool) {
 	versionMu.Lock()
-	defer versionMu.Unlock()
-
 	switch versionProbe {
 	case versionOK:
-		return cachedBin, true
+		bin := cachedBin
+		versionMu.Unlock()
+		return bin, true
 	case versionTooOld:
+		versionMu.Unlock()
 		return "", false
 	}
+	versionMu.Unlock()
 
+	// LookPath and exec run without holding the lock so concurrent
+	// callers are not blocked by the 5 s command timeout.
 	bin, err := exec.LookPath("agentsview")
 	if err != nil {
 		// Not installed — transient (could be installed later).
@@ -156,13 +149,29 @@ func resolveAgentsview(ctx context.Context) (string, bool) {
 		return "", false
 	}
 
-	if parseVersionOK(out) {
+	supported, parsed := parseVersion(out)
+
+	versionMu.Lock()
+	defer versionMu.Unlock()
+
+	// Re-check: another goroutine may have updated the cache.
+	switch versionProbe {
+	case versionOK:
+		return cachedBin, true
+	case versionTooOld:
+		return "", false
+	}
+
+	if supported {
 		versionProbe = versionOK
 		cachedBin = bin
 		return bin, true
 	}
-	// Definitively too old — cache permanently.
-	versionProbe = versionTooOld
+	if parsed {
+		// Parsed a version that is definitively too old.
+		versionProbe = versionTooOld
+	}
+	// Unparseable output — don't cache, allow retry.
 	return "", false
 }
 

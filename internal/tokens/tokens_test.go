@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,81 +74,74 @@ func TestParseJSON(t *testing.T) {
 	})
 }
 
-func TestCheckVersion(t *testing.T) {
-	// Create a fake agentsview script that prints the given output.
-	makeScript := func(t *testing.T, output string) string {
-		t.Helper()
-		dir := t.TempDir()
-		bin := filepath.Join(dir, "agentsview")
-		script := "#!/bin/sh\necho '" + output + "'\n"
-		require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
-		return bin
-	}
-
+func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		name   string
-		output string
-		want   bool
+		name      string
+		output    string
+		supported bool
+		parsed    bool
 	}{
 		{
 			"exact minimum",
 			"agentsview v0.15.0 (commit abc, built 2026-01-01)",
-			true,
+			true, true,
 		},
 		{
 			"newer patch",
 			"agentsview v0.15.1 (commit abc, built 2026-01-01)",
-			true,
+			true, true,
 		},
 		{
 			"newer minor",
 			"agentsview v0.16.0 (commit abc, built 2026-01-01)",
-			true,
+			true, true,
 		},
 		{
 			"newer major",
 			"agentsview v1.0.0 (commit abc, built 2026-01-01)",
-			true,
+			true, true,
 		},
 		{
 			"dev suffix",
 			"agentsview v0.15.0-1-g891cb62 (commit 891cb62, built 2026-03-18)",
-			true,
+			true, true,
 		},
 		{
 			"too old",
 			"agentsview v0.14.9 (commit abc, built 2026-01-01)",
-			false,
+			false, true,
 		},
 		{
 			"very old",
 			"agentsview v0.10.0 (commit abc, built 2026-01-01)",
-			false,
+			false, true,
 		},
 		{
 			"unparseable",
 			"something unexpected",
-			false,
+			false, false,
+		},
+		{
+			"empty",
+			"",
+			false, false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bin := makeScript(t, tt.output)
-			got := checkVersion(context.Background(), bin)
-			assert.Equal(t, tt.want, got)
+			supported, parsed := parseVersion([]byte(tt.output))
+			assert.Equal(t, tt.supported, supported, "supported")
+			assert.Equal(t, tt.parsed, parsed, "parsed")
 		})
 	}
-
-	t.Run("missing binary", func(t *testing.T) {
-		got := checkVersion(
-			context.Background(), "/nonexistent/agentsview",
-		)
-		assert.False(t, got)
-	})
 }
 
 func TestFetchForSessionSkipsOldVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+
 	// Verify FetchForSession returns nil when agentsview is too old,
 	// rather than invoking token-use (which could spawn a server).
 	ResetVersionCache()
@@ -155,8 +149,6 @@ func TestFetchForSessionSkipsOldVersion(t *testing.T) {
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "agentsview")
-	// Script that prints old version for "version", and would fail
-	// loudly for any other subcommand.
 	script := `#!/bin/sh
 if [ "$1" = "version" ]; then
   echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
@@ -168,9 +160,8 @@ exit 99
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 
 	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+":"+origPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
 
-	// Confirm our fake is found.
 	_, err := exec.LookPath("agentsview")
 	require.NoError(t, err)
 
@@ -182,6 +173,10 @@ exit 99
 }
 
 func TestResolveAgentsviewRetriesAfterTransientFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+
 	ResetVersionCache()
 	t.Cleanup(ResetVersionCache)
 
@@ -206,7 +201,7 @@ fi
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 
 	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+":"+origPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
 
 	path, ok := resolveAgentsview(context.Background())
 	assert.True(t, ok, "should succeed after binary appears")
@@ -214,6 +209,10 @@ fi
 }
 
 func TestResolveAgentsviewCachesTooOldPermanently(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+
 	ResetVersionCache()
 	t.Cleanup(ResetVersionCache)
 
@@ -225,7 +224,7 @@ echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 
 	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+":"+origPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
 
 	_, ok := resolveAgentsview(context.Background())
 	assert.False(t, ok)
@@ -238,6 +237,40 @@ echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
 
 	_, ok = resolveAgentsview(context.Background())
 	assert.False(t, ok, "too-old should be cached permanently")
+}
+
+func TestResolveAgentsviewRetriesAfterUnparseableOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+
+	ResetVersionCache()
+	t.Cleanup(ResetVersionCache)
+
+	// First call: agentsview returns unparseable version output.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agentsview")
+	script := "#!/bin/sh\necho 'something unexpected'\n"
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
+
+	_, ok := resolveAgentsview(context.Background())
+	assert.False(t, ok, "unparseable should fail")
+
+	// Replace with valid version — should succeed because
+	// unparseable output was NOT cached as too-old.
+	dir2 := t.TempDir()
+	bin2 := filepath.Join(dir2, "agentsview")
+	script2 := "#!/bin/sh\necho 'agentsview v0.15.0 (commit abc)'\n"
+	require.NoError(t, os.WriteFile(bin2, []byte(script2), 0o755))
+
+	t.Setenv("PATH", dir2+string(os.PathListSeparator)+origPath)
+
+	path, ok := resolveAgentsview(context.Background())
+	assert.True(t, ok, "should succeed after valid version appears")
+	assert.NotEmpty(t, path)
 }
 
 func TestToJSON(t *testing.T) {
