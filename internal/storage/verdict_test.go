@@ -199,6 +199,16 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "FieldLabels/verdict label explicit PASS value",
+		output: "**Verdict**: PASS",
+		want:   VerdictPass,
+	},
+	{
+		name:   "FieldLabels/verdict label explicit FAIL value",
+		output: "**Verdict**: FAIL",
+		want:   VerdictFail,
+	},
+	{
 		name:   "FieldLabels/verdict label no space after colon",
 		output: "**Verdict**:No issues found.",
 		want:   VerdictPass,

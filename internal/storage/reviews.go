@@ -12,17 +12,9 @@ import (
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var r Review
-	var createdAt string
-	var closed int
+	var reviewFields reviewScanFields
 	var job ReviewJob
-	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
-	var commitID sql.NullInt64
-	var commitSubject sql.NullString
-	var tokenUsage sql.NullString
-
-	var verdictBool sql.NullInt64
-	var branch sql.NullString
+	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
@@ -33,71 +25,16 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		JOIN repos rp ON rp.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
-	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&job.RepoPath, &job.RepoName, &commitSubject, &tokenUsage)
+	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
+		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
+		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
+		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage)
 	if err != nil {
 		return nil, err
 	}
-	r.Closed = closed != 0
-	if reviewUUID.Valid {
-		r.UUID = reviewUUID.String
-	}
-
-	r.CreatedAt = parseSQLiteTime(createdAt)
-	if commitID.Valid {
-		job.CommitID = &commitID.Int64
-	}
-	if commitSubject.Valid {
-		job.CommitSubject = commitSubject.String
-	}
-	if branch.Valid {
-		job.Branch = branch.String
-	}
-	if model.Valid {
-		job.Model = model.String
-	}
-	if sessionID.Valid {
-		job.SessionID = sessionID.String
-	}
-	if jobTypeStr.Valid {
-		job.JobType = jobTypeStr.String
-	}
-	if reviewTypeStr.Valid {
-		job.ReviewType = reviewTypeStr.String
-	}
-	if patchIDStr.Valid {
-		job.PatchID = patchIDStr.String
-	}
-	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
-	if startedAt.Valid {
-		t := parseSQLiteTime(startedAt.String)
-		job.StartedAt = &t
-	}
-	if finishedAt.Valid {
-		t := parseSQLiteTime(finishedAt.String)
-		job.FinishedAt = &t
-	}
-	if workerID.Valid {
-		job.WorkerID = workerID.String
-	}
-	if errMsg.Valid {
-		job.Error = errMsg.String
-	}
-	if tokenUsage.Valid {
-		job.TokenUsage = tokenUsage.String
-	}
-
-	// Use stored verdict_bool if available, otherwise fall back to ParseVerdict
-	if r.Output != "" && job.Error == "" && !job.IsTaskJob() {
-		verdict := verdictFromBoolOrParse(verdictBool, r.Output)
-		job.Verdict = &verdict
-	}
-	if verdictBool.Valid {
-		v := int(verdictBool.Int64)
-		r.VerdictBool = &v
-	}
+	applyReviewScan(&r, reviewFields)
+	applyReviewJobScan(&job, jobFields)
+	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
 
 	r.Job = &job
 
@@ -107,18 +44,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 // GetReviewByCommitSHA finds the most recent review by commit SHA (searches git_ref field)
 func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var r Review
-	var createdAt string
-	var closed int
+	var reviewFields reviewScanFields
 	var job ReviewJob
-	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, sessionID, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
-	var commitID sql.NullInt64
-	var commitSubject sql.NullString
-	var tokenUsage sql.NullString
-
-	// Search by git_ref which contains the SHA for single commits
-	var verdictBool sql.NullInt64
-	var branch sql.NullString
+	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
@@ -131,72 +59,16 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		WHERE j.git_ref = ?
 		ORDER BY rv.created_at DESC
 		LIMIT 1
-	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &sessionID, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&job.RepoPath, &job.RepoName, &commitSubject, &tokenUsage)
+	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
+		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
+		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
+		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage)
 	if err != nil {
 		return nil, err
 	}
-	r.Closed = closed != 0
-	if reviewUUID.Valid {
-		r.UUID = reviewUUID.String
-	}
-
-	if commitID.Valid {
-		job.CommitID = &commitID.Int64
-	}
-	if commitSubject.Valid {
-		job.CommitSubject = commitSubject.String
-	}
-	if branch.Valid {
-		job.Branch = branch.String
-	}
-	if model.Valid {
-		job.Model = model.String
-	}
-	if sessionID.Valid {
-		job.SessionID = sessionID.String
-	}
-	if jobTypeStr.Valid {
-		job.JobType = jobTypeStr.String
-	}
-	if reviewTypeStr.Valid {
-		job.ReviewType = reviewTypeStr.String
-	}
-	if patchIDStr.Valid {
-		job.PatchID = patchIDStr.String
-	}
-
-	r.CreatedAt = parseSQLiteTime(createdAt)
-	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
-	if startedAt.Valid {
-		t := parseSQLiteTime(startedAt.String)
-		job.StartedAt = &t
-	}
-	if finishedAt.Valid {
-		t := parseSQLiteTime(finishedAt.String)
-		job.FinishedAt = &t
-	}
-	if workerID.Valid {
-		job.WorkerID = workerID.String
-	}
-	if errMsg.Valid {
-		job.Error = errMsg.String
-	}
-	if tokenUsage.Valid {
-		job.TokenUsage = tokenUsage.String
-	}
-
-	// Use stored verdict_bool if available, otherwise fall back to ParseVerdict
-	if r.Output != "" && job.Error == "" && !job.IsTaskJob() {
-		verdict := verdictFromBoolOrParse(verdictBool, r.Output)
-		job.Verdict = &verdict
-	}
-	if verdictBool.Valid {
-		v := int(verdictBool.Int64)
-		r.VerdictBool = &v
-	}
+	applyReviewScan(&r, reviewFields)
+	applyReviewJobScan(&job, jobFields)
+	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
 
 	r.Job = &job
 
@@ -220,13 +92,11 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	var reviews []Review
 	for rows.Next() {
 		var r Review
-		var createdAt string
-		var closed int
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed); err != nil {
+		var fields reviewScanFields
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed); err != nil {
 			return nil, err
 		}
-		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Closed = closed != 0
+		applyReviewScan(&r, fields)
 		reviews = append(reviews, r)
 	}
 
@@ -251,13 +121,11 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	var reviews []Review
 	for rows.Next() {
 		var r Review
-		var createdAt string
-		var closed int
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed); err != nil {
+		var fields reviewScanFields
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed); err != nil {
 			return nil, err
 		}
-		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Closed = closed != 0
+		applyReviewScan(&r, fields)
 		reviews = append(reviews, r)
 	}
 
@@ -453,56 +321,14 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	result := make(map[int64]JobWithReview, len(jobIDs))
 	for rows.Next() {
 		var j ReviewJob
-		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, sessionID sql.NullString
-		var commitID sql.NullInt64
-		var commitSubject sql.NullString
-		var agentic int
-		var model, branch, jobTypeStr, reviewTypeStr sql.NullString
+		var fields reviewJobScanFields
 
-		if err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
-			&startedAt, &finishedAt, &workerID, &errMsg, &agentic,
-			&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr); err != nil {
+		if err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
+			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Agentic,
+			&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.JobType, &fields.ReviewType); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
-
-		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
-		if commitID.Valid {
-			j.CommitID = &commitID.Int64
-		}
-		if commitSubject.Valid {
-			j.CommitSubject = commitSubject.String
-		}
-		if model.Valid {
-			j.Model = model.String
-		}
-		if sessionID.Valid {
-			j.SessionID = sessionID.String
-		}
-		if branch.Valid {
-			j.Branch = branch.String
-		}
-		if jobTypeStr.Valid {
-			j.JobType = jobTypeStr.String
-		}
-		if reviewTypeStr.Valid {
-			j.ReviewType = reviewTypeStr.String
-		}
-		if startedAt.Valid {
-			t := parseSQLiteTime(startedAt.String)
-			j.StartedAt = &t
-		}
-		if finishedAt.Valid {
-			t := parseSQLiteTime(finishedAt.String)
-			j.FinishedAt = &t
-		}
-		if workerID.Valid {
-			j.WorkerID = workerID.String
-		}
-		if errMsg.Valid {
-			j.Error = errMsg.String
-		}
-		j.Agentic = agentic != 0
+		applyReviewJobScan(&j, fields)
 
 		result[j.ID] = JobWithReview{Job: j}
 	}
@@ -525,26 +351,15 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 	for reviewRows.Next() {
 		var r Review
-		var createdAt string
-		var closed int
-		var verdictBool sql.NullInt64
-		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &verdictBool); err != nil {
+		var fields reviewScanFields
+		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed, &fields.VerdictBool); err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
 		}
-		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Closed = closed != 0
-		if verdictBool.Valid {
-			v := int(verdictBool.Int64)
-			r.VerdictBool = &v
-		}
+		applyReviewScan(&r, fields)
 
 		if entry, ok := result[r.JobID]; ok {
 			entry.Review = &r
-			// Populate verdict on the job, matching GetReviewByJobID/GetReviewByCommitSHA
-			if r.Output != "" && entry.Job.Error == "" && !entry.Job.IsTaskJob() {
-				verdict := verdictFromBoolOrParse(verdictBool, r.Output)
-				entry.Job.Verdict = &verdict
-			}
+			applyJobVerdict(&entry.Job, fields.VerdictBool, r.Output)
 			result[r.JobID] = entry
 		}
 	}
@@ -558,18 +373,16 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 // GetReviewByID finds a review by its ID
 func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	var r Review
-	var createdAt string
-	var closed int
+	var fields reviewScanFields
 
 	err := db.QueryRow(`
 		SELECT id, job_id, agent, prompt, output, created_at, closed
 		FROM reviews WHERE id = ?
-	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed)
+	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt = parseSQLiteTime(createdAt)
-	r.Closed = closed != 0
+	applyReviewScan(&r, fields)
 
 	return &r, nil
 }

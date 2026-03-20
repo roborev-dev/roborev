@@ -62,6 +62,9 @@ func ParseVerdict(output string) string {
 
 	for line := range strings.SplitSeq(output, "\n") {
 		normalized := normalizeVerdictLine(line)
+		if isExplicitVerdictValue(normalized, "pass") {
+			return verdictPass
+		}
 		if !hasPassPrefix(normalized) {
 			continue
 		}
@@ -94,6 +97,10 @@ func hasPassPrefix(line string) bool {
 		}
 	}
 	return false
+}
+
+func isExplicitVerdictValue(line, value string) bool {
+	return line == value
 }
 
 // stripMarkdown removes common markdown formatting from a line
@@ -274,37 +281,17 @@ func isLegendEntry(lines []string, i int) bool {
 		prev = stripMarkdown(stripListMarker(prev))
 
 		// Check for legend header patterns (ends with ":" and contains indicator word)
-		if strings.HasSuffix(prev, ":") {
+		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
 			if strings.Contains(prev, "severity") ||
-				strings.Contains(prev, "levels") ||
+				strings.Contains(prev, "level") ||
+				strings.Contains(prev, "legend") ||
+				strings.Contains(prev, "priority") ||
 				strings.Contains(prev, "rubric") ||
 				strings.Contains(prev, "rating") ||
 				strings.Contains(prev, "scale") {
 				return true
 			}
 		}
-
-		// Stop scanning if we hit non-legend content
-		if !isSeverityLegendLine(prev) && !looksLikeLegendDescription(prev) {
-			break
-		}
 	}
 	return false
-}
-
-func isSeverityLegendLine(line string) bool {
-	severities := []string{"critical", "high", "medium", "low"}
-	for _, sev := range severities {
-		if strings.HasPrefix(line, sev) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeLegendDescription(line string) bool {
-	return strings.HasPrefix(line, "used for") ||
-		strings.HasPrefix(line, "indicates") ||
-		strings.HasPrefix(line, "means") ||
-		strings.HasPrefix(line, "applies to")
 }

@@ -506,6 +506,40 @@ func TestGetRepoStats(t *testing.T) {
 		assert.Equal(t, 1, stats.PassedReviews)
 		assert.Equal(t, 0, stats.FailedReviews)
 	})
+
+	t.Run("stored verdict_bool overrides output parsing", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "stats-stored-verdict-test")
+
+		commit := createCommit(t, db, repo.ID, "stats-stored-verdict-sha")
+		job := enqueueJob(t, db, repo.ID, commit.ID, "stats-stored-verdict-sha")
+		completeTestJob(t, db, job.ID, "**Verdict: PASS**\nLooks good!")
+
+		_, err := db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+		require.NoError(t, err, "force stored verdict_bool failed: %v")
+
+		stats, err := db.GetRepoStats(repo.ID)
+		require.NoError(t, err, "GetRepoStats failed: %v")
+
+		assert.Equal(t, 0, stats.PassedReviews)
+		assert.Equal(t, 1, stats.FailedReviews)
+	})
+
+	t.Run("legacy null verdict_bool still falls back to parsed output", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "stats-legacy-verdict-test")
+
+		commit := createCommit(t, db, repo.ID, "stats-legacy-verdict-sha")
+		job := enqueueJob(t, db, repo.ID, commit.ID, "stats-legacy-verdict-sha")
+		completeTestJob(t, db, job.ID, "**Verdict: PASS**\nLooks good!")
+
+		_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
+		require.NoError(t, err, "clear stored verdict_bool failed: %v")
+
+		stats, err := db.GetRepoStats(repo.ID)
+		require.NoError(t, err, "GetRepoStats failed: %v")
+
+		assert.Equal(t, 1, stats.PassedReviews)
+		assert.Equal(t, 0, stats.FailedReviews)
+	})
 }
 
 func TestDeleteRepo(t *testing.T) {

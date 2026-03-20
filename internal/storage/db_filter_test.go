@@ -657,6 +657,32 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 	assert.True(t, found)
 }
 
+func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "stored-verdict-list-repo"))
+
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "storedverdict123", Agent: "codex"})
+	require.NoError(t, err, "EnqueueJob failed: %v")
+
+	_, err = db.ClaimJob("worker-0")
+	require.NoError(t, err, "ClaimJob failed: %v")
+
+	err = db.CompleteJob(job.ID, "codex", "review prompt", "No issues found.\n## Verdict: PASS")
+	require.NoError(t, err, "CompleteJob failed: %v")
+
+	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	require.NoError(t, err, "force stored verdict_bool failed: %v")
+
+	jobs, err := db.ListJobs("", "", 50, 0)
+	require.NoError(t, err, "ListJobs failed: %v")
+
+	require.Len(t, jobs, 1)
+	require.NotNil(t, jobs[0].Verdict)
+	assert.Equal(t, "F", *jobs[0].Verdict)
+}
+
 func TestListJobsWithJobTypeFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

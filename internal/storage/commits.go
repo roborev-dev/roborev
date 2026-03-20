@@ -9,14 +9,9 @@ import (
 // Lookups are by (repo_id, sha) to handle the same SHA in different repos.
 func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
 	// Try to find existing by (repo_id, sha)
-	var commit Commit
-	var ts, createdAt string
-	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).
-		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
+	commit, err := scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha))
 	if err == nil {
-		commit.Timestamp = parseSQLiteTime(ts)
-		commit.CreatedAt = parseSQLiteTime(createdAt)
-		return &commit, nil
+		return commit, nil
 	}
 	if err != sql.ErrNoRows {
 		return nil, err
@@ -58,42 +53,15 @@ func (db *DB) GetCommitBySHA(sha string) (*Commit, error) {
 		return nil, sql.ErrNoRows // Ambiguous - multiple repos have this SHA
 	}
 
-	var commit Commit
-	var ts, createdAt string
-	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE sha = ?`, sha).
-		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	commit.Timestamp = parseSQLiteTime(ts)
-	commit.CreatedAt = parseSQLiteTime(createdAt)
-	return &commit, nil
+	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE sha = ?`, sha))
 }
 
 // GetCommitByRepoAndSHA returns a commit by repo ID and SHA
 func (db *DB) GetCommitByRepoAndSHA(repoID int64, sha string) (*Commit, error) {
-	var commit Commit
-	var ts, createdAt string
-	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).
-		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	commit.Timestamp = parseSQLiteTime(ts)
-	commit.CreatedAt = parseSQLiteTime(createdAt)
-	return &commit, nil
+	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha))
 }
 
 // GetCommitByID returns a commit by its ID
 func (db *DB) GetCommitByID(id int64) (*Commit, error) {
-	var commit Commit
-	var ts, createdAt string
-	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE id = ?`, id).
-		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	commit.Timestamp = parseSQLiteTime(ts)
-	commit.CreatedAt = parseSQLiteTime(createdAt)
-	return &commit, nil
+	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE id = ?`, id))
 }

@@ -765,63 +765,15 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
-		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
+		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.provider, j.token_usage
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	var args []any
-	var conditions []string
-
-	if statusFilter != "" {
-		conditions = append(conditions, "j.status = ?")
-		args = append(args, statusFilter)
-	}
-	if repoFilter != "" {
-		conditions = append(conditions, "r.root_path = ?")
-		args = append(args, repoFilter)
-	}
-	var o listJobsOptions
-	for _, opt := range opts {
-		opt(&o)
-	}
-	if repoFilter == "" && o.repoPrefix != "" {
-		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
-		args = append(args, o.repoPrefix)
-	}
-	if o.gitRef != "" {
-		conditions = append(conditions, "j.git_ref = ?")
-		args = append(args, o.gitRef)
-	}
-	if o.branch != "" {
-		if o.branchIncludeEmpty {
-			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
-		} else {
-			conditions = append(conditions, "j.branch = ?")
-		}
-		args = append(args, o.branch)
-	}
-	if o.closed != nil {
-		if *o.closed {
-			conditions = append(conditions, "rv.closed = 1")
-		} else {
-			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
-		}
-	}
-	if o.jobType != "" {
-		conditions = append(conditions, "j.job_type = ?")
-		args = append(args, o.jobType)
-	}
-	if o.excludeJobType != "" {
-		conditions = append(conditions, "j.job_type != ?")
-		args = append(args, o.excludeJobType)
-	}
-
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
+	query += queryFilters
 
 	query += " ORDER BY j.id DESC"
 
@@ -844,90 +796,21 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	var jobs []ReviewJob
 	for rows.Next() {
 		var j ReviewJob
-		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, sessionID, jobTypeStr, reviewTypeStr, patchIDStr, provider, tokenUsage sql.NullString
-		var commitID sql.NullInt64
-		var commitSubject sql.NullString
-		var closed sql.NullInt64
-		var agentic int
-		var parentJobID sql.NullInt64
+		var output sql.NullString
+		var verdictBool sql.NullInt64
+		var fields reviewJobScanFields
 
-		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
-			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
-			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &closed, &output,
-			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-			&parentJobID, &provider, &tokenUsage)
+		err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
+			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
+			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
+			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
+			&fields.ParentJobID, &fields.Provider, &fields.TokenUsage)
 		if err != nil {
 			return nil, err
 		}
-
-		if jobUUID.Valid {
-			j.UUID = jobUUID.String
-		}
-		if commitID.Valid {
-			j.CommitID = &commitID.Int64
-		}
-		if commitSubject.Valid {
-			j.CommitSubject = commitSubject.String
-		}
-		j.Agentic = agentic != 0
-		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
-		if startedAt.Valid {
-			t := parseSQLiteTime(startedAt.String)
-			j.StartedAt = &t
-		}
-		if finishedAt.Valid {
-			t := parseSQLiteTime(finishedAt.String)
-			j.FinishedAt = &t
-		}
-		if workerID.Valid {
-			j.WorkerID = workerID.String
-		}
-		if errMsg.Valid {
-			j.Error = errMsg.String
-		}
-		if prompt.Valid {
-			j.Prompt = prompt.String
-		}
-		if sourceMachineID.Valid {
-			j.SourceMachineID = sourceMachineID.String
-		}
-		if model.Valid {
-			j.Model = model.String
-		}
-		if sessionID.Valid {
-			j.SessionID = sessionID.String
-		}
-		if provider.Valid {
-			j.Provider = provider.String
-		}
-		if jobTypeStr.Valid {
-			j.JobType = jobTypeStr.String
-		}
-		if reviewTypeStr.Valid {
-			j.ReviewType = reviewTypeStr.String
-		}
-		if patchIDStr.Valid {
-			j.PatchID = patchIDStr.String
-		}
-		if branch.Valid {
-			j.Branch = branch.String
-		}
-		if closed.Valid {
-			val := closed.Int64 != 0
-			j.Closed = &val
-		}
-		if parentJobID.Valid {
-			j.ParentJobID = &parentJobID.Int64
-		}
-		if tokenUsage.Valid {
-			j.TokenUsage = tokenUsage.String
-		}
-		// Compute verdict only for non-task jobs (task jobs don't have PASS/FAIL verdicts)
-		// Task jobs (run, analyze, custom) are identified by having no commit_id and not being dirty
-		if output.Valid && !j.IsTaskJob() {
-			verdict := ParseVerdict(output.String)
-			j.Verdict = &verdict
+		applyReviewJobScan(&j, fields)
+		if output.Valid {
+			applyJobVerdict(&j, verdictBool, output.String)
 		}
 
 		jobs = append(jobs, j)
@@ -956,33 +839,8 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	var args []any
-	var conditions []string
-
-	if repoFilter != "" {
-		conditions = append(conditions, "r.root_path = ?")
-		args = append(args, repoFilter)
-	}
-	var o listJobsOptions
-	for _, opt := range opts {
-		opt(&o)
-	}
-	if repoFilter == "" && o.repoPrefix != "" {
-		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
-		args = append(args, o.repoPrefix)
-	}
-	if o.branch != "" {
-		if o.branchIncludeEmpty {
-			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
-		} else {
-			conditions = append(conditions, "j.branch = ?")
-		}
-		args = append(args, o.branch)
-	}
-
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	queryFilters, args := buildJobFilterClause("", repoFilter, collectListJobsOptions(opts...))
+	query += queryFilters
 
 	var stats JobStats
 	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Closed, &stats.Open)
@@ -991,16 +849,7 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var j ReviewJob
-	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, prompt, sessionID sql.NullString
-	var commitID sql.NullInt64
-	var commitSubject sql.NullString
-	var agentic int
-	var parentJobID sql.NullInt64
-	var patch sql.NullString
-
-	var model, provider, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
-	var tokenUsage sql.NullString
+	var fields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
@@ -1010,69 +859,14 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
-	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &sessionID, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
-		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
-		&j.RepoPath, &j.RepoName, &commitSubject, &model, &provider, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-		&parentJobID, &patch, &tokenUsage)
+	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
+		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
+		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
+		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage)
 	if err != nil {
 		return nil, err
 	}
-
-	if commitID.Valid {
-		j.CommitID = &commitID.Int64
-	}
-	if commitSubject.Valid {
-		j.CommitSubject = commitSubject.String
-	}
-	j.Agentic = agentic != 0
-	j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
-	if startedAt.Valid {
-		t := parseSQLiteTime(startedAt.String)
-		j.StartedAt = &t
-	}
-	if finishedAt.Valid {
-		t := parseSQLiteTime(finishedAt.String)
-		j.FinishedAt = &t
-	}
-	if workerID.Valid {
-		j.WorkerID = workerID.String
-	}
-	if errMsg.Valid {
-		j.Error = errMsg.String
-	}
-	if prompt.Valid {
-		j.Prompt = prompt.String
-	}
-	if sessionID.Valid {
-		j.SessionID = sessionID.String
-	}
-	if model.Valid {
-		j.Model = model.String
-	}
-	if provider.Valid {
-		j.Provider = provider.String
-	}
-	if jobTypeStr.Valid {
-		j.JobType = jobTypeStr.String
-	}
-	if reviewTypeStr.Valid {
-		j.ReviewType = reviewTypeStr.String
-	}
-	if patchIDStr.Valid {
-		j.PatchID = patchIDStr.String
-	}
-	if branch.Valid {
-		j.Branch = branch.String
-	}
-	if parentJobID.Valid {
-		j.ParentJobID = &parentJobID.Int64
-	}
-	if patch.Valid {
-		j.Patch = &patch.String
-	}
-	if tokenUsage.Valid {
-		j.TokenUsage = tokenUsage.String
-	}
+	applyReviewJobScan(&j, fields)
 
 	return &j, nil
 }

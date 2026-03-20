@@ -434,19 +434,50 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	}
 
 	// Get review verdict counts (P/F from output)
-	// Exclude prompt jobs (commit_id IS NULL AND git_ref = 'prompt') from verdict stats
-	err = db.QueryRow(`
-		SELECT
-			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: PASS%' OR r.output LIKE '%Verdict: PASS%' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: FAIL%' OR r.output LIKE '%Verdict: FAIL%' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.closed = 0 THEN 1 ELSE 0 END), 0)
+	// Closed/open counts preserve the legacy prompt-job exclusion.
+	reviewRows, err := db.Query(`
+		SELECT r.output, r.closed, r.verdict_bool, rj.commit_id, rj.git_ref, rj.job_type
 		FROM reviews r
 		JOIN review_jobs rj ON r.job_id = rj.id
 		WHERE rj.repo_id = ?
-		  AND NOT (rj.commit_id IS NULL AND rj.git_ref = 'prompt')
-	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews, &stats.ClosedReviews, &stats.OpenReviews)
+	`, repoID)
 	if err != nil {
+		return nil, err
+	}
+	defer reviewRows.Close()
+
+	for reviewRows.Next() {
+		var output string
+		var closed int
+		var gitRef string
+		var verdictBool sql.NullInt64
+		var fields reviewJobScanFields
+
+		if err := reviewRows.Scan(&output, &closed, &verdictBool, &fields.CommitID, &gitRef, &fields.JobType); err != nil {
+			return nil, err
+		}
+
+		job := ReviewJob{GitRef: gitRef}
+		applyReviewJobScan(&job, fields)
+		applyJobVerdict(&job, verdictBool, output)
+		if job.Verdict != nil {
+			if *job.Verdict == verdictPass {
+				stats.PassedReviews++
+			} else {
+				stats.FailedReviews++
+			}
+		}
+
+		if job.CommitID == nil && job.GitRef == "prompt" {
+			continue
+		}
+		if closed != 0 {
+			stats.ClosedReviews++
+		} else {
+			stats.OpenReviews++
+		}
+	}
+	if err := reviewRows.Err(); err != nil {
 		return nil, err
 	}
 
