@@ -193,18 +193,23 @@ func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
-func commitWithIdentity(t *testing.T, repoDir, messageFile, authorName string) {
+func commitWithRepoConfig(t *testing.T, repoDir, messageFile string) {
 	t.Helper()
 	cmd := exec.Command("git", "commit", "-F", messageFile)
 	cmd.Dir = repoDir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME="+authorName,
-		"GIT_AUTHOR_EMAIL="+testGitEmail,
-		"GIT_COMMITTER_NAME="+authorName,
-		"GIT_COMMITTER_EMAIL="+testGitEmail,
-	)
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git commit with identity failed\n%s", out)
+	require.NoError(t, err, "git commit with repo config failed\n%s", out)
+}
+
+func setConfiguredUserName(t *testing.T, repoDir, authorName string) {
+	t.Helper()
+	configPath := filepath.Join(repoDir, ".git", "config")
+	configBytes, err := os.ReadFile(configPath)
+	require.NoError(t, err, "read git config: %v", err)
+
+	updated := strings.Replace(string(configBytes), "name = "+testGitUser, "name = "+authorName, 1)
+	require.NotEqual(t, string(configBytes), updated, "expected to replace the configured git user name")
+	require.NoError(t, os.WriteFile(configPath, []byte(updated), 0o644), "write git config: %v", err)
 }
 
 func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) {
@@ -251,7 +256,8 @@ func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
 
 	msgPath := filepath.Join(r.dir, "commit-message.txt")
 	require.NoError(t, os.WriteFile(msgPath, []byte("large change\n"), 0o644))
-	commitWithIdentity(t, r.dir, msgPath, strings.Repeat("a", authorLen))
+	setConfiguredUserName(t, r.dir, strings.Repeat("a", authorLen))
+	commitWithRepoConfig(t, r.dir, msgPath)
 
 	return r.dir, r.git("rev-parse", "HEAD")
 }
