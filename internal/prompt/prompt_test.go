@@ -626,6 +626,19 @@ func TestBuildPromptCodexOversizedDiffPrioritizesSubjectOverAuthor(t *testing.T)
 	assertContains(t, prompt, "**Subject:** large change", "expected the subject line to survive before the author line")
 }
 
+func TestSetupLargeCommitAuthorRepoIgnoresIdentityEnv(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "env author")
+	t.Setenv("GIT_AUTHOR_EMAIL", "env-author@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "env committer")
+	t.Setenv("GIT_COMMITTER_EMAIL", "env-committer@example.com")
+
+	repoPath, sha := setupLargeCommitAuthorRepo(t, 1024)
+
+	info, err := gitpkg.GetCommitInfo(repoPath, sha)
+	require.NoError(t, err, "GetCommitInfo failed: %v", err)
+	assert.Equal(t, strings.Repeat("a", 1024), info.Author, "expected repo-configured author to override inherited identity env")
+}
+
 func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
 	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
 	probeRangeRef := probeSHA + "~1.." + probeSHA

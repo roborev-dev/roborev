@@ -197,6 +197,14 @@ func commitWithRepoConfig(t *testing.T, repoDir, messageFile string) {
 	t.Helper()
 	cmd := exec.Command("git", "commit", "-F", messageFile)
 	cmd.Dir = repoDir
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GIT_AUTHOR_") || strings.HasPrefix(kv, "GIT_COMMITTER_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git commit with repo config failed\n%s", out)
 }
