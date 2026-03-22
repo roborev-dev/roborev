@@ -3,7 +3,6 @@ package prompt
 import (
 	"fmt"
 	"log"
-	"runtime"
 	"strings"
 	"unicode/utf8"
 
@@ -329,12 +328,6 @@ func hardCapPrompt(prompt string, limit int) string {
 }
 
 func shellQuote(s string) string {
-	if runtime.GOOS == "windows" {
-		if s == "" {
-			return "''"
-		}
-		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-	}
 	if s == "" {
 		return "''"
 	}
@@ -486,11 +479,18 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
 	}
 
-	// Get and include the diff
+	// Get and include the diff.
+	// Compute budget assuming optional context can be trimmed if needed,
+	// so large guidelines/previous reviews don't force a needless fallback.
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	promptCap := b.resolveMaxPromptSize(repoPath)
-	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-baseLen-len("### Diff\n\n```diff\n")-len("\n```\n")-1)
+	diffWrap := len("### Diff\n\n```diff\n") + len("\n```\n") + 1
+	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
+	diffLimit := max(0, promptCap-requiredLen-optionalContext.Len()-diffWrap)
+	if diffLimit == 0 {
+		// Optional context consumed the budget; recalculate without it
+		diffLimit = max(0, promptCap-requiredLen-diffWrap)
+	}
 	diff, truncated, err := git.GetDiffLimited(repoPath, sha, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -594,11 +594,18 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 	currentOverflow.WriteString("\n")
 
-	// Get and include the combined diff for the range
+	// Get and include the combined diff for the range.
+	// Compute budget assuming optional context can be trimmed if needed,
+	// so large guidelines/previous reviews don't force a needless fallback.
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	promptCap := b.resolveMaxPromptSize(repoPath)
-	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-baseLen-len("### Combined Diff\n\n```diff\n")-len("\n```\n")-1)
+	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
+	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
+	diffLimit := max(0, promptCap-requiredLen-optionalContext.Len()-diffWrap)
+	if diffLimit == 0 {
+		// Optional context consumed the budget; recalculate without it
+		diffLimit = max(0, promptCap-requiredLen-diffWrap)
+	}
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)

@@ -132,11 +132,9 @@ func GetDiffLimited(
 
 // GetFilesChanged returns the list of files changed in a commit
 func GetFilesChanged(
-	repoPath, sha string, extraExcludes ...string,
+	repoPath, sha string,
 ) ([]string, error) {
-	args := []string{"diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}
-	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -745,11 +743,9 @@ func isBinaryContent(content []byte) bool {
 
 // GetRangeFilesChanged returns the list of files changed in a range (e.g. "mergeBase..HEAD").
 func GetRangeFilesChanged(
-	repoPath, rangeRef string, extraExcludes ...string,
+	repoPath, rangeRef string,
 ) ([]string, error) {
-	args := []string{"diff", "--name-only", rangeRef, "--"}
-	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", "diff", "--name-only", rangeRef)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
