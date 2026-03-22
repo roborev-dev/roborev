@@ -179,8 +179,6 @@ func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int,
 // The diff is provided directly since it was captured at enqueue time.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
 func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
-	var sb strings.Builder
-
 	// Start with system prompt for dirty changes
 	promptType := "dirty"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -189,12 +187,13 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	sb.WriteString(GetSystemPrompt(agentName, promptType))
-	sb.WriteString("\n")
+	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+
+	var optionalContext strings.Builder
 
 	// Add project-specific guidelines if configured
 	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+		b.writeProjectGuidelines(&optionalContext, repoCfg.ReviewGuidelines)
 	}
 
 	// Get previous reviews for context (use HEAD as reference point)
@@ -203,14 +202,13 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, headSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				b.writePreviousReviews(&sb, contexts)
+				b.writePreviousReviews(&optionalContext, contexts)
 			}
 		}
 	}
 
-	// Uncommitted changes section
-	sb.WriteString("## Uncommitted Changes\n\n")
-	sb.WriteString("The following changes have not yet been committed.\n\n")
+	currentRequired := "## Uncommitted Changes\n\n" +
+		"The following changes have not yet been committed.\n\n"
 
 	// Build diff section
 	var diffSection strings.Builder
@@ -222,8 +220,20 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	}
 	diffSection.WriteString("```\n")
 
-	// Check if adding the diff would exceed max prompt size
+	// Trim optional context if it alone would exceed the prompt cap
 	promptCap := b.resolveMaxPromptSize(repoPath)
+	optCtx := optionalContext.String()
+	requiredLen := len(requiredPrefix) + len(currentRequired)
+	if requiredLen+len(optCtx) > promptCap {
+		optCtx = truncateUTF8(optCtx, max(0, promptCap-requiredLen))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(requiredPrefix)
+	sb.WriteString(optCtx)
+	sb.WriteString(currentRequired)
+
+	// Check if adding the diff would exceed max prompt size
 	if sb.Len()+diffSection.Len() > promptCap {
 		// For dirty changes, we can't tell them to "use git diff" because
 		// the working tree may have changed. Just truncate with a note.
@@ -456,16 +466,17 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 				codexCommitInspectionFallbackVariants(sha)...,
 			), nil
 		} else {
-			// Fall back to just commit info without diff
-			var sb strings.Builder
-			sb.WriteString(requiredPrefix)
-			sb.WriteString(optionalContext.String())
-			sb.WriteString(currentRequired.String())
-			sb.WriteString(currentOverflow.String())
-			sb.WriteString("### Diff\n\n")
-			sb.WriteString("(Diff too large to include - please review the commit directly)\n")
-			fmt.Fprintf(&sb, "View with: git show %s\n", sha)
-			return sb.String(), nil
+			fallback := fmt.Sprintf("### Diff\n\n"+
+				"(Diff too large to include - please review the commit directly)\n"+
+				"View with: git show %s\n", sha)
+			return buildPromptPreservingCurrentSection(
+				requiredPrefix,
+				optionalContext.String(),
+				currentRequired.String(),
+				currentOverflow.String(),
+				promptCap,
+				fallback,
+			), nil
 		}
 	}
 
@@ -562,16 +573,17 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 				codexRangeInspectionFallbackVariants(rangeRef)...,
 			), nil
 		} else {
-			// Fall back to just commit info without diff
-			var sb strings.Builder
-			sb.WriteString(requiredPrefix)
-			sb.WriteString(optionalContext.String())
-			sb.WriteString(currentRequired.String())
-			sb.WriteString(currentOverflow.String())
-			sb.WriteString("### Combined Diff\n\n")
-			sb.WriteString("(Diff too large to include - please review the commits directly)\n")
-			fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
-			return sb.String(), nil
+			fallback := fmt.Sprintf("### Combined Diff\n\n"+
+				"(Diff too large to include - please review the commits directly)\n"+
+				"View with: git diff %s\n", rangeRef)
+			return buildPromptPreservingCurrentSection(
+				requiredPrefix,
+				optionalContext.String(),
+				currentRequired.String(),
+				currentOverflow.String(),
+				promptCap,
+				fallback,
+			), nil
 		}
 	}
 

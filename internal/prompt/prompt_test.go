@@ -684,6 +684,51 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
 }
 
+func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 5000)
+	cap := 10000
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, sha, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap,
+		"non-Codex single commit prompt should stay within configured cap")
+	assertContains(t, prompt, "Diff too large",
+		"expected diff-omitted marker")
+}
+
+func TestBuildRangePromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 5000)
+	rangeRef := sha + "~1.." + sha
+	cap := 10000
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap,
+		"non-Codex range prompt should stay within configured cap")
+	assertContains(t, prompt, "Diff too large",
+		"expected diff-omitted marker")
+}
+
+func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
+	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
+	diff := strings.Repeat("+ line\n", 50000)
+	cap := 10000
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap,
+		"dirty prompt should stay within configured cap")
+}
+
 func TestLoadGuidelines(t *testing.T) {
 	tests := []struct {
 		name             string
