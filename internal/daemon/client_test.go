@@ -114,7 +114,7 @@ func TestHTTPClientMarkReviewClosed(t *testing.T) {
 func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 	assert := assert.New(t)
 
-	var reviewCalls int32
+	var reviewCalls atomic.Int32
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -126,7 +126,7 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
 			assertQuery(t, r, "job_id", "1")
 			assertQuery(t, r, "sha", "")
-			if atomic.AddInt32(&reviewCalls, 1) == 1 {
+			if reviewCalls.Add(1) == 1 {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
@@ -141,7 +141,7 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 	review, err := client.WaitForReview(1)
 	require.NoError(t, err, "WaitForReview failed")
 	assert.Equal("Review complete", review.Output)
-	assert.GreaterOrEqual(atomic.LoadInt32(&reviewCalls), int32(2), "expected review to be retried after 404")
+	assert.GreaterOrEqual(reviewCalls.Load(), int32(2), "expected review to be retried after 404")
 }
 
 func TestFindJobForCommit(t *testing.T) {

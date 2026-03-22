@@ -320,8 +320,8 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "concurrent-register", testWorkerID)
 
-	var canceled int32
-	cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
+	var canceled atomic.Int32
+	cancelFunc := func() { canceled.Add(1) }
 
 	tc.Pool.testHookAfterSecondCheck = func() {
 		tc.Pool.registerRunningJob(job.ID, cancelFunc)
@@ -334,7 +334,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 			return false
 		}, "CancelJob should return true")
 	}
-	if atomic.LoadInt32(&canceled) != 1 {
+	if canceled.Load() != 1 {
 		assert.Condition(t, func() bool {
 			return false
 		}, "Job should have been canceled exactly once")

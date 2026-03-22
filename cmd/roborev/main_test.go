@@ -439,7 +439,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	repoDir, commitSHA := setupRefineRepo(t)
 
 	// Track how many times the job has been polled
-	var pollCount int32
+	var pollCount atomic.Int32
 
 	handleGetJobs := func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 		q := r.URL.Query()
@@ -454,7 +454,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				return true
 			}
 			// On first poll, job is still Running; on subsequent polls, transition to Done
-			count := atomic.AddInt32(&pollCount, 1)
+			count := pollCount.Add(1)
 			if count > 1 {
 				job.Status = storage.JobStatusDone
 			}
@@ -541,7 +541,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	require.NoError(t, err, "expected refine to succeed (pending wait should not consume iteration), got: %v")
 
 	// Verify the job was actually polled multiple times (proving we waited)
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&pollCount), int32(2))
+	assert.GreaterOrEqual(t, pollCount.Load(), int32(2))
 }
 
 // ============================================================================
