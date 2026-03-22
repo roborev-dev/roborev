@@ -146,16 +146,9 @@ func NewBuilderWithConfig(
 	return &Builder{db: db, globalCfg: globalCfg}
 }
 
-// resolveMaxPromptSize returns the effective prompt budget from config,
-// falling back to the legacy MaxPromptSize constant.
+// resolveMaxPromptSize returns the effective prompt budget from config.
 func (b *Builder) resolveMaxPromptSize(repoPath string) int {
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.MaxPromptSize > 0 {
-		return repoCfg.MaxPromptSize
-	}
-	if b.globalCfg != nil && b.globalCfg.DefaultMaxPromptSize > 0 {
-		return b.globalCfg.DefaultMaxPromptSize
-	}
-	return MaxPromptSize
+	return config.ResolveMaxPromptSize(repoPath, b.globalCfg)
 }
 
 // resolveExcludes returns the merged exclude patterns for a repo.
@@ -404,7 +397,7 @@ func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []
 			diffCmd),
 		fmt.Sprintf("### Diff\n\n"+
 			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand("git", "show", sha)),
+			renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...)),
 	}
 }
 
@@ -436,7 +429,7 @@ func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string
 			diffCmd),
 		fmt.Sprintf("### Combined Diff\n\n"+
 			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand("git", "diff", rangeRef)),
+			renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...)),
 	}
 }
 

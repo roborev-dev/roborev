@@ -731,9 +731,9 @@ func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
 		"dirty prompt should stay within configured cap")
 }
 
-func TestResolveMaxPromptSizeWithoutConfigUsesLegacyDefault(t *testing.T) {
+func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
 	b := NewBuilder(nil)
-	assert.Equal(t, MaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))
+	assert.Equal(t, config.DefaultMaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))
 }
 
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
@@ -791,6 +791,57 @@ func TestBuildPromptCodexOversizedDiffFallbackCarriesExcludeScope(t *testing.T) 
 		"expected Codex fallback commands to preserve custom exclude patterns")
 	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
 		"expected Codex fallback commands to preserve built-in exclude patterns")
+}
+
+func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
+	repoPath, sha := setupLargeExcludePatternRepo(t)
+	pathspecArgs := gitpkg.ReviewPathspecArgs("custom.dat")
+	variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
+	shortest := variants[len(variants)-1]
+	secondShortest := variants[len(variants)-2]
+	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
+	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
+	cfg := &config.Config{
+		DefaultMaxPromptSize: cap,
+		ExcludePatterns:      []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, shortest, "expected tiny-cap prompt to use the shortest fallback variant")
+	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
+		"expected shortest Codex fallback command to preserve custom exclude patterns")
+	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
+		"expected shortest Codex fallback command to preserve built-in exclude patterns")
+}
+
+func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
+	repoPath, sha := setupLargeExcludePatternRepo(t)
+	rangeRef := sha + "~1.." + sha
+	pathspecArgs := gitpkg.ReviewPathspecArgs("custom.dat")
+	variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+	shortest := variants[len(variants)-1]
+	secondShortest := variants[len(variants)-2]
+	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
+	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
+	cfg := &config.Config{
+		DefaultMaxPromptSize: cap,
+		ExcludePatterns:      []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, shortest, "expected tiny-cap range prompt to use the shortest fallback variant")
+	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
+		"expected shortest range fallback command to preserve custom exclude patterns")
+	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
+		"expected shortest range fallback command to preserve built-in exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {

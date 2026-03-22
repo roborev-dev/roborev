@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // normalizeMSYSPath converts MSYS-style paths (e.g., /c/Users/...) to Windows paths (C:\Users\...).
@@ -699,7 +698,7 @@ func captureGitOutputLimited(repoPath string, maxBytes int, args ...string) (str
 
 	waitErr := cmd.Wait()
 	if truncated {
-		return validUTF8Prefix(out.Bytes()), true, nil
+		return sanitizeToValidUTF8(out.Bytes()), true, nil
 	}
 	if waitErr != nil {
 		return "", false, fmt.Errorf("git command failed: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
@@ -708,12 +707,8 @@ func captureGitOutputLimited(repoPath string, maxBytes int, args ...string) (str
 	return out.String(), false, nil
 }
 
-func validUTF8Prefix(b []byte) string {
-	end := len(b)
-	for end > 0 && !utf8.Valid(b[:end]) {
-		end--
-	}
-	return string(b[:end])
+func sanitizeToValidUTF8(b []byte) string {
+	return string(bytes.ToValidUTF8(b, nil))
 }
 
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)
