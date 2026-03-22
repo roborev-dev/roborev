@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/stretchr/testify/assert"
@@ -920,6 +921,30 @@ func TestGetRangeDiffLimited(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, truncated, "expected limited range diff read to report truncation")
 	assert.LessOrEqual(t, len(diff), 1024)
+}
+
+func TestGetDiffLimitedTruncatesUTF8Safely(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("large.txt", strings.Repeat("世界\n", 20000))
+	repo.CommitAll("large unicode change")
+
+	fullDiff, err := GetDiff(repo.Dir, repo.HeadSHA())
+	require.NoError(t, err)
+
+	splitAt := -1
+	for i := 0; i < len(fullDiff); i++ {
+		if fullDiff[i] >= utf8.RuneSelf {
+			splitAt = i + 1
+			break
+		}
+	}
+	require.Positive(t, splitAt, "expected diff to contain multibyte UTF-8 content")
+
+	diff, truncated, err := GetDiffLimited(repo.Dir, repo.HeadSHA(), splitAt)
+	require.NoError(t, err)
+	assert.True(t, truncated, "expected limited diff read to report truncation")
+	assert.LessOrEqual(t, len(diff), splitAt)
+	assert.True(t, utf8.ValidString(diff), "limited diff output should remain valid UTF-8")
 }
 
 func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
