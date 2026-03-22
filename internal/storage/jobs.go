@@ -403,9 +403,12 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Insert review with sync columns
-	verdictBool := verdictToBool(ParseVerdict(finalOutput))
+	var verdictBoolVal any
+	if finalOutput != "" {
+		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}

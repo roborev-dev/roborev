@@ -683,6 +683,33 @@ func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
 	assert.Equal(t, "F", *jobs[0].Verdict)
 }
 
+func TestListJobsUsesStoredVerdictBoolWithEmptyOutput(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-output-verdict-repo"))
+
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "emptyout123", Agent: "codex"})
+	require.NoError(t, err, "EnqueueJob failed: %v")
+
+	_, err = db.ClaimJob("worker-0")
+	require.NoError(t, err, "ClaimJob failed: %v")
+
+	err = db.CompleteJob(job.ID, "codex", "review prompt", "No issues found.")
+	require.NoError(t, err, "CompleteJob failed: %v")
+
+	// Set output to empty but keep verdict_bool = 1 (pass)
+	_, err = db.Exec(`UPDATE reviews SET output = '', verdict_bool = 1 WHERE job_id = ?`, job.ID)
+	require.NoError(t, err, "clear output failed: %v")
+
+	jobs, err := db.ListJobs("", "", 50, 0)
+	require.NoError(t, err, "ListJobs failed: %v")
+
+	require.Len(t, jobs, 1)
+	require.NotNil(t, jobs[0].Verdict, "verdict should be set even with empty output when verdict_bool is stored")
+	assert.Equal(t, "P", *jobs[0].Verdict)
+}
+
 func TestListJobsWithJobTypeFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
