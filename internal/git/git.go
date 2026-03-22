@@ -696,6 +696,14 @@ func captureGitOutputLimited(repoPath string, maxBytes int, args ...string) (str
 		return "", false, fmt.Errorf("read git output: %w", readErr)
 	}
 
+	// Drain remaining stdout so the process can exit cleanly.
+	// On Windows, a killed process may still block if its stdout
+	// pipe buffer is full and no reader is consuming it, which
+	// prevents Wait from returning.
+	if truncated {
+		_, _ = io.Copy(io.Discard, stdout)
+	}
+
 	waitErr := cmd.Wait()
 	if truncated {
 		return sanitizeToValidUTF8(out.Bytes()), true, nil
