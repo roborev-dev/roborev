@@ -741,7 +741,18 @@ func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
 }
 
 func TestBuildPromptHonorsDefaultPromptCap(t *testing.T) {
-	repoPath, sha := setupLargeDiffRepo(t)
+	// Create a repo whose prompt fits under 250KB but exceeds 200KB.
+	// If the builder regressed to the legacy cap, the prompt would
+	// be ~220KB; with the correct default it must be <= 200KB.
+	midpoint := (config.DefaultMaxPromptSize + MaxPromptSize) / 2
+	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, midpoint)
+
+	legacyCfg := &config.Config{DefaultMaxPromptSize: MaxPromptSize}
+	legacyB := NewBuilderWithConfig(nil, legacyCfg)
+	legacyPrompt, err := legacyB.Build(repoPath, sha, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+	require.Greater(t, len(legacyPrompt), config.DefaultMaxPromptSize,
+		"precondition: prompt with legacy cap should exceed the 200KB default")
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "claude-code", "")
