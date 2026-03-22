@@ -763,6 +763,46 @@ func TestBuildPromptHonorsDefaultPromptCap(t *testing.T) {
 	assert.NotEmpty(t, prompt)
 }
 
+func TestBuildPromptLargeGuidelinesPrefersDiffOverContext(t *testing.T) {
+	// Guidelines consume most of the budget but the diff is small
+	// enough to fit after trimming guidelines. The prompt should
+	// include the inline diff, not the "diff too large" fallback.
+	guidelineLen := defaultPromptCap - 2000
+	r := newTestRepoWithBranch(t, "main")
+
+	guidelines := strings.Repeat("g", guidelineLen)
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"), []byte("base\n"), 0o644,
+	))
+	r.git("add", ".roborev.toml", "base.txt")
+	r.git("commit", "-m", "initial")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+	// Small commit whose diff easily fits in the remaining ~2KB
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "small.txt"), []byte("hello\n"), 0o644,
+	))
+	r.git("add", "small.txt")
+	r.git("commit", "-m", "small change")
+	sha := r.git("rev-parse", "HEAD")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap)
+	assertContains(t, prompt, "```diff",
+		"expected inline diff, not fallback")
+	assertNotContains(t, prompt, "Diff too large",
+		"small diff should be inlined after trimming guidelines")
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)

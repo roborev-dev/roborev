@@ -480,17 +480,13 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	}
 
 	// Get and include the diff.
-	// Compute budget assuming optional context can be trimmed if needed,
-	// so large guidelines/previous reviews don't force a needless fallback.
+	// Budget the diff from non-trimmable sections only; optional context
+	// is trimmed afterward to fit the remaining space.
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	promptCap := b.resolveMaxPromptSize(repoPath)
 	diffWrap := len("### Diff\n\n```diff\n") + len("\n```\n") + 1
 	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-requiredLen-optionalContext.Len()-diffWrap)
-	if diffLimit == 0 {
-		// Optional context consumed the budget; recalculate without it
-		diffLimit = max(0, promptCap-requiredLen-diffWrap)
-	}
+	diffLimit := max(0, promptCap-requiredLen-diffWrap)
 	diff, truncated, err := git.GetDiffLimited(repoPath, sha, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -531,13 +527,20 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	}
 	diffSection.WriteString("```\n")
 
+	// Trim optional context to fit remaining budget after the diff
+	optCtx := optionalContext.String()
+	ctxBudget := promptCap - requiredLen - diffSection.Len()
+	if len(optCtx) > ctxBudget {
+		optCtx = truncateUTF8(optCtx, max(0, ctxBudget))
+	}
+
 	var sb strings.Builder
 	sb.WriteString(requiredPrefix)
-	sb.WriteString(optionalContext.String())
+	sb.WriteString(optCtx)
 	sb.WriteString(currentRequired.String())
 	sb.WriteString(currentOverflow.String())
 	sb.WriteString(diffSection.String())
-	return hardCapPrompt(sb.String(), promptCap), nil
+	return sb.String(), nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
@@ -595,17 +598,13 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	currentOverflow.WriteString("\n")
 
 	// Get and include the combined diff for the range.
-	// Compute budget assuming optional context can be trimmed if needed,
-	// so large guidelines/previous reviews don't force a needless fallback.
+	// Budget the diff from non-trimmable sections only; optional context
+	// is trimmed afterward to fit the remaining space.
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	promptCap := b.resolveMaxPromptSize(repoPath)
 	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
 	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-requiredLen-optionalContext.Len()-diffWrap)
-	if diffLimit == 0 {
-		// Optional context consumed the budget; recalculate without it
-		diffLimit = max(0, promptCap-requiredLen-diffWrap)
-	}
+	diffLimit := max(0, promptCap-requiredLen-diffWrap)
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
@@ -646,13 +645,20 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 	diffSection.WriteString("```\n")
 
+	// Trim optional context to fit remaining budget after the diff
+	optCtx := optionalContext.String()
+	ctxBudget := promptCap - requiredLen - diffSection.Len()
+	if len(optCtx) > ctxBudget {
+		optCtx = truncateUTF8(optCtx, max(0, ctxBudget))
+	}
+
 	var sb strings.Builder
 	sb.WriteString(requiredPrefix)
-	sb.WriteString(optionalContext.String())
+	sb.WriteString(optCtx)
 	sb.WriteString(currentRequired.String())
 	sb.WriteString(currentOverflow.String())
 	sb.WriteString(diffSection.String())
-	return hardCapPrompt(sb.String(), promptCap), nil
+	return sb.String(), nil
 }
 
 // writePreviousReviews writes the previous reviews section to the builder
