@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // normalizeMSYSPath converts MSYS-style paths (e.g., /c/Users/...) to Windows paths (C:\Users\...).
@@ -706,7 +707,18 @@ func captureGitOutputLimited(repoPath string, maxBytes int, args ...string) (str
 
 	waitErr := cmd.Wait()
 	if truncated {
-		return sanitizeToValidUTF8(out.Bytes()), true, nil
+		result := out.Bytes()
+		// Trim at most 3 trailing bytes that form an incomplete
+		// UTF-8 rune left by the byte-boundary truncation. Interior
+		// invalid bytes are preserved and get FFFD replacement below.
+		for i := 0; i < utf8.UTFMax-1 && len(result) > 0; i++ {
+			r, size := utf8.DecodeLastRune(result)
+			if r != utf8.RuneError || size != 1 {
+				break
+			}
+			result = result[:len(result)-1]
+		}
+		return sanitizeToValidUTF8(result), true, nil
 	}
 	if waitErr != nil {
 		return "", false, fmt.Errorf("git command failed: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
@@ -716,7 +728,7 @@ func captureGitOutputLimited(repoPath string, maxBytes int, args ...string) (str
 }
 
 func sanitizeToValidUTF8(b []byte) string {
-	return string(bytes.ToValidUTF8(b, nil))
+	return string(bytes.ToValidUTF8(b, []byte("\uFFFD")))
 }
 
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)

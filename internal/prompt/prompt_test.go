@@ -514,11 +514,15 @@ func deterministicGuidelineLen(t *testing.T, prefixLenAtOne, targetPrefixLen int
 	return guidelineLen
 }
 
+// defaultPromptCap is the effective cap when no config is provided.
+// Tests that use NewBuilder(nil) resolve to this value.
+var defaultPromptCap = config.DefaultMaxPromptSize
+
 func singleCommitNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
 	t.Helper()
 	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 1)
 	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
-	targetPrefixLen := MaxPromptSize - remainingBudget
+	targetPrefixLen := defaultPromptCap - remainingBudget
 	guidelineLen := deterministicGuidelineLen(t, prefixLen, targetPrefixLen)
 	return setupLargeDiffRepoWithGuidelines(t, guidelineLen)
 }
@@ -528,7 +532,7 @@ func rangeNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
 	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 1)
 	rangeRef := sha + "~1.." + sha
 	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
-	targetPrefixLen := MaxPromptSize - remainingBudget
+	targetPrefixLen := defaultPromptCap - remainingBudget
 	guidelineLen := deterministicGuidelineLen(t, prefixLen, targetPrefixLen)
 	return setupLargeDiffRepoWithGuidelines(t, guidelineLen)
 }
@@ -542,7 +546,7 @@ func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
 	assertContains(t, prompt, "git show", "expected fallback to retain local git inspection guidance")
 	assert.NotContains(t, prompt, codexCommitFallback(sha), "expected the full fallback to be downgraded when it would overflow")
 }
@@ -558,7 +562,7 @@ func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "git diff", "expected fallback to retain local git inspection guidance")
 	assert.NotContains(t, prompt, codexRangeFallback(rangeRef), "expected the full range fallback to be downgraded when it would overflow")
 }
@@ -572,7 +576,7 @@ func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testin
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
 	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to be preserved by trimming earlier context")
 }
@@ -585,45 +589,45 @@ func TestBuildPromptCodexOversizedDiffKeepsCurrentCommitMetadataWhenTrimming(t *
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
 	assert.Contains(t, prompt, shortestFallback, "expected the shortest fallback to be preserved after trimming earlier context")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
 }
 
 func TestBuildPromptCodexOversizedDiffWithLargeCommitBodyStaysWithinMaxPromptSize(t *testing.T) {
-	repoPath, sha := setupLargeCommitBodyRepo(t, MaxPromptSize)
+	repoPath, sha := setupLargeCommitBodyRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large commit metadata to still stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
 	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
 }
 
 func TestBuildPromptCodexOversizedDiffWithLargeCommitSubjectStaysWithinMaxPromptSize(t *testing.T) {
-	repoPath, sha := setupLargeCommitSubjectRepo(t, MaxPromptSize)
+	repoPath, sha := setupLargeCommitSubjectRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large commit metadata to still stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
 	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit subject metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 }
 
 func TestBuildPromptCodexOversizedDiffPrioritizesSubjectOverAuthor(t *testing.T) {
-	repoPath, sha := setupLargeCommitAuthorRepo(t, MaxPromptSize)
+	repoPath, sha := setupLargeCommitAuthorRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large commit metadata to still stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
 	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit author metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the subject line to survive before the author line")
@@ -653,7 +657,7 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
 	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to be preserved by trimming earlier context")
 }
@@ -667,7 +671,7 @@ func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected final Codex range prompt to stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assert.Contains(t, prompt, shortestFallback, "expected the shortest range fallback to be preserved after trimming earlier context")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "- "+gitpkg.ShortSHA(sha)+" large change", "expected the current range entry to remain intact")
@@ -680,7 +684,7 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), MaxPromptSize, "expected large range metadata to still stay within the prompt cap")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large range metadata to still stay within the prompt cap")
 	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to remain present when range metadata is oversized")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
@@ -736,6 +740,18 @@ func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
 	assert.Equal(t, config.DefaultMaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))
 }
 
+func TestBuildPromptHonorsDefaultPromptCap(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(repoPath, sha, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), config.DefaultMaxPromptSize,
+		"prompt with no config should honor the 200KB default, not the legacy 250KB constant")
+	assert.NotEmpty(t, prompt)
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)
@@ -751,7 +767,7 @@ func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 }
 
 func TestBuildPromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
-	repoPath, sha := setupLargeCommitBodyRepo(t, MaxPromptSize)
+	repoPath, sha := setupLargeCommitBodyRepo(t, defaultPromptCap)
 	cap := 256
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
