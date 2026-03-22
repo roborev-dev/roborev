@@ -429,10 +429,11 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
 	assertContains(t, prompt, "inspect the commit range locally with read-only git commands", "expected Codex range inspection guidance")
-	assertContains(t, prompt, "git log --oneline "+rangeRef, "expected range commit list command")
-	assertContains(t, prompt, "git diff --stat "+rangeRef, "expected range stat command")
-	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
-	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
+	quoted := shellQuote(rangeRef)
+	assertContains(t, prompt, "git log --oneline "+quoted, "expected range commit list command")
+	assertContains(t, prompt, "git diff --stat "+quoted, "expected range stat command")
+	assertContains(t, prompt, "git diff --unified=80 "+quoted, "expected full range diff command")
+	assertContains(t, prompt, "git diff --name-only "+quoted, "expected touched files command")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 

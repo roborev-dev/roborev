@@ -145,6 +145,16 @@ func NewBuilderWithConfig(
 	return &Builder{db: db, globalCfg: globalCfg}
 }
 
+// resolveMaxPromptSize returns the effective prompt budget from config,
+// falling back to the legacy MaxPromptSize constant.
+func (b *Builder) resolveMaxPromptSize(repoPath string) int {
+	size := config.ResolveMaxPromptSize(repoPath, b.globalCfg)
+	if size <= 0 {
+		return MaxPromptSize
+	}
+	return size
+}
+
 // resolveExcludes returns the merged exclude patterns for a repo.
 // Security reviews skip repo-level patterns to prevent a compromised
 // default branch from hiding files from review.
@@ -213,13 +223,14 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
-	if sb.Len()+diffSection.Len() > MaxPromptSize {
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	if sb.Len()+diffSection.Len() > promptCap {
 		// For dirty changes, we can't tell them to "use git diff" because
 		// the working tree may have changed. Just truncate with a note.
 		sb.WriteString("### Diff\n\n")
 		sb.WriteString("(Diff too large to include in full)\n")
 		// Include truncated diff
-		maxDiffLen := MaxPromptSize - sb.Len() - 100 // Leave room for closing markers
+		maxDiffLen := promptCap - sb.Len() - 100 // Leave room for closing markers
 		if maxDiffLen > 1000 {
 			sb.WriteString("```diff\n")
 			sb.WriteString(diff[:maxDiffLen])
@@ -295,7 +306,7 @@ func truncateUTF8(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}
-	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
 		maxBytes--
 	}
 	return s[:maxBytes]
@@ -329,7 +340,12 @@ func codexCommitInspectionFallbackVariants(sha string) []string {
 	}
 }
 
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func codexRangeInspectionFallbackVariants(rangeRef string) []string {
+	q := shellQuote(rangeRef)
 	return []string{
 		fmt.Sprintf("### Combined Diff\n\n"+
 			"(Diff too large to include inline)\n\n"+
@@ -340,20 +356,20 @@ func codexRangeInspectionFallbackVariants(rangeRef string) []string {
 			"- `git diff --unified=80 %s`\n"+
 			"- `git diff --name-only %s`\n\n"+
 			"Review the actual diff before writing findings.\n",
-			rangeRef, rangeRef, rangeRef, rangeRef),
+			q, q, q, q),
 		fmt.Sprintf("### Combined Diff\n\n"+
 			"(Diff too large to include inline)\n\n"+
 			"For Codex in read-only review mode, inspect the commit range locally before writing findings.\n"+
 			"- `git diff --stat %s`\n"+
 			"- `git diff --unified=80 %s`\n",
-			rangeRef, rangeRef),
+			q, q),
 		fmt.Sprintf("### Combined Diff\n\n"+
 			"(Diff too large to include inline)\n\n"+
 			"For Codex, inspect locally with `git diff --unified=80 %s`.\n",
-			rangeRef),
+			q),
 		fmt.Sprintf("### Combined Diff\n\n"+
 			"(Diff too large; for Codex run `git diff %s` locally.)\n",
-			rangeRef),
+			q),
 	}
 }
 
@@ -427,15 +443,16 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
+	promptCap := b.resolveMaxPromptSize(repoPath)
 	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
-	if baseLen+diffSection.Len() > MaxPromptSize {
+	if baseLen+diffSection.Len() > promptCap {
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
 				currentRequired.String(),
 				currentOverflow.String(),
-				MaxPromptSize,
+				promptCap,
 				codexCommitInspectionFallbackVariants(sha)...,
 			), nil
 		} else {
@@ -532,15 +549,16 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	diffSection.WriteString("```\n")
 
 	// Check if adding the diff would exceed max prompt size
+	promptCap := b.resolveMaxPromptSize(repoPath)
 	baseLen := len(requiredPrefix) + optionalContext.Len() + currentRequired.Len() + currentOverflow.Len()
-	if baseLen+diffSection.Len() > MaxPromptSize {
+	if baseLen+diffSection.Len() > promptCap {
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
 				currentRequired.String(),
 				currentOverflow.String(),
-				MaxPromptSize,
+				promptCap,
 				codexRangeInspectionFallbackVariants(rangeRef)...,
 			), nil
 		} else {
