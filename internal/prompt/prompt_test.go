@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
@@ -416,6 +417,7 @@ func TestBuildPromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testi
 	assertContains(t, prompt, "git show --stat --summary "+sha, "expected commit stat command")
 	assertContains(t, prompt, "git show --format=medium --unified=80 "+sha, "expected full commit diff command")
 	assertContains(t, prompt, "git diff-tree --no-commit-id --name-only -r "+sha, "expected touched files command")
+	assertContains(t, prompt, `:(exclude,glob)**/go.sum`, "expected fallback commands to preserve review excludes")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 
@@ -429,29 +431,29 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
 	assertContains(t, prompt, "inspect the commit range locally with read-only git commands", "expected Codex range inspection guidance")
-	quoted := shellQuote(rangeRef)
-	assertContains(t, prompt, "git log --oneline "+quoted, "expected range commit list command")
-	assertContains(t, prompt, "git diff --stat "+quoted, "expected range stat command")
-	assertContains(t, prompt, "git diff --unified=80 "+quoted, "expected full range diff command")
-	assertContains(t, prompt, "git diff --name-only "+quoted, "expected touched files command")
+	assertContains(t, prompt, "git log --oneline "+rangeRef, "expected range commit list command")
+	assertContains(t, prompt, "git diff --stat "+rangeRef, "expected range stat command")
+	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
+	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
+	assertContains(t, prompt, `:(exclude,glob)**/go.sum`, "expected fallback commands to preserve review excludes")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 
 func codexCommitFallback(sha string) string {
-	return codexCommitInspectionFallbackVariants(sha)[0]
+	return codexCommitInspectionFallbackVariants(sha, gitpkg.ReviewPathspecArgs())[0]
 }
 
 func codexRangeFallback(rangeRef string) string {
-	return codexRangeInspectionFallbackVariants(rangeRef)[0]
+	return codexRangeInspectionFallbackVariants(rangeRef, gitpkg.ReviewPathspecArgs())[0]
 }
 
 func shortestCodexCommitFallback(sha string) string {
-	variants := codexCommitInspectionFallbackVariants(sha)
+	variants := codexCommitInspectionFallbackVariants(sha, gitpkg.ReviewPathspecArgs())
 	return variants[len(variants)-1]
 }
 
 func shortestCodexRangeFallback(rangeRef string) string {
-	variants := codexRangeInspectionFallbackVariants(rangeRef)
+	variants := codexRangeInspectionFallbackVariants(rangeRef, gitpkg.ReviewPathspecArgs())
 	return variants[len(variants)-1]
 }
 
@@ -727,6 +729,68 @@ func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
 
 	assert.LessOrEqual(t, len(prompt), cap,
 		"dirty prompt should stay within configured cap")
+}
+
+func TestResolveMaxPromptSizeWithoutConfigUsesLegacyDefault(t *testing.T) {
+	b := NewBuilder(nil)
+	assert.Equal(t, MaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))
+}
+
+func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
+	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
+	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)
+	cap := 1024
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.True(t, utf8.ValidString(prompt), "dirty prompt should remain valid UTF-8 after truncation")
+}
+
+func TestBuildPromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
+	repoPath, sha := setupLargeCommitBodyRepo(t, MaxPromptSize)
+	cap := 256
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.True(t, utf8.ValidString(prompt), "prompt should remain valid UTF-8 after hard capping")
+}
+
+func TestBuildRangePromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
+	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 4096)
+	cap := 256
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.True(t, utf8.ValidString(prompt), "range prompt should remain valid UTF-8 after hard capping")
+}
+
+func TestBuildPromptCodexOversizedDiffFallbackCarriesExcludeScope(t *testing.T) {
+	repoPath, sha := setupLargeExcludePatternRepo(t)
+	cfg := &config.Config{
+		DefaultMaxPromptSize: 4096,
+		ExcludePatterns:      []string{"custom.dat"},
+	}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
+		"expected Codex fallback commands to preserve custom exclude patterns")
+	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
+		"expected Codex fallback commands to preserve built-in exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {

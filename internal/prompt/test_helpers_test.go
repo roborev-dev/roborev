@@ -296,6 +296,39 @@ func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (str
 	return r.dir, startSHA + ".." + endSHA
 }
 
+func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	var keep strings.Builder
+	for range 12000 {
+		keep.WriteString("package main\n")
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "keep.go"),
+		[]byte(keep.String()), 0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "custom.dat"),
+		[]byte(strings.Repeat("generated\n", 2048)), 0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "go.sum"),
+		[]byte(strings.Repeat("sum\n", 1024)), 0o644,
+	))
+	r.git("add", "keep.go", "custom.dat", "go.sum")
+	r.git("commit", "-m", "large change")
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
 func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {
 	t.Helper()
 	db := testutil.OpenTestDB(t)

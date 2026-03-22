@@ -900,6 +900,28 @@ func TestGetDiffExcludesSlashedDirectory(t *testing.T) {
 	})
 }
 
+func TestGetDiffLimited(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("large.txt", strings.Repeat("line\n", 20000))
+	repo.CommitAll("large change")
+
+	diff, truncated, err := GetDiffLimited(repo.Dir, repo.HeadSHA(), 1024)
+	require.NoError(t, err)
+	assert.True(t, truncated, "expected limited diff read to report truncation")
+	assert.LessOrEqual(t, len(diff), 1024)
+}
+
+func TestGetRangeDiffLimited(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("large.txt", strings.Repeat("line\n", 20000))
+	repo.CommitAll("large change")
+
+	diff, truncated, err := GetRangeDiffLimited(repo.Dir, "HEAD~1..HEAD", 1024)
+	require.NoError(t, err)
+	assert.True(t, truncated, "expected limited range diff read to report truncation")
+	assert.LessOrEqual(t, len(diff), 1024)
+}
+
 func TestGetDirtyDiffExcludesUntrackedFiles(t *testing.T) {
 	t.Run("plain directory exclude", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
