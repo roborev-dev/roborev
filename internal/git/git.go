@@ -237,6 +237,26 @@ func GetRepoRoot(path string) (string, error) {
 	return normalizeMSYSPath(string(out)), nil
 }
 
+// ValidateWorktreeForRepo checks that worktreePath is a git checkout
+// whose main repository root matches repoRoot. Returns true if the
+// worktree is valid for the given repo. Returns false (without error)
+// if the path doesn't exist, isn't a git repo, or belongs to a
+// different repository.
+func ValidateWorktreeForRepo(worktreePath, repoRoot string) bool {
+	mainRoot, err := GetMainRepoRoot(worktreePath)
+	if err != nil {
+		return false
+	}
+	// Resolve symlinks so /tmp vs /private/tmp (macOS) don't cause
+	// false negatives.
+	a, errA := filepath.EvalSymlinks(mainRoot)
+	b, errB := filepath.EvalSymlinks(repoRoot)
+	if errA != nil || errB != nil {
+		return filepath.Clean(mainRoot) == filepath.Clean(repoRoot)
+	}
+	return a == b
+}
+
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.
 // For a regular repository or submodule, this returns the same as GetRepoRoot.
 // For a worktree, this returns the main repository's root path.

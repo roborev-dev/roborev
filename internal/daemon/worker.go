@@ -362,11 +362,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Resolve effective repo path: use worktree if available and still exists.
+	// Resolve effective repo path: use worktree if available, still exists,
+	// and is a valid git checkout for the same repository.
 	effectiveRepoPath := job.RepoPath
 	if job.WorktreePath != "" {
-		if _, err := os.Stat(job.WorktreePath); err != nil {
-			log.Printf("[%s] Worktree %s no longer exists for job %d, using main repo",
+		if !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
+			log.Printf("[%s] Worktree %s invalid or gone for job %d, using main repo",
 				workerID, job.WorktreePath, job.ID)
 		} else {
 			effectiveRepoPath = job.WorktreePath

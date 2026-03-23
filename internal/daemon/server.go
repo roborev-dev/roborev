@@ -707,11 +707,12 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect worktree: if the git working directory differs from the main
+	// Detect worktree: if the worktree toplevel differs from the main
 	// repo root, the request originated from a worktree checkout.
+	// Clean both paths to avoid false positives from normalization differences.
 	var worktreePath string
-	if gitCwd != repoRoot {
-		worktreePath = gitCwd
+	if filepath.Clean(gitCwd) != filepath.Clean(repoRoot) {
+		worktreePath = filepath.Clean(gitCwd)
 	}
 
 	// Check if branch is excluded from reviews
