@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func TestCopilotSupportsAllowAllTools(t *testing.T) {
+	skipIfWindows(t)
+
+	t.Run("supported", func(t *testing.T) {
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput: "Usage: copilot [flags]\n\n  --allow-all-tools  Auto-approve all tool calls",
+		})
+		supported, err := copilotSupportsAllowAllTools(context.Background(), mock.CmdPath)
+		require.NoError(t, err)
+		assert.True(t, supported)
+	})
+
+	t.Run("not supported", func(t *testing.T) {
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput: "Usage: copilot [flags]\n\n  --model  Model to use",
+		})
+		supported, err := copilotSupportsAllowAllTools(context.Background(), mock.CmdPath)
+		require.NoError(t, err)
+		assert.False(t, supported)
+	})
+}
+
 func TestCopilotReview(t *testing.T) {
 	skipIfWindows(t)
 

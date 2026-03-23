@@ -7,7 +7,27 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 )
+
+var copilotAllowAllToolsSupport sync.Map
+
+// copilotSupportsAllowAllTools checks whether the copilot binary supports
+// the --allow-all-tools flag needed for non-interactive tool approval.
+// Results are cached per command path.
+func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, error) {
+	if cached, ok := copilotAllowAllToolsSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	output, err := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), "--allow-all-tools")
+	if err != nil && !supported {
+		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+	}
+	copilotAllowAllToolsSupport.Store(command, supported)
+	return supported, nil
+}
 
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
 type CopilotAgent struct {
