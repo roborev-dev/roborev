@@ -14,12 +14,12 @@ import (
 // environment variables and preserves the original test exit code.
 func RunIsolatedMain(m *testing.M) int {
 	// Snapshot prod log state BEFORE overriding ROBOREV_DATA_DIR.
-	prodDataDir, err := DefaultProdDataDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to resolve production data dir: %v\n", err)
-		return 1
+	// Best-effort: if the home directory can't be resolved (e.g. CI
+	// containers with no HOME), skip the barrier rather than aborting.
+	var barrier *ProdLogBarrier
+	if prodDataDir, err := DefaultProdDataDir(); err == nil {
+		barrier = NewProdLogBarrier(prodDataDir)
 	}
-	barrier := NewProdLogBarrier(prodDataDir)
 
 	tmpDir, cleanupTempDir, err := createIsolatedDataDir()
 	if err != nil {
@@ -36,10 +36,12 @@ func RunIsolatedMain(m *testing.M) int {
 	code := m.Run()
 
 	// Hard barrier: fail if tests polluted production logs.
-	if msg := barrier.Check(); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		if code == 0 {
-			return 1
+	if barrier != nil {
+		if msg := barrier.Check(); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+			if code == 0 {
+				return 1
+			}
 		}
 	}
 	return code
