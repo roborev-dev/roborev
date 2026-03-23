@@ -2343,18 +2343,19 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 
 	// Enqueue the fix job
 	job, err := s.db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:      parentJob.RepoID,
-		CommitID:    commitID,
-		GitRef:      fixGitRef,
-		Branch:      parentJob.Branch,
-		Agent:       agentName,
-		Model:       model,
-		Reasoning:   reasoning,
-		Prompt:      fixPrompt,
-		Agentic:     true,
-		Label:       fmt.Sprintf("fix #%d", req.ParentJobID),
-		JobType:     storage.JobTypeFix,
-		ParentJobID: req.ParentJobID,
+		RepoID:       parentJob.RepoID,
+		CommitID:     commitID,
+		GitRef:       fixGitRef,
+		Branch:       parentJob.Branch,
+		Agent:        agentName,
+		Model:        model,
+		Reasoning:    reasoning,
+		Prompt:       fixPrompt,
+		Agentic:      true,
+		Label:        fmt.Sprintf("fix #%d", req.ParentJobID),
+		JobType:      storage.JobTypeFix,
+		ParentJobID:  req.ParentJobID,
+		WorktreePath: parentJob.WorktreePath,
 	})
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("enqueue fix job: %v", err))

@@ -286,6 +286,7 @@ type SyncableJob struct {
 	DiffContent     *string
 	Error           string
 	TokenUsage      string
+	WorktreePath    string
 	SourceMachineID string
 	UpdatedAt       time.Time
 }
@@ -300,7 +301,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			j.source_machine_id, j.updated_at
+			COALESCE(j.worktree_path, ''), j.source_machine_id, j.updated_at
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
@@ -335,7 +336,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
-			&j.SourceMachineID, &updatedAt,
+			&j.WorktreePath, &j.SourceMachineID, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
@@ -578,8 +579,8 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
-			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			worktree_path, source_machine_id, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -590,13 +591,14 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
 			token_usage = COALESCE(excluded.token_usage, review_jobs.token_usage),
+			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			updated_at = excluded.updated_at,
 			synced_at = ?
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(j.Error), nullStr(j.TokenUsage),
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
+		nullStr(j.WorktreePath), j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }
 
