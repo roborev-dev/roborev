@@ -469,7 +469,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 				} else {
 					// No pending branch review - enqueue a new one
 					fmt.Println("No individual failed reviews - running branch review...")
-					jobID, err = client.EnqueueReview(repoPath, rangeRef, resolvedAgent)
+					jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
 					if err != nil {
 						return fmt.Errorf("failed to enqueue branch review: %w", err)
 					}

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,114 @@ func handleMockRefineGetJobs(t *testing.T) func(w http.ResponseWriter, r *http.R
 		}
 		return false // fall through to base handler
 	}
+}
+
+// TestRunRefineBranchReviewUsesEmptyAgent verifies that when refine
+// enqueues a branch review (after all per-commit reviews pass), it
+// passes an empty agent name so the server resolves it via the "review"
+// workflow config — not the refine/fix agent. This is a regression test
+// for #552.
+func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
+	repoDir, headSHA := setupRefineRepo(t)
+
+	var capturedEnqueueAgent string
+	var enqueueCount int
+
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnEnqueue: func(
+			w http.ResponseWriter, r *http.Request,
+			state *mockRefineState,
+		) bool {
+			var req daemon.EnqueueRequest
+			json.NewDecoder(r.Body).Decode(&req)
+
+			capturedEnqueueAgent = req.Agent
+			enqueueCount++
+
+			state.mu.Lock()
+			jobID := state.nextJobID
+			job := &storage.ReviewJob{
+				ID:     jobID,
+				GitRef: req.GitRef,
+				Agent:  req.Agent,
+				Status: storage.JobStatusDone,
+			}
+			state.jobs[jobID] = job
+			state.nextJobID++
+
+			// Create a passing review for the branch review
+			state.reviews[req.GitRef] = &storage.Review{
+				ID:     jobID + 1000,
+				JobID:  jobID,
+				Output: "No issues found.",
+			}
+			state.mu.Unlock()
+
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(job)
+			return true
+		},
+		// Return only existing jobs without auto-creating —
+		// handleMockRefineGetJobs auto-creates failing reviews
+		// for any git_ref, which would interfere with the branch
+		// review flow.
+		OnGetJobs: func(
+			w http.ResponseWriter, r *http.Request,
+			s *mockRefineState,
+		) bool {
+			q := r.URL.Query()
+			s.mu.Lock()
+			defer s.mu.Unlock()
+
+			if idStr := q.Get("id"); idStr != "" {
+				var jobID int64
+				fmt.Sscanf(idStr, "%d", &jobID)
+				if job, ok := s.jobs[jobID]; ok {
+					json.NewEncoder(w).Encode(map[string]any{
+						"jobs": []storage.ReviewJob{*job},
+					})
+				} else {
+					json.NewEncoder(w).Encode(map[string]any{
+						"jobs": []storage.ReviewJob{},
+					})
+				}
+				return true
+			}
+
+			gitRef := q.Get("git_ref")
+			var jobs []storage.ReviewJob
+			for _, j := range s.jobs {
+				if gitRef == "" || j.GitRef == gitRef {
+					jobs = append(jobs, *j)
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobs": jobs,
+			})
+			return true
+		},
+	})
+	defer md.Close()
+
+	// Per-commit review passes — so refine reaches the branch review
+	md.State.reviews[headSHA] = &storage.Review{
+		ID: 1, JobID: 7, Output: "No issues found.",
+	}
+
+	ctx := defaultTestRunContext(repoDir)
+
+	err := runRefine(ctx, refineOptions{
+		agentName:     "test",
+		maxIterations: 3,
+		quiet:         true,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, enqueueCount,
+		"expected exactly one enqueue call for branch review")
+	assert.Empty(t, capturedEnqueueAgent,
+		"branch review should use empty agent (server-resolved), "+
+			"not the refine agent")
 }
 
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
