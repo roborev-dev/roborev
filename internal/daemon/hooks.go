@@ -137,11 +137,18 @@ func (hr *HookRunner) handleEvent(event Event) {
 		return
 	}
 
-	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific
+	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific.
+	// Prefer worktree path for config loading so the correct .roborev.toml is used.
 	hooks := append([]config.HookConfig{}, cfg.Hooks...)
 
-	if event.Repo != "" {
-		if repoCfg, err := config.LoadRepoConfig(event.Repo); err == nil && repoCfg != nil {
+	repoConfigPath := event.Repo
+	if event.WorktreePath != "" {
+		if _, err := os.Stat(event.WorktreePath); err == nil {
+			repoConfigPath = event.WorktreePath
+		}
+	}
+	if repoConfigPath != "" {
+		if repoCfg, err := config.LoadRepoConfig(repoConfigPath); err == nil && repoCfg != nil {
 			hooks = append(hooks, repoCfg.Hooks...)
 		}
 	}

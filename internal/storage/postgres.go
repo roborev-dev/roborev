@@ -934,8 +934,8 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 			INSERT INTO review_jobs (
 				uuid, repo_id, commit_id, git_ref, session_id, agent, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
-				source_machine_id, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+				worktree_path, source_machine_id, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
@@ -945,10 +945,11 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
 				token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
+				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 				updated_at = NOW()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Reasoning),
 			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-			nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), j.SourceMachineID)
+			nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), j.SourceMachineID)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
