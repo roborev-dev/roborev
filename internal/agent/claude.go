@@ -209,6 +209,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		Dir:     repoPath,
 		Env:     env,
 		Stdin:   strings.NewReader(prompt),
+		Output:  output,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
 			if sw == nil {
 				return parseStreamJSON(r, nil)

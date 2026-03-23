@@ -113,6 +113,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		Dir:     repoPath,
 		Env:     os.Environ(),
 		Stdin:   strings.NewReader(prompt),
+		Output:  output,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
 			if sw == nil {
 				return a.parseStreamJSON(r, nil)

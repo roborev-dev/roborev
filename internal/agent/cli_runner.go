@@ -84,8 +84,10 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 	if ctxErr := contextProcessError(ctx, tracker, result.WaitErr, result.ParseErr); ctxErr != nil {
 		return result, ctxErr
 	}
-	if ctxErr := contextProcessError(ctx, tracker, nil, result.ParseErr); ctxErr != nil {
-		return result, ctxErr
+	if result.WaitErr == nil {
+		if ctxErr := contextProcessError(ctx, tracker, nil, result.ParseErr); ctxErr != nil {
+			return result, ctxErr
+		}
 	}
 
 	return result, nil
