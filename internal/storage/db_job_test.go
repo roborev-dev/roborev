@@ -175,6 +175,16 @@ func TestReviewVerdictComputation(t *testing.T) {
 		require.NoError(t, err, "GetReviewByJobID failed")
 
 		assert.Nil(t, review.Job.Verdict)
+
+		// Verify verdict_bool is NULL in DB (not a false fail)
+		var vb sql.NullInt64
+		err = env.db.QueryRow(
+			`SELECT verdict_bool FROM reviews WHERE job_id = ?`,
+			env.job.ID,
+		).Scan(&vb)
+		require.NoError(t, err)
+		assert.False(t, vb.Valid,
+			"verdict_bool should be NULL for empty output")
 	})
 
 	t.Run("verdict nil when job has error", func(t *testing.T) {

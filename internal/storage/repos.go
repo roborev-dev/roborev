@@ -459,6 +459,11 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 
 		job := ReviewJob{GitRef: gitRef}
 		applyReviewJobScan(&job, fields)
+
+		if job.CommitID == nil && job.GitRef == "prompt" {
+			continue
+		}
+
 		applyJobVerdict(&job, verdictBool, output)
 		if job.Verdict != nil {
 			if *job.Verdict == verdictPass {
@@ -468,9 +473,6 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 			}
 		}
 
-		if job.CommitID == nil && job.GitRef == "prompt" {
-			continue
-		}
 		if closed != 0 {
 			stats.ClosedReviews++
 		} else {

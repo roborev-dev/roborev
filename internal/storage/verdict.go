@@ -39,10 +39,7 @@ func applyReviewVerdict(review *Review, verdictBool sql.NullInt64) {
 }
 
 func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string) {
-	if job.Error != "" || job.IsTaskJob() {
-		return
-	}
-	if output == "" && !verdictBool.Valid {
+	if output == "" || job.Error != "" || job.IsTaskJob() {
 		return
 	}
 	verdict := verdictFromBoolOrParse(verdictBool, output)
