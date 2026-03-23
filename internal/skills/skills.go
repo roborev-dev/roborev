@@ -324,57 +324,27 @@ type AgentStatus struct {
 	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-fix")
 }
 
-func embeddedSkillCatalog() (map[string]SkillInfo, error) {
-	catalog := make(map[string]SkillInfo)
+// ListSkills returns metadata for all embedded skills, deduplicated by
+// directory name. When the same skill exists across multiple agents, the
+// first agent's metadata is used.
+func ListSkills() ([]SkillInfo, error) {
+	seen := make(map[string]bool)
+	var out []SkillInfo
 	for _, spec := range supportedAgents {
 		skills, err := embeddedSkillsForAgent(spec)
 		if err != nil {
 			return nil, err
 		}
 		for _, skill := range skills {
-			info := SkillInfo{
+			if seen[skill.DirName] {
+				continue
+			}
+			seen[skill.DirName] = true
+			out = append(out, SkillInfo{
 				DirName:     skill.DirName,
 				Name:        skill.Name,
 				Description: skill.Description,
-			}
-
-			existing, ok := catalog[skill.DirName]
-			if !ok {
-				catalog[skill.DirName] = info
-				continue
-			}
-			if existing.Name == "" {
-				existing.Name = info.Name
-			}
-			if existing.Description == "" {
-				existing.Description = info.Description
-			}
-			catalog[skill.DirName] = existing
-		}
-	}
-	return catalog, nil
-}
-
-// ListSkills returns metadata for all embedded skills.
-func ListSkills() ([]SkillInfo, error) {
-	catalog, err := embeddedSkillCatalog()
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]SkillInfo, 0, len(catalog))
-	for _, spec := range supportedAgents {
-		skills, err := embeddedSkillsForAgent(spec)
-		if err != nil {
-			return nil, err
-		}
-		for _, skill := range skills {
-			info, ok := catalog[skill.DirName]
-			if !ok {
-				continue
-			}
-			out = append(out, info)
-			delete(catalog, skill.DirName)
+			})
 		}
 	}
 	return out, nil

@@ -3,7 +3,9 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -388,5 +390,81 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 				assert.Empty(t, results)
 			}
 		})
+	}
+}
+
+func TestListSkillsDeduplicatesAcrossAgents(t *testing.T) {
+	skills, err := ListSkills()
+	require.NoError(t, err)
+
+	seen := make(map[string]bool)
+	for _, skill := range skills {
+		assert.False(t, seen[skill.DirName], "duplicate skill in ListSkills output: %s", skill.DirName)
+		seen[skill.DirName] = true
+	}
+}
+
+func TestListSkillsUsesFirstAgentMetadata(t *testing.T) {
+	// When frontmatter differs across agents for the same skill,
+	// ListSkills should return the first agent's (Claude's) metadata.
+	skills, err := ListSkills()
+	require.NoError(t, err)
+
+	claudeSkillsByDir := make(map[string]embeddedSkill)
+	claudeSpec := supportedAgents[0]
+	require.Equal(t, AgentClaude, claudeSpec.agent, "first agent must be Claude for this test")
+
+	embedded, err := embeddedSkillsForAgent(claudeSpec)
+	require.NoError(t, err)
+	for _, s := range embedded {
+		claudeSkillsByDir[s.DirName] = s
+	}
+
+	for _, skill := range skills {
+		cs, ok := claudeSkillsByDir[skill.DirName]
+		if !ok {
+			continue
+		}
+		assert.Equal(t, cs.Name, skill.Name,
+			"skill %s: name should match first agent (Claude)", skill.DirName)
+		assert.Equal(t, cs.Description, skill.Description,
+			"skill %s: description should match first agent (Claude)", skill.DirName)
+	}
+}
+
+func TestDirNameEnumerationDoesNotReadContent(t *testing.T) {
+	// embeddedSkillDirNames only enumerates directories, so it must
+	// succeed even when SKILL.md files are absent. This guards against
+	// regressions that would make IsInstalled/Update depend on file reads.
+	mockFS := fstest.MapFS{
+		"agent/skill-a/.keep": &fstest.MapFile{Data: []byte("")},
+		"agent/skill-b/.keep": &fstest.MapFile{Data: []byte("")},
+	}
+	spec := agentSpec{
+		agent:         "mock",
+		configDirName: ".mock",
+		embedFS:       mockFS,
+		embedDir:      "agent",
+	}
+
+	// embeddedSkillDirNames should succeed (only reads directory entries)
+	names, err := embeddedSkillDirNames(spec)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"skill-a", "skill-b"}, names)
+
+	// embeddedSkillsForAgent should fail (reads SKILL.md content)
+	_, err = embeddedSkillsForAgent(spec)
+	require.Error(t, err, "embeddedSkillsForAgent should fail when SKILL.md is missing")
+
+	// currentInstalledSkillFilePaths should succeed via embeddedSkillDirNames
+	home := t.TempDir()
+	paths, err := currentInstalledSkillFilePaths(home, spec)
+	require.NoError(t, err)
+	require.Len(t, paths, 2)
+	for _, p := range paths {
+		assert.True(t, strings.Contains(p, filepath.Join(home, ".mock", "skills")),
+			"path should be under agent skills dir: %s", p)
+		assert.True(t, strings.HasSuffix(p, "SKILL.md"),
+			"path should end with SKILL.md: %s", p)
 	}
 }
