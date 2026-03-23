@@ -691,9 +691,9 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ReviewType = canonical[0]
 
-	// Get the working directory root for git commands (may be a worktree)
-	// This is needed to resolve refs like HEAD correctly in the worktree context
-	gitCwd, err := git.GetRepoRoot(req.RepoPath)
+	// Get the checkout root (via --show-toplevel) for git commands.
+	// For worktrees this is the worktree root; for the main repo it equals repoRoot.
+	checkoutRoot, err := git.GetRepoRoot(req.RepoPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("not a git repository: %v", err))
 		return
@@ -711,12 +711,12 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// repo root, the request originated from a worktree checkout.
 	// Clean both paths to avoid false positives from normalization differences.
 	var worktreePath string
-	if filepath.Clean(gitCwd) != filepath.Clean(repoRoot) {
-		worktreePath = filepath.Clean(gitCwd)
+	if filepath.Clean(checkoutRoot) != filepath.Clean(repoRoot) {
+		worktreePath = filepath.Clean(checkoutRoot)
 	}
 
 	// Check if branch is excluded from reviews
-	currentBranch := git.GetCurrentBranch(gitCwd)
+	currentBranch := git.GetCurrentBranch(checkoutRoot)
 	if currentBranch != "" && config.IsBranchExcluded(repoRoot, currentBranch) {
 		// Silently skip excluded branches - return 200 OK with skipped flag
 		writeJSON(w, map[string]any{
@@ -850,7 +850,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if isDirty {
 		// Dirty review - use pre-captured diff
-		targetSHA, _ := git.ResolveSHA(gitCwd, "HEAD")
+		targetSHA, _ := git.ResolveSHA(checkoutRoot, "HEAD")
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:       repo.ID,
 			GitRef:       gitRef,
@@ -870,16 +870,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if isRange {
 		// For ranges, resolve both endpoints and create range job
-		// Use gitCwd to resolve refs correctly in worktree context
+		// Use checkoutRoot to resolve refs correctly in worktree context
 		parts := strings.SplitN(gitRef, "..", 2)
-		startSHA, err := git.ResolveSHA(gitCwd, parts[0])
+		startSHA, err := git.ResolveSHA(checkoutRoot, parts[0])
 		if err != nil {
 			// If the start ref is <sha>^ and resolution failed, the commit
 			// may be the root commit (no parent). Use the empty tree SHA so
 			// the range includes the root commit's changes.
 			if before, ok := strings.CutSuffix(parts[0], "^"); ok {
 				base := before
-				if _, resolveErr := git.ResolveSHA(gitCwd, base+"^{commit}"); resolveErr == nil {
+				if _, resolveErr := git.ResolveSHA(checkoutRoot, base+"^{commit}"); resolveErr == nil {
 					startSHA = git.EmptyTreeSHA
 					err = nil
 				}
@@ -889,7 +889,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		endSHA, err := git.ResolveSHA(gitCwd, parts[1])
+		endSHA, err := git.ResolveSHA(checkoutRoot, parts[1])
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid end commit: %v", err))
 			return
@@ -901,7 +901,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// means we can't prove all are excluded.
 		fullRef := startSHA + ".." + endSHA
 		if rangeCommits, rcErr := git.GetRangeCommits(
-			gitCwd, fullRef,
+			checkoutRoot, fullRef,
 		); rcErr == nil && len(rangeCommits) > 0 {
 			messages := make([]string, 0, len(rangeCommits))
 			allRead := true
@@ -943,8 +943,8 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Single commit - use gitCwd to resolve refs correctly in worktree context
-		sha, err := git.ResolveSHA(gitCwd, gitRef)
+		// Single commit - use checkoutRoot to resolve refs correctly in worktree context
+		sha, err := git.ResolveSHA(checkoutRoot, gitRef)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid commit: %v", err))
 			return
@@ -974,7 +974,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		patchID := git.GetPatchID(gitCwd, sha)
+		patchID := git.GetPatchID(checkoutRoot, sha)
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:       repo.ID,
