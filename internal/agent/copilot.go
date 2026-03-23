@@ -122,7 +122,7 @@ func (a *CopilotAgent) CommandName() string {
 }
 
 func (a *CopilotAgent) CommandLine() string {
-	args := []string{"-s"}
+	var args []string
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}

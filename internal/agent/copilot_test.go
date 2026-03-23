@@ -188,8 +188,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 	})
 
 	t.Run("AllowUnsafeAgents overrides to agentic", func(t *testing.T) {
-		SetAllowUnsafeAgents(true)
-		defer SetAllowUnsafeAgents(false)
+		withUnsafeAgents(t, true)
 
 		mock := mockAgentCLI(t, MockCLIOpts{
 			HelpOutput:  "--allow-all-tools",
