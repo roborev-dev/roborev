@@ -327,6 +327,26 @@ func hardCapPrompt(prompt string, limit int) string {
 	return truncateUTF8(prompt, limit)
 }
 
+// safeForMarkdown filters pathspec args to only those that can be
+// safely embedded in markdown inline code spans. Args containing
+// backticks or control characters are dropped.
+func safeForMarkdown(args []string) []string {
+	var safe []string
+	for _, a := range args {
+		ok := true
+		for _, r := range a {
+			if r < ' ' || r == '`' || r == 0x7f {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			safe = append(safe, a)
+		}
+	}
+	return safe
+}
+
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -492,7 +512,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := git.FormatExcludeArgs(excludes)
+		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
@@ -610,7 +630,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := git.FormatExcludeArgs(excludes)
+		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
