@@ -111,10 +111,12 @@ func TestDaemonEndpoint_ConfigAddrRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(tcp, parsed)
 
-	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/test.sock"}
-	parsed, err = ParseEndpoint(unix.ConfigAddr())
-	require.NoError(t, err)
-	assert.Equal(unix, parsed)
+	if runtime.GOOS != "windows" {
+		unix := DaemonEndpoint{Network: "unix", Address: "/tmp/test.sock"}
+		parsed, err = ParseEndpoint(unix.ConfigAddr())
+		require.NoError(t, err)
+		assert.Equal(unix, parsed)
+	}
 }
 
 func TestDaemonEndpoint_Listener_TCP(t *testing.T) {
