@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -129,9 +130,20 @@ func (a *CopilotAgent) CommandLine() string {
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	args := []string{}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+
+	supported, err := copilotSupportsAllowAllTools(ctx, a.Command)
+	if err != nil {
+		log.Printf("copilot: cannot detect --allow-all-tools support: %v", err)
+	}
+
+	var args []string
+	if supported {
+		args = a.buildArgs(agenticMode)
+	} else {
+		if a.Model != "" {
+			args = append(args, "--model", a.Model)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)

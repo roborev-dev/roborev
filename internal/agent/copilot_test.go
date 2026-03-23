@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCopilotSupportsAllowAllTools(t *testing.T) {
@@ -141,4 +144,89 @@ func TestCopilotReview(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCopilotReviewPermissionFlags(t *testing.T) {
+	skipIfWindows(t)
+
+	t.Run("review mode passes permission flags", func(t *testing.T) {
+		assert := assert.New(t)
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput:   "--allow-all-tools",
+			CaptureArgs:  true,
+			CaptureStdin: true,
+			StdoutLines:  []string{"review output"},
+		})
+		a := NewCopilotAgent(mock.CmdPath)
+		res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		require.NoError(t, err)
+		assert.Equal("review output\n", res)
+
+		args := readFileContent(t, mock.ArgsFile)
+		assert.Contains(args, "--allow-all-tools")
+		assert.Contains(args, "-s")
+		assert.Contains(args, "--deny-tool")
+		assertFileContent(t, mock.StdinFile, "prompt")
+	})
+
+	t.Run("agentic mode omits deny list", func(t *testing.T) {
+		assert := assert.New(t)
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput:   "--allow-all-tools",
+			CaptureArgs:  true,
+			CaptureStdin: true,
+			StdoutLines:  []string{"fix output"},
+		})
+		a := NewCopilotAgent(mock.CmdPath).WithAgentic(true)
+		res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		require.NoError(t, err)
+		assert.Equal("fix output\n", res)
+
+		args := readFileContent(t, mock.ArgsFile)
+		assert.Contains(args, "--allow-all-tools")
+		assert.NotContains(args, "--deny-tool")
+	})
+
+	t.Run("AllowUnsafeAgents overrides to agentic", func(t *testing.T) {
+		SetAllowUnsafeAgents(true)
+		defer SetAllowUnsafeAgents(false)
+
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput:  "--allow-all-tools",
+			CaptureArgs: true,
+			StdoutLines: []string{"output"},
+		})
+		a := NewCopilotAgent(mock.CmdPath) // not WithAgentic(true)
+		_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		require.NoError(t, err)
+
+		args := readFileContent(t, mock.ArgsFile)
+		assert.Contains(t, args, "--allow-all-tools")
+		assert.NotContains(t, args, "--deny-tool")
+	})
+
+	t.Run("falls back to no flags when unsupported", func(t *testing.T) {
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput:   "Usage: copilot [flags]", // no --allow-all-tools
+			CaptureArgs:  true,
+			CaptureStdin: true,
+			StdoutLines:  []string{"output"},
+		})
+		a := NewCopilotAgent(mock.CmdPath)
+		_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		require.NoError(t, err)
+
+		args := readFileContent(t, mock.ArgsFile)
+		assert.NotContains(t, args, "--allow-all-tools")
+		assert.NotContains(t, args, "--deny-tool")
+		assert.NotContains(t, args, "-s")
+	})
+}
+
+// readFileContent reads a file and returns its trimmed content.
+func readFileContent(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err, "failed to read %s", path)
+	return strings.TrimSpace(string(content))
 }
