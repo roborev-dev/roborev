@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -188,82 +187,69 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	// Build args - always uses stdin piping + stream-json for non-interactive execution
 	args := a.buildArgs(agenticMode, includeEffort)
 
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-
 	// Strip CLAUDECODE to prevent nested-session detection (#270),
 	// and handle API key (configured key or subscription auth).
 	// Use cmd.Environ() (not os.Environ()) so PWD=<cmd.Dir> is
 	// synthesized correctly. Set env before configureSubprocess so
 	// GIT_OPTIONAL_LOCKS=0 is appended to the final environment.
 	stripKeys := []string{"ANTHROPIC_API_KEY", "CLAUDECODE"}
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
 	baseEnv := cmd.Environ()
+	env := filterEnv(baseEnv, stripKeys...)
 	if apiKey := AnthropicAPIKey(); apiKey != "" {
-		cmd.Env = append(filterEnv(baseEnv, stripKeys...), "ANTHROPIC_API_KEY="+apiKey)
-	} else {
-		cmd.Env = filterEnv(baseEnv, stripKeys...)
+		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
 	}
-	// Suppress sounds from Claude Code (notification/completion sounds)
-	cmd.Env = append(cmd.Env, "CLAUDE_NO_SOUND=1")
+	env = append(env, "CLAUDE_NO_SOUND=1")
 
-	tracker := configureSubprocess(cmd)
-
-	var stderr bytes.Buffer
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
-	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
-	defer stopClosingPipe()
-	cmd.Stderr = &stderr
-
-	// Always pipe prompt via stdin (stream-json mode)
-	cmd.Stdin = strings.NewReader(prompt)
-
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start claude: %w", err)
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:    "claude",
+		Command: a.Command,
+		Args:    args,
+		Dir:     repoPath,
+		Env:     env,
+		Stdin:   strings.NewReader(prompt),
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			if sw == nil {
+				return parseStreamJSON(r, nil)
+			}
+			return parseStreamJSON(r, sw)
+		},
+	})
+	if runErr != nil {
+		return "", runErr
 	}
 
-	// Parse stream-json output
-	result, err := parseStreamJSON(stdoutPipe, output)
-
-	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, tracker, waitErr, err); ctxErr != nil {
-			return "", ctxErr
-		}
+	if runResult.WaitErr != nil {
 		// Build a detailed error including any partial output and stream errors
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "%s failed", a.Name())
-		if err != nil {
-			fmt.Fprintf(&detail, "\nstream: %v", err)
+		if runResult.ParseErr != nil {
+			fmt.Fprintf(&detail, "\nstream: %v", runResult.ParseErr)
 		}
-		if s := stderr.String(); s != "" {
+		if s := runResult.Stderr; s != "" {
 			fmt.Fprintf(&detail, "\nstderr: %s", s)
 		}
-		if result != "" {
+		if runResult.Result != "" {
 			// Truncate partial output to keep error messages readable
-			partial := result
+			partial := runResult.Result
 			if len(partial) > 500 {
 				partial = partial[:500] + "..."
 			}
 			fmt.Fprintf(&detail, "\npartial output: %s", partial)
 		}
-		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
+		return "", fmt.Errorf("%s: %w", detail.String(), runResult.WaitErr)
 	}
 
-	if ctxErr := contextProcessError(ctx, tracker, nil, err); ctxErr != nil {
-		return "", ctxErr
+	if runResult.ParseErr != nil {
+		return "", runResult.ParseErr
 	}
 
-	if err != nil {
-		return "", err
-	}
-
-	if result == "" {
+	if runResult.Result == "" {
 		return "No review output generated", nil
 	}
 
-	return result, nil
+	return runResult.Result, nil
 }
 
 // claudeStreamMessage represents a message in Claude's stream-json output format

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -225,64 +224,41 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
 	args := a.buildArgs(repoPath, agenticMode, autoApprove)
 
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
-
-	// Pipe prompt via stdin to avoid command line length limits on Windows.
-	// Windows has a ~32KB limit on command line arguments, which large diffs easily exceed.
-	cmd.Stdin = strings.NewReader(prompt)
-
-	// Create one shared sync writer for thread-safe output
-	sw := newSyncWriter(output)
-
-	var stderr bytes.Buffer
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
-	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
-	defer stopClosingPipe()
-	// Tee stderr to output writer for live error visibility
-	if sw != nil {
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
-	} else {
-		cmd.Stderr = &stderr
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:         "codex",
+		Command:      a.Command,
+		Args:         args,
+		Dir:          repoPath,
+		Stdin:        strings.NewReader(prompt),
+		Output:       output,
+		StreamStderr: true,
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			return a.parseStreamJSON(r, sw)
+		},
+	})
+	if runErr != nil {
+		return "", runErr
 	}
 
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start codex: %w", err)
-	}
-
-	// Parse JSONL stream from stdout
-	result, parseErr := a.parseStreamJSON(stdoutPipe, sw)
-
-	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
-			return "", ctxErr
+	if runResult.WaitErr != nil {
+		if runResult.ParseErr != nil {
+			return "", fmt.Errorf("codex failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, runResult.Stderr)
 		}
-		if parseErr != nil {
-			return "", fmt.Errorf("codex failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, stderr.String())
-		}
-		return "", fmt.Errorf("codex failed: %w\nstderr: %s", waitErr, stderr.String())
+		return "", fmt.Errorf("codex failed: %w\nstderr: %s", runResult.WaitErr, runResult.Stderr)
 	}
 
-	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
-		return "", ctxErr
-	}
-
-	if parseErr != nil {
-		if errors.Is(parseErr, errNoCodexJSON) {
+	if runResult.ParseErr != nil {
+		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
 			return "", fmt.Errorf("codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w", errNoCodexJSON)
 		}
-		return "", parseErr
+		return "", runResult.ParseErr
 	}
 
-	if result == "" {
+	if runResult.Result == "" {
 		return "No review output generated", nil
 	}
 
-	return result, nil
+	return runResult.Result, nil
 }
 
 // codexEvent represents a top-level event in codex's --json JSONL output.

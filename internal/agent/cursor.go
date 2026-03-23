@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -108,51 +106,40 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	args := a.buildArgs(agenticMode)
 
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-	cmd.Env = os.Environ()
-	tracker := configureSubprocess(cmd)
-	cmd.Stdin = strings.NewReader(prompt)
-
-	var stderr bytes.Buffer
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:    "cursor agent",
+		Command: a.Command,
+		Args:    args,
+		Dir:     repoPath,
+		Env:     os.Environ(),
+		Stdin:   strings.NewReader(prompt),
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			if sw == nil {
+				return a.parseStreamJSON(r, nil)
+			}
+			return a.parseStreamJSON(r, sw)
+		},
+	})
+	if runErr != nil {
+		return "", runErr
 	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
-	defer stopClosingPipe()
-	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start cursor agent: %w", err)
-	}
-
-	// Reuse Claude's stream-json parser (same format)
-	result, err := a.parseStreamJSON(stdoutPipe, output)
-
-	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, tracker, waitErr, err); ctxErr != nil {
-			return "", ctxErr
+	if runResult.WaitErr != nil {
+		if runResult.ParseErr != nil {
+			return "", fmt.Errorf("cursor agent failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, runResult.Stderr)
 		}
-		if err != nil {
-			return "", fmt.Errorf("cursor agent failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
-		}
-		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", waitErr, stderr.String())
+		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", runResult.WaitErr, runResult.Stderr)
 	}
 
-	if ctxErr := contextProcessError(ctx, tracker, nil, err); ctxErr != nil {
-		return "", ctxErr
+	if runResult.ParseErr != nil {
+		return "", runResult.ParseErr
 	}
 
-	if err != nil {
-		return "", err
-	}
-
-	if result == "" {
+	if runResult.Result == "" {
 		return "No review output generated", nil
 	}
 
-	return result, nil
+	return runResult.Result, nil
 }
 
 func (a *CursorAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {

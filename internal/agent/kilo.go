@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 )
 
@@ -122,64 +120,36 @@ func (a *KiloAgent) Review(
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
-	cmd := exec.CommandContext(ctx, a.Command, a.buildArgs()...)
-	cmd.Dir = repoPath
-	cmd.Stdin = strings.NewReader(prompt)
-	tracker := configureSubprocess(cmd)
-
-	sw := newSyncWriter(output)
-
-	var stderrBuf bytes.Buffer
-	if sw != nil {
-		cmd.Stderr = io.MultiWriter(&stderrBuf, sw)
-	} else {
-		cmd.Stderr = &stderrBuf
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:          "kilo",
+		Command:       a.Command,
+		Args:          a.buildArgs(),
+		Dir:           repoPath,
+		Stdin:         strings.NewReader(prompt),
+		Output:        output,
+		StreamStderr:  true,
+		CaptureStdout: true,
+		DrainStdout:   true,
+		Parse:         parseOpenCodeJSON,
+	})
+	if runErr != nil {
+		return "", runErr
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
-	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
-	defer stopClosingPipe()
-
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start kilo: %w", err)
-	}
-	defer stdoutPipe.Close()
-
-	// Tee raw stdout so we can include it in error diagnostics
-	// when stderr is empty (some CLIs print errors to stdout).
-	var stdoutRaw bytes.Buffer
-	tee := io.TeeReader(stdoutPipe, &stdoutRaw)
-
-	result, parseErr := parseOpenCodeJSON(tee, sw)
-
-	// Drain remaining stdout so the subprocess can finish writing
-	// and exit. Without this, cmd.Wait() can deadlock if the
-	// parser returned early (e.g., read error) while the process
-	// is still writing to the pipe.
-	_, _ = io.Copy(&stdoutRaw, stdoutPipe)
-
-	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
-			return "", ctxErr
-		}
+	if runResult.WaitErr != nil {
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "kilo failed")
-		if parseErr != nil {
-			fmt.Fprintf(&detail, "\nstream: %v", parseErr)
+		if runResult.ParseErr != nil {
+			fmt.Fprintf(&detail, "\nstream: %v", runResult.ParseErr)
 		}
-		errText := stripTerminalControls(stderrBuf.String())
+		errText := stripTerminalControls(runResult.Stderr)
 		if errText != "" {
 			fmt.Fprintf(&detail, "\nstderr: %s", errText)
-		} else if raw := stripTerminalControls(
-			stdoutRaw.String(),
-		); raw != "" {
+		} else if raw := stripTerminalControls(runResult.Stdout); raw != "" {
 			fmt.Fprintf(&detail, "\noutput: %s", raw)
 		}
-		if result != "" {
-			partial := result
+		if runResult.Result != "" {
+			partial := runResult.Result
 			if len(partial) > 500 {
 				partial = partial[:500] + "..."
 			}
@@ -187,37 +157,31 @@ func (a *KiloAgent) Review(
 				&detail, "\npartial output: %s", partial,
 			)
 		}
-		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
+		return "", fmt.Errorf("%s: %w", detail.String(), runResult.WaitErr)
 	}
 
-	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
-		return "", ctxErr
+	if runResult.ParseErr != nil {
+		return runResult.Result, runResult.ParseErr
 	}
 
-	if parseErr != nil {
-		return result, parseErr
-	}
-
-	if result == "" {
+	if runResult.Result == "" {
 		// No review text parsed. Surface stderr or non-JSON
 		// stdout so the actual error is visible instead of
 		// a generic "no output" message.
-		errOut := stripTerminalControls(stderrBuf.String())
+		errOut := stripTerminalControls(runResult.Stderr)
 		if errOut = strings.TrimSpace(errOut); errOut != "" {
 			return "", fmt.Errorf(
 				"kilo produced no output: %s", errOut,
 			)
 		}
-		if raw := strings.TrimSpace(
-			stripTerminalControls(stdoutRaw.String()),
-		); raw != "" && hasNonJSONLine(raw) {
+		if raw := strings.TrimSpace(stripTerminalControls(runResult.Stdout)); raw != "" && hasNonJSONLine(raw) {
 			return "", fmt.Errorf(
 				"kilo produced no output: %s", raw,
 			)
 		}
 		return "No review output generated", nil
 	}
-	return result, nil
+	return runResult.Result, nil
 }
 
 // hasNonJSONLine returns true if s contains any non-empty line

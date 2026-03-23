@@ -2,14 +2,12 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"strings"
 )
 
@@ -136,64 +134,42 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 // runGemini executes the Gemini CLI with the given args and returns
 // the review result, captured stderr, and any error.
 func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
-
-	cmd.Stdin = strings.NewReader(prompt)
-
-	sw := newSyncWriter(output)
-
-	var stderr bytes.Buffer
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", "", fmt.Errorf("create stdout pipe: %w", err)
-	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
-	defer stopClosingPipe()
-	if sw != nil {
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
-	} else {
-		cmd.Stderr = &stderr
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:         "gemini",
+		Command:      a.Command,
+		Args:         args,
+		Dir:          repoPath,
+		Stdin:        strings.NewReader(prompt),
+		Output:       output,
+		StreamStderr: true,
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			parsed, err := a.parseStreamJSON(r, sw)
+			return parsed.result, err
+		},
+	})
+	if runErr != nil {
+		return "", "", runErr
 	}
 
-	if err := cmd.Start(); err != nil {
-		return "", "", fmt.Errorf("start gemini: %w", err)
-	}
-
-	parsed, parseErr := a.parseStreamJSON(stdoutPipe, sw)
-
-	// Wait() is the synchronization point: all stderr writes are
-	// guaranteed complete after it returns.
-	waitErr := cmd.Wait()
-	stderrStr := stderr.String()
-
-	if waitErr != nil {
-		if ctxErr := contextProcessError(ctx, tracker, waitErr, parseErr); ctxErr != nil {
-			return "", stderrStr, ctxErr
+	if runResult.WaitErr != nil {
+		if runResult.ParseErr != nil {
+			return "", runResult.Stderr, fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, truncateStderr(runResult.Stderr))
 		}
-		if parseErr != nil {
-			return "", stderrStr, fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderrStr))
+		return "", runResult.Stderr, fmt.Errorf("gemini failed: %w\nstderr: %s", runResult.WaitErr, truncateStderr(runResult.Stderr))
+	}
+
+	if runResult.ParseErr != nil {
+		if errors.Is(runResult.ParseErr, errNoStreamJSON) {
+			return "", runResult.Stderr, fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(runResult.Stderr), errNoStreamJSON)
 		}
-		return "", stderrStr, fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderrStr))
+		return "", runResult.Stderr, runResult.ParseErr
 	}
 
-	if ctxErr := contextProcessError(ctx, tracker, nil, parseErr); ctxErr != nil {
-		return "", stderrStr, ctxErr
+	if runResult.Result != "" {
+		return runResult.Result, runResult.Stderr, nil
 	}
 
-	if parseErr != nil {
-		if errors.Is(parseErr, errNoStreamJSON) {
-			return "", stderrStr, fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(stderrStr), errNoStreamJSON)
-		}
-		return "", stderrStr, parseErr
-	}
-
-	if parsed.result != "" {
-		return parsed.result, stderrStr, nil
-	}
-
-	return "No review output generated", stderrStr, nil
+	return "No review output generated", runResult.Stderr, nil
 }
 
 // isModelNotFoundError returns true if stderr indicates the requested
