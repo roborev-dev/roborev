@@ -757,8 +757,8 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 }
 
 func TestFormatExcludeArgs(t *testing.T) {
-	assert.Nil(t, formatExcludeArgs(nil))
-	assert.Nil(t, formatExcludeArgs([]string{}))
+	assert.Nil(t, FormatExcludeArgs(nil))
+	assert.Nil(t, FormatExcludeArgs([]string{}))
 
 	// Plain names get both file and directory forms
 	assert.Equal(t,
@@ -768,7 +768,7 @@ func TestFormatExcludeArgs(t *testing.T) {
 			":(exclude,glob)**/*.min.js",
 			":(exclude,glob)**/*.min.js/**",
 		},
-		formatExcludeArgs([]string{"foo.lock", "*.min.js"}),
+		FormatExcludeArgs([]string{"foo.lock", "*.min.js"}),
 	)
 
 	// Patterns with path separators get both exact and subtree forms
@@ -777,7 +777,7 @@ func TestFormatExcludeArgs(t *testing.T) {
 			":(exclude,glob)vendor/dist",
 			":(exclude,glob)vendor/dist/**",
 		},
-		formatExcludeArgs([]string{"vendor/dist"}),
+		FormatExcludeArgs([]string{"vendor/dist"}),
 	)
 
 	// Whitespace-only patterns are skipped
@@ -786,7 +786,7 @@ func TestFormatExcludeArgs(t *testing.T) {
 			":(exclude,glob)**/keep",
 			":(exclude,glob)**/keep/**",
 		},
-		formatExcludeArgs([]string{" ", "keep", "  "}),
+		FormatExcludeArgs([]string{" ", "keep", "  "}),
 	)
 
 	// Leading slash = root-anchored (no **/ prefix)
@@ -795,7 +795,7 @@ func TestFormatExcludeArgs(t *testing.T) {
 			":(exclude,glob)vendor",
 			":(exclude,glob)vendor/**",
 		},
-		formatExcludeArgs([]string{"/vendor"}),
+		FormatExcludeArgs([]string{"/vendor"}),
 	)
 }
 

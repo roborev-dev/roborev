@@ -431,7 +431,7 @@ func GetDirtyDiff(
 ) (string, error) {
 	var result strings.Builder
 
-	extra := formatExcludeArgs(extraExcludes)
+	extra := FormatExcludeArgs(extraExcludes)
 
 	// Build diff args with exclusions
 	diffArgs := func(baseArgs ...string) []string {
@@ -589,13 +589,15 @@ var excludedPathPatterns = []string{
 	":(exclude,glob)**/.cache/**",
 }
 
-// formatExcludeArgs converts user-provided exclude patterns (filenames
+// FormatExcludeArgs converts user-provided exclude patterns (filenames
 // or globs) into git pathspec arguments. Plain names without path
 // separators get both **/name (file match) and **/name/** (directory
 // subtree) so they work whether the name is a file or directory.
 // Leading-slash patterns (/vendor) are root-anchored — no **/
 // prefix. Patterns containing "/" are passed through as-is.
-func formatExcludeArgs(patterns []string) []string {
+// FormatExcludeArgs converts user-provided exclude patterns into git
+// pathspec arguments suitable for appending after "--".
+func FormatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
 	}
@@ -635,7 +637,7 @@ func formatExcludeArgs(patterns []string) []string {
 func ReviewPathspecArgs(extraExcludes ...string) []string {
 	args := []string{"."}
 	args = append(args, excludedPathPatterns...)
-	args = append(args, formatExcludeArgs(extraExcludes)...)
+	args = append(args, FormatExcludeArgs(extraExcludes)...)
 	return args
 }
 

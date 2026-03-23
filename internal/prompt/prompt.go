@@ -492,7 +492,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := git.ReviewPathspecArgs(excludes...)
+		pathspecArgs := git.FormatExcludeArgs(excludes)
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
@@ -610,7 +610,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := git.ReviewPathspecArgs(excludes...)
+		pathspecArgs := git.FormatExcludeArgs(excludes)
 		if isCodexReviewAgent(agentName) {
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,

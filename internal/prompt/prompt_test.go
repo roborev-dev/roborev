@@ -417,7 +417,6 @@ func TestBuildPromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testi
 	assertContains(t, prompt, "git show --stat --summary "+sha, "expected commit stat command")
 	assertContains(t, prompt, "git show --format=medium --unified=80 "+sha, "expected full commit diff command")
 	assertContains(t, prompt, "git diff-tree --no-commit-id --name-only -r "+sha, "expected touched files command")
-	assertContains(t, prompt, `:(exclude,glob)**/go.sum`, "expected fallback commands to preserve review excludes")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 
@@ -435,25 +434,24 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 	assertContains(t, prompt, "git diff --stat "+rangeRef, "expected range stat command")
 	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
 	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
-	assertContains(t, prompt, `:(exclude,glob)**/go.sum`, "expected fallback commands to preserve review excludes")
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 
 func codexCommitFallback(sha string) string {
-	return codexCommitInspectionFallbackVariants(sha, gitpkg.ReviewPathspecArgs())[0]
+	return codexCommitInspectionFallbackVariants(sha, nil)[0]
 }
 
 func codexRangeFallback(rangeRef string) string {
-	return codexRangeInspectionFallbackVariants(rangeRef, gitpkg.ReviewPathspecArgs())[0]
+	return codexRangeInspectionFallbackVariants(rangeRef, nil)[0]
 }
 
 func shortestCodexCommitFallback(sha string) string {
-	variants := codexCommitInspectionFallbackVariants(sha, gitpkg.ReviewPathspecArgs())
+	variants := codexCommitInspectionFallbackVariants(sha, nil)
 	return variants[len(variants)-1]
 }
 
 func shortestCodexRangeFallback(rangeRef string) string {
-	variants := codexRangeInspectionFallbackVariants(rangeRef, gitpkg.ReviewPathspecArgs())
+	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
 	return variants[len(variants)-1]
 }
 
@@ -856,13 +854,13 @@ func TestBuildPromptCodexOversizedDiffFallbackCarriesExcludeScope(t *testing.T) 
 
 	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
 		"expected Codex fallback commands to preserve custom exclude patterns")
-	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
-		"expected Codex fallback commands to preserve built-in exclude patterns")
+	assertNotContains(t, prompt, `:(exclude,glob)**/go.sum`,
+		"built-in lockfile excludes should not appear in fallback commands")
 }
 
 func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
 	repoPath, sha := setupLargeExcludePatternRepo(t)
-	pathspecArgs := gitpkg.ReviewPathspecArgs("custom.dat")
+	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
 	shortest := variants[len(variants)-1]
 	secondShortest := variants[len(variants)-2]
@@ -881,14 +879,12 @@ func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
 	assert.Contains(t, prompt, shortest, "expected tiny-cap prompt to use the shortest fallback variant")
 	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
 		"expected shortest Codex fallback command to preserve custom exclude patterns")
-	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
-		"expected shortest Codex fallback command to preserve built-in exclude patterns")
 }
 
 func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
 	repoPath, sha := setupLargeExcludePatternRepo(t)
 	rangeRef := sha + "~1.." + sha
-	pathspecArgs := gitpkg.ReviewPathspecArgs("custom.dat")
+	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
 	shortest := variants[len(variants)-1]
 	secondShortest := variants[len(variants)-2]
@@ -907,8 +903,6 @@ func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) 
 	assert.Contains(t, prompt, shortest, "expected tiny-cap range prompt to use the shortest fallback variant")
 	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
 		"expected shortest range fallback command to preserve custom exclude patterns")
-	assertContains(t, prompt, `:(exclude,glob)**/go.sum`,
-		"expected shortest range fallback command to preserve built-in exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {
