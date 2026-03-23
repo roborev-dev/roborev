@@ -58,6 +58,7 @@ type EnqueueOpts struct {
 	Label        string // Display label in TUI for task jobs (default: "prompt")
 	JobType      string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
 	ParentJobID  int64  // Parent job being fixed (for fix jobs)
+	WorktreePath string // Worktree checkout path (empty = use main repo root)
 }
 
 // EnqueueJob creates a new review job. The job type is inferred from opts.
@@ -119,14 +120,14 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	result, err := db.Exec(`
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
-			parent_job_id, uuid, source_machine_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			parent_job_id, uuid, source_machine_id, updated_at, worktree_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
-		uid, machineID, nowStr)
+		uid, machineID, nowStr, opts.WorktreePath)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +154,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		UUID:            uid,
 		SourceMachineID: machineID,
 		UpdatedAt:       &now,
+		WorktreePath:    opts.WorktreePath,
 	}
 	if opts.ParentJobID > 0 {
 		job.ParentJobID = &opts.ParentJobID
@@ -202,7 +204,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
-		       j.output_prefix, j.patch_id, j.parent_job_id
+		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -211,7 +213,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
 		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.JobType, &fields.ReviewType,
-		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID)
+		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath)
 	if err != nil {
 		return nil, err
 	}
@@ -769,7 +771,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.provider, j.token_usage
+		       j.parent_job_id, j.provider, j.token_usage, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -807,7 +809,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-			&fields.ParentJobID, &fields.Provider, &fields.TokenUsage)
+			&fields.ParentJobID, &fields.Provider, &fields.TokenUsage, &fields.WorktreePath)
 		if err != nil {
 			return nil, err
 		}
@@ -857,7 +859,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.patch, j.token_usage
+		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -865,7 +867,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage)
+		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath)
 	if err != nil {
 		return nil, err
 	}

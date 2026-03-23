@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -170,7 +171,13 @@ func (hr *HookRunner) handleEvent(event Event) {
 		fired++
 		// Run async so hooks don't block workers
 		hr.wg.Add(1)
-		go hr.runHook(cmd, event.Repo)
+		hookDir := event.Repo
+		if event.WorktreePath != "" {
+			if _, err := os.Stat(event.WorktreePath); err == nil {
+				hookDir = event.WorktreePath
+			}
+		}
+		go hr.runHook(cmd, hookDir)
 	}
 
 	if fired > 0 {

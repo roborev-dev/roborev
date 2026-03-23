@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -361,6 +362,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
+	// Resolve effective repo path: use worktree if available and still exists.
+	effectiveRepoPath := job.RepoPath
+	if job.WorktreePath != "" {
+		if _, err := os.Stat(job.WorktreePath); err != nil {
+			log.Printf("[%s] Worktree %s no longer exists for job %d, using main repo",
+				workerID, job.WorktreePath, job.ID)
+		} else {
+			effectiveRepoPath = job.WorktreePath
+		}
+	}
+
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
@@ -382,10 +394,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = pb.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
 		// Normal job - build prompt from git ref
-		reviewPrompt, err = pb.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		reviewPrompt, err = pb.Build(effectiveRepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
@@ -435,15 +447,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
+	// Use the effective worktree path for events (empty when worktree is gone or not a worktree job).
+	eventWorktreePath := ""
+	if effectiveRepoPath != job.RepoPath {
+		eventWorktreePath = effectiveRepoPath
+	}
+
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.started",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Agent:    agentName,
+		Type:         "review.started",
+		TS:           time.Now(),
+		JobID:        job.ID,
+		Repo:         job.RepoPath,
+		RepoName:     job.RepoName,
+		SHA:          job.GitRef,
+		Agent:        agentName,
+		WorktreePath: eventWorktreePath,
 	})
 
 	// Create output writer for tail command
@@ -473,7 +492,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
-	reviewRepoPath := job.RepoPath
+	reviewRepoPath := effectiveRepoPath
 	var fixWorktree *worktree.Worktree
 	if job.IsFixJob() {
 		wt, wtErr := worktree.Create(job.RepoPath, job.GitRef)
@@ -504,13 +523,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			log.Printf("[%s] Job %d was canceled", workerID, job.ID)
 			// Broadcast cancellation event
 			wp.broadcaster.Broadcast(Event{
-				Type:     "review.canceled",
-				TS:       time.Now(),
-				JobID:    job.ID,
-				Repo:     job.RepoPath,
-				RepoName: job.RepoName,
-				SHA:      job.GitRef,
-				Agent:    agentName,
+				Type:         "review.canceled",
+				TS:           time.Now(),
+				JobID:        job.ID,
+				Repo:         job.RepoPath,
+				RepoName:     job.RepoName,
+				SHA:          job.GitRef,
+				Agent:        agentName,
+				WorktreePath: eventWorktreePath,
 			})
 			return // Job already marked as canceled in DB, nothing more to do
 		}
@@ -633,15 +653,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Broadcast completion event
 	verdict := storage.ParseVerdict(output)
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Agent:    agentName,
-		Verdict:  verdict,
-		Findings: output,
+		Type:         "review.completed",
+		TS:           time.Now(),
+		JobID:        job.ID,
+		Repo:         job.RepoPath,
+		RepoName:     job.RepoName,
+		SHA:          job.GitRef,
+		Agent:        agentName,
+		Verdict:      verdict,
+		Findings:     output,
+		WorktreePath: eventWorktreePath,
 	})
 }
 
@@ -770,15 +791,22 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 
 // broadcastFailed sends a review.failed event for a job
 func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
+	wtPath := ""
+	if job.WorktreePath != "" {
+		if _, err := os.Stat(job.WorktreePath); err == nil {
+			wtPath = job.WorktreePath
+		}
+	}
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.failed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Agent:    agentName,
-		Error:    errorMsg,
+		Type:         "review.failed",
+		TS:           time.Now(),
+		JobID:        job.ID,
+		Repo:         job.RepoPath,
+		RepoName:     job.RepoName,
+		SHA:          job.GitRef,
+		Agent:        agentName,
+		Error:        errorMsg,
+		WorktreePath: wtPath,
 	})
 }
 

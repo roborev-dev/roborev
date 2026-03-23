@@ -707,6 +707,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Detect worktree: if the git working directory differs from the main
+	// repo root, the request originated from a worktree checkout.
+	var worktreePath string
+	if gitCwd != repoRoot {
+		worktreePath = gitCwd
+	}
+
 	// Check if branch is excluded from reviews
 	currentBranch := git.GetCurrentBranch(gitCwd)
 	if currentBranch != "" && config.IsBranchExcluded(repoRoot, currentBranch) {
@@ -834,6 +841,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
 			JobType:      req.JobType,
 			Provider:     req.Provider,
+			WorktreePath: worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
@@ -843,16 +851,17 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Dirty review - use pre-captured diff
 		targetSHA, _ := git.ResolveSHA(gitCwd, "HEAD")
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:      repo.ID,
-			GitRef:      gitRef,
-			Branch:      req.Branch,
-			SessionID:   s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, targetSHA),
-			Agent:       agentName,
-			Model:       model,
-			Reasoning:   reasoning,
-			ReviewType:  req.ReviewType,
-			DiffContent: req.DiffContent,
-			Provider:    req.Provider,
+			RepoID:       repo.ID,
+			GitRef:       gitRef,
+			Branch:       req.Branch,
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, targetSHA),
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			ReviewType:   req.ReviewType,
+			DiffContent:  req.DiffContent,
+			Provider:     req.Provider,
+			WorktreePath: worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
@@ -917,15 +926,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		}
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:     repo.ID,
-			GitRef:     fullRef,
-			Branch:     req.Branch,
-			SessionID:  s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, endSHA),
-			Agent:      agentName,
-			Model:      model,
-			Reasoning:  reasoning,
-			ReviewType: req.ReviewType,
-			Provider:   req.Provider,
+			RepoID:       repo.ID,
+			GitRef:       fullRef,
+			Branch:       req.Branch,
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, endSHA),
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			ReviewType:   req.ReviewType,
+			Provider:     req.Provider,
+			WorktreePath: worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -966,17 +976,18 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		patchID := git.GetPatchID(gitCwd, sha)
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:     repo.ID,
-			CommitID:   commit.ID,
-			GitRef:     sha,
-			Branch:     req.Branch,
-			SessionID:  s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, sha),
-			Agent:      agentName,
-			Model:      model,
-			Reasoning:  reasoning,
-			ReviewType: req.ReviewType,
-			PatchID:    patchID,
-			Provider:   req.Provider,
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       sha,
+			Branch:       req.Branch,
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, sha),
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			ReviewType:   req.ReviewType,
+			PatchID:      patchID,
+			Provider:     req.Provider,
+			WorktreePath: worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))

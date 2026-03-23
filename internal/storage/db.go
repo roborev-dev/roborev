@@ -707,6 +707,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add worktree_path column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'worktree_path'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check worktree_path column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN worktree_path TEXT DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("add worktree_path column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err
