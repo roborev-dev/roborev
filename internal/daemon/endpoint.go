@@ -124,6 +124,15 @@ func (e DaemonEndpoint) String() string {
 	return e.Network + ":" + e.Address
 }
 
+// ConfigAddr returns a ParseEndpoint-compatible string suitable for
+// persisting in config or runtime metadata files.
+func (e DaemonEndpoint) ConfigAddr() string {
+	if e.IsUnix() {
+		return "unix://" + e.Address
+	}
+	return e.Address
+}
+
 // Port returns the TCP port, or 0 for Unix sockets.
 func (e DaemonEndpoint) Port() int {
 	if e.IsUnix() {

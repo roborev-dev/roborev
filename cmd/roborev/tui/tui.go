@@ -951,7 +951,7 @@ func Run(cfg Config) error {
 			})
 
 			rtInfo := buildTUIRuntimeInfo(
-				socketPath, cfg.Endpoint.BaseURL(),
+				socketPath, cfg.Endpoint.ConfigAddr(),
 			)
 			if err := WriteTUIRuntime(rtInfo); err != nil {
 				log.Printf(

@@ -103,6 +103,20 @@ func TestDaemonEndpoint_String(t *testing.T) {
 	assert.Equal("unix:/tmp/test.sock", unix.String())
 }
 
+func TestDaemonEndpoint_ConfigAddrRoundTrips(t *testing.T) {
+	assert := assert.New(t)
+
+	tcp := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	parsed, err := ParseEndpoint(tcp.ConfigAddr())
+	require.NoError(t, err)
+	assert.Equal(tcp, parsed)
+
+	unix := DaemonEndpoint{Network: "unix", Address: "/tmp/test.sock"}
+	parsed, err = ParseEndpoint(unix.ConfigAddr())
+	require.NoError(t, err)
+	assert.Equal(unix, parsed)
+}
+
 func TestDaemonEndpoint_Listener_TCP(t *testing.T) {
 	ep := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:0"}
 	ln, err := ep.Listener()

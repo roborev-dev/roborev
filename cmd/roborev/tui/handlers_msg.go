@@ -718,7 +718,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		// new daemon address after reconnect.
 		if m.controlSocket != "" {
 			rtInfo := buildTUIRuntimeInfo(
-				m.controlSocket, m.endpoint.BaseURL(),
+				m.controlSocket, m.endpoint.ConfigAddr(),
 			)
 			if err := WriteTUIRuntime(rtInfo); err != nil {
 				log.Printf(
