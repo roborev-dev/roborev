@@ -725,6 +725,46 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, success)
 	})
+
+	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
+		wtJobUUID := uuid.NewString()
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: "batch-wt-sha",
+		})
+		wtJobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:            wtJobUUID,
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       "batch-wt-sha",
+				GitRef:          "test-ref",
+				Agent:           "test",
+				Status:          "done",
+				WorktreePath:    "/worktrees/feature-x",
+				SourceMachineID: defaultTestMachineID,
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, wtJobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		// Pull back using a different machine ID so the job isn't excluded
+		pulled, _, err := pool.PullJobs(ctx, "other-machine", "", 100)
+		require.NoError(t, err)
+
+		var found *PulledJob
+		for i := range pulled {
+			if pulled[i].UUID == wtJobUUID {
+				found = &pulled[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "expected job %s in pull results", wtJobUUID)
+		assert.Equal(t, "/worktrees/feature-x", found.WorktreePath)
+	})
 }
 
 func TestIntegration_BatchUpsertReviews(t *testing.T) {
