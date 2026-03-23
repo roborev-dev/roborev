@@ -1566,4 +1566,12 @@ func TestValidateWorktreeForRepo(t *testing.T) {
 
 		assert.False(t, ValidateWorktreeForRepo(repo2.Dir, repo1.Dir))
 	})
+
+	t.Run("subdirectory of same repo fails", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		subDir := filepath.Join(repo.Dir, "src")
+		require.NoError(t, os.MkdirAll(subDir, 0o755))
+
+		assert.False(t, ValidateWorktreeForRepo(subDir, repo.Dir))
+	})
 }
