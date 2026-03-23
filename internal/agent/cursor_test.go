@@ -173,6 +173,25 @@ func TestCursorReviewEmptyOutput(t *testing.T) {
 	assert.Equal(t, "No review output generated", result)
 }
 
+func TestCursorReviewStreamsProgressToOutput(t *testing.T) {
+	a, _ := setupMockCursorAgent(t, MockCLIOpts{
+		StdoutLines: []string{
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reviewing..."}]}}`,
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	var output strings.Builder
+	result, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", &output,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "ok", result)
+	assert.Contains(t, output.String(), `"type":"assistant"`)
+	assert.Contains(t, output.String(), `"Reviewing..."`)
+}
+
 func TestCursorReviewErrorResult(t *testing.T) {
 	a, _ := setupMockCursorAgent(t, MockCLIOpts{
 		StdoutLines: []string{

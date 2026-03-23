@@ -381,6 +381,29 @@ exit 0
 	assert.Equal("No review output generated", result)
 }
 
+func TestClaudeReviewStreamsProgressToOutput(t *testing.T) {
+	assert := assert.New(t)
+
+	script := `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+if [ "$1" = "--help" ]; then echo "usage"; exit 0; fi
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Reviewing..."}]}}'
+echo '{"type":"result","result":"LGTM"}'
+exit 0
+`
+	cmdPath := writeTempCommand(t, script)
+
+	a := NewClaudeAgent(cmdPath)
+	var output strings.Builder
+	result, err := a.Review(
+		context.Background(), t.TempDir(), "abc123", "review this", &output,
+	)
+	require.NoError(t, err)
+	assert.Equal("LGTM", result)
+	assert.Contains(output.String(), `"type":"assistant"`)
+	assert.Contains(output.String(), `"Reviewing..."`)
+}
+
 func TestClaudeReviewErrorResult(t *testing.T) {
 	assert := assert.New(t)
 
