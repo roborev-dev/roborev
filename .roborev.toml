@@ -43,6 +43,17 @@ security findings:
 - Symlink-following in hook read/write under .git/hooks/ (controlled by the
   local user; a compromised local filesystem is out of scope)
 
+## Agent tool permissions
+
+Review agents run with shell access to inspect diffs and source files. The
+allow-all-tools plus deny-list approach used by agents like Copilot is
+intentional — it matches the trust level of Codex (--sandbox read-only still
+permits arbitrary shell execution) and Gemini (--approval-mode plan). The
+deny-list is defense-in-depth, not a security boundary. Users reviewing
+untrusted code are expected to run roborev in a sandboxed environment
+(container, VM). Do not flag agent tool permission patterns as security
+vulnerabilities when they follow this model.
+
 ## Config loading and filesystem fallback
 
 Config loading (loadGuidelines, loadCIRepoConfig) reads .roborev.toml from
