@@ -118,9 +118,11 @@ func (hr *HookRunner) WaitUntilIdle() {
 	}
 }
 
-// Stop shuts down the hook runner and unsubscribes from the broadcaster.
+// Stop shuts down the hook runner, waits for in-flight hooks to finish,
+// and unsubscribes from the broadcaster.
 func (hr *HookRunner) Stop() {
 	close(hr.stopCh)
+	hr.wg.Wait()
 	hr.broadcaster.Unsubscribe(hr.subID)
 }
 
