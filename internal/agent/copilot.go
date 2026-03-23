@@ -67,7 +67,7 @@ type CopilotAgent struct {
 	Command   string         // The copilot command to run (default: "copilot")
 	Model     string         // Model to use
 	Reasoning ReasoningLevel // Reasoning level (for future support)
-	Agentic   bool           // Whether agentic mode is enabled (note: Copilot requires manual approval for actions)
+	Agentic   bool           // Whether agentic mode is enabled (controls --deny-tool flags)
 }
 
 // NewCopilotAgent creates a new Copilot agent
@@ -89,8 +89,8 @@ func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
-// Note: Copilot CLI requires manual approval for all actions and does not support
-// automated unsafe execution. The agentic flag is tracked but has no effect on Copilot's behavior.
+// In agentic mode, all tools are allowed without restriction. In review mode
+// (default), destructive tools are denied via --deny-tool flags.
 func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
 	return &CopilotAgent{
 		Command:   a.Command,
@@ -122,7 +122,7 @@ func (a *CopilotAgent) CommandName() string {
 }
 
 func (a *CopilotAgent) CommandLine() string {
-	var args []string
+	args := []string{"-s"}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
