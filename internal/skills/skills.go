@@ -154,16 +154,34 @@ func embeddedSkillsForAgent(spec agentSpec) ([]embeddedSkill, error) {
 	return skills, nil
 }
 
+// embeddedSkillDirNames returns just the directory names of embedded skills
+// without reading file contents. Use this for path-only operations like
+// IsInstalled and Update where content is not needed.
+func embeddedSkillDirNames(spec agentSpec) ([]string, error) {
+	entries, err := fs.ReadDir(spec.embedFS, spec.embedDir)
+	if err != nil {
+		return nil, fmt.Errorf("read embedded skills: %w", err)
+	}
+
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, nil
+}
+
 func currentInstalledSkillFilePaths(home string, spec agentSpec) ([]string, error) {
-	skills, err := embeddedSkillsForAgent(spec)
+	dirNames, err := embeddedSkillDirNames(spec)
 	if err != nil {
 		return nil, err
 	}
 
 	skillsDir := agentSkillsDir(home, spec)
-	paths := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		paths = append(paths, skillInstallPath(skillsDir, skill.DirName))
+	paths := make([]string, 0, len(dirNames))
+	for _, name := range dirNames {
+		paths = append(paths, skillInstallPath(skillsDir, name))
 	}
 	return paths, nil
 }
