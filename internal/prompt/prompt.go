@@ -397,7 +397,7 @@ func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []
 			"- `%s`\n"+
 			"- `git show %s -- path/to/file`\n\n"+
 			"Review the actual diff before writing findings.\n",
-			statCmd, diffCmd, filesCmd, sha),
+			statCmd, diffCmd, filesCmd, shellQuote(sha)),
 		fmt.Sprintf("### Diff\n\n"+
 			"(Diff too large to include inline)\n\n"+
 			"For Codex in read-only review mode, inspect the commit locally before writing findings.\n"+
@@ -523,9 +523,9 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 				codexCommitInspectionFallbackVariants(sha, pathspecArgs)...,
 			), nil
 		} else {
-			fallback := fmt.Sprintf("### Diff\n\n"+
-				"(Diff too large to include - please review the commit directly)\n"+
-				"View with: git show %s\n", sha)
+			fallback := "### Diff\n\n" +
+				"(Diff too large to include - please review the commit directly)\n" +
+				"View with: " + renderShellCommand("git", "show", sha) + "\n"
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
@@ -641,9 +641,9 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 				codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)...,
 			), nil
 		} else {
-			fallback := fmt.Sprintf("### Combined Diff\n\n"+
-				"(Diff too large to include - please review the commits directly)\n"+
-				"View with: git diff %s\n", rangeRef)
+			fallback := "### Combined Diff\n\n" +
+				"(Diff too large to include - please review the commits directly)\n" +
+				"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
