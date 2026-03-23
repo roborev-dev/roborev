@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -426,10 +427,5 @@ func fileExists(path string) bool {
 }
 
 func anyFileExists(paths []string) bool {
-	for _, p := range paths {
-		if fileExists(p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(paths, fileExists)
 }

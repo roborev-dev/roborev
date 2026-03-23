@@ -3,7 +3,6 @@ package skills
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -462,9 +461,9 @@ func TestDirNameEnumerationDoesNotReadContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, paths, 2)
 	for _, p := range paths {
-		assert.True(t, strings.Contains(p, filepath.Join(home, ".mock", "skills")),
+		assert.Contains(t, p, filepath.Join(home, ".mock", "skills"),
 			"path should be under agent skills dir: %s", p)
-		assert.True(t, strings.HasSuffix(p, "SKILL.md"),
+		assert.Contains(t, p, "SKILL.md",
 			"path should end with SKILL.md: %s", p)
 	}
 }
