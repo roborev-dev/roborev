@@ -161,6 +161,21 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 
 roborev auto-detects installed agents.
 
+## Security Model
+
+roborev delegates code review and fix tasks to AI coding agents that
+have shell access. Review agents may execute read-only git and shell
+commands to inspect diffs; fix agents run in isolated worktrees with
+full tool access.
+
+**roborev is designed for use with trusted codebases.** The review
+prompt includes diff content and commit messages from the repository.
+If you are reviewing untrusted code (e.g., open-source contributions
+from unknown authors), run roborev inside a sandboxed environment
+(container, VM, or similar) to limit the blast radius of any
+prompt-injection attack that could cause an agent to execute
+unintended commands.
+
 ## Documentation
 
 Full documentation available at **[roborev.io](https://roborev.io)**:
