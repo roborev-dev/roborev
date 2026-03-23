@@ -29,6 +29,38 @@ func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, er
 	return supported, nil
 }
 
+// copilotReviewDenyTools lists tools denied in review mode to enforce read-only
+// behavior. Deny rules take precedence over --allow-all-tools in copilot's
+// permission system.
+var copilotReviewDenyTools = []string{
+	"write",
+	"shell(git push:*)",
+	"shell(git commit:*)",
+	"shell(git checkout:*)",
+	"shell(git reset:*)",
+	"shell(git rebase:*)",
+	"shell(git merge:*)",
+	"shell(git stash:*)",
+	"shell(git clean:*)",
+	"shell(rm:*)",
+}
+
+// buildArgs constructs CLI arguments for a copilot invocation.
+// In review mode, destructive tools are denied. In agentic mode, all tools
+// are allowed without restriction.
+func (a *CopilotAgent) buildArgs(agenticMode bool) []string {
+	args := []string{"-s", "--allow-all-tools"}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if !agenticMode {
+		for _, tool := range copilotReviewDenyTools {
+			args = append(args, "--deny-tool", tool)
+		}
+	}
+	return args
+}
+
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
 type CopilotAgent struct {
 	Command   string         // The copilot command to run (default: "copilot")

@@ -29,6 +29,49 @@ func TestCopilotSupportsAllowAllTools(t *testing.T) {
 	})
 }
 
+func TestCopilotBuildArgs(t *testing.T) {
+	a := NewCopilotAgent("copilot")
+
+	t.Run("review mode includes deny list", func(t *testing.T) {
+		assert := assert.New(t)
+		args := a.buildArgs(false)
+		assert.Contains(args, "-s")
+		assert.Contains(args, "--allow-all-tools")
+		// Verify deny-tool pairs exist for each denied tool
+		for _, tool := range copilotReviewDenyTools {
+			found := false
+			for i, arg := range args {
+				if arg == "--deny-tool" && i+1 < len(args) && args[i+1] == tool {
+					found = true
+					break
+				}
+			}
+			assert.True(found, "missing --deny-tool %q", tool)
+		}
+	})
+
+	t.Run("agentic mode has no deny list", func(t *testing.T) {
+		assert := assert.New(t)
+		args := a.buildArgs(true)
+		assert.Contains(args, "-s")
+		assert.Contains(args, "--allow-all-tools")
+		assert.NotContains(args, "--deny-tool")
+	})
+
+	t.Run("model flag included when set", func(t *testing.T) {
+		withModel := NewCopilotAgent("copilot").WithModel("gpt-4o").(*CopilotAgent)
+		args := withModel.buildArgs(false)
+		found := false
+		for i, arg := range args {
+			if arg == "--model" && i+1 < len(args) && args[i+1] == "gpt-4o" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "expected --model gpt-4o in args: %v", args)
+	})
+}
+
 func TestCopilotReview(t *testing.T) {
 	skipIfWindows(t)
 
