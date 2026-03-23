@@ -595,8 +595,22 @@ var excludedPathPatterns = []string{
 // subtree) so they work whether the name is a file or directory.
 // Leading-slash patterns (/vendor) are root-anchored — no **/
 // prefix. Patterns containing "/" are passed through as-is.
+// containsUnsafeChars returns true if s contains characters that are
+// unsafe to embed in shell commands or markdown code spans (backticks,
+// control characters, newlines).
+func containsUnsafeChars(s string) bool {
+	for _, r := range s {
+		if r < ' ' || r == '`' || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // FormatExcludeArgs converts user-provided exclude patterns into git
 // pathspec arguments suitable for appending after "--".
+// Patterns containing control characters or backticks are silently
+// dropped to prevent shell/markdown injection.
 func FormatExcludeArgs(patterns []string) []string {
 	if len(patterns) == 0 {
 		return nil
@@ -605,7 +619,7 @@ func FormatExcludeArgs(patterns []string) []string {
 	for _, raw := range patterns {
 		p := strings.TrimSpace(raw)
 		p = strings.TrimRight(p, "/")
-		if p == "" {
+		if p == "" || containsUnsafeChars(p) {
 			continue
 		}
 
