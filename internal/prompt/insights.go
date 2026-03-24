@@ -34,9 +34,9 @@ Identify files, packages, or directories that concentrate failures. List them wi
 
 ## 3. Noise Candidates
 
-Identify finding types that are consistently present in reviews that were closed/addressed without corresponding code changes. These suggest the review guideline should suppress them. For each:
+Identify finding types that are consistently present in reviews that were closed (marked "addressed/closed") and accompanied by developer comments suggesting the finding was intentional or a false positive. These suggest the review guideline should suppress them. For each:
 - Describe the finding type
-- Note how many times it appeared and was dismissed
+- Note how many times it appeared and was closed with dismissive comments
 - Suggest whether to suppress it entirely or refine the criteria
 
 ## 4. Guideline Gaps
