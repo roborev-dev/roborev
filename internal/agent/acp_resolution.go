@@ -52,6 +52,20 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 	return resolved
 }
 
+func resolveAvailableBackupWithConfig(preferred string, backups []string, cfg *config.Config) (Agent, bool) {
+	for _, backup := range backups {
+		backup = resolveAlias(backup)
+		if backup == "" || backup == preferred {
+			continue
+		}
+		if _, ok := registry[backup]; ok && isAvailableWithConfig(backup, cfg) {
+			agent, _ := Get(backup)
+			return applyCommandOverrides(agent, cfg), true
+		}
+	}
+	return nil, false
+}
+
 // isAvailableWithConfig checks whether the named agent can be resolved
 // to an executable command, considering config command overrides. If a
 // config override points to an available binary, the agent is considered
@@ -104,17 +118,8 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 
 		// ACP unavailable — try backup agents with config-aware
 		// availability so *_cmd overrides are honored.
-		if cfg != nil {
-			for _, b := range backups {
-				b = resolveAlias(b)
-				if b == "" {
-					continue
-				}
-				if _, ok := registry[b]; ok && isAvailableWithConfig(b, cfg) {
-					a, _ := Get(b)
-					return applyCommandOverrides(a, cfg), nil
-				}
-			}
+		if backup, ok := resolveAvailableBackupWithConfig("", backups, cfg); ok {
+			return backup, nil
 		}
 
 		// Finally fall back to normal auto-selection.
@@ -141,17 +146,8 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 	// fallback chain. This runs regardless of whether preferred is
 	// set so that backup-only configurations (preferred="" with a
 	// backup_agent) still honor *_cmd overrides.
-	if cfg != nil {
-		for _, b := range backups {
-			b = resolveAlias(b)
-			if b == "" || b == preferred {
-				continue
-			}
-			if _, ok := registry[b]; ok && isAvailableWithConfig(b, cfg) {
-				a, _ := Get(b)
-				return applyCommandOverrides(a, cfg), nil
-			}
-		}
+	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, cfg); ok {
+		return backup, nil
 	}
 
 	resolved, err := GetAvailable(preferred, backups...)
