@@ -89,6 +89,18 @@ func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
 	assertNotContainsArg(t, args, "-bad-session")
 }
 
+func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
+	a := NewCodexAgent("codex").WithSessionID("session-123").WithModel("o4-mini").(*CodexAgent)
+
+	cmdLine := a.CommandLine()
+
+	assert.Contains(t, cmdLine, "exec resume --json")
+	assert.Contains(t, cmdLine, "session-123")
+	assert.Contains(t, cmdLine, "--sandbox read-only")
+	assert.NotContains(t, cmdLine, " -C ")
+	assert.False(t, strings.HasSuffix(cmdLine, " -"), "command line should omit stdin marker: %q", cmdLine)
+}
+
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 

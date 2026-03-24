@@ -65,6 +65,13 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 	}
 }
 
+func TestCursorCommandLineUsesBuildArgs(t *testing.T) {
+	a := NewCursorAgent("agent").WithModel("gpt-5.2-codex-high").WithAgentic(true).(*CursorAgent)
+
+	want := strings.Join(a.buildArgs(true), " ")
+	assert.Equal(t, "agent "+want, a.CommandLine())
+}
+
 func setupMockCursorAgent(t *testing.T, opts MockCLIOpts) (*CursorAgent, *MockCLIResult) {
 	t.Helper()
 	skipIfWindows(t)

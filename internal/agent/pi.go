@@ -107,18 +107,13 @@ func (a *PiAgent) CommandName() string {
 
 func (a *PiAgent) CommandLine() string {
 	args := a.buildArgs("")
-	if len(args) == 0 {
-		args = []string{"-p", "--mode", "json"}
-	}
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *PiAgent) buildArgs(repoPath string) []string {
+func (a *PiAgent) buildArgs(sessionPath string) []string {
 	args := []string{"-p", "--mode", "json"}
-	if repoPath != "" {
-		if sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID)); sessionPath != "" {
-			args = append(args, "--session", sessionPath)
-		}
+	if sessionPath != "" {
+		args = append(args, "--session", sessionPath)
 	}
 	if a.Provider != "" {
 		args = append(args, "--provider", a.Provider)
@@ -165,7 +160,8 @@ func (a *PiAgent) Review(
 		return "", fmt.Errorf("close temp prompt file: %w", err)
 	}
 
-	args := a.buildArgs(repoPath)
+	sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID))
+	args := a.buildArgs(sessionPath)
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

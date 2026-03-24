@@ -65,18 +65,7 @@ func (a *CursorAgent) CommandName() string {
 
 func (a *CursorAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	// Show flags without the prompt (piped via stdin)
-	args := []string{"-p", "--output-format", "stream-json"}
-	model := a.Model
-	if model == "" {
-		model = "auto"
-	}
-	args = append(args, "--model", model)
-	if agenticMode {
-		args = append(args, "--force")
-	} else {
-		args = append(args, "--mode", "plan")
-	}
+	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
 

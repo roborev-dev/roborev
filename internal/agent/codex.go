@@ -105,27 +105,30 @@ func (a *CodexAgent) CommandName() string {
 
 func (a *CodexAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	// Show representative args (repo path is a runtime value)
-	sessionID := sanitizedResumeSessionID(a.SessionID)
-	args := []string{"exec", "--json"}
-	if sessionID != "" {
-		args = []string{"exec", "resume", "--json", sessionID}
-	}
-	if agenticMode {
-		args = append(args, codexDangerousFlag)
-	} else {
-		args = append(args, "--sandbox", "read-only")
-	}
-	if a.Model != "" {
-		args = append(args, "-m", a.Model)
-	}
-	if effort := a.codexReasoningEffort(); effort != "" {
-		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
-	}
+	args := a.commandArgs(codexArgOptions{
+		agenticMode: agenticMode,
+		autoApprove: !agenticMode,
+		preview:     true,
+	})
 	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) []string {
+	return a.commandArgs(codexArgOptions{
+		repoPath:    repoPath,
+		agenticMode: agenticMode,
+		autoApprove: autoApprove,
+	})
+}
+
+type codexArgOptions struct {
+	repoPath    string
+	agenticMode bool
+	autoApprove bool
+	preview     bool
+}
+
+func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{
 		"exec",
@@ -134,18 +137,18 @@ func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) [
 		args = append(args, "resume")
 	}
 	args = append(args, "--json")
-	if agenticMode {
+	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)
 	}
-	if autoApprove {
+	if opts.autoApprove {
 		// Use read-only sandbox for review mode instead of --full-auto
 		// (which implies --sandbox workspace-write). Background review
 		// jobs run in the user's repo and must not take index.lock.
 		args = append(args, "--sandbox", "read-only")
 	}
-	args = append(args,
-		"-C", repoPath,
-	)
+	if !opts.preview {
+		args = append(args, "-C", opts.repoPath)
+	}
 	if a.Model != "" {
 		args = append(args, "-m", a.Model)
 	}
@@ -155,9 +158,11 @@ func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) [
 	if sessionID != "" {
 		args = append(args, sessionID)
 	}
-	// "-" must come after all flags to read prompt from stdin
-	// This avoids Windows command line length limits (~32KB)
-	args = append(args, "-")
+	if !opts.preview {
+		// "-" must come after all flags to read prompt from stdin
+		// This avoids Windows command line length limits (~32KB)
+		args = append(args, "-")
+	}
 	return args
 }
 
