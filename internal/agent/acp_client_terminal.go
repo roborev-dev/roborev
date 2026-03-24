@@ -86,7 +86,7 @@ type acpClient struct {
 func (c *acpClient) validateSessionID(sessionID acp.SessionId) error {
 	expectedSessionID := c.sessionID
 	if expectedSessionID == "" && c.agent != nil {
-		expectedSessionID = c.agent.SessionId
+		expectedSessionID = c.agent.SessionID
 	}
 	if expectedSessionID == "" {
 		if sessionID != "" {

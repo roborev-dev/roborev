@@ -1,58 +1,15 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 )
-
-// expectedAgents is the single source of truth for registered agent names.
-var expectedAgents = []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "test"}
-
-// verifyAgentPassesFlag creates a mock command that echoes args, runs the agent's Review method,
-// and validates that the output contains the expected flag and value.
-func verifyAgentPassesFlag(t *testing.T, createAgent func(cmdPath string) Agent, expectedFlag, expectedValue string) {
-	t.Helper()
-	skipIfWindows(t)
-
-	script := "#!/bin/sh\necho \"args: $@\"\n"
-	cmdPath := writeTempCommand(t, script)
-	agent := createAgent(cmdPath)
-
-	result, err := agent.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
-
-	if !strings.Contains(result, expectedFlag) {
-		t.Errorf("expected flag %q in args, got: %q", expectedFlag, result)
-	}
-	if expectedValue != "" && !strings.Contains(result, expectedValue) {
-		t.Errorf("expected value %q in args, got: %q", expectedValue, result)
-	}
-}
-
-func containsString(values []string, target string) bool {
-	return slices.Contains(values, target)
-}
-
-// skipIfWindows skips the test on Windows with a message.
-// Use for tests that rely on Unix shell scripts.
-func skipIfWindows(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping test that requires Unix shell scripts")
-	}
-}
 
 // writeTempCommand writes script to a temporary executable file and returns
 // its path. The file is cleaned up when the test finishes.
@@ -108,10 +65,6 @@ func writeTempCommand(t *testing.T, script string) string {
 	if err := f.Close(); err != nil {
 		t.Fatalf("write temp command close: %v", err)
 	}
-	// Manual ETXTBSY probe: on Linux (especially under -race), exec can
-	// race against the kernel releasing the inode write reference. Retry
-	// with exponential backoff if we hit the race. Note that Go 1.25+
-	// also does its own probe inside exec.Cmd.Start(); see doc comment.
 	const maxRetries = 10
 	for i := range maxRetries {
 		_, err = exec.Command(path, "--help-probe-etxtbsy").CombinedOutput()
@@ -126,20 +79,12 @@ func writeTempCommand(t *testing.T, script string) string {
 	return path
 }
 
-// withUnsafeAgents sets the global AllowUnsafeAgents flag and restores it on cleanup.
-func withUnsafeAgents(t *testing.T, allow bool) {
-	t.Helper()
-	prev := AllowUnsafeAgents()
-	SetAllowUnsafeAgents(allow)
-	t.Cleanup(func() { SetAllowUnsafeAgents(prev) })
-}
-
 // MockCLIOpts controls the behavior of a mock agent CLI script.
 type MockCLIOpts struct {
-	HelpOutput   string // Output when --help is passed; empty means no --help handling
-	ExitCode     int    // Exit code for normal (non-help) invocations
-	CaptureArgs  bool   // Write "$@" to a capture file
-	CaptureStdin bool   // Write stdin to a capture file
+	HelpOutput   string
+	ExitCode     int
+	CaptureArgs  bool
+	CaptureStdin bool
 	StdoutLines  []string
 	StderrLines  []string
 }
@@ -147,8 +92,8 @@ type MockCLIOpts struct {
 // MockCLIResult holds paths to the mock command and any capture files.
 type MockCLIResult struct {
 	CmdPath   string
-	ArgsFile  string // Non-empty when CaptureArgs was set
-	StdinFile string // Non-empty when CaptureStdin was set
+	ArgsFile  string
+	StdinFile string
 }
 
 // readMockArgs reads the captured arguments from a mock CLI's ArgsFile and splits them into a slice.
@@ -189,7 +134,6 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
 
-	// Handle --help: write output to a file and cat it to avoid shell escaping issues
 	if opts.HelpOutput != "" {
 		helpFile := filepath.Join(tmpDir, "help_output.txt")
 		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0644); err != nil {
@@ -198,19 +142,16 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
 	}
 
-	// Capture args
 	if opts.CaptureArgs {
 		result.ArgsFile = filepath.Join(tmpDir, "args.txt")
 		fmt.Fprintf(&script, "echo \"$@\" > %q\n", result.ArgsFile)
 	}
 
-	// Capture stdin
 	if opts.CaptureStdin {
 		result.StdinFile = filepath.Join(tmpDir, "stdin.txt")
 		fmt.Fprintf(&script, "cat > %q\n", result.StdinFile)
 	}
 
-	// Emit configured stdout lines
 	if len(opts.StdoutLines) > 0 {
 		stdoutFile := filepath.Join(tmpDir, "stdout.txt")
 		content := strings.Join(opts.StdoutLines, "\n")
@@ -223,7 +164,6 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		script.WriteString(fmt.Sprintf(`cat %q`, stdoutFile) + "\n")
 	}
 
-	// Emit configured stderr lines
 	if len(opts.StderrLines) > 0 {
 		stderrFile := filepath.Join(tmpDir, "stderr.txt")
 		content := strings.Join(opts.StderrLines, "\n")
@@ -255,30 +195,6 @@ func makeToolCallJSON(name string, args map[string]any) string {
 		panic(fmt.Sprintf("makeToolCallJSON: %v", err))
 	}
 	return string(b)
-}
-
-// assertContains fails the test if s does not contain substr.
-func assertContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if !strings.Contains(s, substr) {
-		t.Errorf("expected string to contain %q\nDocument content:\n%s", substr, s)
-	}
-}
-
-// assertNotContains fails the test if s contains substr.
-func assertNotContains(t *testing.T, s, substr string) {
-	t.Helper()
-	if strings.Contains(s, substr) {
-		t.Errorf("expected %q to not contain %q", s, substr)
-	}
-}
-
-// assertEqual fails the test if got != want.
-func assertEqual(t *testing.T, got, want string) {
-	t.Helper()
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
 }
 
 // ScriptBuilder helps construct shell scripts for mocking CLI output in tests.
@@ -315,54 +231,3 @@ func (b *ScriptBuilder) AddRaw(line string) *ScriptBuilder {
 func (b *ScriptBuilder) Build() string {
 	return strings.Join(b.lines, "\n") + "\n"
 }
-
-// FailingWriter always returns an error on Write.
-type FailingWriter struct {
-	Err error
-}
-
-func (w *FailingWriter) Write(p []byte) (int, error) {
-	return 0, w.Err
-}
-
-// assertFileContent reads the file at path and verifies it matches expected content.
-func assertFileContent(t *testing.T, path, expected string) {
-	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	if got := strings.TrimSpace(string(content)); got != expected {
-		t.Errorf("file %s content = %q, want %q", path, got, expected)
-	}
-}
-
-// assertFileNotContains reads the file at path and verifies it does NOT contain the unexpected string.
-func assertFileNotContains(t *testing.T, path, unexpected string) {
-	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	if strings.Contains(string(content), unexpected) {
-		t.Errorf("file %s contained leaked string: %q", path, unexpected)
-	}
-}
-
-// FakeAgent implements Agent for testing purposes.
-type FakeAgent struct {
-	NameStr  string
-	ReviewFn func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
-}
-
-func (a *FakeAgent) Name() string { return a.NameStr }
-func (a *FakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if a.ReviewFn != nil {
-		return a.ReviewFn(ctx, repoPath, commitSHA, prompt, output)
-	}
-	return "", nil
-}
-func (a *FakeAgent) WithReasoning(level ReasoningLevel) Agent { return a }
-func (a *FakeAgent) WithAgentic(agentic bool) Agent           { return a }
-func (a *FakeAgent) WithModel(model string) Agent             { return a }
-func (a *FakeAgent) CommandLine() string                      { return "" }

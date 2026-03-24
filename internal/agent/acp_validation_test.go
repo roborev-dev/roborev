@@ -19,7 +19,7 @@ func TestValidateSessionID(t *testing.T) {
 	t.Run("Valid session ID matching agent session", func(t *testing.T) {
 
 		agent := &ACPAgent{
-			SessionId: "test-session-123",
+			SessionID: "test-session-123",
 		}
 
 		client := &acpClient{
@@ -34,7 +34,7 @@ func TestValidateSessionID(t *testing.T) {
 	t.Run("Invalid session ID not matching agent session", func(t *testing.T) {
 
 		agent := &ACPAgent{
-			SessionId: "test-session-123",
+			SessionID: "test-session-123",
 		}
 
 		client := &acpClient{
@@ -49,7 +49,7 @@ func TestValidateSessionID(t *testing.T) {
 	t.Run("Empty agent session ID rejects non-empty request session ID", func(t *testing.T) {
 
 		agent := &ACPAgent{
-			SessionId: "",
+			SessionID: "",
 		}
 
 		client := &acpClient{
@@ -65,7 +65,7 @@ func TestValidateSessionID(t *testing.T) {
 	t.Run("Empty request session ID with non-empty agent session", func(t *testing.T) {
 
 		agent := &ACPAgent{
-			SessionId: "test-session-123",
+			SessionID: "test-session-123",
 		}
 
 		client := &acpClient{
@@ -81,7 +81,7 @@ func TestValidateSessionID(t *testing.T) {
 	t.Run("Both session IDs empty", func(t *testing.T) {
 
 		agent := &ACPAgent{
-			SessionId: "",
+			SessionID: "",
 		}
 
 		client := &acpClient{
@@ -95,7 +95,7 @@ func TestValidateSessionID(t *testing.T) {
 
 	t.Run("Client session ID takes precedence over agent session ID", func(t *testing.T) {
 		agent := &ACPAgent{
-			SessionId: "agent-session",
+			SessionID: "agent-session",
 		}
 		client := &acpClient{
 			agent:     agent,
@@ -195,7 +195,7 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 
 	client := &acpClient{
 		agent: &ACPAgent{
-			SessionId: "expected-session",
+			SessionID: "expected-session",
 		},
 		result: &bytes.Buffer{},
 	}

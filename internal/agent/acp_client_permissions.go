@@ -144,8 +144,8 @@ func selectPermissionOutcome(options []acp.PermissionOption, allow bool) acp.Req
 
 // configuredModeIsAvailable checks if the configured mode is available in the list of available modes
 // from the ACP agent session response.
-func configuredModeIsAvailable(configuredMode string, availablesModes []acp.SessionMode) bool {
-	for _, mode := range availablesModes {
+func configuredModeIsAvailable(configuredMode string, availableModes []acp.SessionMode) bool {
+	for _, mode := range availableModes {
 		if string(mode.Id) == configuredMode {
 			return true
 		}

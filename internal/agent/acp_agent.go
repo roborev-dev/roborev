@@ -38,7 +38,7 @@ type ACPAgent struct {
 	Reasoning       ReasoningLevel // Reasoning level
 	Agentic         bool           // Agentic mode
 	Timeout         time.Duration  // Command timeout
-	SessionId       string         // Current ACP session ID
+	SessionID       string         // Current ACP session ID
 	repoRoot        string         // Repository root for path validation
 }
 
@@ -57,7 +57,7 @@ func NewACPAgent(command string) *ACPAgent {
 		AutoApproveMode: defaultACPAutoApproveMode,
 		Timeout:         time.Duration(defaultACPTimeoutSeconds) * time.Second,
 		Reasoning:       ReasoningStandard,
-		SessionId:       "", // Initialize with empty session ID
+		SessionID:       "", // Initialize with empty session ID
 	}
 }
 
@@ -123,7 +123,7 @@ func (a *ACPAgent) WithReasoning(level ReasoningLevel) Agent {
 		Reasoning:       level,     // Use the provided level parameter
 		Agentic:         a.Agentic, // Preserve Agentic field
 		Timeout:         a.Timeout,
-		SessionId:       a.SessionId, // Preserve SessionId
+		SessionID:       a.SessionID, // Preserve SessionID
 	}
 }
 
@@ -149,7 +149,7 @@ func (a *ACPAgent) WithAgentic(agentic bool) Agent {
 		Reasoning:       a.Reasoning,
 		Agentic:         agentic,
 		Timeout:         a.Timeout,
-		SessionId:       a.SessionId, // Preserve SessionId
+		SessionID:       a.SessionID, // Preserve SessionID
 	}
 }
 
@@ -169,7 +169,7 @@ func (a *ACPAgent) WithModel(model string) Agent {
 		Reasoning:       a.Reasoning,
 		Agentic:         a.Agentic, // Preserve Agentic field
 		Timeout:         a.Timeout,
-		SessionId:       a.SessionId, // Preserve SessionId
+		SessionID:       a.SessionID, // Preserve SessionID
 	}
 }
 

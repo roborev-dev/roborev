@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -98,7 +100,7 @@ var allAgentSpecs = []agentSpec{
 	},
 	{
 		Name:           "kiro",
-		DefaultCommand: "kiro",
+		DefaultCommand: "kiro-cli",
 		FallbackRank:   7,
 	},
 	{
@@ -138,7 +140,7 @@ var allAgentSpecs = []agentSpec{
 }
 
 var agentSpecsByName = buildAgentSpecsByName()
-var fallbackAgentOrder = buildFallbackAgentOrder()
+var fallbackAgentOrder = buildFallbackAgentOrder(allAgentSpecs)
 
 func buildAgentSpecsByName() map[string]agentSpec {
 	specs := make(map[string]agentSpec, len(allAgentSpecs))
@@ -151,21 +153,37 @@ func buildAgentSpecsByName() map[string]agentSpec {
 	return specs
 }
 
-func buildFallbackAgentOrder() []string {
-	fallbacks := make([]string, 0, len(allAgentSpecs))
-	for rank := 1; ; rank++ {
-		found := false
-		for _, spec := range allAgentSpecs {
-			if spec.FallbackRank == rank {
-				fallbacks = append(fallbacks, spec.Name)
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fallbacks
+func buildFallbackAgentOrder(specs []agentSpec) []string {
+	fallbackSpecs := make([]agentSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.FallbackRank > 0 {
+			fallbackSpecs = append(fallbackSpecs, spec)
 		}
 	}
+
+	slices.SortFunc(fallbackSpecs, func(a, b agentSpec) int {
+		if a.FallbackRank != b.FallbackRank {
+			return a.FallbackRank - b.FallbackRank
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	for i := 1; i < len(fallbackSpecs); i++ {
+		if fallbackSpecs[i-1].FallbackRank == fallbackSpecs[i].FallbackRank {
+			panic(fmt.Sprintf("duplicate fallback rank %d for %s and %s", fallbackSpecs[i].FallbackRank, fallbackSpecs[i-1].Name, fallbackSpecs[i].Name))
+		}
+	}
+
+	fallbacks := make([]string, 0, len(fallbackSpecs))
+	for i, spec := range fallbackSpecs {
+		expectedRank := i + 1
+		if spec.FallbackRank != expectedRank {
+			panic(fmt.Sprintf("invalid fallback rank for %s: got %d, want %d", spec.Name, spec.FallbackRank, expectedRank))
+		}
+		fallbacks = append(fallbacks, spec.Name)
+	}
+
+	return fallbacks
 }
 
 func resolveAlias(name string) string {

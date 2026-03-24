@@ -278,7 +278,7 @@ func terminalExists(client *acpClient, terminalID string) bool {
 func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	agent := &ACPAgent{
-		SessionId:       "test-session",
+		SessionID:       "test-session",
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
 		Mode:            "auto-approve",
@@ -612,7 +612,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 
 	agent := &ACPAgent{
-		SessionId:       "test-session",
+		SessionID:       "test-session",
 		ReadOnlyMode:    "read-only",
 		AutoApproveMode: "auto-approve",
 		Mode:            "auto-approve",
