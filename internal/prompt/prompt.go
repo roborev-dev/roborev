@@ -66,6 +66,8 @@ After reviewing, provide:
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
 
+Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
+
 If you find no issues, state "No issues found." after the summary.`
 
 // SystemPromptDirty is the base instruction for reviewing uncommitted (dirty) changes
@@ -94,6 +96,8 @@ After reviewing, provide:
    - File and line reference where possible
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
+
+Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -128,6 +132,8 @@ After reviewing, provide:
    - File and line reference where possible
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
+
+Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -1072,6 +1078,8 @@ For each finding, provide:
 - File and line reference
 - The specific code path an attacker would exploit and what they gain
 - Suggested remediation
+
+Before finalizing, verify your review: every finding must reference a specific file and line number and describe a plausible exploit path. The severity must match the exploitability you described. Drop any finding that fails these checks.
 
 If you find no security issues, state "No issues found." after the summary.
 Do not report code quality or style issues unless they have security implications.`
