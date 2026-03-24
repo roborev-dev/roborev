@@ -461,7 +461,7 @@ func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "review"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
 
 	info, err := gitpkg.GetCommitInfo(repoPath, sha)
 	require.NoError(t, err, "GetCommitInfo failed: %v", err)
@@ -484,7 +484,7 @@ func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
 	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "range"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
 
 	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
 	require.NoError(t, err, "GetRangeCommits failed: %v", err)
@@ -1011,7 +1011,7 @@ func TestLoadGuidelines(t *testing.T) {
 				tt.setupFilesystem(t, ctx.Dir)
 			}
 
-			guidelines := loadGuidelines(ctx.Dir)
+			guidelines := LoadGuidelines(ctx.Dir)
 			if tt.wantContains != "" {
 				assertContains(t, guidelines, tt.wantContains, "missing expected guidelines")
 			}

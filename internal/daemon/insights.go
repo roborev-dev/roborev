@@ -27,10 +27,7 @@ func (s *Server) buildInsightsPrompt(
 
 	cfg := s.configWatcher.Config()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
-	guidelines := ""
-	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil {
-		guidelines = repoCfg.ReviewGuidelines
-	}
+	guidelines := prompt.LoadGuidelines(repoRoot)
 
 	promptText := prompt.BuildInsightsPrompt(prompt.InsightsData{
 		Reviews:       reviews,

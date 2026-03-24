@@ -461,7 +461,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	var optionalContext strings.Builder
 
 	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&optionalContext, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -578,7 +578,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	var optionalContext strings.Builder
 
 	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&optionalContext, loadGuidelines(repoPath))
+	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -722,12 +722,10 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString("\n\n")
 }
 
-// loadMergedGuidelines loads review guidelines from the repo's default
-// branch (detected via git) and the given ref, then merges them so
-// branch guidelines can add lines but cannot remove base lines.
-// Falls back to filesystem LoadRepoConfig only when no .roborev.toml
-// exists on the default branch (not when it exists with empty guidelines).
-func loadGuidelines(repoPath string) string {
+// LoadGuidelines loads review guidelines from the repo's default
+// branch, falling back to filesystem config when the default branch
+// has no .roborev.toml.
+func LoadGuidelines(repoPath string) string {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
 	// ignored to prevent prompt injection from untrusted PR authors.
