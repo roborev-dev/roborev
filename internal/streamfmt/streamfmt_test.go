@@ -909,16 +909,17 @@ func TestResolveColorProfile(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesNoColor(t *testing.T) {
+	// When colorProfile is Ascii, StripTrailingPadding removes all SGR
+	// sequences (colors, bold, underline, reset) so no formatting can
+	// bleed across lines.
 	text := "# Heading\n\nSome **bold** text."
 	style := GlamourStyle()
 	lines := RenderMarkdownLines(text, 80, 80, style, 2, termenv.Ascii)
 
 	combined := strings.Join(lines, "\n")
-	// Match ANSI SGR sequences that set foreground/background colors.
-	// Bold/reset are acceptable under NO_COLOR convention.
-	colorSGR := regexp.MustCompile(`\x1b\[(3[0-7]|4[0-7]|9[0-7]|10[0-7]|38;|48;)[0-9;]*m`)
-	matches := colorSGR.FindAllString(combined, -1)
-	assert.Empty(t, matches, "expected no ANSI color sequences with Ascii profile, got: %v", matches)
+	allSGR := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	matches := allSGR.FindAllString(combined, -1)
+	assert.Empty(t, matches, "expected no SGR sequences with Ascii profile, got: %v", matches)
 }
 
 func TestGlamourStyleRespectsColorMode(t *testing.T) {

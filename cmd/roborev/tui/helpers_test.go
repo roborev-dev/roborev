@@ -435,19 +435,16 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesNoColor(t *testing.T) {
-	// When colorProfile is Ascii, output should contain no ANSI color sequences.
-	// Bold/reset sequences (\x1b[;1m, \x1b[0m) are still emitted by glamour
-	// for text formatting — these are not colors and are acceptable under NO_COLOR.
+	// When colorProfile is Ascii, stripTrailingPadding removes all SGR
+	// sequences (colors, bold, underline, reset) so no formatting can
+	// bleed across lines.
 	text := "# Heading\n\nSome **bold** text and `code`."
 	lines := renderMarkdownLines(text, 80, 80, styles.DarkStyleConfig, 2, termenv.Ascii)
 
 	combined := strings.Join(lines, "\n")
-	// Match ANSI SGR sequences that set foreground/background colors:
-	// \x1b[3Xm (fg), \x1b[4Xm (bg), \x1b[9Xm (bright fg), \x1b[10Xm (bright bg),
-	// \x1b[38;...m (extended fg), \x1b[48;...m (extended bg).
-	colorSGR := regexp.MustCompile(`\x1b\[(3[0-7]|4[0-7]|9[0-7]|10[0-7]|38;|48;)[0-9;]*m`)
-	matches := colorSGR.FindAllString(combined, -1)
-	assert.Empty(t, matches, "expected no ANSI color sequences with Ascii profile, got: %v", matches)
+	allSGR := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	matches := allSGR.FindAllString(combined, -1)
+	assert.Empty(t, matches, "expected no SGR sequences with Ascii profile, got: %v", matches)
 }
 
 func TestReflowHelpRows(t *testing.T) {
