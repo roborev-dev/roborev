@@ -54,7 +54,8 @@ After reviewing, provide:
      - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
      - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
+   - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
+   - Suggested fix
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -76,7 +77,8 @@ After reviewing, provide:
      - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
      - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
+   - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
+   - Suggested fix
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -100,7 +102,8 @@ After reviewing, provide:
      - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
      - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
+   - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
+   - Suggested fix
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -1001,10 +1004,12 @@ After reviewing, provide:
 1. A brief summary of what the design proposes
 2. PRD findings, listed with:
    - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
+   - What specifically goes wrong during implementation if this gap is not addressed
+   - Suggested improvement
 3. Task list findings, listed with:
    - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
+   - What specifically goes wrong during implementation if this gap is not addressed
+   - Suggested improvement
 4. Any missing considerations not covered by the design
 5. A verdict: Pass or Fail with brief justification
 
@@ -1037,7 +1042,7 @@ For each finding, provide:
   - **medium**: Weakness that increases attack surface or could become exploitable with other changes
   - **low**: Defense-in-depth improvement or theoretical concern with no practical exploit path in current code
 - File and line reference
-- Description of the vulnerability
+- The specific code path an attacker would exploit and what they gain
 - Suggested remediation
 
 If you find no security issues, state "No issues found." after the summary.
