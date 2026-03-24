@@ -47,6 +47,11 @@ func TestIsTaskJob(t *testing.T) {
 			job:  storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "analyze"},
 			want: true,
 		},
+		{
+			name: "explicit: insights job by job_type",
+			job:  storage.ReviewJob{JobType: storage.JobTypeInsights, GitRef: "insights"},
+			want: true,
+		},
 		// Inferred JobType
 		{
 			name: "inferred: single commit review",
@@ -161,6 +166,7 @@ func TestUsesStoredPrompt(t *testing.T) {
 		want bool
 	}{
 		{name: "task", job: storage.ReviewJob{JobType: storage.JobTypeTask}, want: true},
+		{name: "insights", job: storage.ReviewJob{JobType: storage.JobTypeInsights}, want: true},
 		{name: "compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact}, want: true},
 		{name: "review", job: storage.ReviewJob{JobType: storage.JobTypeReview}, want: false},
 		{name: "range", job: storage.ReviewJob{JobType: storage.JobTypeRange}, want: false},

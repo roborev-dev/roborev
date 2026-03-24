@@ -43,6 +43,7 @@ func main() {
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
 	rootCmd.AddCommand(analyzeCmd())
+	rootCmd.AddCommand(insightsCmd())
 	rootCmd.AddCommand(fixCmd())
 	rootCmd.AddCommand(compactCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility

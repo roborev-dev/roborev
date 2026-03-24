@@ -37,12 +37,13 @@ const (
 
 // JobType classifies what kind of work a review job represents.
 const (
-	JobTypeReview  = "review"  // Single commit review
-	JobTypeRange   = "range"   // Commit range review
-	JobTypeDirty   = "dirty"   // Uncommitted changes review
-	JobTypeTask    = "task"    // Run/analyze/design/custom prompt
-	JobTypeCompact = "compact" // Consolidated review verification
-	JobTypeFix     = "fix"     // Background fix using worktree
+	JobTypeReview   = "review"   // Single commit review
+	JobTypeRange    = "range"    // Commit range review
+	JobTypeDirty    = "dirty"    // Uncommitted changes review
+	JobTypeTask     = "task"     // Run/analyze/design/custom prompt
+	JobTypeInsights = "insights" // Historical review insights analysis
+	JobTypeCompact  = "compact"  // Consolidated review verification
+	JobTypeFix      = "fix"      // Background fix using worktree
 )
 
 type ReviewJob struct {
@@ -56,7 +57,7 @@ type ReviewJob struct {
 	Model        string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
 	Provider     string     `json:"provider,omitempty"`  // Provider to use (e.g., anthropic, openai)
 	Reasoning    string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
-	JobType      string     `json:"job_type"`            // review, range, dirty, task
+	JobType      string     `json:"job_type"`            // review, range, dirty, task, insights, compact, fix
 	Status       JobStatus  `json:"status"`
 	EnqueuedAt   time.Time  `json:"enqueued_at"`
 	StartedAt    *time.Time `json:"started_at,omitempty"`
@@ -102,7 +103,7 @@ func (j ReviewJob) IsDirtyJob() bool {
 // Compact jobs are not considered task jobs since they produce P/F verdicts.
 func (j ReviewJob) IsTaskJob() bool {
 	if j.JobType != "" {
-		return j.JobType == JobTypeTask
+		return j.JobType == JobTypeTask || j.JobType == JobTypeInsights
 	}
 	// Fallback heuristic for jobs without job_type (e.g., from old sync data)
 	if j.CommitID != nil {
@@ -124,10 +125,13 @@ func (j ReviewJob) IsTaskJob() bool {
 }
 
 // UsesStoredPrompt returns true if this job type uses a pre-stored prompt
-// (task, compact, or fix). These job types have prompts built at enqueue
+// (task, insights, compact, or fix). These job types have prompts built at enqueue
 // time, not constructed by the worker from git data.
 func (j ReviewJob) UsesStoredPrompt() bool {
-	return j.JobType == JobTypeTask || j.JobType == JobTypeCompact || j.JobType == JobTypeFix
+	return j.JobType == JobTypeTask ||
+		j.JobType == JobTypeInsights ||
+		j.JobType == JobTypeCompact ||
+		j.JobType == JobTypeFix
 }
 
 // IsFixJob returns true if this is a background fix job.

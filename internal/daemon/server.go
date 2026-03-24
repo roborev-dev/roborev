@@ -597,6 +597,7 @@ type EnqueueRequest struct {
 	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
 	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
 	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
+	Since        string `json:"since,omitempty"`      // RFC3339 lower bound for insights datasets
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
@@ -605,7 +606,7 @@ type EnqueueRequest struct {
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
 	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
-	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/compact)
+	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
 	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
 }
 
@@ -717,11 +718,21 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Check if branch is excluded from reviews
 	currentBranch := git.GetCurrentBranch(checkoutRoot)
-	if currentBranch != "" && config.IsBranchExcluded(checkoutRoot, currentBranch) {
+	branchToCheck := currentBranch
+	if req.JobType == storage.JobTypeInsights {
+		// Insights is read-only historical analysis — only apply branch
+		// exclusion when an explicit branch filter was provided.
+		if req.Branch != "" {
+			branchToCheck = req.Branch
+		} else {
+			branchToCheck = ""
+		}
+	}
+	if branchToCheck != "" && config.IsBranchExcluded(checkoutRoot, branchToCheck) {
 		// Silently skip excluded branches - return 200 OK with skipped flag
 		writeJSON(w, map[string]any{
 			"skipped": true,
-			"reason":  fmt.Sprintf("branch %q is excluded from reviews", currentBranch),
+			"reason":  fmt.Sprintf("branch %q is excluded from reviews", branchToCheck),
 		})
 		return
 	}
@@ -804,6 +815,32 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		model = agent.ResolveWorkflowModelForAgent(
 			agentName, req.Model, repoRoot, cfg, workflow, reasoning,
 		)
+	}
+
+	if req.JobType == storage.JobTypeInsights {
+		if req.Since == "" {
+			writeError(w, http.StatusBadRequest, "since is required for insights jobs")
+			return
+		}
+		since, err := time.Parse(time.RFC3339, req.Since)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since must be RFC3339")
+			return
+		}
+
+		insightsPrompt, reviewCount, err := s.buildInsightsPrompt(repoRoot, req.Branch, since)
+		if err != nil {
+			s.writeInternalError(w, fmt.Sprintf("build insights prompt: %v", err))
+			return
+		}
+		if reviewCount == 0 {
+			writeJSON(w, map[string]any{
+				"skipped": true,
+				"reason":  "No failing reviews found in the specified time window.",
+			})
+			return
+		}
+		req.CustomPrompt = insightsPrompt
 	}
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
