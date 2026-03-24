@@ -55,38 +55,24 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		OpenCodeCmd:   "custom-opencode",
 	}
 
-	tests := []struct {
-		name            string
-		expectedCommand string
-	}{
-		{name: "codex", expectedCommand: "custom-codex"},
-		{name: "claude-code", expectedCommand: "custom-claude"},
-		{name: "gemini", expectedCommand: "gemini"},
-		{name: "copilot", expectedCommand: "copilot"},
-		{name: "opencode", expectedCommand: "custom-opencode"},
-		{name: "cursor", expectedCommand: "custom-cursor"},
-		{name: "kiro", expectedCommand: "kiro-cli"},
-		{name: "kilo", expectedCommand: "kilo"},
-		{name: "droid", expectedCommand: "droid"},
-		{name: "pi", expectedCommand: "custom-pi"},
-		{name: "acp", expectedCommand: "acp-agent"},
-		{name: "test", expectedCommand: ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			agent, err := Get(tt.name)
+	for _, spec := range allAgentSpecs {
+		t.Run(spec.Name, func(t *testing.T) {
+			agent, err := Get(spec.Name)
 			require.NoError(t, err)
 
 			overridden := applyCommandOverrides(agent, cfg)
 			commandAgent, ok := overridden.(CommandAgent)
-			if tt.expectedCommand == "" {
+			if spec.DefaultCommand == "" {
 				assert.False(t, ok)
 				return
 			}
 
 			require.True(t, ok)
-			assert.Equal(t, tt.expectedCommand, commandAgent.CommandName())
+			expectedCommand := spec.DefaultCommand
+			if override := commandOverrideForAgent(spec.Name, cfg); override != "" {
+				expectedCommand = override
+			}
+			assert.Equal(t, expectedCommand, commandAgent.CommandName())
 		})
 	}
 }

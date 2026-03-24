@@ -86,6 +86,18 @@ func TestContextProcessError(t *testing.T) {
 	}
 }
 
+func TestContextProcessErrorParseOnlyPathWouldMaskRealWaitErr(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tracker := &subprocessTracker{}
+	tracker.canceledByContext.Store(true)
+	waitErr := errors.New("exit status 1")
+
+	require.NoError(t, contextProcessError(ctx, tracker, waitErr, fs.ErrClosed))
+	require.ErrorIs(t, contextProcessError(ctx, tracker, nil, fs.ErrClosed), context.Canceled)
+}
+
 func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	skipIfWindows(t)
 

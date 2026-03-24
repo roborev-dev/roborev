@@ -76,6 +76,24 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	return result, nil
 }
 
+// FakeAgent implements Agent for tests outside the agent package.
+type FakeAgent struct {
+	NameStr  string
+	ReviewFn func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
+}
+
+func (a *FakeAgent) Name() string { return a.NameStr }
+func (a *FakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.ReviewFn != nil {
+		return a.ReviewFn(ctx, repoPath, commitSHA, prompt, output)
+	}
+	return "", nil
+}
+func (a *FakeAgent) WithReasoning(level ReasoningLevel) Agent { return a }
+func (a *FakeAgent) WithAgentic(agentic bool) Agent           { return a }
+func (a *FakeAgent) WithModel(model string) Agent             { return a }
+func (a *FakeAgent) CommandLine() string                      { return "" }
+
 func init() {
 	Register(NewTestAgent())
 }
