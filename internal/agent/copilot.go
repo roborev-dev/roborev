@@ -78,26 +78,33 @@ func NewCopilotAgent(command string) *CopilotAgent {
 	return &CopilotAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *CopilotAgent) clone(opts ...agentCloneOption) *CopilotAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &CopilotAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 // In agentic mode, all tools are allowed without restriction. In review mode
 // (default), destructive tools are denied via --deny-tool flags.
 func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -105,12 +112,7 @@ func (a *CopilotAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 func (a *CopilotAgent) Name() string {

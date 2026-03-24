@@ -91,16 +91,32 @@ func NewKiroAgent(command string) *KiroAgent {
 	return &KiroAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *KiroAgent) clone(opts ...agentCloneOption) *KiroAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		"",
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &KiroAgent{
+		Command:   cfg.Command,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy with the reasoning level stored.
 // kiro-cli has no reasoning flag; callers can map reasoning to agent selection instead.
 func (a *KiroAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &KiroAgent{Command: a.Command, Reasoning: level, Agentic: a.Agentic}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 // In agentic mode, --trust-all-tools is passed so kiro can use tools without confirmation.
 func (a *KiroAgent) WithAgentic(agentic bool) Agent {
-	return &KiroAgent{Command: a.Command, Reasoning: a.Reasoning, Agentic: agentic}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns the agent unchanged; kiro-cli does not expose a --model CLI flag.

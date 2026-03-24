@@ -34,26 +34,32 @@ func NewClaudeAgent(command string) *ClaudeAgent {
 	return &ClaudeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		a.SessionID,
+		opts...,
+	)
+	return &ClaudeAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+		SessionID: cfg.SessionID,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the specified reasoning level.
 func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &ClaudeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
-	return &ClaudeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -61,24 +67,12 @@ func (a *ClaudeAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &ClaudeAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
-	return &ClaudeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: sanitizedResumeSessionID(sessionID),
-	}
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 // claudeEffort maps ReasoningLevel to Claude Code's --effort flag values

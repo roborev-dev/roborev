@@ -40,20 +40,32 @@ func NewCodexAgent(command string) *CodexAgent {
 	return &CodexAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		a.SessionID,
+		opts...,
+	)
+	return &CodexAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+		SessionID: cfg.SessionID,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *CodexAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CodexAgent{Command: a.Command, Model: a.Model, Reasoning: level, Agentic: a.Agentic, SessionID: a.SessionID}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *CodexAgent) WithAgentic(agentic bool) Agent {
-	return &CodexAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -61,24 +73,12 @@ func (a *CodexAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &CodexAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *CodexAgent) WithSessionID(sessionID string) Agent {
-	return &CodexAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: sanitizedResumeSessionID(sessionID),
-	}
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values

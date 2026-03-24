@@ -24,18 +24,30 @@ func NewDroidAgent(command string) *DroidAgent {
 	return &DroidAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *DroidAgent) clone(opts ...agentCloneOption) *DroidAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		"",
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &DroidAgent{
+		Command:   cfg.Command,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *DroidAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &DroidAgent{Command: a.Command, Reasoning: level, Agentic: a.Agentic}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *DroidAgent) WithAgentic(agentic bool) Agent {
-	return &DroidAgent{
-		Command:   a.Command,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns the agent unchanged (model selection not supported for droid).
