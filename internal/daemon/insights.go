@@ -45,7 +45,7 @@ func (s *Server) fetchInsightsReviews(
 	// Normalize to forward slashes to match how GetOrCreateRepo stores paths.
 	repoFilter := filepath.ToSlash(repoRoot)
 
-	listOpts := []storage.ListJobsOption{storage.WithExcludeJobType(storage.JobTypeTask)}
+	var listOpts []storage.ListJobsOption
 	if branch != "" {
 		listOpts = append(listOpts, storage.WithBranch(branch))
 	}
@@ -57,10 +57,10 @@ func (s *Server) fetchInsightsReviews(
 
 	reviews := make([]prompt.InsightsReview, 0, min(len(jobs), maxInsightsReviews))
 	for _, job := range jobs {
-		if job.FinishedAt != nil && job.FinishedAt.Before(since) {
+		if !job.IsReviewJob() {
 			continue
 		}
-		if job.UsesStoredPrompt() {
+		if job.FinishedAt != nil && job.FinishedAt.Before(since) {
 			continue
 		}
 		if job.Verdict == nil || *job.Verdict != "F" {

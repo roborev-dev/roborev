@@ -157,6 +157,35 @@ func TestIsDirtyJob(t *testing.T) {
 	}
 }
 
+func TestIsReviewJob(t *testing.T) {
+	assert := assert.New(t)
+
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want bool
+	}{
+		// Explicit JobType
+		{name: "explicit: review", job: storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: "abc123"}, want: true},
+		{name: "explicit: range", job: storage.ReviewJob{JobType: storage.JobTypeRange, GitRef: "a..b"}, want: true},
+		{name: "explicit: dirty", job: storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty"}, want: true},
+		{name: "explicit: task", job: storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "run"}, want: false},
+		{name: "explicit: insights", job: storage.ReviewJob{JobType: storage.JobTypeInsights, GitRef: "insights"}, want: false},
+		{name: "explicit: compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact, GitRef: "compact"}, want: false},
+		{name: "explicit: fix", job: storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "abc123"}, want: false},
+		// Inferred (empty job_type from old data)
+		{name: "inferred: commit review", job: storage.ReviewJob{CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"}, want: true},
+		{name: "inferred: dirty", job: storage.ReviewJob{GitRef: "dirty"}, want: true},
+		{name: "inferred: range", job: storage.ReviewJob{GitRef: "abc..def"}, want: true},
+		{name: "inferred: task label", job: storage.ReviewJob{GitRef: "run:lint"}, want: false},
+		{name: "inferred: empty ref", job: storage.ReviewJob{GitRef: ""}, want: false},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(tt.want, tt.job.IsReviewJob(), "%q: IsReviewJob() = %v, want %v", tt.name, tt.job.IsReviewJob(), tt.want)
+	}
+}
+
 func TestUsesStoredPrompt(t *testing.T) {
 	assert := assert.New(t)
 

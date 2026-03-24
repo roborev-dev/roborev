@@ -134,6 +134,21 @@ func (j ReviewJob) UsesStoredPrompt() bool {
 		j.JobType == JobTypeFix
 }
 
+// IsReviewJob returns true if this is an actual code review
+// (single commit, range, or dirty) rather than a task, insights,
+// compact, or fix job. Uses the same backward-compat heuristic as
+// IsTaskJob for jobs with empty job_type.
+func (j ReviewJob) IsReviewJob() bool {
+	if j.JobType != "" {
+		return j.JobType == JobTypeReview ||
+			j.JobType == JobTypeRange ||
+			j.JobType == JobTypeDirty
+	}
+	// Fallback: a job is a review if the task heuristic says it's
+	// not a task (and it has some git ref).
+	return j.GitRef != "" && !j.IsTaskJob()
+}
+
 // IsFixJob returns true if this is a background fix job.
 func (j ReviewJob) IsFixJob() bool {
 	return j.JobType == JobTypeFix

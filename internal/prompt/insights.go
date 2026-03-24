@@ -173,8 +173,16 @@ func BuildInsightsPrompt(data InsightsData) string {
 		}
 		if len(r.Responses) > 0 {
 			entry.WriteString("\nComments on this review:\n")
+			commentCap := 2048
+			commentBytes := 0
 			for _, resp := range r.Responses {
-				fmt.Fprintf(&entry, "- %s: %q\n", resp.Responder, resp.Response)
+				line := fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response)
+				if commentBytes+len(line) > commentCap {
+					entry.WriteString("... (remaining comments truncated)\n")
+					break
+				}
+				entry.WriteString(line)
+				commentBytes += len(line)
 			}
 		}
 		entry.WriteString("\n")

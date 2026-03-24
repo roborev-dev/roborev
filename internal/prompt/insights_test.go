@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,39 @@ func TestBuildInsightsPrompt_IncludesComments(t *testing.T) {
 	assert.Contains(t, result, "Comments on this review:")
 	assert.Contains(t, result, `- user: "This was intentional"`)
 	assert.Contains(t, result, `- agent: "Confirmed after discussion"`)
+}
+
+func TestBuildInsightsPrompt_TruncatesLargeCommentThread(t *testing.T) {
+	t.Parallel()
+
+	var responses []storage.Response
+	for i := range 50 {
+		responses = append(responses, storage.Response{
+			Responder: "user",
+			Response:  strings.Repeat("comment text ", 20) + fmt.Sprintf("comment-%d", i),
+		})
+	}
+
+	data := InsightsData{
+		Reviews: []InsightsReview{
+			{
+				JobID:     1,
+				Agent:     "test",
+				Output:    "a finding",
+				Responses: responses,
+			},
+		},
+		Since:         time.Now().Add(-7 * 24 * time.Hour),
+		MaxPromptSize: 50000,
+	}
+
+	result := BuildInsightsPrompt(data)
+
+	assert.Contains(t, result, "a finding")
+	assert.Contains(t, result, "Comments on this review:")
+	assert.Contains(t, result, "remaining comments truncated")
+	// The review should still be included despite large comments
+	assert.Contains(t, result, "Review 1")
 }
 
 func TestBuildInsightsPrompt_NoGuidelines(t *testing.T) {
