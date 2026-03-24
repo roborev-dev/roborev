@@ -2025,6 +2025,38 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 	})
 }
 
+func TestResolveCurrentRepoRoots(t *testing.T) {
+	repo, worktreeDir := setupWorktree(t)
+	chdir(t, worktreeDir)
+
+	resolvedWorktreeDir, err := filepath.EvalSymlinks(worktreeDir)
+	require.NoError(t, err)
+
+	roots, err := resolveCurrentRepoRoots()
+	require.NoError(t, err)
+	assert.Equal(t, resolvedWorktreeDir, roots.worktreeRoot)
+	assert.Equal(t, repo.Dir, roots.mainRepoRoot)
+}
+
+func TestResolveCurrentBranchFilter(t *testing.T) {
+	t.Run("uses worktree branch when branch omitted", func(t *testing.T) {
+		_, worktreeDir := setupWorktree(t)
+		assert.Equal(t, "wt-branch", resolveCurrentBranchFilter(worktreeDir, "", false))
+	})
+
+	t.Run("returns explicit branch", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("a.txt", "a", "initial")
+		assert.Equal(t, "feature/custom", resolveCurrentBranchFilter(repo.Dir, "feature/custom", false))
+	})
+
+	t.Run("returns empty string for all branches", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("a.txt", "a", "initial")
+		assert.Empty(t, resolveCurrentBranchFilter(repo.Dir, "", true))
+	})
+}
+
 func TestJobVerdict(t *testing.T) {
 	pass := "P"
 	fail := "F"
