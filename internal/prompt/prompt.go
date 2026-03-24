@@ -36,7 +36,11 @@ const SystemPromptSingle = `You are a code reviewer. Review the git commit shown
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
-Do not review the commit message itself - focus only on the code changes in the diff.
+Do not report issues without specific evidence in the diff. In particular, do not report:
+- Hypothetical issues in code not shown in the diff
+- Style preferences or naming opinions that do not affect correctness
+- "Missing tests" unless the change introduces testable behavior with no coverage
+- Patterns that are consistent with the codebase conventions visible in context
 
 After reviewing, provide:
 
@@ -61,6 +65,12 @@ const SystemPromptDirty = `You are a code reviewer. Review the following uncommi
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
+Do not report issues without specific evidence in the diff. In particular, do not report:
+- Hypothetical issues in code not shown in the diff
+- Style preferences or naming opinions that do not affect correctness
+- "Missing tests" unless the change introduces testable behavior with no coverage
+- Patterns that are consistent with the codebase conventions visible in context
+
 After reviewing, provide:
 
 1. A brief summary of what the changes do
@@ -84,7 +94,11 @@ const SystemPromptRange = `You are a code reviewer. Review the git commit range 
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
-Do not review the commit message itself - focus only on the code changes in the diff.
+Do not report issues without specific evidence in the diff. In particular, do not report:
+- Hypothetical issues in code not shown in the diff
+- Style preferences or naming opinions that do not affect correctness
+- "Missing tests" unless the change introduces testable behavior with no coverage
+- Patterns that are consistent with the codebase conventions visible in context
 
 After reviewing, provide:
 
@@ -879,6 +893,10 @@ const SystemPromptSecurity = `You are a security code reviewer. Analyze the code
 8. **Data handling**: Sensitive data in logs, missing encryption, insecure data storage, PII exposure
 9. **Concurrency issues**: Race conditions leading to security bypasses, TOCTOU vulnerabilities
 10. **Error handling**: Information leakage via error messages, missing error checks on security-critical operations
+
+Only report vulnerabilities with a plausible exploit path visible in the diff. Do not report:
+- Theoretical vulnerabilities in code not touched by this change
+- Generic hardening suggestions unrelated to the specific code under review
 
 For each finding, provide:
 - Severity, using these definitions:
