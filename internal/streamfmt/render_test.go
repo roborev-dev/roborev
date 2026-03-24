@@ -191,3 +191,66 @@ func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 	assertLogNotContains(t, out, "step_finish")
 	assertLogNotContains(t, out, `"type"`)
 }
+
+func TestStripTrailingPadding(t *testing.T) {
+	bold := "\x1b[1m"
+	underline := "\x1b[4m"
+	reset := "\x1b[0m"
+	red := "\x1b[31m"
+
+	tests := []struct {
+		name    string
+		line    string
+		noColor bool
+		want    string
+	}{
+		{
+			name:    "color mode appends reset",
+			line:    red + "hello" + reset,
+			noColor: false,
+			want:    red + "hello" + reset,
+		},
+		{
+			name:    "color mode strips trailing padding",
+			line:    red + "hello" + reset + "   " + reset,
+			noColor: false,
+			want:    red + "hello" + reset,
+		},
+		{
+			name:    "noColor strips mid-line bold",
+			line:    bold + "hello" + reset,
+			noColor: true,
+			want:    "hello",
+		},
+		{
+			name:    "noColor strips mid-line underline",
+			line:    underline + "text" + reset,
+			noColor: true,
+			want:    "text",
+		},
+		{
+			name:    "noColor strips mixed SGR sequences",
+			line:    bold + underline + "mixed" + reset + " plain",
+			noColor: true,
+			want:    "mixed plain",
+		},
+		{
+			name:    "noColor preserves plain text",
+			line:    "no formatting here",
+			noColor: true,
+			want:    "no formatting here",
+		},
+		{
+			name:    "noColor strips trailing padding and all SGR",
+			line:    bold + "word" + reset + "   ",
+			noColor: true,
+			want:    "word",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StripTrailingPadding(tt.line, tt.noColor)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
