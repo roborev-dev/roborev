@@ -717,7 +717,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Check if branch is excluded from reviews
 	currentBranch := git.GetCurrentBranch(checkoutRoot)
-	if currentBranch != "" && config.IsBranchExcluded(repoRoot, currentBranch) {
+	if currentBranch != "" && config.IsBranchExcluded(checkoutRoot, currentBranch) {
 		// Silently skip excluded branches - return 200 OK with skipped flag
 		writeJSON(w, map[string]any{
 			"skipped": true,
@@ -855,7 +855,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RepoID:       repo.ID,
 			GitRef:       gitRef,
 			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, targetSHA),
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, targetSHA),
 			Agent:        agentName,
 			Model:        model,
 			Reasoning:    reasoning,
@@ -930,7 +930,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RepoID:       repo.ID,
 			GitRef:       fullRef,
 			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, endSHA),
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, endSHA),
 			Agent:        agentName,
 			Model:        model,
 			Reasoning:    reasoning,
@@ -981,7 +981,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			CommitID:     commit.ID,
 			GitRef:       sha,
 			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, sha),
+			SessionID:    s.findReusableSessionID(repoRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, sha),
 			Agent:        agentName,
 			Model:        model,
 			Reasoning:    reasoning,
@@ -1020,7 +1020,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) findReusableSessionID(
-	repoPath string, repoID int64, branch, agentName, reviewType, targetSHA string,
+	repoPath string, repoID int64, branch, agentName, reviewType, worktreePath, targetSHA string,
 ) string {
 	cfg := s.configWatcher.Config()
 	if !config.ResolveReuseReviewSession(repoPath, cfg) || branch == "" || targetSHA == "" {
@@ -1032,6 +1032,7 @@ func (s *Server) findReusableSessionID(
 		branch,
 		agentName,
 		reviewType,
+		worktreePath,
 		config.ResolveReuseReviewSessionLookback(repoPath, cfg),
 	)
 	if err != nil {

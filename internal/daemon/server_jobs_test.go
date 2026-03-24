@@ -616,7 +616,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 		}, "failed to seed session_id: %v", err)
 	}
 
-	candidate, err := db.FindReusableSessionCandidate(repo.ID, "feature/session", "test", config.ReviewTypeDefault)
+	candidate, err := db.FindReusableSessionCandidate(repo.ID, "feature/session", "test", config.ReviewTypeDefault, "")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -625,7 +625,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	require.NotNil(t, candidate, "expected reusable session candidate")
 	assert.Equal(t, "session-123", candidate.SessionID, "candidate session_id")
 
-	reused := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, sha)
+	reused := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", sha)
 	if reused != "session-123" {
 		require.Condition(t, func() bool {
 			return false
@@ -780,7 +780,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want empty for unrelated history", got)
@@ -873,7 +873,7 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want empty for old candidate", got)
@@ -1013,7 +1013,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want %q", got, "session-valid")
@@ -1161,21 +1161,21 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with default lookback = %q, want %q", got, "session-valid")
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 10
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with capped lookback = %q, want empty", got)
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 12
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with expanded lookback = %q, want %q", got, "session-valid")
@@ -1305,7 +1305,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		}, "failed to seed malformed session candidate: %v", err)
 	}
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with unusable newer refs = %q, want %q", got, "session-valid")
@@ -1407,7 +1407,7 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		}, "failed to seed invalid session_id: %v", err)
 	}
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with invalid stored session_id = %q, want %q", got, "session-valid")
