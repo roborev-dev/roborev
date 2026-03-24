@@ -132,20 +132,6 @@ func (e *UnknownAgentError) Error() string {
 	)
 }
 
-// aliases maps short names to full agent names
-var aliases = map[string]string{
-	"claude": "claude-code",
-	"agent":  "cursor",
-}
-
-// resolveAlias returns the canonical agent name, resolving aliases
-func resolveAlias(name string) string {
-	if canonical, ok := aliases[name]; ok {
-		return canonical
-	}
-	return name
-}
-
 // CanonicalName resolves an agent alias to its canonical name.
 // Returns the name unchanged if it is not an alias.
 func CanonicalName(name string) string {
@@ -235,9 +221,7 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		}
 	}
 
-	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi
-	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi"}
-	for _, name := range fallbacks {
+	for _, name := range fallbackAgentOrder {
 		if name != preferred && IsAvailable(name) {
 			return Get(name)
 		}
@@ -252,7 +236,7 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 	}
 
 	if len(available) == 0 {
-		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents")
+		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))
 	}
 
 	return Get(available[0])

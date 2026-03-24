@@ -1,9 +1,10 @@
 package agent
 
 import (
-	"github.com/roborev-dev/roborev/internal/config"
 	"os/exec"
 	"strings"
+
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 func defaultACPAgentConfig() *config.ACPAgentConfig {
@@ -51,49 +52,6 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 	return resolved
 }
 
-// applyCommandOverrides clones the agent and applies the configured
-// command override from cfg. Returns the original agent unchanged when
-// no override applies. Cloning avoids mutating global registry
-// singletons that concurrent callers share.
-func applyCommandOverrides(a Agent, cfg *config.Config) Agent {
-	if cfg == nil {
-		return a
-	}
-	switch agent := a.(type) {
-	case *CodexAgent:
-		if cfg.CodexCmd != "" {
-			clone := *agent
-			clone.Command = cfg.CodexCmd
-			return &clone
-		}
-	case *ClaudeAgent:
-		if cfg.ClaudeCodeCmd != "" {
-			clone := *agent
-			clone.Command = cfg.ClaudeCodeCmd
-			return &clone
-		}
-	case *CursorAgent:
-		if cfg.CursorCmd != "" {
-			clone := *agent
-			clone.Command = cfg.CursorCmd
-			return &clone
-		}
-	case *PiAgent:
-		if cfg.PiCmd != "" {
-			clone := *agent
-			clone.Command = cfg.PiCmd
-			return &clone
-		}
-	case *OpenCodeAgent:
-		if cfg.OpenCodeCmd != "" {
-			clone := *agent
-			clone.Command = cfg.OpenCodeCmd
-			return &clone
-		}
-	}
-	return a
-}
-
 // isAvailableWithConfig checks whether the named agent can be resolved
 // to an executable command, considering config command overrides. If a
 // config override points to an available binary, the agent is considered
@@ -109,9 +67,8 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 		return true // non-command agents (e.g. test) are always available
 	}
 	// Check the configured command first — it takes priority.
-	overridden := applyCommandOverrides(a, cfg)
-	if oca, ok := overridden.(CommandAgent); ok {
-		if _, err := exec.LookPath(oca.CommandName()); err == nil {
+	if override := commandOverrideForAgent(name, cfg); override != "" {
+		if _, err := exec.LookPath(override); err == nil {
 			return true
 		}
 	}
