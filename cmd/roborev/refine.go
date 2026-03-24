@@ -355,9 +355,10 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	}
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
 
-	// Resolve agent for refine workflow at this reasoning level
-	resolvedAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "refine")
+	// Resolve agent/model preferences for refine at this reasoning level.
+	resolution := agent.ResolveWorkflowConfig(
+		opts.agentName, repoPath, cfg, "refine", resolvedReasoning,
+	)
 	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)
 	agent.SetAllowUnsafeAgents(allowUnsafe)
 	if cfg != nil {
@@ -367,12 +368,14 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	// Get the agent with configured reasoning level (model applied after
 	// backup determination to avoid baking the primary model into a
 	// backup agent).
-	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, backupAgent)
+	addressAgent, err := selectRefineAgent(
+		cfg, resolution.PreferredAgent, reasoningLevel, resolution.BackupAgent,
+	)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
 	addressAgent, _ = applyModelForAgent(
-		addressAgent, resolvedAgent, backupAgent,
+		addressAgent, resolution.PreferredAgent, resolution.BackupAgent,
 		opts.model, repoPath, cfg, "refine", resolvedReasoning,
 	)
 	fmt.Printf("Using agent: %s\n", addressAgent.Name())
@@ -1214,20 +1217,15 @@ func applyModelForAgent(
 	workflow string,
 	reasoning string,
 ) (agent.Agent, string) {
-	usingBackup := backupAgentName != "" &&
-		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgentName) &&
-		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
-
-	var model string
-	if usingBackup && cliModel == "" {
-		model = config.ResolveBackupModelForWorkflow(
-			repoPath, cfg, workflow,
-		)
-	} else {
-		model = agent.ResolveWorkflowModelForAgent(
-			a.Name(), cliModel, repoPath, cfg, workflow, reasoning,
-		)
+	resolution := agent.WorkflowConfig{
+		RepoPath:       repoPath,
+		GlobalConfig:   cfg,
+		Workflow:       workflow,
+		Reasoning:      reasoning,
+		PreferredAgent: preferredAgent,
+		BackupAgent:    backupAgentName,
 	}
+	model := resolution.ModelForSelectedAgent(a.Name(), cliModel)
 
 	if model != "" {
 		a = a.WithModel(model)

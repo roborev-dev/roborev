@@ -803,25 +803,19 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	// Resolve agent and model via fix workflow config.
-	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
+	resolution := agent.ResolveWorkflowConfig(
+		agentName, repoPath, cfg, "fix", reasoning,
+	)
+	agentName = resolution.PreferredAgent
 
-	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
+	a, err := agent.GetAvailableWithConfig(
+		agentName, cfg, resolution.BackupAgent,
+	)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}
 
-	// Use backup model when the backup agent was selected and no
-	// explicit model was passed via CLI.
-	preferredForAnalyze := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredForAnalyze)
-	if usingBackup && model == "" {
-		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
-	} else {
-		model = resolveFixModel(a.Name(), model, repoPath, cfg, reasoning)
-	}
+	model = resolution.ModelForSelectedAgent(a.Name(), model)
 
 	// Configure agent: agentic mode, with model and reasoning
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)

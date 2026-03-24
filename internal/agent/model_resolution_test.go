@@ -272,3 +272,34 @@ agent = "custom-acp"
 	)
 	require.Equal(t, "gpt-5.4", got, "ResolveWorkflowModelForAgent() = %q, want %q", got, "gpt-5.4")
 }
+
+func TestResolveWorkflowConfigModelForSelectedAgent_UsesBackupModelForAliasMatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		ReviewAgent:       "gemini",
+		ReviewBackupAgent: "claude",
+		ReviewBackupModel: "claude-sonnet",
+	}
+
+	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+
+	require.Equal(t, "gemini", resolution.PreferredAgent)
+	require.Equal(t, "claude", resolution.BackupAgent)
+	require.Equal(t, "claude-sonnet", resolution.ModelForSelectedAgent("claude-code", ""))
+}
+
+func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		DefaultAgent:      "codex",
+		DefaultModel:      "gpt-5.4",
+		ReviewAgent:       "gemini",
+		ReviewBackupAgent: "claude",
+	}
+
+	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+
+	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
+}

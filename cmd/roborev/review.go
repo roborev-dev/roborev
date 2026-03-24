@@ -384,12 +384,15 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		workflow = reviewType
 	}
 
-	// Resolve agent using workflow-specific resolution (matches daemon behavior)
-	preferredAgent := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, workflow, reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, workflow)
+	// Resolve agent/model preferences (matches daemon behavior).
+	resolution := agent.ResolveWorkflowConfig(
+		agentName, repoPath, cfg, workflow, reasoning,
+	)
 
 	// Get the agent (try backup before hardcoded chain)
-	a, err := agent.GetAvailableWithConfig(preferredAgent, cfg, backupAgent)
+	a, err := agent.GetAvailableWithConfig(
+		resolution.PreferredAgent, cfg, resolution.BackupAgent,
+	)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}
@@ -399,7 +402,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithReasoning(reasoningLevel)
 	a, model = applyModelForAgent(
-		a, preferredAgent, backupAgent,
+		a, resolution.PreferredAgent, resolution.BackupAgent,
 		model, repoPath, cfg, workflow, reasoning,
 	)
 

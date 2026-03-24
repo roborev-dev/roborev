@@ -562,9 +562,11 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			workflow = rt
 		}
 
-		// Resolve agent through workflow config when not explicitly set
-		resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
-		backupAgent := config.ResolveBackupAgentForWorkflow(repo.RootPath, cfg, workflow)
+		// Resolve agent through workflow config when not explicitly set.
+		resolution := agent.ResolveWorkflowConfig(
+			ag, repo.RootPath, cfg, workflow, reasoning,
+		)
+		resolvedAgent := resolution.PreferredAgent
 		if p.agentResolverFn != nil {
 			name, err := p.agentResolverFn(resolvedAgent)
 			if err != nil {
@@ -572,26 +574,18 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			}
 			resolvedAgent = name
-		} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg, backupAgent); err != nil {
+		} else if resolved, err := agent.GetAvailableWithConfig(
+			resolvedAgent, cfg, resolution.BackupAgent,
+		); err != nil {
 			rollback("No agent available — check agent config or quota")
 			return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 		} else {
 			resolvedAgent = resolved.Name()
 		}
 
-		// Use backup model when the backup agent was selected
-		preferredForWorkflow := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
-		usingBackup := backupAgent != "" &&
-			agent.CanonicalName(resolvedAgent) == agent.CanonicalName(backupAgent) &&
-			agent.CanonicalName(resolvedAgent) != agent.CanonicalName(preferredForWorkflow)
-		var resolvedModel string
-		if usingBackup && cfg.CI.Model == "" {
-			resolvedModel = config.ResolveBackupModelForWorkflow(repo.RootPath, cfg, workflow)
-		} else {
-			resolvedModel = agent.ResolveWorkflowModelForAgent(
-				resolvedAgent, cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning,
-			)
-		}
+		resolvedModel := resolution.ModelForSelectedAgent(
+			resolvedAgent, cfg.CI.Model,
+		)
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,

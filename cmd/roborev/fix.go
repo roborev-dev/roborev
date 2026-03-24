@@ -322,8 +322,11 @@ func resolveFixModel(
 	selectedAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) string {
-	return agent.ResolveWorkflowModelForAgent(
-		selectedAgent, cliModel, repoPath, cfg, "fix", reasoning,
+	resolution := agent.ResolveWorkflowConfig(
+		"", repoPath, cfg, "fix", reasoning,
+	)
+	return resolution.ModelForSelectedAgent(
+		selectedAgent, cliModel,
 	)
 }
 
@@ -339,26 +342,20 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
 	}
 
-	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
+	resolution := agent.ResolveWorkflowConfig(
+		opts.agentName, repoPath, cfg, "fix", reasoning,
+	)
 
-	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
+	a, err := agent.GetAvailableWithConfig(
+		resolution.PreferredAgent, cfg, resolution.BackupAgent,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
 
-	// Use backup model when the backup agent was selected and no
-	// explicit model was passed via CLI.
-	preferredAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
-	var modelStr string
-	if usingBackup && opts.model == "" {
-		modelStr = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
-	} else {
-		modelStr = resolveFixModel(a.Name(), opts.model, repoPath, cfg, reasoning)
-	}
+	modelStr := resolution.ModelForSelectedAgent(
+		a.Name(), opts.model,
+	)
 
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithAgentic(true).WithReasoning(reasoningLevel)
