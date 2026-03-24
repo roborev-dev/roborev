@@ -65,6 +65,7 @@ func TestParseSinceDuration(t *testing.T) {
 		{input: "invalid", wantErr: true},
 		{input: "0d", wantErr: true},
 		{input: "-5d", wantErr: true},
+		{input: "-5h", wantErr: true},
 	}
 
 	for _, tt := range tests {

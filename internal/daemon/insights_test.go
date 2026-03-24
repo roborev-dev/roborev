@@ -101,6 +101,54 @@ func TestHandleEnqueueInsightsSkipsWhenNoFailingReviewsMatch(t *testing.T) {
 	assert.Contains(t, resp.Reason, "No failing reviews found")
 }
 
+func TestHandleEnqueueInsightsNoBranchIncludesAllBranches(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	repoDir := filepath.Join(tmpDir, "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+
+	mainRoot, err := gitpkg.GetMainRepoRoot(repoDir)
+	require.NoError(t, err)
+
+	repo, err := db.GetOrCreateRepo(mainRoot)
+	require.NoError(t, err)
+
+	// Create failing reviews on two different branches.
+	enqueueCompletedInsightsReviewJob(
+		t, db, repo.ID, "aaa111", "main",
+		storage.JobTypeReview, failingInsightsOutput("Main finding"),
+	)
+	enqueueCompletedInsightsReviewJob(
+		t, db, repo.ID, "bbb222", "feature",
+		storage.JobTypeReview, failingInsightsOutput("Feature finding"),
+	)
+
+	since := time.Now().Add(-24 * time.Hour)
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue",
+		EnqueueRequest{
+			RepoPath: repoDir,
+			GitRef:   "insights",
+			Agent:    "test",
+			JobType:  storage.JobTypeInsights,
+			Since:    since.Format(time.RFC3339),
+			// Branch intentionally omitted.
+		})
+	w := httptest.NewRecorder()
+
+	server.handleEnqueue(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+
+	assert.Contains(t, stored.Prompt, "Main finding")
+	assert.Contains(t, stored.Prompt, "Feature finding")
+}
+
 func enqueueCompletedInsightsReviewJob(
 	t *testing.T,
 	db *storage.DB,

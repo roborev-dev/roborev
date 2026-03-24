@@ -737,8 +737,10 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fall back to detected branch when client didn't send one
-	if req.Branch == "" {
+	// Fall back to detected branch when client didn't send one.
+	// Insights jobs are read-only historical analysis, so leave
+	// the branch empty to analyze all branches.
+	if req.Branch == "" && req.JobType != storage.JobTypeInsights {
 		req.Branch = currentBranch
 	}
 

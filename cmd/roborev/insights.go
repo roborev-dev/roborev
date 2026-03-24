@@ -214,6 +214,10 @@ func parseSinceDuration(s string) (time.Time, error) {
 
 	// Try standard Go duration first (e.g., "720h")
 	if d, err := time.ParseDuration(s); err == nil {
+		if d <= 0 {
+			return time.Time{},
+				fmt.Errorf("duration must be positive, got %s", s)
+		}
 		return time.Now().Add(-d), nil
 	}
 
