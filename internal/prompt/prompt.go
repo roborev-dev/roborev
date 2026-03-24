@@ -28,13 +28,18 @@ Return only the final review content. Do NOT include process narration, progress
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
 // SystemPromptSingle is the base instruction for single commit reviews
-const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
+const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below.
 
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
+First, read the commit message to understand the developer's intent. Then read the diff and check whether the code changes fully and correctly achieve that intent. Gaps between stated intent and actual implementation are high-value findings.
+
+Check for:
+
+1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit message claims?
+2. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
+3. **Security**: Injection vulnerabilities, auth issues, data exposure
+4. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
+5. **Regressions**: Changes that might break existing functionality
+6. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
 Do not report issues without specific evidence in the diff. In particular, do not report:
 - Hypothetical issues in code not shown in the diff
@@ -86,13 +91,18 @@ After reviewing, provide:
 If you find no issues, state "No issues found." after the summary.`
 
 // SystemPromptRange is the base instruction for commit range reviews
-const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below for:
+const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below.
 
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
+First, read the commit messages to understand the developers' intent. Then read the diff and check whether the code changes fully and correctly achieve that intent. Gaps between stated intent and actual implementation are high-value findings.
+
+Check for:
+
+1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit messages claim?
+2. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
+3. **Security**: Injection vulnerabilities, auth issues, data exposure
+4. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
+5. **Regressions**: Changes that might break existing functionality
+6. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
 Do not report issues without specific evidence in the diff. In particular, do not report:
 - Hypothetical issues in code not shown in the diff
