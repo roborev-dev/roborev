@@ -19,7 +19,12 @@ Your analysis should produce:
 
 ## 1. Recurring Finding Patterns
 
-Identify clusters of similar findings that appear across multiple reviews. For each pattern:
+Identify clusters of similar findings that appear across multiple reviews. Apply evidence thresholds:
+- 1-2 occurrences: note as a data point only, do not recommend action
+- 3-5 occurrences: emerging pattern, suggest as a candidate guideline with moderate confidence
+- 6+ occurrences: strong signal, recommend specific guideline text with high confidence
+
+For each pattern:
 - Name the pattern concisely
 - Count how many reviews contain it
 - Give 1-2 representative examples with file/line references if available
@@ -48,7 +53,10 @@ Identify patterns the reviews keep flagging that are NOT mentioned in the curren
 
 ## 5. Suggested Guideline Additions
 
-Provide concrete text snippets that could be added to the project's review_guidelines configuration. Format each as a ready-to-use guideline entry.
+Only suggest guidelines backed by 3+ occurrences from section 1 or 3+ noise candidates from section 3. For each, provide:
+- The concrete text snippet ready to add to review_guidelines configuration
+- The occurrence count that justifies this addition
+- Whether this suppresses noise or codifies a real quality standard
 
 Be specific and actionable. Avoid vague recommendations. Base everything on evidence from the provided reviews.`
 
