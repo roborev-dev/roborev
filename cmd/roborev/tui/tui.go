@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -525,6 +526,23 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	} else if autoFilterBranch && cwdBranch != "" {
 		activeBranchFilter = cwdBranch
 		filterStack = append(filterStack, filterTypeBranch)
+	}
+
+	// Apply ROBOREV_COLOR_MODE to the lipgloss default renderer so that
+	// AdaptiveColor styles on the queue screen respect the env var.
+	// NO_COLOR takes precedence per the convention.
+	// The glamour/markdown layer is handled separately via streamfmt.
+	if termenv.EnvNoColor() {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	} else {
+		switch strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE")) {
+		case "dark":
+			lipgloss.SetHasDarkBackground(true)
+		case "light":
+			lipgloss.SetHasDarkBackground(false)
+		case "none":
+			lipgloss.SetColorProfile(termenv.Ascii)
+		}
 	}
 
 	return model{

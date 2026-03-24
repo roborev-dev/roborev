@@ -128,6 +128,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 - Runtime info: `~/.roborev/daemon.json`
 - SQLite DB: `~/.roborev/reviews.db` using WAL mode
 - Data dir override: `ROBOREV_DATA_DIR`
+- Color mode: `ROBOREV_COLOR_MODE` env var (`auto`, `dark`, `light`, `none`); `NO_COLOR=1` also supported
 - Global config: `~/.roborev/config.toml`
 - Repo config: `.roborev.toml` at repo root
 - Config precedence is generally: CLI flags -> repo config -> global config -> defaults

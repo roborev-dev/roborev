@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -9,11 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	gansi "github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
 // Filter type constants used in filterStack and popFilter/pushFilter.
@@ -320,44 +319,13 @@ type markdownCache struct {
 	lastPromptMaxScroll int
 }
 
-// resolveColorMode returns the glamour style config and termenv color profile
-// based on the ROBOREV_COLOR_MODE env var and the NO_COLOR convention.
-// Valid ROBOREV_COLOR_MODE values: auto (default), dark, light, none.
-func resolveColorMode() (gansi.StyleConfig, termenv.Profile) {
-	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
-
-	if mode == "none" || termenv.EnvNoColor() {
-		return styles.DarkStyleConfig, termenv.Ascii
-	}
-
-	profile := termenv.EnvColorProfile()
-	switch mode {
-	case "dark":
-		return styles.DarkStyleConfig, profile
-	case "light":
-		return styles.LightStyleConfig, profile
-	default: // "auto" or ""
-		if termenv.HasDarkBackground() {
-			return styles.DarkStyleConfig, profile
-		}
-		return styles.LightStyleConfig, profile
-	}
-}
-
 // newMarkdownCache creates a markdownCache, detecting terminal background
 // color now (before bubbletea enters raw mode and takes over stdin).
-// Builds a custom style with zero margins to avoid extra padding.
-// Respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
+// Delegates style and color profile resolution to the streamfmt package,
+// which respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
 func newMarkdownCache(tabWidth int) *markdownCache {
-	style, profile := resolveColorMode()
-	// Remove document and code block margins that add extra indentation.
-	zeroMargin := uint(0)
-	style.Document.Margin = &zeroMargin
-	style.CodeBlock.Margin = &zeroMargin
-	// Remove inline code prefix/suffix spaces (rendered as visible
-	// colored blocks around `backtick` content).
-	style.Code.Prefix = ""
-	style.Code.Suffix = ""
+	style := streamfmt.GlamourStyle()
+	profile := streamfmt.ResolveColorProfile()
 	if tabWidth <= 0 {
 		tabWidth = 2
 	} else if tabWidth > 16 {

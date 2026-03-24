@@ -35,6 +35,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 - **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
 - **Config**: Global at `~/.roborev/config.toml`, per-repo at `.roborev.toml`
 - **Data dir**: Set `ROBOREV_DATA_DIR` env var to override `~/.roborev`
+- **Color mode**: `ROBOREV_COLOR_MODE=auto|dark|light|none` controls TUI color theme; `NO_COLOR=1` strips all colors
 - **Runtime info**: Daemon writes PID/addr/port to `~/.roborev/daemon.json`
 
 ## Package Map

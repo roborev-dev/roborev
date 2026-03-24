@@ -162,6 +162,14 @@ Project-specific review instructions here.
 
 See [configuration guide](https://roborev.io/configuration/) for all options.
 
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |
+| `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
+
 ## Supported Agents
 
 | Agent | Install |

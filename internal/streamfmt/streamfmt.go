@@ -103,18 +103,18 @@ func TerminalWidth(w io.Writer) int {
 
 // GlamourStyle returns a glamour style config with zero margins,
 // matching the TUI's rendering. Detects dark/light background once.
-// Respects ROBOREV_COLOR_MODE env var for explicit dark/light/none selection.
+// Respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
 func GlamourStyle() gansi.StyleConfig {
 	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
 	var style gansi.StyleConfig
-	switch mode {
-	case "dark":
-		style = styles.DarkStyleConfig
-	case "light":
-		style = styles.LightStyleConfig
-	case "none":
+	switch {
+	case mode == "none" || termenv.EnvNoColor():
 		// Use dark style as base; colors will be stripped by Ascii profile.
 		style = styles.DarkStyleConfig
+	case mode == "dark":
+		style = styles.DarkStyleConfig
+	case mode == "light":
+		style = styles.LightStyleConfig
 	default: // "auto" or ""
 		style = styles.LightStyleConfig
 		if termenv.HasDarkBackground() {

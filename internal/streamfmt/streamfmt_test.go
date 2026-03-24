@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -894,13 +895,16 @@ func TestResolveColorProfile(t *testing.T) {
 		t.Setenv("ROBOREV_COLOR_MODE", "none")
 		assert.Equal(t, termenv.Ascii, ResolveColorProfile())
 	})
-	t.Run("default does not return Ascii", func(t *testing.T) {
+	t.Run("NO_COLOR takes precedence over ROBOREV_COLOR_MODE=dark", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("ROBOREV_COLOR_MODE", "dark")
+		assert.Equal(t, termenv.Ascii, ResolveColorProfile())
+	})
+	t.Run("default returns env color profile", func(t *testing.T) {
 		t.Setenv("NO_COLOR", "")
 		t.Setenv("ROBOREV_COLOR_MODE", "")
-		// In a test environment the profile may vary, but it should not be Ascii
-		// unless the test runner itself sets NO_COLOR.
-		profile := ResolveColorProfile()
-		_ = profile // just ensure no panic
+		// Should match what termenv detects for the current environment.
+		assert.Equal(t, termenv.EnvColorProfile(), ResolveColorProfile())
 	})
 }
 
@@ -918,20 +922,47 @@ func TestRenderMarkdownLinesNoColor(t *testing.T) {
 }
 
 func TestGlamourStyleRespectsColorMode(t *testing.T) {
-	t.Run("dark mode", func(t *testing.T) {
+	// Use the upstream style configs as reference values so tests don't
+	// break if glamour changes its default color palette.
+	darkDocColor := *styles.DarkStyleConfig.Document.Color
+	lightDocColor := *styles.LightStyleConfig.Document.Color
+	require.NotEqual(t, darkDocColor, lightDocColor, "dark and light Document.Color must differ for this test to be meaningful")
+
+	t.Run("dark mode selects dark style", func(t *testing.T) {
 		t.Setenv("ROBOREV_COLOR_MODE", "dark")
+		t.Setenv("NO_COLOR", "")
 		style := GlamourStyle()
-		assert.NotNil(t, style.H1.Color, "dark mode should have heading colors")
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, darkDocColor, *style.Document.Color)
 	})
-	t.Run("light mode", func(t *testing.T) {
+	t.Run("light mode selects light style", func(t *testing.T) {
 		t.Setenv("ROBOREV_COLOR_MODE", "light")
+		t.Setenv("NO_COLOR", "")
 		style := GlamourStyle()
-		assert.NotNil(t, style.H1.Color, "light mode should have heading colors")
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, lightDocColor, *style.Document.Color)
 	})
-	t.Run("none mode", func(t *testing.T) {
+	t.Run("none mode selects dark style as base", func(t *testing.T) {
 		t.Setenv("ROBOREV_COLOR_MODE", "none")
-		// Should not panic; style is still returned (colors stripped by Ascii profile).
+		t.Setenv("NO_COLOR", "")
 		style := GlamourStyle()
-		_ = style
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, darkDocColor, *style.Document.Color)
+	})
+	t.Run("NO_COLOR selects dark style as base", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("ROBOREV_COLOR_MODE", "")
+		style := GlamourStyle()
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, darkDocColor, *style.Document.Color)
+	})
+	t.Run("NO_COLOR takes precedence over dark mode", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("ROBOREV_COLOR_MODE", "dark")
+		// NO_COLOR wins: profile should be Ascii, style should be dark base.
+		assert.Equal(t, termenv.Ascii, ResolveColorProfile())
+		style := GlamourStyle()
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, darkDocColor, *style.Document.Color)
 	})
 }

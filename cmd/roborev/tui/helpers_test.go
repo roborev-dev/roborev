@@ -434,63 +434,6 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 	}
 }
 
-func TestResolveColorMode(t *testing.T) {
-	tests := []struct {
-		name         string
-		colorMode    string
-		noColor      string
-		wantProfile  termenv.Profile
-		wantDarkBase bool // true if DarkStyleConfig should be selected
-	}{
-		{
-			name:        "none mode returns Ascii",
-			colorMode:   "none",
-			wantProfile: termenv.Ascii,
-		},
-		{
-			name:        "NO_COLOR returns Ascii",
-			noColor:     "1",
-			wantProfile: termenv.Ascii,
-		},
-		{
-			name:         "dark mode forces dark style",
-			colorMode:    "dark",
-			wantDarkBase: true,
-		},
-		{
-			name:         "light mode forces light style",
-			colorMode:    "light",
-			wantDarkBase: false,
-		},
-		{
-			name: "empty defaults to auto",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.colorMode != "" {
-				t.Setenv("ROBOREV_COLOR_MODE", tt.colorMode)
-			} else {
-				t.Setenv("ROBOREV_COLOR_MODE", "")
-			}
-			if tt.noColor != "" {
-				t.Setenv("NO_COLOR", tt.noColor)
-			} else {
-				t.Setenv("NO_COLOR", "")
-			}
-			style, profile := resolveColorMode()
-			if tt.wantProfile != 0 {
-				assert.Equal(t, tt.wantProfile, profile)
-			}
-			if tt.colorMode == "dark" || tt.colorMode == "none" {
-				// DarkStyleConfig has non-nil Heading.Color
-				assert.NotNil(t, style.H1.Color, "expected dark-based style")
-			}
-			_ = style // ensure no panic
-		})
-	}
-}
-
 func TestRenderMarkdownLinesNoColor(t *testing.T) {
 	// When colorProfile is Ascii, output should contain no ANSI color sequences.
 	// Bold/reset sequences (\x1b[;1m, \x1b[0m) are still emitted by glamour
