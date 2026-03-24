@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,4 +174,73 @@ func TestGhActionCmd_NotGitRepo(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err, "expected error outside git repo")
 	require.ErrorContains(t, err, "not a git repository", "expected 'not a git repository' error, got: %v", err)
+}
+
+func TestResolveWorkflowConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentFlag string
+		repoCfg   *config.RepoConfig
+		globalCfg *config.Config
+		want      []string
+	}{
+		{
+			name:      "flag overrides all",
+			agentFlag: "codex,gemini",
+			repoCfg: &config.RepoConfig{
+				Agent: "claude-code",
+				CI:    config.RepoCIConfig{Agents: []string{"cursor"}},
+			},
+			globalCfg: &config.Config{
+				DefaultAgent: "droid",
+				CI:           config.CIConfig{Agents: []string{"kiro"}},
+			},
+			want: []string{"codex", "gemini"},
+		},
+		{
+			name: "repo ci agents override repo agent",
+			repoCfg: &config.RepoConfig{
+				Agent: "claude-code",
+				CI:    config.RepoCIConfig{Agents: []string{"gemini"}},
+			},
+			want: []string{"gemini"},
+		},
+		{
+			name: "repo agent overrides global ci agents",
+			repoCfg: &config.RepoConfig{
+				Agent: "claude-code",
+			},
+			globalCfg: &config.Config{
+				CI: config.CIConfig{Agents: []string{"gemini"}},
+			},
+			want: []string{"claude-code"},
+		},
+		{
+			name: "global ci agents override global default agent",
+			globalCfg: &config.Config{
+				DefaultAgent: "claude-code",
+				CI:           config.CIConfig{Agents: []string{"gemini"}},
+			},
+			want: []string{"gemini"},
+		},
+		{
+			name: "global default agent beats built-in default",
+			globalCfg: &config.Config{
+				DefaultAgent: "claude-code",
+			},
+			want: []string{"claude-code"},
+		},
+		{
+			name: "falls back to built-in default",
+			want: []string{"codex"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := config.ResolveCIWorkflowAgents(
+				tt.agentFlag, tt.repoCfg, tt.globalCfg)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
