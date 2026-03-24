@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode"
 
@@ -53,6 +54,7 @@ type Formatter struct {
 	width int // terminal width; 0 = no wrapping
 
 	glamourStyle gansi.StyleConfig // detected once at init
+	colorProfile termenv.Profile   // color profile for glamour (Ascii when NO_COLOR)
 
 	writeErr    error // first write error encountered during formatting
 	lastWasTool bool  // tracks tool vs text transitions for spacing
@@ -70,6 +72,7 @@ func New(w io.Writer, isTTY bool) *Formatter {
 	f := &Formatter{w: w, isTTY: isTTY}
 	if isTTY {
 		f.glamourStyle = GlamourStyle()
+		f.colorProfile = ResolveColorProfile()
 		f.width = TerminalWidth(w)
 	}
 	return f
@@ -82,7 +85,8 @@ func NewWithWidth(
 	w io.Writer, width int, style gansi.StyleConfig,
 ) *Formatter {
 	return &Formatter{
-		w: w, isTTY: true, width: width, glamourStyle: style,
+		w: w, isTTY: true, width: width,
+		glamourStyle: style, colorProfile: ResolveColorProfile(),
 	}
 }
 
@@ -99,10 +103,23 @@ func TerminalWidth(w io.Writer) int {
 
 // GlamourStyle returns a glamour style config with zero margins,
 // matching the TUI's rendering. Detects dark/light background once.
+// Respects ROBOREV_COLOR_MODE env var for explicit dark/light/none selection.
 func GlamourStyle() gansi.StyleConfig {
-	style := styles.LightStyleConfig
-	if termenv.HasDarkBackground() {
+	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
+	var style gansi.StyleConfig
+	switch mode {
+	case "dark":
 		style = styles.DarkStyleConfig
+	case "light":
+		style = styles.LightStyleConfig
+	case "none":
+		// Use dark style as base; colors will be stripped by Ascii profile.
+		style = styles.DarkStyleConfig
+	default: // "auto" or ""
+		style = styles.LightStyleConfig
+		if termenv.HasDarkBackground() {
+			style = styles.DarkStyleConfig
+		}
 	}
 	zeroMargin := uint(0)
 	style.Document.Margin = &zeroMargin
@@ -110,6 +127,17 @@ func GlamourStyle() gansi.StyleConfig {
 	style.Code.Prefix = ""
 	style.Code.Suffix = ""
 	return style
+}
+
+// ResolveColorProfile returns the termenv color profile based on
+// the ROBOREV_COLOR_MODE env var and the NO_COLOR convention.
+// Returns termenv.Ascii when colors should be suppressed.
+func ResolveColorProfile() termenv.Profile {
+	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
+	if mode == "none" || termenv.EnvNoColor() {
+		return termenv.Ascii
+	}
+	return termenv.EnvColorProfile()
 }
 
 // Width returns the configured terminal width.
@@ -459,7 +487,7 @@ func (f *Formatter) writeText(text string) {
 		return
 	}
 	lines := RenderMarkdownLines(
-		text, f.width, f.width, f.glamourStyle, 2,
+		text, f.width, f.width, f.glamourStyle, 2, f.colorProfile,
 	)
 	for _, line := range lines {
 		f.writef("%s\n", line)
@@ -522,7 +550,7 @@ func PrintMarkdownOrPlain(w io.Writer, text string) {
 	}
 	width := TerminalWidth(w)
 	style := GlamourStyle()
-	lines := RenderMarkdownLines(text, width, width, style, 2)
+	lines := RenderMarkdownLines(text, width, width, style, 2, ResolveColorProfile())
 	for _, line := range lines {
 		fmt.Fprintln(w, line)
 	}

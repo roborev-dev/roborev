@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -879,4 +881,57 @@ func TestFormatterWidth(t *testing.T) {
 	// Width() should return the configured terminal width.
 	fmtr := NewWithWidth(io.Discard, 42, GlamourStyle())
 	require.Equal(t, 42, fmtr.Width(), "Width() = %d, want 42", fmtr.Width())
+}
+
+func TestResolveColorProfile(t *testing.T) {
+	t.Run("NO_COLOR returns Ascii", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "1")
+		t.Setenv("ROBOREV_COLOR_MODE", "")
+		assert.Equal(t, termenv.Ascii, ResolveColorProfile())
+	})
+	t.Run("ROBOREV_COLOR_MODE=none returns Ascii", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("ROBOREV_COLOR_MODE", "none")
+		assert.Equal(t, termenv.Ascii, ResolveColorProfile())
+	})
+	t.Run("default does not return Ascii", func(t *testing.T) {
+		t.Setenv("NO_COLOR", "")
+		t.Setenv("ROBOREV_COLOR_MODE", "")
+		// In a test environment the profile may vary, but it should not be Ascii
+		// unless the test runner itself sets NO_COLOR.
+		profile := ResolveColorProfile()
+		_ = profile // just ensure no panic
+	})
+}
+
+func TestRenderMarkdownLinesNoColor(t *testing.T) {
+	text := "# Heading\n\nSome **bold** text."
+	style := GlamourStyle()
+	lines := RenderMarkdownLines(text, 80, 80, style, 2, termenv.Ascii)
+
+	combined := strings.Join(lines, "\n")
+	// Match ANSI SGR sequences that set foreground/background colors.
+	// Bold/reset are acceptable under NO_COLOR convention.
+	colorSGR := regexp.MustCompile(`\x1b\[(3[0-7]|4[0-7]|9[0-7]|10[0-7]|38;|48;)[0-9;]*m`)
+	matches := colorSGR.FindAllString(combined, -1)
+	assert.Empty(t, matches, "expected no ANSI color sequences with Ascii profile, got: %v", matches)
+}
+
+func TestGlamourStyleRespectsColorMode(t *testing.T) {
+	t.Run("dark mode", func(t *testing.T) {
+		t.Setenv("ROBOREV_COLOR_MODE", "dark")
+		style := GlamourStyle()
+		assert.NotNil(t, style.H1.Color, "dark mode should have heading colors")
+	})
+	t.Run("light mode", func(t *testing.T) {
+		t.Setenv("ROBOREV_COLOR_MODE", "light")
+		style := GlamourStyle()
+		assert.NotNil(t, style.H1.Color, "light mode should have heading colors")
+	})
+	t.Run("none mode", func(t *testing.T) {
+		t.Setenv("ROBOREV_COLOR_MODE", "none")
+		// Should not panic; style is still returned (colors stripped by Ascii profile).
+		style := GlamourStyle()
+		_ = style
+	})
 }

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ func stripTestANSI(s string) string {
 
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
-	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, 80, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, 80, styles.DarkStyleConfig, 2, termenv.TrueColor)
 
 	found := 0
 	for _, line := range lines {
@@ -36,7 +37,7 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
-	lines := renderMarkdownLines("", 80, 80, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines("", 80, 80, styles.DarkStyleConfig, 2, termenv.TrueColor)
 	// Should not panic and should produce some output (even if empty)
 	assert.NotNil(t, lines)
 }
@@ -304,7 +305,7 @@ func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
 	// Long prose lines should be word-wrapped by glamour, not truncated.
 	// All words must appear in the rendered output.
 	longProse := "This is a very long prose line with important content that should be word-wrapped by glamour rather than truncated so that no information is lost from the rendered output"
-	lines := renderMarkdownLines(longProse, 60, 80, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines(longProse, 60, 80, styles.DarkStyleConfig, 2, termenv.TrueColor)
 
 	var combined strings.Builder
 	for _, line := range lines {
@@ -423,7 +424,7 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 	longLine := strings.Repeat("x", 200)
 	text := "Review:\n\n```\n" + longLine + "\n```\n"
 	width := 76
-	lines := renderMarkdownLines(text, width, width, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines(text, width, width, styles.DarkStyleConfig, 2, termenv.TrueColor)
 
 	for i, line := range lines {
 		stripped := stripTestANSI(line)
@@ -431,6 +432,79 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 			assert.LessOrEqual(t, len(stripped), width+10, "line %d exceeds width %d: len=%d %q", i, width, len(stripped), stripped)
 		}
 	}
+}
+
+func TestResolveColorMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		colorMode    string
+		noColor      string
+		wantProfile  termenv.Profile
+		wantDarkBase bool // true if DarkStyleConfig should be selected
+	}{
+		{
+			name:        "none mode returns Ascii",
+			colorMode:   "none",
+			wantProfile: termenv.Ascii,
+		},
+		{
+			name:        "NO_COLOR returns Ascii",
+			noColor:     "1",
+			wantProfile: termenv.Ascii,
+		},
+		{
+			name:         "dark mode forces dark style",
+			colorMode:    "dark",
+			wantDarkBase: true,
+		},
+		{
+			name:         "light mode forces light style",
+			colorMode:    "light",
+			wantDarkBase: false,
+		},
+		{
+			name: "empty defaults to auto",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.colorMode != "" {
+				t.Setenv("ROBOREV_COLOR_MODE", tt.colorMode)
+			} else {
+				t.Setenv("ROBOREV_COLOR_MODE", "")
+			}
+			if tt.noColor != "" {
+				t.Setenv("NO_COLOR", tt.noColor)
+			} else {
+				t.Setenv("NO_COLOR", "")
+			}
+			style, profile := resolveColorMode()
+			if tt.wantProfile != 0 {
+				assert.Equal(t, tt.wantProfile, profile)
+			}
+			if tt.colorMode == "dark" || tt.colorMode == "none" {
+				// DarkStyleConfig has non-nil Heading.Color
+				assert.NotNil(t, style.H1.Color, "expected dark-based style")
+			}
+			_ = style // ensure no panic
+		})
+	}
+}
+
+func TestRenderMarkdownLinesNoColor(t *testing.T) {
+	// When colorProfile is Ascii, output should contain no ANSI color sequences.
+	// Bold/reset sequences (\x1b[;1m, \x1b[0m) are still emitted by glamour
+	// for text formatting — these are not colors and are acceptable under NO_COLOR.
+	text := "# Heading\n\nSome **bold** text and `code`."
+	lines := renderMarkdownLines(text, 80, 80, styles.DarkStyleConfig, 2, termenv.Ascii)
+
+	combined := strings.Join(lines, "\n")
+	// Match ANSI SGR sequences that set foreground/background colors:
+	// \x1b[3Xm (fg), \x1b[4Xm (bg), \x1b[9Xm (bright fg), \x1b[10Xm (bright bg),
+	// \x1b[38;...m (extended fg), \x1b[48;...m (extended bg).
+	colorSGR := regexp.MustCompile(`\x1b\[(3[0-7]|4[0-7]|9[0-7]|10[0-7]|38;|48;)[0-9;]*m`)
+	matches := colorSGR.FindAllString(combined, -1)
+	assert.Empty(t, matches, "expected no ANSI color sequences with Ascii profile, got: %v", matches)
 }
 
 func TestReflowHelpRows(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	gansi "github.com/charmbracelet/glamour/ansi"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 )
 
 // ansiEscapePattern matches ANSI escape sequences (colors, cursor
@@ -88,9 +89,13 @@ var trailingPadRe = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
 
 // StripTrailingPadding removes trailing whitespace and ANSI SGR codes
 // from a glamour output line, then appends a reset to ensure clean
-// color state.
-func StripTrailingPadding(line string) string {
-	return trailingPadRe.ReplaceAllString(line, "") + "\x1b[0m"
+// color state. When noColor is true, the reset sequence is omitted.
+func StripTrailingPadding(line string, noColor bool) string {
+	line = trailingPadRe.ReplaceAllString(line, "")
+	if noColor {
+		return line
+	}
+	return line + "\x1b[0m"
 }
 
 // WrapText wraps text to the specified width, preserving existing
@@ -233,17 +238,20 @@ func ParseFence(line string) (byte, int, bool) {
 
 // RenderMarkdownLines renders markdown text using glamour and splits
 // into lines. wrapWidth controls glamour's word-wrap column.
-// maxWidth controls line truncation (actual terminal width). Falls
-// back to WrapText if glamour rendering fails.
+// maxWidth controls line truncation (actual terminal width).
+// colorProfile controls glamour's color output (use termenv.Ascii to suppress colors).
+// Falls back to WrapText if glamour rendering fails.
 func RenderMarkdownLines(
 	text string, wrapWidth, maxWidth int,
 	glamourStyle gansi.StyleConfig, tabWidth int,
+	colorProfile termenv.Profile,
 ) []string {
 	text = TruncateLongLines(text, maxWidth, tabWidth)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
+		glamour.WithColorProfile(colorProfile),
 	)
 	if err != nil {
 		return SanitizeLines(WrapText(text, wrapWidth))
@@ -252,9 +260,10 @@ func RenderMarkdownLines(
 	if err != nil {
 		return SanitizeLines(WrapText(text, wrapWidth))
 	}
+	noColor := colorProfile == termenv.Ascii
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
-		line = StripTrailingPadding(line)
+		line = StripTrailingPadding(line, noColor)
 		line = SanitizeEscapes(line)
 		if xansi.StringWidth(line) > maxWidth {
 			line = xansi.Truncate(line, maxWidth, "")

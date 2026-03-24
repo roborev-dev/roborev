@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -299,6 +300,7 @@ func wrapLine(line string, width int) []string {
 // which blocks for seconds inside bubbletea's raw-mode input loop.
 type markdownCache struct {
 	glamourStyle gansi.StyleConfig // custom style derived from dark/light, detected once at init
+	colorProfile termenv.Profile   // color profile for glamour rendering (Ascii when NO_COLOR)
 	tabWidth     int               // tab expansion width (default 2)
 
 	reviewLines []string
@@ -318,14 +320,36 @@ type markdownCache struct {
 	lastPromptMaxScroll int
 }
 
+// resolveColorMode returns the glamour style config and termenv color profile
+// based on the ROBOREV_COLOR_MODE env var and the NO_COLOR convention.
+// Valid ROBOREV_COLOR_MODE values: auto (default), dark, light, none.
+func resolveColorMode() (gansi.StyleConfig, termenv.Profile) {
+	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
+
+	if mode == "none" || termenv.EnvNoColor() {
+		return styles.DarkStyleConfig, termenv.Ascii
+	}
+
+	profile := termenv.EnvColorProfile()
+	switch mode {
+	case "dark":
+		return styles.DarkStyleConfig, profile
+	case "light":
+		return styles.LightStyleConfig, profile
+	default: // "auto" or ""
+		if termenv.HasDarkBackground() {
+			return styles.DarkStyleConfig, profile
+		}
+		return styles.LightStyleConfig, profile
+	}
+}
+
 // newMarkdownCache creates a markdownCache, detecting terminal background
 // color now (before bubbletea enters raw mode and takes over stdin).
 // Builds a custom style with zero margins to avoid extra padding.
+// Respects ROBOREV_COLOR_MODE env var and NO_COLOR convention.
 func newMarkdownCache(tabWidth int) *markdownCache {
-	style := styles.LightStyleConfig
-	if termenv.HasDarkBackground() {
-		style = styles.DarkStyleConfig
-	}
+	style, profile := resolveColorMode()
 	// Remove document and code block margins that add extra indentation.
 	zeroMargin := uint(0)
 	style.Document.Margin = &zeroMargin
@@ -339,7 +363,7 @@ func newMarkdownCache(tabWidth int) *markdownCache {
 	} else if tabWidth > 16 {
 		tabWidth = 16
 	}
-	return &markdownCache{glamourStyle: style, tabWidth: tabWidth}
+	return &markdownCache{glamourStyle: style, colorProfile: profile, tabWidth: tabWidth}
 }
 
 // truncateLongLines normalizes tabs and truncates lines inside fenced code
@@ -481,15 +505,21 @@ var trailingPadRe = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
 
 // stripTrailingPadding removes trailing whitespace and ANSI SGR codes from a
 // glamour output line, then appends a reset to ensure clean color state.
-func stripTrailingPadding(line string) string {
-	return trailingPadRe.ReplaceAllString(line, "") + "\x1b[0m"
+// When noColor is true, the reset sequence is omitted.
+func stripTrailingPadding(line string, noColor bool) string {
+	line = trailingPadRe.ReplaceAllString(line, "")
+	if noColor {
+		return line
+	}
+	return line + "\x1b[0m"
 }
 
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
 // wrapWidth controls glamour's word-wrap column (capped for readability).
 // maxWidth controls line truncation (actual terminal width).
+// colorProfile controls glamour's color output (use termenv.Ascii to suppress colors).
 // Falls back to wrapText if glamour rendering fails.
-func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gansi.StyleConfig, tabWidth int) []string {
+func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gansi.StyleConfig, tabWidth int, colorProfile termenv.Profile) []string {
 	// Truncate long lines before glamour so they don't get word-wrapped.
 	// Use maxWidth (terminal width) so content fills the available space.
 	text = truncateLongLines(text, maxWidth, tabWidth)
@@ -497,6 +527,7 @@ func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gans
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
+		glamour.WithColorProfile(colorProfile),
 	)
 	if err != nil {
 		return sanitizeLines(wrapText(text, wrapWidth))
@@ -505,9 +536,10 @@ func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gans
 	if err != nil {
 		return sanitizeLines(wrapText(text, wrapWidth))
 	}
+	noColor := colorProfile == termenv.Ascii
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
-		line = stripTrailingPadding(line)
+		line = stripTrailingPadding(line, noColor)
 		line = sanitizeEscapes(line)
 		// Truncate output lines that still exceed maxWidth (glamour can add
 		// indentation for block quotes, lists, etc. beyond the wrap width).
@@ -526,7 +558,7 @@ func (c *markdownCache) getReviewLines(text string, wrapWidth, maxWidth int, rev
 	if c.reviewID == reviewID && c.reviewWidth == maxWidth && c.reviewText == text {
 		return c.reviewLines
 	}
-	c.reviewLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth)
+	c.reviewLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth, c.colorProfile)
 	c.reviewID = reviewID
 	c.reviewWidth = maxWidth
 	c.reviewText = text
@@ -540,7 +572,7 @@ func (c *markdownCache) getPromptLines(text string, wrapWidth, maxWidth int, rev
 	if c.promptID == reviewID && c.promptWidth == maxWidth && c.promptText == text {
 		return c.promptLines
 	}
-	c.promptLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth)
+	c.promptLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth, c.colorProfile)
 	c.promptID = reviewID
 	c.promptWidth = maxWidth
 	c.promptText = text
