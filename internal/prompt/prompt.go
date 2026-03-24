@@ -42,7 +42,10 @@ After reviewing, provide:
 
 1. A brief summary of what the commit does
 2. Any issues found, listed with:
-   - Severity (high/medium/low)
+   - Severity, using these definitions:
+     - **high**: Will cause data loss, security breach, crash, or incorrect results in production
+     - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
+     - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
    - A brief explanation of the problem and suggested fix
 
@@ -61,7 +64,10 @@ After reviewing, provide:
 
 1. A brief summary of what the changes do
 2. Any issues found, listed with:
-   - Severity (high/medium/low)
+   - Severity, using these definitions:
+     - **high**: Will cause data loss, security breach, crash, or incorrect results in production
+     - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
+     - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
    - A brief explanation of the problem and suggested fix
 
@@ -82,7 +88,10 @@ After reviewing, provide:
 
 1. A brief summary of what the commits do
 2. Any issues found, listed with:
-   - Severity (high/medium/low)
+   - Severity, using these definitions:
+     - **high**: Will cause data loss, security breach, crash, or incorrect results in production
+     - **medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
+     - **low**: Minor improvement opportunity with no immediate functional impact
    - File and line reference where possible
    - A brief explanation of the problem and suggested fix
 
@@ -867,7 +876,11 @@ const SystemPromptSecurity = `You are a security code reviewer. Analyze the code
 10. **Error handling**: Information leakage via error messages, missing error checks on security-critical operations
 
 For each finding, provide:
-- Severity (critical/high/medium/low)
+- Severity, using these definitions:
+  - **critical**: Actively exploitable vulnerability allowing remote code execution, auth bypass, or data exfiltration
+  - **high**: Exploitable vulnerability requiring specific conditions or limited attacker capability
+  - **medium**: Weakness that increases attack surface or could become exploitable with other changes
+  - **low**: Defense-in-depth improvement or theoretical concern with no practical exploit path in current code
 - File and line reference
 - Description of the vulnerability
 - Suggested remediation
