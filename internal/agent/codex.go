@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -325,54 +324,39 @@ func codexFailureEventError(ev codexEvent) error {
 // Codex emits events like thread.started, turn.started, item.completed (with agent_message),
 // and turn.completed. The agent_message items contain the actual review text.
 func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error) {
-	br := bufio.NewReader(r)
-
 	var validEventsParsed bool
 	agentMessages := newTrailingReviewText()
 	var streamFailure error
 
-	for {
-		line, err := br.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return "", fmt.Errorf("read stream: %w", err)
-		}
+	err := scanStreamJSONLines(r, sw, func(line string) error {
+		var ev codexEvent
+		if jsonErr := json.Unmarshal([]byte(line), &ev); jsonErr == nil {
+			if isCodexEventType(ev.Type) {
+				validEventsParsed = true
 
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			// Stream raw line to the writer for progress visibility
-			if sw != nil {
-				_, _ = sw.Write([]byte(trimmed + "\n"))
-			}
+				if streamFailure == nil {
+					streamFailure = codexFailureEventError(ev)
+				}
 
-			var ev codexEvent
-			if jsonErr := json.Unmarshal([]byte(trimmed), &ev); jsonErr == nil {
-				if isCodexEventType(ev.Type) {
-					validEventsParsed = true
+				if isCodexToolEvent(ev) {
+					// The persisted review is defined as the assistant text
+					// after the last tool event in the stream.
+					agentMessages.ResetAfterTool()
+				}
 
-					if streamFailure == nil {
-						streamFailure = codexFailureEventError(ev)
-					}
-
-					if isCodexToolEvent(ev) {
-						// The persisted review is defined as the assistant text
-						// after the last tool event in the stream.
-						agentMessages.ResetAfterTool()
-					}
-
-					// Collect agent_message text from completed/updated items.
-					// For messages with IDs, keep only the latest text per ID to avoid duplicates
-					// from incremental updates while preserving first-seen order.
-					if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
-						ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-						agentMessages.AddWithID(ev.Item.ID, ev.Item.Text)
-					}
+				// Collect agent_message text from completed/updated items.
+				// For messages with IDs, keep only the latest text per ID to avoid duplicates
+				// from incremental updates while preserving first-seen order.
+				if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
+					ev.Item.Type == "agent_message" && ev.Item.Text != "" {
+					agentMessages.AddWithID(ev.Item.ID, ev.Item.Text)
 				}
 			}
 		}
-
-		if err == io.EOF {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
 	if !validEventsParsed {

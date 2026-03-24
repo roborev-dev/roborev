@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -304,73 +303,47 @@ func extractContentText(raw json.RawMessage) string {
 // On success, returns (result, nil). On failure, returns (partialOutput, error)
 // where partialOutput contains any assistant messages collected before the error.
 func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
-	br := bufio.NewReader(r)
-
 	var lastResult string
 	assistantMessages := newTrailingReviewText()
 	var errorMessages []string
 	var validEventsParsed bool
 
-	for {
-		line, err := br.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return "", fmt.Errorf("read stream: %w", err)
-		}
+	err := scanStreamJSONLines(r, output, func(line string) error {
+		var msg claudeStreamMessage
+		if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
+			validEventsParsed = true
 
-		// Process line even if EOF (might have trailing content without newline)
-		line = strings.TrimSpace(line)
-		if line != "" {
-			// Stream raw line to the writer for progress visibility
-			if sw := newSyncWriter(output); sw != nil {
-				_, _ = sw.Write([]byte(line + "\n"))
+			if msg.Type == "assistant" {
+				if text := extractContentText(msg.Message.Content); text != "" {
+					assistantMessages.Add(text)
+				}
+			}
+			if msg.Type == "tool_use" || msg.Type == "tool_result" {
+				assistantMessages.ResetAfterTool()
 			}
 
-			var msg claudeStreamMessage
-			if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
-				validEventsParsed = true
-
-				// Collect assistant messages for the result.
-				// Content can be a string or an array of content blocks.
-				if msg.Type == "assistant" {
-					if text := extractContentText(msg.Message.Content); text != "" {
-						assistantMessages.Add(text)
-					}
-				}
-				if msg.Type == "tool_use" || msg.Type == "tool_result" {
-					// Only the trailing post-tool assistant segment is treated
-					// as the review body.
-					assistantMessages.ResetAfterTool()
-				}
-
-				// The final result message contains the summary.
-				// When is_error is set, the result event signals a
-				// failure (auth, API, quota, etc.) — capture the
-				// error details instead of treating it as output.
-				if msg.Type == "result" {
-					if msg.IsError {
-						errMsg := "review returned error"
-						if msg.Error.Message != "" {
-							errMsg = msg.Error.Message
-						} else if msg.Result != "" {
-							errMsg = msg.Result
-						}
-						errorMessages = append(errorMessages, errMsg)
+			if msg.Type == "result" {
+				if msg.IsError {
+					errMsg := "review returned error"
+					if msg.Error.Message != "" {
+						errMsg = msg.Error.Message
 					} else if msg.Result != "" {
-						lastResult = msg.Result
+						errMsg = msg.Result
 					}
-				}
-
-				// Capture standalone error events from Claude Code
-				if msg.Type == "error" && msg.Error.Message != "" {
-					errorMessages = append(errorMessages, msg.Error.Message)
+					errorMessages = append(errorMessages, errMsg)
+				} else if msg.Result != "" {
+					lastResult = msg.Result
 				}
 			}
-			// Skip malformed JSON lines silently
-		}
 
-		if err == io.EOF {
-			break
+			if msg.Type == "error" && msg.Error.Message != "" {
+				errorMessages = append(errorMessages, msg.Error.Message)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
 	// Error if we didn't parse any valid events

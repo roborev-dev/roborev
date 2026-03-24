@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -208,55 +207,33 @@ type parseResult struct {
 // Returns parseResult with the extracted content, or error on I/O or parse failure.
 // The sw parameter is the shared sync writer for thread-safe output (may be nil).
 func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult, error) {
-	br := bufio.NewReader(r)
-
 	var lastResult string
 	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
 
-	for {
-		line, err := br.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return parseResult{}, fmt.Errorf("read stream: %w", err)
-		}
+	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
+		var msg geminiStreamMessage
+		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
+			validEventsParsed = true
 
-		// Stream line to the writer for progress visibility
-		trimmed := strings.TrimSpace(line)
-		if sw != nil && trimmed != "" {
-			_, _ = sw.Write([]byte(trimmed + "\n"))
-		}
+			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
+				assistantMessages.Add(msg.Content)
+			}
+			if msg.Type == "assistant" && msg.Message.Content != "" {
+				assistantMessages.Add(msg.Message.Content)
+			}
+			if msg.Type == "tool" || msg.Type == "tool_result" {
+				assistantMessages.ResetAfterTool()
+			}
 
-		// Try to parse as JSON
-		if trimmed != "" {
-			var msg geminiStreamMessage
-			if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
-				validEventsParsed = true
-
-				// Collect assistant messages for the result
-				// Gemini format: type="message", role="assistant", content at top level
-				if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-					assistantMessages.Add(msg.Content)
-				}
-				// Claude Code format: type="assistant", message.content nested
-				if msg.Type == "assistant" && msg.Message.Content != "" {
-					assistantMessages.Add(msg.Message.Content)
-				}
-				if msg.Type == "tool" || msg.Type == "tool_result" {
-					// Treat pre-tool assistant text as provisional; only the
-					// trailing post-tool segment becomes review output.
-					assistantMessages.ResetAfterTool()
-				}
-
-				// The final result message contains the summary
-				if msg.Type == "result" && msg.Result != "" {
-					lastResult = msg.Result
-				}
+			if msg.Type == "result" && msg.Result != "" {
+				lastResult = msg.Result
 			}
 		}
-
-		if err == io.EOF {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return parseResult{}, err
 	}
 
 	// If no valid events were parsed, return error

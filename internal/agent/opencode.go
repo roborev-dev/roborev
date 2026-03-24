@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -171,43 +170,25 @@ type opencodePart struct {
 func parseOpenCodeJSON(
 	r io.Reader, sw *syncWriter,
 ) (string, error) {
-	br := bufio.NewReader(r)
-
 	textParts := newTrailingReviewText()
 
-	for {
-		line, err := br.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return textParts.Join(""), fmt.Errorf(
-				"read stream: %w", err,
-			)
-		}
-
-		line = strings.TrimSpace(line)
-		if line != "" {
-			if sw != nil {
-				_, _ = sw.Write([]byte(line + "\n"))
-			}
-
-			var ev opencodeEvent
-			if json.Unmarshal([]byte(line), &ev) == nil &&
-				ev.Part != nil {
-				var part opencodePart
-				if json.Unmarshal(ev.Part, &part) == nil &&
-					part.Type != "" {
-					if part.Type == "tool" {
-						textParts.ResetAfterTool()
-					}
-					if part.Type == "text" && part.Text != "" {
-						textParts.Add(stripTerminalControls(part.Text))
-					}
+	err := scanStreamJSONLines(r, sw, func(line string) error {
+		var ev opencodeEvent
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Part != nil {
+			var part opencodePart
+			if json.Unmarshal(ev.Part, &part) == nil && part.Type != "" {
+				if part.Type == "tool" {
+					textParts.ResetAfterTool()
+				}
+				if part.Type == "text" && part.Text != "" {
+					textParts.Add(stripTerminalControls(part.Text))
 				}
 			}
 		}
-
-		if err == io.EOF {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return textParts.Join(""), err
 	}
 
 	return textParts.Join(""), nil
