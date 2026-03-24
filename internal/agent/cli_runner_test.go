@@ -31,6 +31,6 @@ func TestRunStreamingCLIPreservesWaitErrWhenContextCancelsAfterParse(t *testing.
 	require.NoError(t, err)
 	require.Error(t, result.WaitErr)
 	assert.Equal(t, "ok\n", result.Result)
-	assert.ErrorIs(t, result.ParseErr, fs.ErrClosed)
+	require.ErrorIs(t, result.ParseErr, fs.ErrClosed)
 	assert.Contains(t, result.WaitErr.Error(), "exit status 1")
 }
