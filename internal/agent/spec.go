@@ -221,7 +221,5 @@ func applyCommandOverrides(a Agent, cfg *config.Config) Agent {
 }
 
 func installHintAgentNames() []string {
-	names := make([]string, 0, len(fallbackAgentOrder))
-	names = append(names, fallbackAgentOrder...)
-	return names
+	return slices.Clone(fallbackAgentOrder)
 }
