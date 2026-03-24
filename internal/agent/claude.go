@@ -221,24 +221,11 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	if runResult.WaitErr != nil {
-		// Build a detailed error including any partial output and stream errors
-		var detail strings.Builder
-		fmt.Fprintf(&detail, "%s failed", a.Name())
-		if runResult.ParseErr != nil {
-			fmt.Fprintf(&detail, "\nstream: %v", runResult.ParseErr)
-		}
-		if s := runResult.Stderr; s != "" {
-			fmt.Fprintf(&detail, "\nstderr: %s", s)
-		}
-		if runResult.Result != "" {
-			// Truncate partial output to keep error messages readable
-			partial := runResult.Result
-			if len(partial) > 500 {
-				partial = partial[:500] + "..."
-			}
-			fmt.Fprintf(&detail, "\npartial output: %s", partial)
-		}
-		return "", fmt.Errorf("%s: %w", detail.String(), runResult.WaitErr)
+		return "", formatDetailedCLIWaitError(runResult, detailedCLIWaitErrorOptions{
+			AgentName:     a.Name(),
+			Stderr:        runResult.Stderr,
+			PartialOutput: runResult.Result,
+		})
 	}
 
 	if runResult.ParseErr != nil {

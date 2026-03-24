@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -126,10 +125,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	if runResult.WaitErr != nil {
-		if runResult.ParseErr != nil {
-			return "", fmt.Errorf("cursor agent failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, runResult.Stderr)
-		}
-		return "", fmt.Errorf("cursor agent failed: %w\nstderr: %s", runResult.WaitErr, runResult.Stderr)
+		return "", formatStreamingCLIWaitError("cursor agent", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {

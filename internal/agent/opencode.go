@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -124,22 +123,11 @@ func (a *OpenCodeAgent) Review(
 	}
 
 	if runResult.WaitErr != nil {
-		var detail strings.Builder
-		fmt.Fprintf(&detail, "opencode failed")
-		if runResult.ParseErr != nil {
-			fmt.Fprintf(&detail, "\nstream: %v", runResult.ParseErr)
-		}
-		if s := runResult.Stderr; s != "" {
-			fmt.Fprintf(&detail, "\nstderr: %s", s)
-		}
-		if runResult.Result != "" {
-			partial := runResult.Result
-			if len(partial) > 500 {
-				partial = partial[:500] + "..."
-			}
-			fmt.Fprintf(&detail, "\npartial output: %s", partial)
-		}
-		return "", fmt.Errorf("%s: %w", detail.String(), runResult.WaitErr)
+		return "", formatDetailedCLIWaitError(runResult, detailedCLIWaitErrorOptions{
+			AgentName:     "opencode",
+			Stderr:        runResult.Stderr,
+			PartialOutput: runResult.Result,
+		})
 	}
 
 	if runResult.ParseErr != nil {

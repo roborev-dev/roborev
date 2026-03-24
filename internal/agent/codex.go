@@ -240,10 +240,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	if runResult.WaitErr != nil {
-		if runResult.ParseErr != nil {
-			return "", fmt.Errorf("codex failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, runResult.Stderr)
-		}
-		return "", fmt.Errorf("codex failed: %w\nstderr: %s", runResult.WaitErr, runResult.Stderr)
+		return "", formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {

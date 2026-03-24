@@ -137,27 +137,14 @@ func (a *KiloAgent) Review(
 	}
 
 	if runResult.WaitErr != nil {
-		var detail strings.Builder
-		fmt.Fprintf(&detail, "kilo failed")
-		if runResult.ParseErr != nil {
-			fmt.Fprintf(&detail, "\nstream: %v", runResult.ParseErr)
-		}
 		errText := stripTerminalControls(runResult.Stderr)
-		if errText != "" {
-			fmt.Fprintf(&detail, "\nstderr: %s", errText)
-		} else if raw := stripTerminalControls(runResult.Stdout); raw != "" {
-			fmt.Fprintf(&detail, "\noutput: %s", raw)
-		}
-		if runResult.Result != "" {
-			partial := runResult.Result
-			if len(partial) > 500 {
-				partial = partial[:500] + "..."
-			}
-			fmt.Fprintf(
-				&detail, "\npartial output: %s", partial,
-			)
-		}
-		return "", fmt.Errorf("%s: %w", detail.String(), runResult.WaitErr)
+		return "", formatDetailedCLIWaitError(runResult, detailedCLIWaitErrorOptions{
+			AgentName:      "kilo",
+			Stderr:         errText,
+			FallbackOutput: stripTerminalControls(runResult.Stdout),
+			FallbackLabel:  "output",
+			PartialOutput:  runResult.Result,
+		})
 	}
 
 	if runResult.ParseErr != nil {

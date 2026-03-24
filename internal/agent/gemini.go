@@ -151,10 +151,7 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	}
 
 	if runResult.WaitErr != nil {
-		if runResult.ParseErr != nil {
-			return "", runResult.Stderr, fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", runResult.WaitErr, runResult.ParseErr, truncateStderr(runResult.Stderr))
-		}
-		return "", runResult.Stderr, fmt.Errorf("gemini failed: %w\nstderr: %s", runResult.WaitErr, truncateStderr(runResult.Stderr))
+		return "", runResult.Stderr, formatStreamingCLIWaitError("gemini", runResult, truncateStderr(runResult.Stderr))
 	}
 
 	if runResult.ParseErr != nil {
