@@ -140,11 +140,20 @@ func (hr *HookRunner) handleEvent(event Event) {
 		return
 	}
 
-	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific
-	hooks := append([]config.HookConfig{}, cfg.Hooks...)
+	// Resolve one effective repo path: prefer the worktree if it still
+	// exists and belongs to the same repository. Used for both config
+	// loading (.roborev.toml) and as the hook working directory.
+	effectiveRepo := event.Repo
+	if event.WorktreePath != "" && event.Repo != "" {
+		if gitpkg.ValidateWorktreeForRepo(event.WorktreePath, event.Repo) {
+			effectiveRepo = event.WorktreePath
+		}
+	}
 
-	if event.Repo != "" {
-		if repoCfg, err := config.LoadRepoConfig(event.Repo); err == nil && repoCfg != nil {
+	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific.
+	hooks := append([]config.HookConfig{}, cfg.Hooks...)
+	if effectiveRepo != "" {
+		if repoCfg, err := config.LoadRepoConfig(effectiveRepo); err == nil && repoCfg != nil {
 			hooks = append(hooks, repoCfg.Hooks...)
 		}
 	}
@@ -174,7 +183,7 @@ func (hr *HookRunner) handleEvent(event Event) {
 		fired++
 		// Run async so hooks don't block workers
 		hr.wg.Add(1)
-		go hr.runHook(cmd, event.Repo)
+		go hr.runHook(cmd, effectiveRepo)
 	}
 
 	if fired > 0 {

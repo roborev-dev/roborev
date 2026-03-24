@@ -597,6 +597,50 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		require.Equal(t, commit.Subject, stored.CommitSubject)
 	})
 
+	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
+		// Enqueue a review with a worktree path
+		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "fix-val-abc",
+			Agent:        "test",
+			WorktreePath: filepath.Join(tmpDir, "worktrees", "feature"),
+		})
+		require.NoError(t, err)
+
+		// Claim jobs until we get ours (earlier subtests may leave queued jobs)
+		for {
+			claimed, claimErr := db.ClaimJob("w-wt-fix")
+			require.NoError(t, claimErr)
+			require.NotNil(t, claimed)
+			if claimed.ID == wtJob.ID {
+				break
+			}
+			db.CompleteJob(claimed.ID, "test", "prompt", "PASS")
+		}
+		require.NoError(t, db.CompleteJob(
+			wtJob.ID, "test", "prompt", "FAIL: issues found",
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: wtJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		require.Equal(t,
+			filepath.Join(tmpDir, "worktrees", "feature"),
+			stored.WorktreePath,
+		)
+	})
+
 	t.Run("custom prompt includes review context", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",

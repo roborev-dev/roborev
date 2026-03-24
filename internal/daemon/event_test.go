@@ -53,4 +53,29 @@ func TestEvent_MarshalJSON(t *testing.T) {
 	// Explicitly check that 'error' is not present
 	_, hasError := decoded["error"]
 	assert.False(t, hasError, "expected 'error' field to be omitted")
+
+	// WorktreePath omitted when empty
+	_, hasWT := decoded["worktree_path"]
+	assert.False(t, hasWT, "expected 'worktree_path' to be omitted when empty")
+}
+
+func TestEvent_MarshalJSON_WorktreePath(t *testing.T) {
+	event := Event{
+		Type:         "review.completed",
+		TS:           time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
+		JobID:        42,
+		Repo:         "/path/to/myrepo",
+		RepoName:     "myrepo",
+		SHA:          "abc123",
+		Agent:        "claude-code",
+		WorktreePath: "/worktrees/feature-branch",
+	}
+
+	data, err := event.MarshalJSON()
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, "/worktrees/feature-branch", decoded["worktree_path"])
 }

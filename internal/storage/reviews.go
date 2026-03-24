@@ -135,7 +135,7 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 // FindReusableSessionCandidates returns recent completed jobs with reusable
 // sessions for the same repo, branch, agent, and review type, newest first.
 func (db *DB) FindReusableSessionCandidates(
-	repoID int64, branch, agent, reviewType string, limit int,
+	repoID int64, branch, agent, reviewType, worktreePath string, limit int,
 ) ([]ReviewJob, error) {
 	if repoID == 0 || branch == "" || agent == "" {
 		return nil, nil
@@ -153,8 +153,9 @@ func (db *DB) FindReusableSessionCandidates(
 		  AND session_id IS NOT NULL
 		  AND session_id <> ''
 		  AND COALESCE(NULLIF(review_type, ''), 'default') = ?
+		  AND COALESCE(worktree_path, '') = ?
 		ORDER BY COALESCE(finished_at, updated_at, enqueued_at) DESC, id DESC`
-	baseArgs := []any{repoID, branch, agent, reviewType}
+	baseArgs := []any{repoID, branch, agent, reviewType, worktreePath}
 	if limit <= 0 {
 		jobs, _, err := db.scanReusableSessionCandidates(query, baseArgs, 0)
 		return jobs, err
@@ -180,9 +181,9 @@ func (db *DB) FindReusableSessionCandidates(
 
 // FindReusableSessionCandidate returns the newest reusable session candidate.
 func (db *DB) FindReusableSessionCandidate(
-	repoID int64, branch, agent, reviewType string,
+	repoID int64, branch, agent, reviewType, worktreePath string,
 ) (*ReviewJob, error) {
-	jobs, err := db.FindReusableSessionCandidates(repoID, branch, agent, reviewType, 1)
+	jobs, err := db.FindReusableSessionCandidates(repoID, branch, agent, reviewType, worktreePath, 1)
 	if err != nil {
 		return nil, err
 	}

@@ -31,6 +31,7 @@ type reviewJobScanFields struct {
 	TokenUsage      sql.NullString
 	Agentic         int
 	Closed          sql.NullInt64
+	WorktreePath    string
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
@@ -107,6 +108,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		closed := fields.Closed.Int64 != 0
 		job.Closed = &closed
 	}
+	job.WorktreePath = fields.WorktreePath
 }
 
 type reviewScanFields struct {

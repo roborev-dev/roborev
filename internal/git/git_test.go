@@ -1535,3 +1535,43 @@ func TestWorktreePathForBranch(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateWorktreeForRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	t.Run("valid worktree passes", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		wt := repo.AddWorktree("val-wt")
+
+		assert.True(t, ValidateWorktreeForRepo(wt.Dir, repo.Dir))
+	})
+
+	t.Run("main repo validates against itself", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+
+		assert.True(t, ValidateWorktreeForRepo(repo.Dir, repo.Dir))
+	})
+
+	t.Run("nonexistent path fails", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+
+		assert.False(t, ValidateWorktreeForRepo("/nonexistent/path", repo.Dir))
+	})
+
+	t.Run("unrelated repo fails", func(t *testing.T) {
+		repo1 := NewTestRepoWithCommit(t)
+		repo2 := NewTestRepoWithCommit(t)
+
+		assert.False(t, ValidateWorktreeForRepo(repo2.Dir, repo1.Dir))
+	})
+
+	t.Run("subdirectory of same repo fails", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		subDir := filepath.Join(repo.Dir, "src")
+		require.NoError(t, os.MkdirAll(subDir, 0o755))
+
+		assert.False(t, ValidateWorktreeForRepo(subDir, repo.Dir))
+	})
+}

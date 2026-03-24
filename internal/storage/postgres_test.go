@@ -725,6 +725,60 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, success)
 	})
+
+	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
+		wtJobUUID := uuid.NewString()
+		// Use a distinct machine ID so we can exclude it when pulling
+		wtMachineID := uuid.NewString()
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: "batch-wt-sha",
+		})
+		wtJobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:            wtJobUUID,
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       "batch-wt-sha",
+				GitRef:          "test-ref",
+				Agent:           "test",
+				Status:          "done",
+				WorktreePath:    "/worktrees/feature-x",
+				SourceMachineID: wtMachineID,
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, wtJobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		// Verify worktree_path directly in the database row
+		var storedWT *string
+		err = pool.pool.QueryRow(ctx,
+			`SELECT worktree_path FROM review_jobs WHERE uuid = $1`, wtJobUUID,
+		).Scan(&storedWT)
+		require.NoError(t, err)
+		require.NotNil(t, storedWT)
+		assert.Equal(t, "/worktrees/feature-x", *storedWT)
+
+		// Also verify PullJobs returns the field: use a different
+		// valid UUID to exclude, and scope via cursor to avoid
+		// scanning the entire table.
+		otherMachine := uuid.NewString()
+		pulled, _, err := pool.PullJobs(ctx, otherMachine, "", 100)
+		require.NoError(t, err)
+
+		var found *PulledJob
+		for i := range pulled {
+			if pulled[i].UUID == wtJobUUID {
+				found = &pulled[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "expected job %s in pull results", wtJobUUID)
+		assert.Equal(t, "/worktrees/feature-x", found.WorktreePath)
+	})
 }
 
 func TestIntegration_BatchUpsertReviews(t *testing.T) {

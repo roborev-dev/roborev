@@ -8,16 +8,17 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
-	Type     string    `json:"type"`
-	TS       time.Time `json:"ts"`
-	JobID    int64     `json:"job_id"`
-	Repo     string    `json:"repo"`
-	RepoName string    `json:"repo_name"`
-	SHA      string    `json:"sha"`
-	Agent    string    `json:"agent,omitempty"`
-	Verdict  string    `json:"verdict,omitempty"`
-	Findings string    `json:"findings,omitempty"`
-	Error    string    `json:"error,omitempty"`
+	Type         string    `json:"type"`
+	TS           time.Time `json:"ts"`
+	JobID        int64     `json:"job_id"`
+	Repo         string    `json:"repo"`
+	RepoName     string    `json:"repo_name"`
+	SHA          string    `json:"sha"`
+	Agent        string    `json:"agent,omitempty"`
+	Verdict      string    `json:"verdict,omitempty"`
+	Findings     string    `json:"findings,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	WorktreePath string    `json:"worktree_path,omitempty"`
 }
 
 // Subscriber represents a client subscribed to events
@@ -112,26 +113,28 @@ func (b *EventBroadcaster) SubscriberCount() int {
 // MarshalJSON converts an Event to JSON for streaming
 func (e Event) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Type     string `json:"type"`
-		TS       string `json:"ts"`
-		JobID    int64  `json:"job_id"`
-		Repo     string `json:"repo"`
-		RepoName string `json:"repo_name"`
-		SHA      string `json:"sha"`
-		Agent    string `json:"agent,omitempty"`
-		Verdict  string `json:"verdict,omitempty"`
-		Findings string `json:"findings,omitempty"`
-		Error    string `json:"error,omitempty"`
+		Type         string `json:"type"`
+		TS           string `json:"ts"`
+		JobID        int64  `json:"job_id"`
+		Repo         string `json:"repo"`
+		RepoName     string `json:"repo_name"`
+		SHA          string `json:"sha"`
+		Agent        string `json:"agent,omitempty"`
+		Verdict      string `json:"verdict,omitempty"`
+		Findings     string `json:"findings,omitempty"`
+		Error        string `json:"error,omitempty"`
+		WorktreePath string `json:"worktree_path,omitempty"`
 	}{
-		Type:     e.Type,
-		TS:       e.TS.UTC().Format(time.RFC3339),
-		JobID:    e.JobID,
-		Repo:     e.Repo,
-		RepoName: e.RepoName,
-		SHA:      e.SHA,
-		Agent:    e.Agent,
-		Verdict:  e.Verdict,
-		Findings: e.Findings,
-		Error:    e.Error,
+		Type:         e.Type,
+		TS:           e.TS.UTC().Format(time.RFC3339),
+		JobID:        e.JobID,
+		Repo:         e.Repo,
+		RepoName:     e.RepoName,
+		SHA:          e.SHA,
+		Agent:        e.Agent,
+		Verdict:      e.Verdict,
+		Findings:     e.Findings,
+		Error:        e.Error,
+		WorktreePath: e.WorktreePath,
 	})
 }

@@ -221,3 +221,83 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 
 	assert.False(t, !modelPreserved.Valid || modelPreserved.String != "gpt-4")
 }
+
+func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Enqueue a job with a worktree path
+	commit, err := h.db.GetOrCreateCommit(h.repo.ID, "wt-sync-abc", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	job, err := h.db.EnqueueJob(EnqueueOpts{
+		RepoID:       h.repo.ID,
+		CommitID:     commit.ID,
+		GitRef:       "wt-sync-abc",
+		Agent:        "test",
+		WorktreePath: "/worktrees/feature-branch",
+	})
+	require.NoError(t, err)
+
+	// Complete the job so it becomes syncable
+	claimed, err := h.db.ClaimJob("w-sync-wt")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+
+	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, jobs)
+
+	var found *SyncableJob
+	for i := range jobs {
+		if jobs[i].UUID == job.UUID {
+			found = &jobs[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "expected job %s in sync results", job.UUID)
+	assert.Equal(t, "/worktrees/feature-branch", found.WorktreePath)
+}
+
+func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/test/repo-wt-sync")
+	require.NoError(t, err)
+
+	jobUUID := "test-uuid-wt-" + time.Now().Format("20060102150405")
+
+	pulledJob := PulledJob{
+		UUID:            jobUUID,
+		RepoIdentity:    "/test/repo-wt-sync",
+		GitRef:          "HEAD",
+		Agent:           "test-agent",
+		Status:          "done",
+		WorktreePath:    "/worktrees/my-branch",
+		SourceMachineID: "test-machine",
+		EnqueuedAt:      time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	err = db.UpsertPulledJob(pulledJob, repo.ID, nil)
+	require.NoError(t, err)
+
+	// Verify worktree_path was stored
+	var wt string
+	err = db.QueryRow(
+		`SELECT COALESCE(worktree_path, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
+	).Scan(&wt)
+	require.NoError(t, err)
+	assert.Equal(t, "/worktrees/my-branch", wt)
+
+	// Upsert with empty worktree_path should not clear existing value
+	pulledJob.WorktreePath = ""
+	err = db.UpsertPulledJob(pulledJob, repo.ID, nil)
+	require.NoError(t, err)
+
+	err = db.QueryRow(
+		`SELECT COALESCE(worktree_path, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
+	).Scan(&wt)
+	require.NoError(t, err)
+	assert.Equal(t, "/worktrees/my-branch", wt)
+}
