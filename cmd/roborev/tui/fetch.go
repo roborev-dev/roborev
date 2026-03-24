@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	neturl "net/url"
 	"sort"
@@ -46,6 +45,79 @@ func (m model) tickInterval() time.Duration {
 		return tickIntervalActive
 	}
 	return tickIntervalIdle
+}
+
+type jobsPageResult struct {
+	Jobs    []storage.ReviewJob `json:"jobs"`
+	HasMore bool                `json:"has_more"`
+	Stats   storage.JobStats    `json:"stats"`
+}
+
+type repoListResult struct {
+	Repos []struct {
+		Name     string `json:"name"`
+		RootPath string `json:"root_path"`
+		Count    int    `json:"count"`
+	} `json:"repos"`
+	TotalCount int `json:"total_count"`
+}
+
+type branchListResult struct {
+	Branches []struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	} `json:"branches"`
+	TotalCount int `json:"total_count"`
+}
+
+func (m model) loadJobsPage(params neturl.Values) (*jobsPageResult, error) {
+	path := "/api/jobs"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	var result jobsPageResult
+	if err := m.getJSON(path, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (m model) loadRepoList(branchFilter string) (*repoListResult, bool, error) {
+	path := "/api/repos"
+	branchFiltered := branchFilter != "" && branchFilter != branchNone
+	if branchFiltered {
+		params := neturl.Values{}
+		params.Set("branch", branchFilter)
+		path += "?" + params.Encode()
+	}
+
+	var result repoListResult
+	if err := m.getJSON(path, &result); err != nil {
+		return nil, false, err
+	}
+	return &result, branchFiltered, nil
+}
+
+func (m model) loadBranchList(rootPaths []string) (*branchListResult, error) {
+	path := "/api/branches"
+	if len(rootPaths) > 0 {
+		params := neturl.Values{}
+		for _, repoPath := range rootPaths {
+			if repoPath != "" {
+				params.Add("repo", repoPath)
+			}
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+
+	var result branchListResult
+	if err := m.getJSON(path, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (m model) fetchJobs() tea.Cmd {
@@ -100,24 +172,12 @@ func (m model) fetchJobs() tea.Cmd {
 			params.Set("limit", fmt.Sprintf("%d", limit))
 		}
 
-		url := fmt.Sprintf("%s/api/jobs?%s", m.endpoint.BaseURL(), params.Encode())
-		resp, err := m.client.Get(url)
+		result, err := m.loadJobsPage(params)
 		if err != nil {
-			return jobsErrMsg{err: err, seq: seq}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return jobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status), seq: seq}
-		}
-
-		var result struct {
-			Jobs    []storage.ReviewJob `json:"jobs"`
-			HasMore bool                `json:"has_more"`
-			Stats   storage.JobStats    `json:"stats"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return jobsErrMsg{err: err, seq: seq}
+			return jobsErrMsg{
+				err: fmt.Errorf("fetch jobs: %w", err),
+				seq: seq,
+			}
 		}
 		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
 	}
@@ -144,23 +204,12 @@ func (m model) fetchMoreJobs() tea.Cmd {
 			params.Set("closed", "false")
 		}
 		params.Set("exclude_job_type", "fix")
-		url := fmt.Sprintf("%s/api/jobs?%s", m.endpoint.BaseURL(), params.Encode())
-		resp, err := m.client.Get(url)
+		result, err := m.loadJobsPage(params)
 		if err != nil {
-			return paginationErrMsg{err: err, seq: seq}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return paginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status), seq: seq}
-		}
-
-		var result struct {
-			Jobs    []storage.ReviewJob `json:"jobs"`
-			HasMore bool                `json:"has_more"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return paginationErrMsg{err: err, seq: seq}
+			return paginationErrMsg{
+				err: fmt.Errorf("fetch more jobs: %w", err),
+				seq: seq,
+			}
 		}
 		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
 	}
@@ -201,27 +250,10 @@ func (m model) tryReconnect() tea.Cmd {
 // fetchRepoNames fetches the unfiltered repo list and builds a
 // display-name-to-root-paths mapping for control socket resolution.
 func (m model) fetchRepoNames() tea.Cmd {
-	client := m.client
-	baseURL := m.endpoint.BaseURL()
-
 	return func() tea.Msg {
-		resp, err := client.Get(baseURL + "/api/repos")
+		result, _, err := m.loadRepoList("")
 		if err != nil {
 			return repoNamesMsg{} // non-fatal; map stays nil
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return repoNamesMsg{}
-		}
-
-		var result struct {
-			Repos []struct {
-				Name     string `json:"name"`
-				RootPath string `json:"root_path"`
-			} `json:"repos"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return repoNamesMsg{}
 		}
 
 		names := make(map[string][]string)
@@ -237,41 +269,12 @@ func (m model) fetchRepoNames() tea.Cmd {
 }
 
 func (m model) fetchRepos() tea.Cmd {
-	// Capture values for use in goroutine
-	client := m.client
-	baseURL := m.endpoint.BaseURL()
 	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
 
 	return func() tea.Msg {
-		// Build URL with optional branch filter (URL-encoded)
-		// Skip sending branch for branchNone sentinel - it's a client-side filter
-		reposURL := baseURL + "/api/repos"
-		if activeBranchFilter != "" && activeBranchFilter != branchNone {
-			params := neturl.Values{}
-			params.Set("branch", activeBranchFilter)
-			reposURL += "?" + params.Encode()
-		}
-
-		resp, err := client.Get(reposURL)
+		reposResult, filtered, err := m.loadRepoList(activeBranchFilter)
 		if err != nil {
-			return errMsg(err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return errMsg(fmt.Errorf("fetch repos: %s", resp.Status))
-		}
-
-		var reposResult struct {
-			Repos []struct {
-				Name     string `json:"name"`
-				RootPath string `json:"root_path"`
-				Count    int    `json:"count"`
-			} `json:"repos"`
-			TotalCount int `json:"total_count"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&reposResult); err != nil {
-			return errMsg(err)
+			return errMsg(fmt.Errorf("fetch repos: %w", err))
 		}
 
 		// Aggregate repos by display name
@@ -298,8 +301,6 @@ func (m model) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		filtered := activeBranchFilter != "" &&
-			activeBranchFilter != branchNone
 		return reposMsg{repos: repos, branchFiltered: filtered}
 	}
 }
@@ -312,9 +313,6 @@ func (m model) fetchRepos() tea.Cmd {
 func (m model) fetchBranchesForRepo(
 	rootPaths []string, repoIdx int, expand bool, searchSeq int,
 ) tea.Cmd {
-	client := m.client
-	baseURL := m.endpoint.BaseURL()
-
 	errMsg := func(err error) repoBranchesMsg {
 		return repoBranchesMsg{
 			repoIdx:      repoIdx,
@@ -326,40 +324,9 @@ func (m model) fetchBranchesForRepo(
 	}
 
 	return func() tea.Msg {
-		branchURL := baseURL + "/api/branches"
-		if len(rootPaths) > 0 {
-			params := neturl.Values{}
-			for _, repoPath := range rootPaths {
-				if repoPath != "" {
-					params.Add("repo", repoPath)
-				}
-			}
-			if len(params) > 0 {
-				branchURL += "?" + params.Encode()
-			}
-		}
-
-		resp, err := client.Get(branchURL)
+		branchResult, err := m.loadBranchList(rootPaths)
 		if err != nil {
-			return errMsg(err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return errMsg(
-				fmt.Errorf("fetch branches for repo: %s", resp.Status),
-			)
-		}
-
-		var branchResult struct {
-			Branches []struct {
-				Name  string `json:"name"`
-				Count int    `json:"count"`
-			} `json:"branches"`
-			TotalCount int `json:"total_count"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
-			return errMsg(err)
+			return errMsg(fmt.Errorf("fetch branches for repo: %w", err))
 		}
 
 		branches := make([]branchFilterItem, len(branchResult.Branches))
@@ -535,6 +502,36 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 	}
 
 	return responses
+}
+
+func (m model) loadPatch(jobID int64) (string, error) {
+	patch, err := m.getText(fmt.Sprintf("/api/job/patch?job_id=%d", jobID))
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return "", fmt.Errorf("no patch available")
+		}
+		return "", fmt.Errorf("fetch patch: %w", err)
+	}
+	if patch == "" {
+		return "", fmt.Errorf("empty patch")
+	}
+	return patch, nil
+}
+
+func (m model) loadJob(jobID int64) (*storage.ReviewJob, error) {
+	params := neturl.Values{}
+	params.Set("id", fmt.Sprintf("%d", jobID))
+
+	result, err := m.loadJobsPage(params)
+	if err != nil {
+		return nil, fmt.Errorf("fetch job: %w", err)
+	}
+	for i := range result.Jobs {
+		if result.Jobs[i].ID == jobID {
+			return &result.Jobs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("job %d not found", jobID)
 }
 
 func (m model) fetchReview(jobID int64) tea.Cmd {
@@ -809,44 +806,22 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 }
 func (m model) fetchPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
-		url := m.endpoint.BaseURL() + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
-		resp, err := m.client.Get(url)
+		patch, err := m.loadPatch(jobID)
 		if err != nil {
 			return patchMsg{jobID: jobID, err: err}
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return patchMsg{jobID: jobID, err: fmt.Errorf("no patch available (HTTP %d)", resp.StatusCode)}
-		}
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return patchMsg{jobID: jobID, err: err}
-		}
-		return patchMsg{jobID: jobID, patch: string(data)}
+		return patchMsg{jobID: jobID, patch: patch}
 	}
-}
-func (m model) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
-	var result struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := m.getJSON(fmt.Sprintf("/api/jobs?id=%d", jobID), &result); err != nil {
-		return nil, err
-	}
-	for i := range result.Jobs {
-		if result.Jobs[i].ID == jobID {
-			return &result.Jobs[i], nil
-		}
-	}
-	return nil, fmt.Errorf("job %d not found", jobID)
 }
 
 // fetchFixJobs fetches fix jobs from the daemon.
 func (m model) fetchFixJobs() tea.Cmd {
 	return func() tea.Msg {
-		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		err := m.getJSON("/api/jobs?job_type=fix&limit=200", &result)
+		params := neturl.Values{}
+		params.Set("job_type", "fix")
+		params.Set("limit", "200")
+
+		result, err := m.loadJobsPage(params)
 		if err != nil {
 			return fixJobsMsg{err: err}
 		}
