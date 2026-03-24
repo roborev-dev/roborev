@@ -87,13 +87,18 @@ func SanitizeLines(lines []string) []string {
 // terminals.
 var trailingPadRe = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
 
+// allSGRRe matches any ANSI SGR escape sequence.
+var allSGRRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 // StripTrailingPadding removes trailing whitespace and ANSI SGR codes
 // from a glamour output line, then appends a reset to ensure clean
-// color state. When noColor is true, the reset sequence is omitted.
+// color state. When noColor is true, all SGR sequences are stripped
+// to prevent open attributes (bold, underline) from bleeding across
+// lines.
 func StripTrailingPadding(line string, noColor bool) string {
 	line = trailingPadRe.ReplaceAllString(line, "")
 	if noColor {
-		return line
+		return allSGRRe.ReplaceAllString(line, "")
 	}
 	return line + "\x1b[0m"
 }
