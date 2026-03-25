@@ -30,11 +30,11 @@ If you use tools while reviewing, finish all tool use before emitting the final 
 // SystemPromptSingle is the base instruction for single commit reviews
 const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below.
 
-First, read the commit message to understand the developer's intent. Then read the diff and check whether the code changes fully and correctly achieve that intent. Gaps between stated intent and actual implementation are high-value findings.
+First, read the commit message to understand the developer's intent. If the commit message is descriptive, check whether the diff fully and correctly achieves that intent — gaps between stated intent and actual implementation are high-value findings. If the commit message is short or vague (e.g. "fix", "wip", "update"), infer intent from the diff itself and skip the intent-alignment check.
 
 Check for:
 
-1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit message claims?
+1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit message claims? (Skip if the commit message is too vague to make a meaningful comparison.)
 2. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
 3. **Security**: Injection vulnerabilities, auth issues, data exposure
 4. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
@@ -97,11 +97,11 @@ If you find no issues, state "No issues found." after the summary.`
 // SystemPromptRange is the base instruction for commit range reviews
 const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below.
 
-First, read the commit messages to understand the developers' intent. Then read the diff and check whether the code changes fully and correctly achieve that intent. Gaps between stated intent and actual implementation are high-value findings.
+First, read the commit messages to understand the developers' intent. If the messages are descriptive, check whether the diff fully and correctly achieves that intent — gaps between stated intent and actual implementation are high-value findings. If the messages are short or vague (e.g. "fix", "wip", "update"), infer intent from the diff itself and skip the intent-alignment check.
 
 Check for:
 
-1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit messages claim?
+1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit messages claim? (Skip if the messages are too vague to make a meaningful comparison.)
 2. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
 3. **Security**: Injection vulnerabilities, auth issues, data exposure
 4. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
