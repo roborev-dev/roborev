@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -30,6 +31,9 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		job, err := api.getJob(ctx, jobID)
 		if err != nil {
+			if errors.Is(err, ErrJobNotFound) {
+				return nil, err
+			}
 			continue
 		}
 
