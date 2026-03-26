@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/activation"
+
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -27,19 +29,20 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	db            *storage.DB
-	configWatcher *ConfigWatcher
-	broadcaster   Broadcaster
-	workerPool    *WorkerPool
-	httpServer    *http.Server
-	syncWorker    *storage.SyncWorker
-	ciPoller      *CIPoller
-	hookRunner    *HookRunner
-	errorLog      *ErrorLog
-	activityLog   *ActivityLog
-	startTime     time.Time
-	endpointMu    sync.Mutex // protects endpoint (written by Start, read by Stop)
-	endpoint      DaemonEndpoint
+	db              *storage.DB
+	configWatcher   *ConfigWatcher
+	broadcaster     Broadcaster
+	workerPool      *WorkerPool
+	httpServer      *http.Server
+	syncWorker      *storage.SyncWorker
+	ciPoller        *CIPoller
+	hookRunner      *HookRunner
+	errorLog        *ErrorLog
+	activityLog     *ActivityLog
+	startTime       time.Time
+	endpointMu      sync.Mutex // protects endpoint (written by Start, read by Stop)
+	endpoint        DaemonEndpoint
+	socketActivated bool // true if started via systemd socket activation
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -124,13 +127,23 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 func (s *Server) Start(ctx context.Context) error {
 	cfg := s.configWatcher.Config()
 
-	ep, err := ParseEndpoint(cfg.ServerAddr)
+	// Check for socket activation before falling back to the config
+	listener, ep, err := getSystemdListener()
 	if err != nil {
 		return err
 	}
+	if listener != nil {
+		s.socketActivated = true
+		log.Printf("Using systemd socket activation on %s", ep)
+	} else {
+		ep, err = ParseEndpoint(cfg.ServerAddr)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Clean up any zombie daemons first (there can be only one)
-	if cleaned := CleanupZombieDaemons(); cleaned > 0 {
+	if cleaned := CleanupZombieDaemons(ep); cleaned > 0 {
 		log.Printf("Cleaned up %d zombie daemon(s)", cleaned)
 		if s.activityLog != nil {
 			s.activityLog.Log(
@@ -143,6 +156,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Check if a responsive daemon is still running after cleanup
 	if info, err := GetAnyRunningDaemon(); err == nil && IsDaemonAlive(info.Endpoint()) {
+		if listener != nil {
+			_ = listener.Close()
+		}
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
 	}
 
@@ -157,53 +173,54 @@ func (s *Server) Start(ctx context.Context) error {
 		// Continue without hot-reloading - not a fatal error
 	}
 
-	// Bind the listener before publishing runtime metadata so concurrent CLI
-	// invocations cannot race a half-started daemon and kill it as a zombie.
-	var listener net.Listener
-	if ep.IsUnix() {
-		socketPath := ep.Address
-		socketDir := filepath.Dir(socketPath)
-		if err := os.MkdirAll(socketDir, 0700); err != nil {
-			s.configWatcher.Stop()
-			return fmt.Errorf("create socket directory: %w", err)
-		}
-		// Verify the parent directory has safe permissions (owner-only)
-		if fi, err := os.Stat(socketDir); err == nil {
-			if perm := fi.Mode().Perm(); perm&0077 != 0 {
+	if !s.socketActivated {
+		// Bind the listener before publishing runtime metadata so concurrent CLI
+		// invocations cannot race a half-started daemon and kill it as a zombie.
+		if ep.IsUnix() {
+			socketPath := ep.Address
+			socketDir := filepath.Dir(socketPath)
+			if err := os.MkdirAll(socketDir, 0700); err != nil {
 				s.configWatcher.Stop()
-				return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)
+				return fmt.Errorf("create socket directory: %w", err)
 			}
-		}
-		// Remove stale socket from a previous run
-		os.Remove(socketPath)
-		listener, err = ep.Listener()
-		if err != nil {
-			s.configWatcher.Stop()
-			return fmt.Errorf("listen on %s: %w", ep, err)
-		}
-		if err := os.Chmod(socketPath, 0600); err != nil {
-			_ = listener.Close()
-			s.configWatcher.Stop()
-			return fmt.Errorf("chmod socket: %w", err)
-		}
-	} else {
-		// TCP: find an available port first
-		addr, _, err := FindAvailablePort(ep.Address)
-		if err != nil {
-			s.configWatcher.Stop()
-			return fmt.Errorf("find available port: %w", err)
-		}
-		ep = DaemonEndpoint{Network: "tcp", Address: addr}
-		s.httpServer.Addr = addr
+			// Verify the parent directory has safe permissions (owner-only)
+			if fi, err := os.Stat(socketDir); err == nil {
+				if perm := fi.Mode().Perm(); perm&0077 != 0 {
+					s.configWatcher.Stop()
+					return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)
+				}
+			}
+			// Remove stale socket from a previous run
+			os.Remove(socketPath)
+			listener, err = ep.Listener()
+			if err != nil {
+				s.configWatcher.Stop()
+				return fmt.Errorf("listen on %s: %w", ep, err)
+			}
+			if err := os.Chmod(socketPath, 0600); err != nil {
+				_ = listener.Close()
+				s.configWatcher.Stop()
+				return fmt.Errorf("chmod socket: %w", err)
+			}
+		} else {
+			// TCP: find an available port first
+			addr, _, err := FindAvailablePort(ep.Address)
+			if err != nil {
+				s.configWatcher.Stop()
+				return fmt.Errorf("find available port: %w", err)
+			}
+			ep = DaemonEndpoint{Network: "tcp", Address: addr}
+			s.httpServer.Addr = addr
 
-		listener, err = ep.Listener()
-		if err != nil {
-			s.configWatcher.Stop()
-			return fmt.Errorf("listen on %s: %w", ep, err)
+			listener, err = ep.Listener()
+			if err != nil {
+				s.configWatcher.Stop()
+				return fmt.Errorf("listen on %s: %w", ep, err)
+			}
+			// Update ep with actual bound address
+			ep = DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
+			s.httpServer.Addr = ep.Address
 		}
-		// Update ep with actual bound address
-		ep = DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
-		s.httpServer.Addr = ep.Address
 	}
 
 	s.endpointMu.Lock()
@@ -342,6 +359,52 @@ func logHookWarnings(repos []storage.Repo) {
 	}
 }
 
+// getSystemdListener returns the listener and endpoint passed by systemd during
+// socket activation, or (nil, empty, nil) if not running under socket activation.
+// Validates the listener matches the daemon's local-only trust model.
+func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
+	listeners, err := activation.Listeners()
+	if err != nil {
+		return nil, DaemonEndpoint{}, fmt.Errorf("socket activation: %w", err)
+	}
+	if len(listeners) == 0 {
+		return nil, DaemonEndpoint{}, nil
+	}
+	if len(listeners) > 1 {
+		return nil, DaemonEndpoint{}, fmt.Errorf(
+			"socket activation: multiple sockets not supported")
+	}
+
+	listener := listeners[0]
+	addr := listener.Addr().String()
+	if listener.Addr().Network() == "unix" {
+		addr = "unix://" + addr
+	}
+	ep, err := ParseEndpoint(addr)
+	if err != nil {
+		// Errors on non-localhost, etc.
+		_ = listener.Close()
+		return nil, ep, err
+	}
+
+	// Ensure that Unix sockets have safe permissions.
+	if ep.IsUnix() {
+		fi, err := os.Stat(ep.Address)
+		if err != nil {
+			_ = listener.Close()
+			return nil, ep, fmt.Errorf("socket activation: %w", err)
+		}
+		if perm := fi.Mode().Perm(); perm&0077 != 0 {
+			_ = listener.Close()
+			return nil, ep, fmt.Errorf(
+				"socket activation: socket %q has unsafe permissions: %04o",
+				ep.Address, perm)
+		}
+	}
+
+	return listener, ep, nil
+}
+
 // Stop gracefully shuts down the server
 func (s *Server) Stop() error {
 	// Log daemon stop before shutting down components
@@ -368,11 +431,11 @@ func (s *Server) Stop() error {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
-	// Clean up Unix domain socket
+	// Clean up Unix domain socket (if we created it)
 	s.endpointMu.Lock()
 	ep := s.endpoint
 	s.endpointMu.Unlock()
-	if ep.IsUnix() {
+	if ep.IsUnix() && !s.socketActivated {
 		os.Remove(ep.Address)
 	}
 
