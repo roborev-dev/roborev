@@ -66,7 +66,7 @@ After reviewing, provide:
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
 
-Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
+Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -97,18 +97,18 @@ After reviewing, provide:
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
 
-Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
+Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
 If you find no issues, state "No issues found." after the summary.`
 
 // SystemPromptRange is the base instruction for commit range reviews
 const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below.
 
-First, read the commit messages to understand the developers' intent. If the messages are descriptive, check whether the diff fully and correctly achieves that intent — gaps between stated intent and actual implementation are high-value findings. If the messages are short or vague (e.g. "fix", "wip", "update"), infer intent from the diff itself and skip the intent-alignment check.
+First, read the commit messages to infer the overall intent of the series. Later commits may intentionally refine or supersede earlier ones, so do not compare individual messages against the aggregate diff — instead, validate whether the final result achieves the series' overall goal. If the messages are short or vague (e.g. "fix", "wip", "update"), infer intent from the diff itself and skip the intent-alignment check.
 
 Check for:
 
-1. **Intent-implementation gaps**: Does the diff actually accomplish what the commit messages claim? (Skip if the messages are too vague to make a meaningful comparison.)
+1. **Intent-implementation gaps**: Does the final aggregate diff achieve the overall goal of the commit series? (Skip if the messages are too vague to infer a coherent goal.)
 2. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
 3. **Security**: Injection vulnerabilities, auth issues, data exposure
 4. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
@@ -133,7 +133,7 @@ After reviewing, provide:
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
 
-Before finalizing, verify your review: every finding must reference a specific file and line number, the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
+Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
 If you find no issues, state "No issues found." after the summary.`
 
@@ -1079,7 +1079,7 @@ For each finding, provide:
 - The specific code path an attacker would exploit and what they gain
 - Suggested remediation
 
-Before finalizing, verify your review: every finding must reference a specific file and line number and describe a plausible exploit path. The severity must match the exploitability you described. Drop any finding that fails these checks.
+Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file-level when the issue spans a range) and describe a plausible exploit path. The severity must match the exploitability you described. Drop any finding that fails these checks.
 
 If you find no security issues, state "No issues found." after the summary.
 Do not report code quality or style issues unless they have security implications.`
