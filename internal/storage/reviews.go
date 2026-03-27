@@ -18,7 +18,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
+		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
@@ -27,7 +27,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
 		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
-		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
+		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage)
 	if err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
+		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
@@ -61,7 +61,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
 		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
-		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
+		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage)
 	if err != nil {
 		return nil, err
