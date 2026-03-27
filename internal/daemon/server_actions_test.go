@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -445,6 +446,27 @@ func TestHandleRerunJob(t *testing.T) {
 			}, "Expected status 405 for GET, got %d", w.Code)
 		}
 	})
+}
+
+func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
+	mainRepo := t.TempDir()
+	worktreeRepo := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(worktreeRepo, ".roborev.toml"), []byte("review_model = \"worktree-model\"\n"), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:        "test",
+		JobType:      storage.JobTypeReview,
+		ReviewType:   config.ReviewTypeDefault,
+		Reasoning:    "thorough",
+		RepoPath:     mainRepo,
+		WorktreePath: worktreeRepo,
+	}
+
+	model, provider := resolveRerunModelProvider(job, config.DefaultConfig())
+	assert.Equal(t, "worktree-model", model)
+	assert.Empty(t, provider)
 }
 
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs

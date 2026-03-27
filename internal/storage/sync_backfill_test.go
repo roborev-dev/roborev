@@ -210,16 +210,16 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	}
 	assert.Equal(t, "gpt-4", modelAfter.String)
 
-	// Also verify that upserting with empty model doesn't clear existing model
-	pulledJob.Model = "" // Empty model
+	// Upserting with empty model should clear the existing effective model so
+	// synced reruns can propagate implicit/default state.
+	pulledJob.Model = ""
 	err = db.UpsertPulledJob(pulledJob, repo.ID, nil)
 	require.NoError(t, err, "UpsertPulledJob (empty model) failed: %v")
 
-	var modelPreserved sql.NullString
-	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelPreserved)
-	require.NoError(t, err, "Failed to query model preserved: %v")
-
-	assert.False(t, !modelPreserved.Valid || modelPreserved.String != "gpt-4")
+	var modelCleared sql.NullString
+	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelCleared)
+	require.NoError(t, err, "Failed to query model cleared: %v")
+	assert.False(t, modelCleared.Valid)
 }
 
 func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
@@ -300,4 +300,44 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	).Scan(&wt)
 	require.NoError(t, err)
 	assert.Equal(t, "/worktrees/my-branch", wt)
+}
+
+func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/test/repo-sync-clear")
+	require.NoError(t, err)
+
+	jobUUID := "test-uuid-clear-" + time.Now().Format("20060102150405")
+	pulledJob := PulledJob{
+		UUID:              jobUUID,
+		RepoIdentity:      "/test/repo-sync-clear",
+		GitRef:            "HEAD",
+		Agent:             "test-agent",
+		Model:             "gpt-4",
+		Provider:          "openai",
+		RequestedModel:    "gpt-4",
+		RequestedProvider: "openai",
+		Status:            "done",
+		SourceMachineID:   "test-machine",
+		EnqueuedAt:        time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
+
+	pulledJob.Model = ""
+	pulledJob.Provider = ""
+	pulledJob.RequestedModel = ""
+	pulledJob.RequestedProvider = ""
+	pulledJob.UpdatedAt = time.Now().Add(time.Second)
+	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
+
+	var model, provider, requestedModel, requestedProvider *string
+	err = db.QueryRow(`SELECT model, provider, requested_model, requested_provider FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&model, &provider, &requestedModel, &requestedProvider)
+	require.NoError(t, err)
+	assert.Nil(t, model)
+	assert.Nil(t, provider)
+	assert.Nil(t, requestedModel)
+	assert.Nil(t, requestedProvider)
 }

@@ -657,7 +657,11 @@ func workflowForJob(jobType, reviewType string) string {
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string) {
 	workflow := workflowForJob(job.JobType, job.ReviewType)
-	resolution := agent.ResolveWorkflowConfig("", job.RepoPath, cfg, workflow, job.Reasoning)
+	resolutionPath := job.RepoPath
+	if strings.TrimSpace(job.WorktreePath) != "" {
+		resolutionPath = job.WorktreePath
+	}
+	resolution := agent.ResolveWorkflowConfig("", resolutionPath, cfg, workflow, job.Reasoning)
 	model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
 	provider := strings.TrimSpace(job.RequestedProvider)
 	return model, provider

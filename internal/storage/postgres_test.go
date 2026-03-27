@@ -1069,36 +1069,44 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 
 	// Upsert with a model value - should backfill
 	job := SyncableJob{
-		UUID:            jobUUID,
-		RepoIdentity:    repoIdentity,
-		GitRef:          "HEAD",
-		Agent:           "test-agent",
-		Model:           "gpt-4", // Now providing a model
-		Status:          "done",
-		SourceMachineID: machineID,
-		EnqueuedAt:      time.Now(),
+		UUID:              jobUUID,
+		RepoIdentity:      repoIdentity,
+		GitRef:            "HEAD",
+		Agent:             "test-agent",
+		Model:             "gpt-4", // Now providing a model
+		Provider:          "openai",
+		RequestedModel:    "gpt-4",
+		RequestedProvider: "openai",
+		Status:            "done",
+		SourceMachineID:   machineID,
+		EnqueuedAt:        time.Now(),
 	}
 	err = pool.UpsertJob(ctx, job, repoID, nil)
 	require.NoError(t, err, "UpsertJob failed: %v")
 
-	// Verify model was backfilled
+	// Verify model was backfilled.
 	var modelAfter *string
 	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelAfter)
 	require.NoError(t, err, "Failed to query model after: %v")
-
 	assert.NotNil(t, modelAfter, "Expected model to be backfilled, but it's still NULL")
 	if modelAfter != nil {
 		assert.Equal(t, "gpt-4", *modelAfter)
 	}
 
-	// Also verify that upserting with empty model doesn't clear existing model
-	job.Model = "" // Empty model
+	// Upserting with empty values should clear the effective/requested fields so
+	// synced reruns can propagate implicit/default state.
+	job.Model = ""
+	job.Provider = ""
+	job.RequestedModel = ""
+	job.RequestedProvider = ""
 	err = pool.UpsertJob(ctx, job, repoID, nil)
-	require.NoError(t, err, "UpsertJob (empty model) failed: %v")
+	require.NoError(t, err, "UpsertJob (empty model/provider) failed: %v")
 
-	var modelPreserved *string
-	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelPreserved)
-	require.NoError(t, err, "Failed to query model preserved: %v")
-
-	assert.False(t, modelPreserved == nil || *modelPreserved != "gpt-4")
+	var modelCleared, providerCleared, requestedModelCleared, requestedProviderCleared *string
+	err = pool.pool.QueryRow(ctx, `SELECT model, provider, requested_model, requested_provider FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelCleared, &providerCleared, &requestedModelCleared, &requestedProviderCleared)
+	require.NoError(t, err, "Failed to query cleared fields: %v")
+	assert.Nil(t, modelCleared, "Expected empty model upsert to clear existing model")
+	assert.Nil(t, providerCleared, "Expected empty provider upsert to clear existing provider")
+	assert.Nil(t, requestedModelCleared, "Expected empty requested_model upsert to clear existing requested model")
+	assert.Nil(t, requestedProviderCleared, "Expected empty requested_provider upsert to clear existing requested provider")
 }

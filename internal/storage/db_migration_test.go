@@ -575,8 +575,8 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 			VALUES (1, '/tmp/test', 'test');
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 			VALUES (1, 1, 'abc123', 'Author', 'Subject', '2024-01-01');
-		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status)
-			VALUES (1, 1, 1, 'abc123', 'codex', 'done');
+		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, agentic)
+			VALUES (1, 1, 1, 'abc123', 'codex', 'done', 1);
 		INSERT INTO reviews (id, job_id, agent, prompt, output)
 			VALUES (1, 1, 'codex', 'test', 'looks good');
 	`)
@@ -622,6 +622,10 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 			return false
 		}, "Review output not preserved: got %q", review.Output)
 	}
+
+	job, err := db.GetJobByID(1)
+	require.NoError(t, err)
+	assert.True(t, job.Agentic, "agentic flag should survive rebuild migration")
 
 	// Verify applied/rebased statuses work
 	_, err = db.Exec(

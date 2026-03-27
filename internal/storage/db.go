@@ -369,6 +369,7 @@ func (db *DB) migrate() error {
 				case "reasoning":
 					hasReasoning = true
 				case "agentic":
+					hasAgentic = true
 				case "model":
 					hasModel = true
 				case "provider":
