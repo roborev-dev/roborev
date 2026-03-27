@@ -382,8 +382,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var promptToPersist string
 	storedPromptValue := job.Prompt
 	var err error
-	if decodedStoredPrompt, ok := prompt.DecodeStoredReviewPrompt(storedPromptValue); ok {
-		reviewPrompt = decodedStoredPrompt
+	if prompt.IsStoredReviewPrompt(storedPromptValue) {
+		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble

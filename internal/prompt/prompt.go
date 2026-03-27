@@ -28,9 +28,8 @@ Return only the final review content. Do NOT include process narration, progress
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
 const (
-	storedReviewPromptStart  = "<roborev-stored-review-prompt>\n"
-	storedReviewPromptEnd    = "\n</roborev-stored-review-prompt>"
-	legacyStoredReviewPrompt = "<!-- roborev:stored-review-prompt -->\n"
+	storedReviewPromptStart = "<roborev-stored-review-prompt>\n"
+	storedReviewPromptEnd   = "\n</roborev-stored-review-prompt>"
 )
 
 // SystemPromptSingle is the base instruction for single commit reviews
@@ -274,17 +273,10 @@ func EncodeStoredReviewPrompt(reviewPrompt string) string {
 	return storedReviewPromptStart + reviewPrompt + storedReviewPromptEnd
 }
 
-// DecodeStoredReviewPrompt returns the precomputed review prompt body when the
-// stored value was explicitly marked as an enqueue-time prompt override.
-func DecodeStoredReviewPrompt(stored string) (string, bool) {
-	if strings.HasPrefix(stored, storedReviewPromptStart) && strings.HasSuffix(stored, storedReviewPromptEnd) {
-		trimmed := strings.TrimPrefix(stored, storedReviewPromptStart)
-		return strings.TrimSuffix(trimmed, storedReviewPromptEnd), true
-	}
-	if strings.HasPrefix(stored, legacyStoredReviewPrompt) {
-		return strings.TrimPrefix(stored, legacyStoredReviewPrompt), true
-	}
-	return "", false
+// IsStoredReviewPrompt reports whether the stored value is a precomputed full
+// review prompt wrapped for persistence.
+func IsStoredReviewPrompt(stored string) bool {
+	return strings.HasPrefix(stored, storedReviewPromptStart) && strings.HasSuffix(stored, storedReviewPromptEnd)
 }
 
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {

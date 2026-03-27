@@ -72,16 +72,12 @@ func TestStoredReviewPromptEncodingRoundTrip(t *testing.T) {
 	encoded := EncodeStoredReviewPrompt("precomputed prompt")
 	require.Contains(t, encoded, "<roborev-stored-review-prompt>")
 	require.Contains(t, encoded, "</roborev-stored-review-prompt>")
-
-	decoded, ok := DecodeStoredReviewPrompt(encoded)
-	require.True(t, ok)
-	assert.Equal(t, "precomputed prompt", decoded)
+	require.True(t, IsStoredReviewPrompt(encoded))
+	assert.Contains(t, encoded, "precomputed prompt")
 }
 
-func TestDecodeStoredReviewPrompt_LegacyMarker(t *testing.T) {
-	decoded, ok := DecodeStoredReviewPrompt("<!-- roborev:stored-review-prompt -->\nlegacy prompt")
-	require.True(t, ok)
-	assert.Equal(t, "legacy prompt", decoded)
+func TestIsStoredReviewPrompt_RejectsPlainPrompt(t *testing.T) {
+	assert.False(t, IsStoredReviewPrompt("plain prompt"))
 }
 
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
