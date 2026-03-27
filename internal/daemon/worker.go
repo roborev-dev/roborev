@@ -379,10 +379,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// patterns are resolved consistently.
 	pb := prompt.NewBuilderWithConfig(wp.db, cfg)
 	var reviewPrompt string
-	promptToPersist := job.Prompt
+	var promptToPersist string
+	storedPromptValue := job.Prompt
 	var err error
-	if storedPrompt, ok := prompt.DecodeStoredReviewPrompt(job.Prompt); ok {
-		reviewPrompt = storedPrompt
+	if decodedStoredPrompt, ok := prompt.DecodeStoredReviewPrompt(storedPromptValue); ok {
+		if encoded := prompt.EncodeStoredReviewPrompt(decodedStoredPrompt); encoded != storedPromptValue {
+			reviewPrompt = encoded
+			promptToPersist = encoded
+		} else {
+			reviewPrompt = storedPromptValue
+			promptToPersist = storedPromptValue
+		}
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
@@ -391,6 +398,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		} else {
 			reviewPrompt = job.Prompt
 		}
+		promptToPersist = job.Prompt
 	} else if job.UsesStoredPrompt() {
 		// Prompt-native job (task/compact) with missing prompt — likely a
 		// daemon version mismatch or storage issue. Fail clearly instead
