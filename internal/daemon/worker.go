@@ -383,13 +383,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	storedPromptValue := job.Prompt
 	var err error
 	if decodedStoredPrompt, ok := prompt.DecodeStoredReviewPrompt(storedPromptValue); ok {
-		if encoded := prompt.EncodeStoredReviewPrompt(decodedStoredPrompt); encoded != storedPromptValue {
-			reviewPrompt = encoded
-			promptToPersist = encoded
-		} else {
-			reviewPrompt = storedPromptValue
-			promptToPersist = storedPromptValue
-		}
+		reviewPrompt = decodedStoredPrompt
+		promptToPersist = storedPromptValue
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")

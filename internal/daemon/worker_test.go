@@ -465,11 +465,50 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	encodedPrompt := prompt.EncodeStoredReviewPrompt("precomputed prompt")
-	assert.Equal(t, encodedPrompt, capturedPrompt)
+	assert.Equal(t, "precomputed prompt", capturedPrompt)
 	decodedPrompt, ok := prompt.DecodeStoredReviewPrompt(updated.Prompt)
 	require.True(t, ok)
 	assert.Equal(t, "precomputed prompt", decodedPrompt)
 	assert.Equal(t, encodedPrompt, updated.Prompt)
+}
+
+func TestProcessJob_PreservesLegacyStoredReviewPromptOverride(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	var capturedPrompt string
+	agentName := "legacy-stored-review-prompt-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			capturedPrompt = reviewPrompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	const legacyPrompt = "<!-- roborev:stored-review-prompt -->\nlegacy prompt"
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    agentName,
+		Prompt:   legacyPrompt,
+	})
+	require.NoError(t, err)
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Equal(t, "legacy prompt", capturedPrompt)
+	assert.Equal(t, legacyPrompt, updated.Prompt)
 }
 
 func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
