@@ -1715,6 +1715,50 @@ func TestTUIHideClosed(t *testing.T) {
 		assertSelection(t, m2, 1, 2)
 
 	})
+	t.Run("RefreshPreservesSelectionInReviewView", func(t *testing.T) {
+		// When in review view, a job refresh should NOT move selectedIdx
+		// away from a closed job. Navigation (←/→) is relative to the
+		// viewed job's position; normalizeSelectionIfHidden handles
+		// adjustment when the user returns to the queue.
+		m := newModel(testEndpoint, withExternalIODisabled())
+		m.currentView = viewReview
+		m.hideClosed = true
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withClosed(boolPtr(false))),
+			makeJob(2, withClosed(boolPtr(false))),
+			makeJob(3, withClosed(boolPtr(false))),
+			makeJob(4, withClosed(boolPtr(false))),
+			makeJob(5, withClosed(boolPtr(false))),
+		}
+		// User is viewing job 3 (index 2)
+		m.selectedIdx = 2
+		m.selectedJobID = 3
+		m.currentReview = &storage.Review{
+			ID:    100,
+			JobID: 3,
+			Job:   &storage.ReviewJob{ID: 3},
+		}
+
+		// Simulate closing the current review
+		m.pendingClosed = map[int64]pendingState{3: {newState: true, seq: 1}}
+
+		// Simulate a job refresh where job 3 is now closed
+		m2, _ := updateModel(t, m, jobsMsg{
+			jobs: []storage.ReviewJob{
+				makeJob(1, withClosed(boolPtr(false))),
+				makeJob(2, withClosed(boolPtr(false))),
+				makeJob(3, withClosed(boolPtr(true))),
+				makeJob(4, withClosed(boolPtr(false))),
+				makeJob(5, withClosed(boolPtr(false))),
+			},
+			hasMore: false,
+		})
+
+		// Selection must stay at index 2 (job 3) so ←/→ navigation
+		// continues from the user's current position.
+		assertSelection(t, m2, 2, 3)
+	})
 	t.Run("NavigationSkipsHidden", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 		m.currentView = viewQueue
