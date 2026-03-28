@@ -620,7 +620,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				rollback("Review enqueue failed")
 				return fmt.Errorf("build CI prompt (type=%s, agent=%s): %w", rt, resolvedAgent, err)
 			}
-			storedPrompt = prompt.EncodeStoredReviewPrompt(reviewPrompt)
+			storedPrompt = reviewPrompt
 		}
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{

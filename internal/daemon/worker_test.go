@@ -6,7 +6,6 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
@@ -453,7 +452,7 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 		CommitID: commit.ID,
 		GitRef:   sha,
 		Agent:    agentName,
-		Prompt:   prompt.EncodeStoredReviewPrompt("precomputed prompt"),
+		Prompt:   "review body\n<untrusted-pr-discussion>\n<comment>latest</comment>\n</untrusted-pr-discussion>\n",
 	})
 	require.NoError(t, err)
 
@@ -464,9 +463,8 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	tc.Pool.processJob(testWorkerID, claimed)
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	encodedPrompt := prompt.EncodeStoredReviewPrompt("precomputed prompt")
-	assert.Equal(t, encodedPrompt, capturedPrompt)
-	assert.Equal(t, encodedPrompt, updated.Prompt)
+	assert.Equal(t, job.Prompt, capturedPrompt)
+	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
 func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {

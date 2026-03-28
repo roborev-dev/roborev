@@ -27,11 +27,6 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
-const (
-	storedReviewPromptStart = "<roborev-stored-review-prompt>\n"
-	storedReviewPromptEnd   = "\n</roborev-stored-review-prompt>"
-)
-
 // SystemPromptSingle is the base instruction for single commit reviews
 const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
 
@@ -263,22 +258,6 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
 }
-
-// EncodeStoredReviewPrompt marks a precomputed review prompt so workers can
-// distinguish it from prompts saved after runtime prompt construction.
-func EncodeStoredReviewPrompt(reviewPrompt string) string {
-	if reviewPrompt == "" {
-		return ""
-	}
-	return storedReviewPromptStart + reviewPrompt + storedReviewPromptEnd
-}
-
-// IsStoredReviewPrompt reports whether the stored value is a precomputed full
-// review prompt wrapped for persistence.
-func IsStoredReviewPrompt(stored string) bool {
-	return strings.HasPrefix(stored, storedReviewPromptStart) && strings.HasSuffix(stored, storedReviewPromptEnd)
-}
-
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 	if len(variants) == 0 || limit <= 0 {
 		return

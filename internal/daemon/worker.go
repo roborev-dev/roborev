@@ -382,7 +382,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var promptToPersist string
 	storedPromptValue := job.Prompt
 	var err error
-	if prompt.IsStoredReviewPrompt(storedPromptValue) {
+	if strings.Contains(storedPromptValue, "<untrusted-pr-discussion>") {
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {

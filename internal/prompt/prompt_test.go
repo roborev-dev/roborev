@@ -68,18 +68,6 @@ func TestBuildPromptWithAdditionalContext(t *testing.T) {
 	assertContains(t, prompt, "Most recent human comment first.", "Prompt should contain additional context body")
 }
 
-func TestStoredReviewPromptEncodingRoundTrip(t *testing.T) {
-	encoded := EncodeStoredReviewPrompt("precomputed prompt")
-	require.Contains(t, encoded, "<roborev-stored-review-prompt>")
-	require.Contains(t, encoded, "</roborev-stored-review-prompt>")
-	require.True(t, IsStoredReviewPrompt(encoded))
-	assert.Contains(t, encoded, "precomputed prompt")
-}
-
-func TestIsStoredReviewPrompt_RejectsPlainPrompt(t *testing.T) {
-	assert.False(t, IsStoredReviewPrompt("plain prompt"))
-}
-
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 
