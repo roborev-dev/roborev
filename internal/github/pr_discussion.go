@@ -2,12 +2,12 @@ package github
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	googlegithub "github.com/google/go-github/v84/github"
 )
 
 const (
@@ -25,108 +25,103 @@ type PRDiscussionComment struct {
 	CreatedAt time.Time
 }
 
-type ghCommentUser struct {
-	Login string `json:"login"`
-	Type  string `json:"type"`
-}
-
-type ghIssueComment struct {
-	Body      string        `json:"body"`
-	CreatedAt string        `json:"created_at"`
-	User      ghCommentUser `json:"user"`
-}
-
-type ghReview struct {
-	Body        string        `json:"body"`
-	SubmittedAt string        `json:"submitted_at"`
-	User        ghCommentUser `json:"user"`
-}
-
-type ghReviewComment struct {
-	Body         string        `json:"body"`
-	CreatedAt    string        `json:"created_at"`
-	Path         string        `json:"path"`
-	Line         *int          `json:"line"`
-	OriginalLine *int          `json:"original_line"`
-	User         ghCommentUser `json:"user"`
-}
-
-type ghCollaborator struct {
-	Login    string `json:"login"`
-	RoleName string `json:"role_name"`
-}
-
 // ListPRDiscussionComments returns human-authored pull request discussion
 // comments across top-level issue comments, review summaries, and inline review
 // comments. Results are sorted oldest-first.
-func ListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int, env []string) ([]PRDiscussionComment, error) {
+func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int) ([]PRDiscussionComment, error) {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+
 	var comments []PRDiscussionComment
 
-	issueLines, err := ghAPIBase64Lines(ctx, fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", ghRepo, prNumber), env)
-	if err != nil {
-		return nil, err
+	issueOpts := &googlegithub.IssueListCommentsOptions{
+		Sort:      ptr("created"),
+		Direction: ptr("asc"),
+		ListOptions: googlegithub.ListOptions{
+			PerPage: 100,
+		},
 	}
-	for _, line := range issueLines {
-		var item ghIssueComment
-		if err := decodeBase64JSON(line, &item); err != nil {
-			return nil, fmt.Errorf("parse issue comment: %w", err)
+	for {
+		issueComments, resp, err := c.api.Issues.ListComments(ctx, owner, repo, prNumber, issueOpts)
+		if err != nil {
+			return nil, fmt.Errorf("list issue comments: %w", err)
 		}
-		if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.Body) || strings.TrimSpace(item.Body) == "" {
-			continue
+		for _, item := range issueComments {
+			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
+				continue
+			}
+			comments = append(comments, PRDiscussionComment{
+				Author:    item.GetUser().GetLogin(),
+				Body:      item.GetBody(),
+				Source:    PRDiscussionSourceIssueComment,
+				CreatedAt: item.GetCreatedAt().Time,
+			})
 		}
-		comments = append(comments, PRDiscussionComment{
-			Author:    item.User.Login,
-			Body:      item.Body,
-			Source:    PRDiscussionSourceIssueComment,
-			CreatedAt: parseGitHubTimestamp(item.CreatedAt),
-		})
-	}
-
-	reviewLines, err := ghAPIBase64Lines(ctx, fmt.Sprintf("repos/%s/pulls/%d/reviews?per_page=100", ghRepo, prNumber), env)
-	if err != nil {
-		return nil, err
-	}
-	for _, line := range reviewLines {
-		var item ghReview
-		if err := decodeBase64JSON(line, &item); err != nil {
-			return nil, fmt.Errorf("parse review summary: %w", err)
+		if resp == nil || resp.NextPage == 0 {
+			break
 		}
-		if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.Body) || strings.TrimSpace(item.Body) == "" {
-			continue
-		}
-		comments = append(comments, PRDiscussionComment{
-			Author:    item.User.Login,
-			Body:      item.Body,
-			Source:    PRDiscussionSourceReview,
-			CreatedAt: parseGitHubTimestamp(item.SubmittedAt),
-		})
+		issueOpts.Page = resp.NextPage
 	}
 
-	inlineLines, err := ghAPIBase64Lines(ctx, fmt.Sprintf("repos/%s/pulls/%d/comments?per_page=100", ghRepo, prNumber), env)
-	if err != nil {
-		return nil, err
+	reviewOpts := &googlegithub.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := c.api.PullRequests.ListReviews(ctx, owner, repo, prNumber, reviewOpts)
+		if err != nil {
+			return nil, fmt.Errorf("list pull request reviews: %w", err)
+		}
+		for _, item := range reviews {
+			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
+				continue
+			}
+			comments = append(comments, PRDiscussionComment{
+				Author:    item.GetUser().GetLogin(),
+				Body:      item.GetBody(),
+				Source:    PRDiscussionSourceReview,
+				CreatedAt: item.GetSubmittedAt().Time,
+			})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		reviewOpts.Page = resp.NextPage
 	}
-	for _, line := range inlineLines {
-		var item ghReviewComment
-		if err := decodeBase64JSON(line, &item); err != nil {
-			return nil, fmt.Errorf("parse review comment: %w", err)
+
+	inlineOpts := &googlegithub.PullRequestListCommentsOptions{
+		Sort:      "created",
+		Direction: "asc",
+		ListOptions: googlegithub.ListOptions{
+			PerPage: 100,
+		},
+	}
+	for {
+		inlineComments, resp, err := c.api.PullRequests.ListComments(ctx, owner, repo, prNumber, inlineOpts)
+		if err != nil {
+			return nil, fmt.Errorf("list pull request comments: %w", err)
 		}
-		if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.Body) || strings.TrimSpace(item.Body) == "" {
-			continue
+		for _, item := range inlineComments {
+			if !isHumanGitHubUser(item.User) || isRoborevCommentBody(item.GetBody()) || strings.TrimSpace(item.GetBody()) == "" {
+				continue
+			}
+			comment := PRDiscussionComment{
+				Author:    item.GetUser().GetLogin(),
+				Body:      item.GetBody(),
+				Source:    PRDiscussionSourceReviewComment,
+				Path:      item.GetPath(),
+				CreatedAt: item.GetCreatedAt().Time,
+			}
+			if item.GetLine() > 0 {
+				comment.Line = item.GetLine()
+			} else if item.GetOriginalLine() > 0 {
+				comment.Line = item.GetOriginalLine()
+			}
+			comments = append(comments, comment)
 		}
-		comment := PRDiscussionComment{
-			Author:    item.User.Login,
-			Body:      item.Body,
-			Source:    PRDiscussionSourceReviewComment,
-			Path:      item.Path,
-			CreatedAt: parseGitHubTimestamp(item.CreatedAt),
+		if resp == nil || resp.NextPage == 0 {
+			break
 		}
-		if item.Line != nil && *item.Line > 0 {
-			comment.Line = *item.Line
-		} else if item.OriginalLine != nil && *item.OriginalLine > 0 {
-			comment.Line = *item.OriginalLine
-		}
-		comments = append(comments, comment)
+		inlineOpts.Page = resp.NextPage
 	}
 
 	sort.SliceStable(comments, func(i, j int) bool {
@@ -139,81 +134,49 @@ func ListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int, 
 // ListTrustedRepoCollaborators returns collaborator logins that have effective
 // maintain or admin access to the repository. Logins are normalized to lower
 // case for case-insensitive matching against GitHub comment authors.
-func ListTrustedRepoCollaborators(ctx context.Context, ghRepo string, env []string) (map[string]struct{}, error) {
-	lines, err := ghAPIBase64Lines(ctx, fmt.Sprintf("repos/%s/collaborators?per_page=100&affiliation=all", ghRepo), env)
+func (c *Client) ListTrustedRepoCollaborators(ctx context.Context, ghRepo string) (map[string]struct{}, error) {
+	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return nil, err
 	}
 
-	trusted := make(map[string]struct{}, len(lines))
-	for _, line := range lines {
-		var item ghCollaborator
-		if err := decodeBase64JSON(line, &item); err != nil {
-			return nil, fmt.Errorf("parse collaborator: %w", err)
-		}
-		login := strings.ToLower(strings.TrimSpace(item.Login))
-		if login == "" {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(item.RoleName)) {
-		case "admin", "maintain":
-			trusted[login] = struct{}{}
-		}
+	opts := &googlegithub.ListCollaboratorsOptions{
+		Affiliation: "all",
+		ListOptions: googlegithub.ListOptions{PerPage: 100},
 	}
-
-	return trusted, nil
+	trusted := make(map[string]struct{})
+	for {
+		collaborators, resp, err := c.api.Repositories.ListCollaborators(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list collaborators: %w", err)
+		}
+		for _, item := range collaborators {
+			login := strings.ToLower(strings.TrimSpace(item.GetLogin()))
+			if login == "" {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(item.GetRoleName())) {
+			case "admin", "maintain":
+				trusted[login] = struct{}{}
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return trusted, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
-func ghAPIBase64Lines(ctx context.Context, endpoint string, env []string) ([]string, error) {
-	cmd := execCommand(ctx, "gh", "api", endpoint, "--paginate", "--jq", ".[] | @base64")
-	if env != nil {
-		cmd.Env = env
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("gh api %s: %w: %s", endpoint, err, string(out))
-	}
-
-	var lines []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
-}
-
-func decodeBase64JSON(line string, dst any) error {
-	raw, err := base64.StdEncoding.DecodeString(line)
-	if err != nil {
-		return fmt.Errorf("decode base64: %w", err)
-	}
-	if err := json.Unmarshal(raw, dst); err != nil {
-		return fmt.Errorf("decode json: %w", err)
-	}
-	return nil
-}
-
-func isHumanGitHubUser(user ghCommentUser) bool {
-	if strings.EqualFold(strings.TrimSpace(user.Type), "bot") {
+func isHumanGitHubUser(user *googlegithub.User) bool {
+	if user == nil {
 		return false
 	}
-	return !strings.HasSuffix(strings.TrimSpace(user.Login), "[bot]")
+	if strings.EqualFold(strings.TrimSpace(user.GetType()), "bot") {
+		return false
+	}
+	return !strings.HasSuffix(strings.TrimSpace(user.GetLogin()), "[bot]")
 }
 
 func isRoborevCommentBody(body string) bool {
 	return strings.Contains(body, CommentMarker)
-}
-
-func parseGitHubTimestamp(raw string) time.Time {
-	if strings.TrimSpace(raw) == "" {
-		return time.Time{}
-	}
-	ts, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return time.Time{}
-	}
-	return ts
 }

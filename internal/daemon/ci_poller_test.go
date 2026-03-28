@@ -213,9 +213,9 @@ func (h *ciPollerHarness) markJobCanceled(t *testing.T, jobID int64, errText str
 
 // stubGitCloneFn returns a stub git clone function that records if it was called
 // and creates a minimal git repository with the given remote URL.
-func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.Context, string, string, []string) error {
+func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.Context, string, string, string) error {
 	t.Helper()
-	return func(_ context.Context, _, targetPath string, _ []string) error {
+	return func(_ context.Context, _, targetPath, _ string) error {
 		*called = true
 		if err := exec.Command("git", "init", "-b", "main", targetPath).Run(); err != nil {
 			return err
@@ -374,8 +374,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 	)
 }
 
-func TestGhEnvForRepo_FiltersExistingTokens(t *testing.T) {
-	// Set up a CIPoller with a pre-cached token (avoids JWT/API calls)
+func TestGitHubTokenForRepo_PrefersAppTokenOverEnvironment(t *testing.T) {
 	provider := &GitHubAppTokenProvider{
 		tokens: map[int64]*cachedToken{
 			111111: {token: "ghs_app_token_123", expires: time.Now().Add(1 * time.Hour)},
@@ -385,65 +384,31 @@ func TestGhEnvForRepo_FiltersExistingTokens(t *testing.T) {
 	cfg.CI.GitHubAppInstallationID = 111111
 	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
 
-	// Plant GH_TOKEN and GITHUB_TOKEN in env
 	t.Setenv("GH_TOKEN", "personal_token")
 	t.Setenv("GITHUB_TOKEN", "another_personal_token")
 
-	env := p.ghEnvForRepo("acme/api")
-
-	// Should contain our app token
-	found := false
-	for _, e := range env {
-		if e == "GH_TOKEN=ghs_app_token_123" {
-			found = true
-		}
-		if strings.HasPrefix(e, "GITHUB_TOKEN=") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "GITHUB_TOKEN should have been filtered out")
-		}
-		if strings.HasPrefix(e, "GH_TOKEN=personal_token") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "original GH_TOKEN should have been filtered out")
-		}
-	}
-	if !found {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected GH_TOKEN=ghs_app_token_123 in env")
-	}
+	assert.Equal(t, "ghs_app_token_123", p.githubTokenForRepo("acme/api"))
 }
 
-func TestGhEnvForRepo_NilProvider(t *testing.T) {
+func TestGitHubTokenForRepo_FallsBackToEnvironment(t *testing.T) {
 	p := &CIPoller{tokenProvider: nil}
-	if env := p.ghEnvForRepo("acme/api"); env != nil {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected nil env when no token provider, got %v", env)
-	}
+	t.Setenv("GH_TOKEN", "personal_token")
+	assert.Equal(t, "personal_token", p.githubTokenForRepo("acme/api"))
 }
 
-func TestGhEnvForRepo_UnknownOwner(t *testing.T) {
-	// Token provider exists but no installation ID for the owner
+func TestGitHubTokenForRepo_UsesFallbackTokenForUnknownOwner(t *testing.T) {
 	provider := &GitHubAppTokenProvider{
 		tokens: make(map[int64]*cachedToken),
 	}
 	cfg := config.DefaultConfig()
 	cfg.CI.GitHubAppInstallations = map[string]int64{"known-org": 111111}
-	// No singular fallback
 	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
+	t.Setenv("GITHUB_TOKEN", "fallback_token")
 
-	env := p.ghEnvForRepo("unknown-org/repo")
-	if env != nil {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected nil env for unknown owner, got %v", env)
-	}
+	assert.Equal(t, "fallback_token", p.githubTokenForRepo("unknown-org/repo"))
 }
 
-func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
-	// Two installations cached, verify correct one is used per repo
+func TestGitHubTokenForRepo_MultiInstallationRouting(t *testing.T) {
 	provider := &GitHubAppTokenProvider{
 		tokens: map[int64]*cachedToken{
 			111111: {token: "ghs_token_wesm", expires: time.Now().Add(1 * time.Hour)},
@@ -457,36 +422,11 @@ func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
 	}
 	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
 
-	// Check wesm repo uses wesm installation token
-	env1 := p.ghEnvForRepo("wesm/my-repo")
-	found1 := false
-	for _, e := range env1 {
-		if e == "GH_TOKEN=ghs_token_wesm" {
-			found1 = true
-		}
-	}
-	if !found1 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected wesm's token for wesm/my-repo")
-	}
-
-	// Check roborev-dev repo uses org installation token
-	env2 := p.ghEnvForRepo("roborev-dev/other-repo")
-	found2 := false
-	for _, e := range env2 {
-		if e == "GH_TOKEN=ghs_token_org" {
-			found2 = true
-		}
-	}
-	if !found2 {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected roborev-dev's token for roborev-dev/other-repo")
-	}
+	assert.Equal(t, "ghs_token_wesm", p.githubTokenForRepo("wesm/my-repo"))
+	assert.Equal(t, "ghs_token_org", p.githubTokenForRepo("roborev-dev/other-repo"))
 }
 
-func TestGhEnvForRepo_CaseInsensitiveOwner(t *testing.T) {
+func TestGitHubTokenForRepo_CaseInsensitiveOwner(t *testing.T) {
 	provider := &GitHubAppTokenProvider{
 		tokens: map[int64]*cachedToken{
 			111111: {token: "ghs_token_wesm", expires: time.Now().Add(1 * time.Hour)},
@@ -496,19 +436,7 @@ func TestGhEnvForRepo_CaseInsensitiveOwner(t *testing.T) {
 	cfg.CI.GitHubAppInstallations = map[string]int64{"wesm": 111111}
 	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
 
-	// Uppercase owner in repo should still match lowercase config key
-	env := p.ghEnvForRepo("Wesm/my-repo")
-	found := false
-	for _, e := range env {
-		if e == "GH_TOKEN=ghs_token_wesm" {
-			found = true
-		}
-	}
-	if !found {
-		assert.Condition(t, func() bool {
-			return false
-		}, "expected token for case-variant owner 'Wesm' matching config key 'wesm'")
-	}
+	assert.Equal(t, "ghs_token_wesm", p.githubTokenForRepo("Wesm/my-repo"))
 }
 
 func TestFormatRawBatchComment_Truncation(t *testing.T) {
@@ -1666,13 +1594,13 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 	// Stub gitCloneFn to create a bare git repo instead of real cloning
 	cloneCalled := false
 	stub := stubGitCloneFn(t, "https://github.com/acme/newrepo.git", &cloneCalled)
-	p.gitCloneFn = func(ctx context.Context, ghRepo, targetPath string, args []string) error {
+	p.gitCloneFn = func(ctx context.Context, ghRepo, targetPath, token string) error {
 		if ghRepo != "acme/newrepo" {
 			assert.Condition(t, func() bool {
 				return false
 			}, "ghRepo=%q, want acme/newrepo", ghRepo)
 		}
-		return stub(ctx, ghRepo, targetPath, args)
+		return stub(ctx, ghRepo, targetPath, token)
 	}
 
 	repo, err := p.findOrCloneRepo(
@@ -1751,7 +1679,7 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 
 	// gitCloneFn should NOT be called since dir already exists
 	p.gitCloneFn = func(
-		_ context.Context, _, _ string, _ []string,
+		_ context.Context, _, _, _ string,
 	) error {
 		require.Condition(t, func() bool {
 			return false
@@ -2180,7 +2108,7 @@ func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	p.gitCloneFn = func(
-		_ context.Context, _, _ string, _ []string,
+		_ context.Context, _, _, _ string,
 	) error {
 		return fmt.Errorf("auth failed")
 	}
@@ -2221,7 +2149,7 @@ func TestCIPollerFindOrCloneRepo_PropagatesAmbiguity(t *testing.T) {
 
 	// Should NOT attempt to clone — ambiguity is a real error
 	p.gitCloneFn = func(
-		_ context.Context, _, _ string, _ []string,
+		_ context.Context, _, _, _ string,
 	) error {
 		require.Condition(t, func() bool {
 			return false

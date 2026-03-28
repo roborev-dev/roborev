@@ -3,11 +3,9 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/url"
 	"os"
@@ -37,7 +35,7 @@ type ghPRAuthor struct {
 	Login string `json:"login"`
 }
 
-// ghPR represents a GitHub pull request from `gh pr list --json`
+// ghPR represents an open GitHub pull request summary.
 type ghPR struct {
 	Number      int        `json:"number"`
 	HeadRefOid  string     `json:"headRefOid"`
@@ -67,7 +65,7 @@ type CIPoller struct {
 	listPRDiscussionFn  func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
 	gitFetchFn          func(context.Context, string) error
 	gitFetchPRHeadFn    func(context.Context, string, int) error
-	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
+	gitCloneFn          func(ctx context.Context, ghRepo, targetPath, token string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	buildReviewPromptFn func(string, string, int64, int, string, string, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
@@ -226,8 +224,8 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
 
-	repos, err := p.repoResolver.Resolve(ctx, &cfg.CI, func(owner string) []string {
-		return p.ghEnvForRepo(owner + "/_") // ghEnvForRepo only uses the owner part
+	repos, err := p.repoResolver.Resolve(ctx, &cfg.CI, func(owner string) string {
+		return p.githubTokenForRepo(owner + "/_") // githubTokenForRepo only uses the owner part
 	})
 	if err != nil {
 		log.Printf("CI poller: repo resolver error: %v (falling back to exact entries)", err)
@@ -251,7 +249,7 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
-	// List open PRs via gh CLI
+	// List open PRs via the GitHub API
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("list PRs: %w", err)
@@ -270,7 +268,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 			if openPRs[ref.PRNumber] {
 				continue
 			}
-			// The PR is missing from gh pr list, which may be
+			// The PR is missing from the open PR list, which may be
 			// truncated at 100 results. Verify it's actually
 			// closed before canceling work.
 			if p.callIsPROpen(ctx, ghRepo, ref.PRNumber) {
@@ -769,9 +767,9 @@ func (p *CIPoller) ensureClone(
 			return nil, fmt.Errorf("create clone parent dir: %w", err)
 		}
 
-		env := p.ghEnvForRepo(ghRepo)
+		token := p.githubTokenForRepo(ghRepo)
 		if err := p.callGitClone(
-			ctx, ghRepo, clonePath, env,
+			ctx, ghRepo, clonePath, token,
 		); err != nil {
 			return nil, fmt.Errorf("clone %s: %w", ghRepo, err)
 		}
@@ -916,18 +914,17 @@ func ownerRepoFromURL(raw string) string {
 	return ""
 }
 
-// ghClone clones a GitHub repo using the gh CLI.
+// ghClone clones a GitHub repo using git over HTTPS.
 func ghClone(
-	ctx context.Context, ghRepo, targetPath string, env []string,
+	ctx context.Context, ghRepo, targetPath, token string,
 ) error {
-	cmd := exec.CommandContext(
-		ctx, "gh", "repo", "clone", ghRepo, targetPath,
-	)
-	if env != nil {
-		cmd.Env = env
+	cloneURL, err := ghpkg.CloneURL(ghRepo, token)
+	if err != nil {
+		return err
 	}
+	cmd := exec.CommandContext(ctx, "git", "clone", cloneURL, targetPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh repo clone: %s: %s", err, string(out))
+		return fmt.Errorf("git clone: %s: %s", err, string(out))
 	}
 	return nil
 }
@@ -935,12 +932,12 @@ func ghClone(
 func (p *CIPoller) callGitClone(
 	ctx context.Context,
 	ghRepo, targetPath string,
-	env []string,
+	token string,
 ) error {
 	if p.gitCloneFn != nil {
-		return p.gitCloneFn(ctx, ghRepo, targetPath, env)
+		return p.gitCloneFn(ctx, ghRepo, targetPath, token)
 	}
-	return ghClone(ctx, ghRepo, targetPath, env)
+	return ghClone(ctx, ghRepo, targetPath, token)
 }
 
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
@@ -986,61 +983,50 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	}
 }
 
-// ghEnvForRepo returns the environment for gh CLI commands targeting a specific repo.
-// It resolves the installation ID for the repo's owner and injects GH_TOKEN.
-// Returns nil if no token provider, no installation ID for the owner, or on error
-// (gh uses its default auth in those cases).
-func (p *CIPoller) ghEnvForRepo(ghRepo string) []string {
-	if p.tokenProvider == nil {
-		return nil
-	}
+func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
-	cfg := p.cfgGetter.Config()
-	installationID := cfg.CI.InstallationIDForOwner(owner)
-	if installationID == 0 {
-		log.Printf("CI poller: no installation ID for owner %q, using default gh auth", owner)
-		return nil
-	}
-	token, err := p.tokenProvider.TokenForInstallation(installationID)
-	if err != nil {
-		log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to default gh auth: %v", owner, err)
-		return nil
-	}
-	// Filter out any existing GH_TOKEN or GITHUB_TOKEN to ensure our
-	// app token takes precedence over the user's personal token.
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
-			continue
+	if p.tokenProvider != nil {
+		cfg := p.cfgGetter.Config()
+		installationID := cfg.CI.InstallationIDForOwner(owner)
+		if installationID == 0 {
+			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
+		} else if token, err := p.tokenProvider.TokenForInstallation(installationID); err != nil {
+			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
+		} else {
+			return token
 		}
-		env = append(env, e)
 	}
-	return append(env, "GH_TOKEN="+token)
+	if token := strings.TrimSpace(os.Getenv("GH_TOKEN")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 }
 
-// listOpenPRs uses the gh CLI to list open PRs for a GitHub repo
-func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
-		"--repo", ghRepo,
-		"--json", "number,headRefOid,baseRefName,headRefName,title,author",
-		"--state", "open",
-		"--limit", "100",
-	)
-	if env := p.ghEnvForRepo(ghRepo); env != nil {
-		cmd.Env = env
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh pr list: %s", string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("gh pr list: %w", err)
-	}
+func (p *CIPoller) githubClientForRepo(ghRepo string) (*ghpkg.Client, error) {
+	return ghpkg.NewClient(p.githubTokenForRepo(ghRepo))
+}
 
-	var prs []ghPR
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, fmt.Errorf("parse gh output: %w", err)
+// listOpenPRs uses go-github to list open PRs for a GitHub repo.
+func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+	openPRs, err := client.ListOpenPullRequests(ctx, ghRepo, 100)
+	if err != nil {
+		return nil, err
+	}
+	prs := make([]ghPR, 0, len(openPRs))
+	for _, pr := range openPRs {
+		prs = append(prs, ghPR{
+			Number:      pr.Number,
+			HeadRefOid:  pr.HeadRefOID,
+			BaseRefName: pr.BaseRefName,
+			HeadRefName: pr.HeadRefName,
+			Title:       pr.Title,
+			Author:      ghPRAuthor{Login: pr.AuthorLogin},
+		})
 	}
 	return prs, nil
 }
@@ -1514,11 +1500,19 @@ func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, 
 }
 
 func (p *CIPoller) listPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int) ([]ghpkg.PRDiscussionComment, error) {
-	return ghpkg.ListPRDiscussionComments(ctx, ghRepo, prNumber, p.ghEnvForRepo(ghRepo))
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+	return client.ListPRDiscussionComments(ctx, ghRepo, prNumber)
 }
 
 func (p *CIPoller) listTrustedActors(ctx context.Context, ghRepo string) (map[string]struct{}, error) {
-	return ghpkg.ListTrustedRepoCollaborators(ctx, ghRepo, p.ghEnvForRepo(ghRepo))
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+	return client.ListTrustedRepoCollaborators(ctx, ghRepo)
 }
 
 func (p *CIPoller) callGitFetch(ctx context.Context, repoPath string) error {
@@ -1596,30 +1590,23 @@ func (p *CIPoller) callListTrustedActors(ctx context.Context, ghRepo string) (ma
 	return p.listTrustedActors(ctx, ghRepo)
 }
 
-// isPROpen checks whether a GitHub PR is still open by running
-// `gh pr view`. Returns true on any error (fail-open) to avoid
-// dropping legitimate batches on transient failures.
+// isPROpen checks whether a GitHub PR is still open. Returns true on any
+// error (fail-open) to avoid dropping legitimate batches on transient failures.
 func (p *CIPoller) isPROpen(
 	ctx context.Context, ghRepo string, prNumber int,
 ) bool {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view",
-		"--repo", ghRepo,
-		fmt.Sprintf("%d", prNumber),
-		"--json", "state",
-		"--jq", ".state",
-	)
-	if env := p.ghEnvForRepo(ghRepo); env != nil {
-		cmd.Env = env
-	}
-	out, err := cmd.Output()
+	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
-		// Fail-open: assume PR is open on errors
 		return true
 	}
-	return strings.TrimSpace(string(out)) == "OPEN"
+	open, err := client.IsPullRequestOpen(ctx, ghRepo, prNumber)
+	if err != nil {
+		return true
+	}
+	return open
 }
 
 func (p *CIPoller) buildPRDiscussionContext(ctx context.Context, ghRepo string, prNumber int) (string, error) {
@@ -1762,47 +1749,15 @@ func truncateUTF8(text string, maxBytes int) string {
 }
 
 // setCommitStatus posts a commit status check via the GitHub API.
-// Uses the GitHub App token provider for authentication. If no token
-// provider is configured, the call is silently skipped.
 func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error {
-	if p.tokenProvider == nil {
+	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
 		return nil
 	}
-
-	owner, _, _ := strings.Cut(ghRepo, "/")
-	cfg := p.cfgGetter.Config()
-	installationID := cfg.CI.InstallationIDForOwner(owner)
-	if installationID == 0 {
-		return nil
-	}
-
-	path := fmt.Sprintf("/repos/%s/statuses/%s", ghRepo, sha)
-	payload := fmt.Sprintf(
-		`{"state":%q,"description":%q,"context":"roborev"}`,
-		state, description,
-	)
-	body := strings.NewReader(payload)
-
-	resp, err := p.tokenProvider.APIRequest("POST", path, body, installationID)
+	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
-		return fmt.Errorf("set commit status: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf(
-				"set commit status: HTTP %d (body unreadable: %v)",
-				resp.StatusCode, readErr,
-			)
-		}
-		return fmt.Errorf(
-			"set commit status: HTTP %d: %s",
-			resp.StatusCode, string(respBody),
-		)
-	}
-	return nil
+	return client.SetCommitStatus(context.Background(), ghRepo, sha, state, description)
 }
 
 // toReviewResults converts storage batch results to the
@@ -1873,11 +1828,14 @@ func formatPRComment(review *storage.Review, verdict string) string {
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	env := p.ghEnvForRepo(ghRepo)
-	if p.resolveUpsertComments(ghRepo) {
-		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, env)
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return err
 	}
-	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, env)
+	if p.resolveUpsertComments(ghRepo) {
+		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
+	}
+	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
 }
 
 // resolveUpsertComments determines whether to upsert PR comments
