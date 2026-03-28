@@ -69,6 +69,7 @@ type CIPoller struct {
 	gitFetchPRHeadFn    func(context.Context, string, int) error
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
+	buildReviewPromptFn func(string, string, int64, int, string, string, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	synthesizeFn        func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
@@ -101,6 +102,10 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
+	p.buildReviewPromptFn = func(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string, cfg *config.Config) (string, error) {
+		builder := prompt.NewBuilderWithConfig(p.db, cfg)
+		return builder.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
+	}
 	p.postPRCommentFn = p.postPRComment
 	p.synthesizeFn = p.synthesizeBatchResults
 	p.repoResolver = &RepoResolver{}
@@ -606,8 +611,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 		storedPrompt := ""
 		if prDiscussionContext != "" {
-			builder := prompt.NewBuilderWithConfig(p.db, cfg)
-			reviewPrompt, err := builder.BuildWithAdditionalContext(
+			reviewPrompt, err := p.callBuildReviewPrompt(
 				repo.RootPath,
 				gitRef,
 				repo.ID,
@@ -615,12 +619,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				resolvedAgent,
 				rt,
 				prDiscussionContext,
+				cfg,
 			)
 			if err != nil {
-				rollback("Review enqueue failed")
-				return fmt.Errorf("build CI prompt (type=%s, agent=%s): %w", rt, resolvedAgent, err)
+				log.Printf("CI poller: failed to prebuild prompt for %s#%d (type=%s, agent=%s): %v; enqueuing without stored prompt", ghRepo, pr.Number, rt, resolvedAgent, err)
+			} else {
+				storedPrompt = reviewPrompt
 			}
-			storedPrompt = reviewPrompt
 		}
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
@@ -1535,6 +1540,14 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 		return p.mergeBaseFn(repoPath, baseRef, headRef)
 	}
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
+}
+
+func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string, cfg *config.Config) (string, error) {
+	if p.buildReviewPromptFn != nil {
+		return p.buildReviewPromptFn(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext, cfg)
+	}
+	builder := prompt.NewBuilderWithConfig(p.db, cfg)
+	return builder.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
 }
 
 func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {
