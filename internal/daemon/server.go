@@ -381,6 +381,10 @@ func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
 	}
 
 	listener := listeners[0]
+	if listener == nil {
+		return nil, DaemonEndpoint{}, fmt.Errorf(
+			"socket activation: unsupported socket type")
+	}
 	addr := listener.Addr().String()
 	if listener.Addr().Network() == "unix" {
 		addr = "unix://" + addr

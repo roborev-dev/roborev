@@ -473,6 +473,11 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if ep.IsUnix() && ep.Address == target.Address {
 			if info.PID > 0 {
 				killProcess(info.PID)
+				if isProcessAlive(info.PID) {
+					// Could not confirm kill; leave runtime
+					// metadata so the next attempt can retry.
+					continue
+				}
 			}
 			if info.SourcePath != "" {
 				os.Remove(info.SourcePath)
