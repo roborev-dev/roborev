@@ -387,6 +387,12 @@ func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
 	}
 	addr := listener.Addr().String()
 	if listener.Addr().Network() == "unix" {
+		if strings.HasPrefix(addr, "@") || strings.HasPrefix(addr, "\x00") {
+			_ = listener.Close()
+			return nil, DaemonEndpoint{}, fmt.Errorf(
+				"socket activation: abstract Unix sockets are not supported"+
+					" (got %q); use a filesystem path in ListenStream=", addr)
+		}
 		addr = "unix://" + addr
 	}
 	ep, err := ParseEndpoint(addr)
