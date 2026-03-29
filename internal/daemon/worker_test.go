@@ -429,6 +429,84 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 	}
 }
 
+func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	var capturedPrompt string
+	agentName := "stored-review-prompt-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			capturedPrompt = reviewPrompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    agentName,
+		Prompt:   "review body\n<untrusted-pr-discussion>\n<comment>latest</comment>\n</untrusted-pr-discussion>\n",
+	})
+	require.NoError(t, err)
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Equal(t, job.Prompt, capturedPrompt)
+	assert.Equal(t, job.Prompt, updated.Prompt)
+}
+
+func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	var capturedPrompt string
+	agentName := "review-retry-prompt-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			capturedPrompt = reviewPrompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    agentName,
+	})
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.SaveJobPrompt(job.ID, "stale prompt from prior attempt"))
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.Equal(t, "stale prompt from prior attempt", claimed.Prompt)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	require.NotEmpty(t, capturedPrompt)
+	assert.NotEqual(t, "stale prompt from prior attempt", capturedPrompt)
+	assert.Equal(t, capturedPrompt, updated.Prompt)
+}
+
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "deadlock-test", testWorkerID)

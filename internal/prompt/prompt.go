@@ -164,10 +164,16 @@ func (b *Builder) resolveExcludes(
 // Build constructs a review prompt for a commit or range with context from previous reviews.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
 func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+	return b.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, "")
+}
+
+// BuildWithAdditionalContext constructs a review prompt with an optional
+// caller-provided markdown context block inserted ahead of the current diff.
+func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
 	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
@@ -252,7 +258,6 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
 }
-
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 	if len(variants) == 0 || limit <= 0 {
 		return
@@ -447,7 +452,7 @@ func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
-func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	// Start with system prompt
 	promptType := "review"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -462,6 +467,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
+	b.writeAdditionalContext(&optionalContext, additionalContext)
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -564,7 +570,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 }
 
 // buildRangePrompt constructs a prompt for a commit range
-func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
 	// Start with system prompt for ranges
 	promptType := "range"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -579,6 +585,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
+	b.writeAdditionalContext(&optionalContext, additionalContext)
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -719,6 +726,14 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString(ProjectGuidelinesHeader)
 	sb.WriteString("\n")
 	sb.WriteString(strings.TrimSpace(guidelines))
+	sb.WriteString("\n\n")
+}
+
+func (b *Builder) writeAdditionalContext(sb *strings.Builder, additionalContext string) {
+	if strings.TrimSpace(additionalContext) == "" {
+		return
+	}
+	sb.WriteString(strings.TrimSpace(additionalContext))
 	sb.WriteString("\n\n")
 }
 

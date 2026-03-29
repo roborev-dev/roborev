@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,9 +71,78 @@ func TestHelperProcess(t *testing.T) {
 		}
 		fmt.Print(token)
 		os.Exit(0)
+	case "pr_discussion_issue":
+		emitBase64Lines(map[string]any{
+			"body":       "human issue comment",
+			"created_at": "2026-03-24T14:00:00Z",
+			"user": map[string]any{
+				"login": "alice",
+				"type":  "User",
+			},
+		}, map[string]any{
+			"body":       "comment from bot",
+			"created_at": "2026-03-24T15:00:00Z",
+			"user": map[string]any{
+				"login": "dependabot[bot]",
+				"type":  "Bot",
+			},
+		}, map[string]any{
+			"body":       CommentMarker + "\nroborev summary",
+			"created_at": "2026-03-24T16:00:00Z",
+			"user": map[string]any{
+				"login": "roborev-runner",
+				"type":  "User",
+			},
+		})
+		os.Exit(0)
+	case "pr_discussion_reviews":
+		emitBase64Lines(map[string]any{
+			"body":         "review summary comment",
+			"submitted_at": "2026-03-25T10:30:00Z",
+			"user": map[string]any{
+				"login": "bob",
+				"type":  "User",
+			},
+		})
+		os.Exit(0)
+	case "pr_discussion_inline":
+		emitBase64Lines(map[string]any{
+			"body":       "inline review comment",
+			"created_at": "2026-03-26T09:15:00Z",
+			"path":       "internal/daemon/ci_poller.go",
+			"line":       123,
+			"user": map[string]any{
+				"login": "carol",
+				"type":  "User",
+			},
+		})
+		os.Exit(0)
+	case "trusted_collaborators":
+		emitBase64Lines(map[string]any{
+			"login":     "alice",
+			"role_name": "admin",
+		}, map[string]any{
+			"login":     "bob",
+			"role_name": "maintain",
+		}, map[string]any{
+			"login":     "eve",
+			"role_name": "write",
+		})
+		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown action: %s", action)
 		os.Exit(2)
+	}
+}
+
+func emitBase64Lines(items ...map[string]any) {
+	for _, item := range items {
+		payload, err := json.Marshal(item)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "marshal helper payload: %v", err)
+			os.Exit(2)
+		}
+		fmt.Println(base64.StdEncoding.EncodeToString(payload))
 	}
 }
 
@@ -350,4 +420,46 @@ func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
 	require.NoError(t, err)
 	body := readCapturedBody(t, captureFile)
 	assertTruncatedBody(t, body)
+}
+
+func TestListPRDiscussionComments_FiltersAndSorts(t *testing.T) {
+	mockGHSequence(t, "pr_discussion_issue", "pr_discussion_reviews", "pr_discussion_inline")
+
+	comments, err := ListPRDiscussionComments(context.Background(), "owner/repo", 17, nil)
+	require.NoError(t, err)
+	require.Len(t, comments, 3)
+
+	require.Equal(t, "alice", comments[0].Author)
+	require.Equal(t, PRDiscussionSourceIssueComment, comments[0].Source)
+
+	require.Equal(t, "bob", comments[1].Author)
+	require.Equal(t, PRDiscussionSourceReview, comments[1].Source)
+
+	require.Equal(t, "carol", comments[2].Author)
+	require.Equal(t, PRDiscussionSourceReviewComment, comments[2].Source)
+	require.Equal(t, "internal/daemon/ci_poller.go", comments[2].Path)
+	require.Equal(t, 123, comments[2].Line)
+
+	for _, comment := range comments {
+		require.NotContains(t, comment.Body, CommentMarker)
+		require.NotContains(t, comment.Author, "[bot]")
+	}
+}
+
+func TestListPRDiscussionComments_Error(t *testing.T) {
+	setExecCommand(t, helperCmd("find_fail"))
+
+	_, err := ListPRDiscussionComments(context.Background(), "owner/repo", 17, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "gh api")
+}
+
+func TestListTrustedRepoCollaborators_FiltersToMaintainAndAdmin(t *testing.T) {
+	setExecCommand(t, helperCmd("trusted_collaborators"))
+
+	trusted, err := ListTrustedRepoCollaborators(context.Background(), "owner/repo", nil)
+	require.NoError(t, err)
+	require.Contains(t, trusted, "alice")
+	require.Contains(t, trusted, "bob")
+	require.NotContains(t, trusted, "eve")
 }

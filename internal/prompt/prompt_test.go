@@ -49,6 +49,25 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	assertNotContains(t, prompt, "## Previous Reviews", "Prompt should not contain previous reviews section without db")
 }
 
+func TestBuildPromptWithAdditionalContext(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+
+	builder := NewBuilder(nil)
+	prompt, err := builder.BuildWithAdditionalContext(
+		repoPath,
+		commits[len(commits)-1],
+		0,
+		0,
+		"test",
+		"",
+		"## Pull Request Discussion\n\nMost recent human comment first.\n",
+	)
+	require.NoError(t, err)
+
+	assertContains(t, prompt, "## Pull Request Discussion", "Prompt should contain additional context")
+	assertContains(t, prompt, "Most recent human comment first.", "Prompt should contain additional context body")
+}
+
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 
