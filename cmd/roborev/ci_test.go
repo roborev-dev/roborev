@@ -159,7 +159,7 @@ func TestExtractHeadSHA(t *testing.T) {
 
 func TestResolveAgentList(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
-		agents := resolveAgentList(
+		agents := config.ResolveCIAgents(
 			"codex,gemini", nil, nil)
 		assert.False(t, len(agents) != 2 ||
 			agents[0] != "codex" ||
@@ -167,33 +167,33 @@ func TestResolveAgentList(t *testing.T) {
 	})
 
 	t.Run("default", func(t *testing.T) {
-		agents := resolveAgentList("", nil, nil)
+		agents := config.ResolveCIAgents("", nil, nil)
 		assert.False(t, len(agents) != 1 || agents[0] != "")
 	})
 }
 
 func TestResolveReviewTypes(t *testing.T) {
 	t.Run("flag", func(t *testing.T) {
-		types := resolveReviewTypes(
+		types := config.ResolveCIReviewTypes(
 			"security,design", nil, nil)
 		assert.Len(t, types, 2)
 	})
 
 	t.Run("default", func(t *testing.T) {
-		types := resolveReviewTypes("", nil, nil)
+		types := config.ResolveCIReviewTypes("", nil, nil)
 		assert.False(t, len(types) != 1 || types[0] != "security")
 	})
 }
 
 func TestResolveAgentList_EmptyFlag(t *testing.T) {
 	// Comma-only flag should resolve to empty list.
-	agents := resolveAgentList(",", nil, nil)
+	agents := config.ResolveCIAgents(",", nil, nil)
 	assert.Empty(t, agents)
 }
 
 func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
 	// Whitespace-comma flag should resolve to empty list.
-	types := resolveReviewTypes(" , ", nil, nil)
+	types := config.ResolveCIReviewTypes(" , ", nil, nil)
 	assert.Empty(t, types)
 }
 
@@ -249,10 +249,74 @@ func TestResolveCIUpsertComments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveCIUpsertComments(tt.repo, tt.global)
+			got := config.ResolveCIUpsertComments(tt.repo, tt.global)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestResolveCIReasoning(t *testing.T) {
+	t.Run("explicit flag wins", func(t *testing.T) {
+		got, err := config.ResolveCIReasoning("high", nil, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "thorough", got)
+	})
+
+	t.Run("repo override wins", func(t *testing.T) {
+		got, err := config.ResolveCIReasoning("", &config.RepoConfig{
+			CI: config.RepoCIConfig{Reasoning: "medium"},
+		}, &config.Config{})
+		require.NoError(t, err)
+		assert.Equal(t, "medium", got)
+	})
+
+	t.Run("invalid repo config falls back to default", func(t *testing.T) {
+		got, err := config.ResolveCIReasoning("", &config.RepoConfig{
+			CI: config.RepoCIConfig{Reasoning: "nope"},
+		}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "thorough", got)
+	})
+}
+
+func TestResolveCIMinSeverity(t *testing.T) {
+	t.Run("explicit flag wins", func(t *testing.T) {
+		got, err := config.ResolveCIMinSeverity("HIGH", nil, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "high", got)
+	})
+
+	t.Run("repo override beats global", func(t *testing.T) {
+		got, err := config.ResolveCIMinSeverity("", &config.RepoConfig{
+			CI: config.RepoCIConfig{MinSeverity: "medium"},
+		}, &config.Config{
+			CI: config.CIConfig{MinSeverity: "high"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "medium", got)
+	})
+
+	t.Run("invalid repo config falls through to valid global", func(t *testing.T) {
+		got, err := config.ResolveCIMinSeverity("", &config.RepoConfig{
+			CI: config.RepoCIConfig{MinSeverity: "bogus"},
+		}, &config.Config{
+			CI: config.CIConfig{MinSeverity: "critical"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "critical", got)
+	})
+}
+
+func TestResolveCISynthesisAgent(t *testing.T) {
+	got := config.ResolveCISynthesisAgent("", &config.RepoConfig{}, &config.Config{
+		CI: config.CIConfig{SynthesisAgent: "gemini"},
+	})
+	assert.Equal(t, "gemini", got)
+
+	got = config.ResolveCISynthesisAgent("codex", nil, &config.Config{
+		CI: config.CIConfig{SynthesisAgent: "gemini"},
+	})
+	assert.Equal(t, "codex", got)
 }
 
 func TestSplitTrimmed(t *testing.T) {

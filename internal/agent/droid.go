@@ -24,18 +24,30 @@ func NewDroidAgent(command string) *DroidAgent {
 	return &DroidAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *DroidAgent) clone(opts ...agentCloneOption) *DroidAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		"",
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &DroidAgent{
+		Command:   cfg.Command,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *DroidAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &DroidAgent{Command: a.Command, Reasoning: level, Agentic: a.Agentic}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *DroidAgent) WithAgentic(agentic bool) Agent {
-	return &DroidAgent{
-		Command:   a.Command,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns the agent unchanged (model selection not supported for droid).
@@ -65,15 +77,7 @@ func (a *DroidAgent) CommandName() string {
 
 func (a *DroidAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := []string{"exec"}
-	if agenticMode {
-		args = append(args, "--auto", "medium")
-	} else {
-		args = append(args, "--auto", "low")
-	}
-	if effort := a.droidReasoningEffort(); effort != "" {
-		args = append(args, "--reasoning-effort", effort)
-	}
+	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
 

@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -109,20 +108,13 @@ Examples:
 				return fmt.Errorf("--list and --batch are mutually exclusive")
 			}
 			if list {
-				// When --all-branches, effectiveBranch stays "" so
-				// queryOpenJobs omits the branch filter.
-				effectiveBranch := branch
-				if !allBranches && effectiveBranch == "" {
-					workDir, err := os.Getwd()
-					if err != nil {
-						return fmt.Errorf("get working directory: %w", err)
-					}
-					repoRoot := workDir
-					if root, err := git.GetRepoRoot(workDir); err == nil {
-						repoRoot = root
-					}
-					effectiveBranch = git.GetCurrentBranch(repoRoot)
+				roots, err := resolveCurrentRepoRoots()
+				if err != nil {
+					return err
 				}
+				effectiveBranch := resolveCurrentBranchFilter(
+					roots.worktreeRoot, branch, allBranches,
+				)
 				return runFixList(cmd, effectiveBranch, newestFirst)
 			}
 			opts := fixOptions{
@@ -147,18 +139,13 @@ Examples:
 				}
 				// If no args, discover unaddressed jobs
 				if len(jobIDs) == 0 {
-					effectiveBranch := branch
-					if !allBranches && effectiveBranch == "" {
-						workDir, err := os.Getwd()
-						if err != nil {
-							return fmt.Errorf("get working directory: %w", err)
-						}
-						repoRoot := workDir
-						if root, err := git.GetRepoRoot(workDir); err == nil {
-							repoRoot = root
-						}
-						effectiveBranch = git.GetCurrentBranch(repoRoot)
+					roots, err := resolveCurrentRepoRoots()
+					if err != nil {
+						return err
 					}
+					effectiveBranch := resolveCurrentBranchFilter(
+						roots.worktreeRoot, branch, allBranches,
+					)
 					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, opts)
 				}
 				return runFixBatch(cmd, jobIDs, "", false, false, false, opts)
@@ -169,18 +156,13 @@ Examples:
 				// --branch X: use explicit branch
 				// --all-branches: empty string (no filter)
 				// default: current branch
-				effectiveBranch := branch
-				if !allBranches && effectiveBranch == "" {
-					workDir, err := os.Getwd()
-					if err != nil {
-						return fmt.Errorf("get working directory: %w", err)
-					}
-					repoRoot := workDir
-					if root, err := git.GetRepoRoot(workDir); err == nil {
-						repoRoot = root
-					}
-					effectiveBranch = git.GetCurrentBranch(repoRoot)
+				roots, err := resolveCurrentRepoRoots()
+				if err != nil {
+					return err
 				}
+				effectiveBranch := resolveCurrentBranchFilter(
+					roots.worktreeRoot, branch, allBranches,
+				)
 				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts)
 			}
 
@@ -322,8 +304,11 @@ func resolveFixModel(
 	selectedAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) string {
-	return agent.ResolveWorkflowModelForAgent(
-		selectedAgent, cliModel, repoPath, cfg, "fix", reasoning,
+	resolution := agent.ResolveWorkflowConfig(
+		"", repoPath, cfg, "fix", reasoning,
+	)
+	return resolution.ModelForSelectedAgent(
+		selectedAgent, cliModel,
 	)
 }
 
@@ -339,26 +324,20 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
 	}
 
-	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
+	resolution := agent.ResolveWorkflowConfig(
+		opts.agentName, repoPath, cfg, "fix", reasoning,
+	)
 
-	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
+	a, err := agent.GetAvailableWithConfig(
+		resolution.PreferredAgent, cfg, resolution.BackupAgent,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
 
-	// Use backup model when the backup agent was selected and no
-	// explicit model was passed via CLI.
-	preferredAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
-	var modelStr string
-	if usingBackup && opts.model == "" {
-		modelStr = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
-	} else {
-		modelStr = resolveFixModel(a.Name(), opts.model, repoPath, cfg, reasoning)
-	}
+	modelStr := resolution.ModelForSelectedAgent(
+		a.Name(), opts.model,
+	)
 
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithAgentic(true).WithReasoning(reasoningLevel)
@@ -378,15 +357,9 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 		return err
 	}
 
-	// Get working directory and repo root
-	workDir, err := os.Getwd()
+	roots, err := resolveCurrentRepoRoots()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
-	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		repoRoot = root
+		return err
 	}
 
 	// Process each job
@@ -395,7 +368,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
 		}
 
-		err := fixSingleJob(cmd, repoRoot, jobID, opts)
+		err := fixSingleJob(cmd, roots.worktreeRoot, jobID, opts)
 		if err != nil {
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
@@ -442,24 +415,15 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	roots, err := resolveCurrentRepoRoots()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
-	worktreeRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		worktreeRoot = root
-	}
-	apiRepoRoot := worktreeRoot
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		apiRepoRoot = root
+		return err
 	}
 
 	seen := make(map[int64]bool)
 
 	for {
-		jobs, err := queryOpenJobs(ctx, apiRepoRoot, branch)
+		jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -473,7 +437,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 			if explicitBranch {
 				filterBranch = branch
 			}
-			jobs = filterReachableJobs(worktreeRoot, filterBranch, jobs)
+			jobs = filterReachableJobs(roots.worktreeRoot, filterBranch, jobs)
 		}
 
 		// Filter out jobs we've already processed
@@ -673,20 +637,12 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	roots, err := resolveCurrentRepoRoots()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-	worktreeRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		worktreeRoot = root
-	}
-	apiRepoRoot := worktreeRoot
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		apiRepoRoot = root
+		return err
 	}
 
-	jobs, err := queryOpenJobs(ctx, apiRepoRoot, branch)
+	jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
 	if err != nil {
 		return err
 	}
@@ -694,7 +650,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	// When listing all branches (branch==""), skip filtering — the
 	// user explicitly asked for everything in this repo.
 	if branch != "" {
-		jobs = filterReachableJobs(worktreeRoot, branch, jobs)
+		jobs = filterReachableJobs(roots.worktreeRoot, branch, jobs)
 	}
 
 	jobIDs := make([]int64, len(jobs))
@@ -966,23 +922,14 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	roots, err := resolveCurrentRepoRoots()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		repoRoot = root
-	}
-	// Use main repo root for API queries (daemon stores jobs under main repo path)
-	apiRepoRoot := repoRoot
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		apiRepoRoot = root
+		return err
 	}
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobs, queryErr := queryOpenJobs(ctx, apiRepoRoot, branch)
+		jobs, queryErr := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -991,7 +938,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			if explicitBranch {
 				filterBranch = branch
 			}
-			jobs = filterReachableJobs(repoRoot, filterBranch, jobs)
+			jobs = filterReachableJobs(roots.worktreeRoot, filterBranch, jobs)
 		}
 		jobIDs = make([]int64, len(jobs))
 		for i, j := range jobs {
@@ -1055,7 +1002,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	}
 
 	// Resolve agent once
-	fixAgent, err := resolveFixAgent(repoRoot, opts)
+	fixAgent, err := resolveFixAgent(roots.worktreeRoot, opts)
 	if err != nil {
 		return err
 	}
@@ -1064,7 +1011,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	// task job — task/analyze output has no severity labels, so the
 	// instruction would confuse the agent for those entries.
 	minSev, err := config.ResolveFixMinSeverity(
-		opts.minSeverity, repoRoot,
+		opts.minSeverity, roots.worktreeRoot,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve min-severity: %w", err)
@@ -1081,7 +1028,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	// Split into batches by prompt size (after severity resolution
 	// so the severity instruction overhead is accounted for)
 	cfg, _ := config.LoadGlobal()
-	maxSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+	maxSize := config.ResolveMaxPromptSize(roots.worktreeRoot, cfg)
 	batches := splitIntoBatches(entries, maxSize, minSev)
 
 	for i, batch := range batches {
@@ -1115,7 +1062,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		}
 
 		result, err := fixJobDirect(ctx, fixJobParams{
-			RepoRoot: repoRoot,
+			RepoRoot: roots.worktreeRoot,
 			Agent:    fixAgent,
 			Output:   out,
 		}, prompt)
@@ -1134,7 +1081,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			} else if result.NoChanges {
 				cmd.Println("No changes were made by the fix agent.")
 			} else {
-				if hasChanges, hcErr := git.HasUncommittedChanges(repoRoot); hcErr == nil && hasChanges {
+				if hasChanges, hcErr := git.HasUncommittedChanges(roots.worktreeRoot); hcErr == nil && hasChanges {
 					cmd.Println("Warning: Changes were made but not committed. Please review and commit manually.")
 				}
 			}
@@ -1142,7 +1089,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 
 		// Enqueue review for fix commit
 		if result.CommitCreated {
-			if enqErr := enqueueIfNeeded(ctx, batchAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
+			if enqErr := enqueueIfNeeded(ctx, batchAddr, roots.worktreeRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
 			}
 		}

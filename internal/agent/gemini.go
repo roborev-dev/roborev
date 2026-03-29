@@ -45,24 +45,31 @@ func NewGeminiAgent(command string) *GeminiAgent {
 	return &GeminiAgent{Command: command, Model: defaultGeminiModel, Reasoning: ReasoningStandard}
 }
 
+func (a *GeminiAgent) clone(opts ...agentCloneOption) *GeminiAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &GeminiAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *GeminiAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
-	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -70,12 +77,7 @@ func (a *GeminiAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &GeminiAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 func (a *GeminiAgent) Name() string {

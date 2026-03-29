@@ -75,6 +75,16 @@ func TestCopilotBuildArgs(t *testing.T) {
 	})
 }
 
+func TestCopilotCommandLineUsesPreviewArgs(t *testing.T) {
+	a := NewCopilotAgent("copilot").WithModel("gpt-4o").(*CopilotAgent)
+
+	cmdLine := a.CommandLine()
+
+	assert.Contains(t, cmdLine, "--model gpt-4o")
+	assert.NotContains(t, cmdLine, "--allow-all-tools")
+	assert.NotContains(t, cmdLine, "--deny-tool")
+}
+
 func TestCopilotReview(t *testing.T) {
 	skipIfWindows(t)
 

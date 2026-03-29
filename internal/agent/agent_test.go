@@ -320,6 +320,105 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	assert.Contains(t, cmdLine, `-c model_reasoning_effort="high"`)
 }
 
+func TestSessionAgentsPreserveStateAcrossCloneMethods(t *testing.T) {
+	tests := []struct {
+		name   string
+		agent  Agent
+		verify func(*testing.T, Agent)
+	}{
+		{
+			name: "codex",
+			agent: NewCodexAgent("codex").
+				WithSessionID("session-123").
+				WithModel("o4-mini").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				codex, ok := a.(*CodexAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", codex.SessionID)
+				assert.Equal(t, "o4-mini", codex.Model)
+				assert.Equal(t, ReasoningThorough, codex.Reasoning)
+				assert.True(t, codex.Agentic)
+			},
+		},
+		{
+			name: "claude",
+			agent: NewClaudeAgent("claude").
+				WithSessionID("session-123").
+				WithModel("opus").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				claude, ok := a.(*ClaudeAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", claude.SessionID)
+				assert.Equal(t, "opus", claude.Model)
+				assert.Equal(t, ReasoningThorough, claude.Reasoning)
+				assert.True(t, claude.Agentic)
+			},
+		},
+		{
+			name: "opencode",
+			agent: NewOpenCodeAgent("opencode").
+				WithSessionID("session-123").
+				WithModel("anthropic/claude-sonnet-4").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				opencode, ok := a.(*OpenCodeAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", opencode.SessionID)
+				assert.Equal(t, "anthropic/claude-sonnet-4", opencode.Model)
+				assert.Equal(t, ReasoningThorough, opencode.Reasoning)
+				assert.True(t, opencode.Agentic)
+			},
+		},
+		{
+			name: "kilo",
+			agent: NewKiloAgent("kilo").
+				WithSessionID("session-123").
+				WithModel("anthropic/claude-sonnet-4").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				kilo, ok := a.(*KiloAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", kilo.SessionID)
+				assert.Equal(t, "anthropic/claude-sonnet-4", kilo.Model)
+				assert.Equal(t, ReasoningThorough, kilo.Reasoning)
+				assert.True(t, kilo.Agentic)
+			},
+		},
+		{
+			name: "pi",
+			agent: func() Agent {
+				pi := NewPiAgent("pi").WithProvider("anthropic").(*PiAgent)
+				return pi.
+					WithSessionID("session-123").
+					WithModel("claude-sonnet-4").
+					WithReasoning(ReasoningThorough).
+					WithAgentic(true)
+			}(),
+			verify: func(t *testing.T, a Agent) {
+				pi, ok := a.(*PiAgent)
+				require.True(t, ok)
+				assert.Equal(t, "anthropic", pi.Provider)
+				assert.Equal(t, "session-123", pi.SessionID)
+				assert.Equal(t, "claude-sonnet-4", pi.Model)
+				assert.Equal(t, ReasoningThorough, pi.Reasoning)
+				assert.True(t, pi.Agentic)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.verify(t, tt.agent)
+		})
+	}
+}
+
 func assertArgsContain(t *testing.T, cmdLine, flag, value string) {
 	t.Helper()
 	tokens := strings.Fields(cmdLine)

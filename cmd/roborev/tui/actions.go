@@ -3,8 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -244,9 +242,9 @@ func (m model) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
 // needWorktree if the branch is not checked out anywhere.
 func (m model) applyFixPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
-		patch, jobDetail, msg := m.fetchPatchAndJob(jobID)
-		if msg != nil {
-			return *msg
+		patch, jobDetail, err := m.loadPatchAndJob(jobID)
+		if err != nil {
+			return applyPatchResultMsg{jobID: jobID, err: err}
 		}
 
 		// Resolve the target directory: if the branch has its own worktree,
@@ -271,9 +269,9 @@ func (m model) applyFixPatch(jobID int64) tea.Cmd {
 // patch there, commits, and removes the worktree. The commit persists on the branch.
 func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 	return func() tea.Msg {
-		patch, jobDetail, msg := m.fetchPatchAndJob(jobID)
-		if msg != nil {
-			return *msg
+		patch, jobDetail, err := m.loadPatchAndJob(jobID)
+		if err != nil {
+			return applyPatchResultMsg{jobID: jobID, err: err}
 		}
 
 		// Create a temporary worktree on the branch.
@@ -309,32 +307,16 @@ func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 	}
 }
 
-// fetchPatchAndJob fetches the patch content and job details for a fix job.
-// Returns nil msg on success; a non-nil msg should be returned to the TUI immediately.
-func (m model) fetchPatchAndJob(jobID int64) (string, *storage.ReviewJob, *applyPatchResultMsg) {
-	url := m.endpoint.BaseURL() + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
-	resp, err := m.client.Get(url)
+// loadPatchAndJob fetches the patch content and job details for a fix job.
+func (m model) loadPatchAndJob(jobID int64) (string, *storage.ReviewJob, error) {
+	patch, err := m.loadPatch(jobID)
 	if err != nil {
-		return "", nil, &applyPatchResultMsg{jobID: jobID, err: err}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, &applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("no patch available")}
+		return "", nil, err
 	}
 
-	patchData, err := io.ReadAll(resp.Body)
+	jobDetail, err := m.loadJob(jobID)
 	if err != nil {
-		return "", nil, &applyPatchResultMsg{jobID: jobID, err: err}
-	}
-	patch := string(patchData)
-	if patch == "" {
-		return "", nil, &applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("empty patch")}
-	}
-
-	jobDetail, jErr := m.fetchJobByID(jobID)
-	if jErr != nil {
-		return "", nil, &applyPatchResultMsg{jobID: jobID, err: jErr}
+		return "", nil, err
 	}
 
 	return patch, jobDetail, nil
@@ -476,7 +458,7 @@ func patchFiles(patch string) ([]string, error) {
 func (m model) triggerRebase(staleJobID int64) tea.Cmd {
 	return func() tea.Msg {
 		// Find the parent job ID (the original review this fix was for)
-		staleJob, fetchErr := m.fetchJobByID(staleJobID)
+		staleJob, fetchErr := m.loadJob(staleJobID)
 		if fetchErr != nil {
 			return fixTriggerResultMsg{err: fmt.Errorf("stale job %d not found: %w", staleJobID, fetchErr)}
 		}

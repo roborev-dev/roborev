@@ -26,28 +26,34 @@ func NewOpenCodeAgent(command string) *OpenCodeAgent {
 	return &OpenCodeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *OpenCodeAgent) clone(opts ...agentCloneOption) *OpenCodeAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		a.SessionID,
+		opts...,
+	)
+	return &OpenCodeAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+		SessionID: cfg.SessionID,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *OpenCodeAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &OpenCodeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 // Note: OpenCode's `run` command auto-approves all permissions in non-interactive mode,
 // so agentic mode is effectively always enabled when running through roborev.
 func (a *OpenCodeAgent) WithAgentic(agentic bool) Agent {
-	return &OpenCodeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -55,24 +61,12 @@ func (a *OpenCodeAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &OpenCodeAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *OpenCodeAgent) WithSessionID(sessionID string) Agent {
-	return &OpenCodeAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: sanitizedResumeSessionID(sessionID),
-	}
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 func (a *OpenCodeAgent) Name() string {

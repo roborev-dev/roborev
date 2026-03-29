@@ -119,23 +119,8 @@ func resolveWorkflowConfig(
 
 	globalCfg, _ := config.LoadGlobal()
 	repoCfg, _ := config.LoadRepoConfig(repoRoot)
-
-	// Resolve agents: flag > repo [ci] agents > repo agent
-	// > global [ci] agents > global default_agent > default
-	if agentFlag != "" {
-		cfg.Agents = splitTrimmed(agentFlag)
-	} else if repoCfg != nil &&
-		len(repoCfg.CI.Agents) > 0 {
-		cfg.Agents = repoCfg.CI.Agents
-	} else if repoCfg != nil && repoCfg.Agent != "" {
-		cfg.Agents = []string{repoCfg.Agent}
-	} else if globalCfg != nil &&
-		len(globalCfg.CI.Agents) > 0 {
-		cfg.Agents = globalCfg.CI.Agents
-	} else if globalCfg != nil &&
-		globalCfg.DefaultAgent != "" {
-		cfg.Agents = []string{globalCfg.DefaultAgent}
-	}
+	cfg.Agents = config.ResolveCIWorkflowAgents(
+		agentFlag, repoCfg, globalCfg)
 
 	if roborevVersion != "" {
 		cfg.RoborevVersion = roborevVersion

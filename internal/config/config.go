@@ -880,6 +880,64 @@ func resolve[T comparable](defaultVal T, candidates ...T) T {
 	return defaultVal
 }
 
+// resolveSlice returns the first non-empty slice from candidates, or defaultVal.
+func resolveSlice[T any](defaultVal []T, candidates ...[]T) []T {
+	for _, v := range candidates {
+		if len(v) > 0 {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+// resolveBool returns the first non-nil boolean from candidates, or defaultVal.
+func resolveBool(defaultVal bool, candidates ...*bool) bool {
+	for _, v := range candidates {
+		if v != nil {
+			return *v
+		}
+	}
+	return defaultVal
+}
+
+func splitTrimmedCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func singleTrimmedValue(value string) []string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return []string{trimmed}
+	}
+	return nil
+}
+
+func resolveNormalized(
+	defaultVal string,
+	normalize func(string) (string, error),
+	explicit string,
+	candidates ...string,
+) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return normalize(explicit)
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		if normalized, err := normalize(candidate); err == nil && normalized != "" {
+			return normalized, nil
+		}
+	}
+	return defaultVal, nil
+}
+
 // ResolveAgent determines which agent to use based on config priority:
 // 1. Explicit agent parameter (if non-empty)
 // 2. Per-repo config
@@ -895,6 +953,144 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 		globalVal = globalCfg.DefaultAgent
 	}
 	return resolve("codex", explicit, repoVal, globalVal)
+}
+
+// ResolveCIAgents determines which agents to use for CI review execution.
+// Priority: explicit CSV flag > repo [ci].agents > global [ci].agents > [""].
+func ResolveCIAgents(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) []string {
+	if explicit != "" {
+		return splitTrimmedCSV(explicit)
+	}
+	var repoAgents []string
+	if repoCfg != nil {
+		repoAgents = repoCfg.CI.Agents
+	}
+	var globalAgents []string
+	if globalCfg != nil {
+		globalAgents = globalCfg.CI.Agents
+	}
+	return resolveSlice([]string{""}, repoAgents, globalAgents)
+}
+
+// ResolveCIReviewTypes determines which review types to use for CI review execution.
+// Priority: explicit CSV flag > repo [ci].review_types > global [ci].review_types > ["security"].
+func ResolveCIReviewTypes(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) []string {
+	if explicit != "" {
+		return splitTrimmedCSV(explicit)
+	}
+	var repoTypes []string
+	if repoCfg != nil {
+		repoTypes = repoCfg.CI.ReviewTypes
+	}
+	var globalTypes []string
+	if globalCfg != nil {
+		globalTypes = globalCfg.CI.ReviewTypes
+	}
+	return resolveSlice([]string{ReviewTypeSecurity}, repoTypes, globalTypes)
+}
+
+// ResolveCIReasoning determines the reasoning level for CI review execution.
+// Priority: explicit > repo [ci].reasoning > "thorough".
+func ResolveCIReasoning(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) (string, error) {
+	var repoVal string
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Reasoning
+	}
+	_ = globalCfg
+	return resolveNormalized("thorough", NormalizeReasoning, explicit, repoVal)
+}
+
+// ResolveCIMinSeverity determines the synthesis severity filter for CI review execution.
+// Priority: explicit > repo [ci].min_severity > global [ci].min_severity > "".
+func ResolveCIMinSeverity(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) (string, error) {
+	var repoVal string
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.MinSeverity
+	}
+	var globalVal string
+	if globalCfg != nil {
+		globalVal = globalCfg.CI.MinSeverity
+	}
+	return resolveNormalized("", NormalizeMinSeverity, explicit, repoVal, globalVal)
+}
+
+// ResolveCISynthesisAgent determines the synthesis agent for CI review execution.
+// Priority: explicit > global [ci].synthesis_agent > "".
+func ResolveCISynthesisAgent(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) string {
+	var globalVal string
+	if globalCfg != nil {
+		globalVal = strings.TrimSpace(globalCfg.CI.SynthesisAgent)
+	}
+	_ = repoCfg
+	return resolve("", strings.TrimSpace(explicit), globalVal)
+}
+
+// ResolveCIUpsertComments determines whether CI should update an existing PR comment.
+// Priority: repo [ci].upsert_comments > global [ci].upsert_comments > false.
+func ResolveCIUpsertComments(
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) bool {
+	var repoVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.UpsertComments
+	}
+	var globalVal *bool
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.UpsertComments
+	}
+	return resolveBool(false, repoVal, globalVal)
+}
+
+// ResolveCIWorkflowAgents determines which agents to encode into a generated CI workflow.
+// Priority: explicit CSV flag > repo [ci].agents > repo agent > global [ci].agents > global default_agent > ["codex"].
+func ResolveCIWorkflowAgents(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) []string {
+	if explicit != "" {
+		return splitTrimmedCSV(explicit)
+	}
+	var repoCIAgents []string
+	var repoAgent []string
+	if repoCfg != nil {
+		repoCIAgents = repoCfg.CI.Agents
+		repoAgent = singleTrimmedValue(repoCfg.Agent)
+	}
+	var globalCIAgents []string
+	var globalAgent []string
+	if globalCfg != nil {
+		globalCIAgents = globalCfg.CI.Agents
+		globalAgent = singleTrimmedValue(globalCfg.DefaultAgent)
+	}
+	return resolveSlice(
+		[]string{"codex"},
+		repoCIAgents,
+		repoAgent,
+		globalCIAgents,
+		globalAgent,
+	)
 }
 
 // clampPositive returns v if v > 0, otherwise 0.

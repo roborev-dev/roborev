@@ -4,10 +4,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -16,7 +15,7 @@ import (
 // waitForJobCompletion polls a job until it completes, streaming output if provided.
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
-	client := getDaemonHTTPClient(30 * time.Second)
+	api := newDaemonReviewAPI(serverAddr, getDaemonHTTPClient(30*time.Second))
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 	lastOutputLen := 0
@@ -30,36 +29,13 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 		case <-time.After(pollInterval):
 		}
 
-		// Check job status
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID), nil)
+		job, err := api.getJob(ctx, jobID)
 		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue // Keep polling
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			if errors.Is(err, ErrJobNotFound) {
+				return nil, err
+			}
 			continue
 		}
-
-		var jobsResp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
-			continue
-		}
-		resp.Body.Close()
-
-		if len(jobsResp.Jobs) == 0 {
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := jobsResp.Jobs[0]
 
 		// Show status progress indicator while waiting
 		if output != nil && lastStatus != string(job.Status) {
@@ -90,50 +66,22 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		// Stream partial output while running
 		if output != nil && job.Status == storage.JobStatusRunning {
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
-			if err == nil {
-				reviewResp, err := client.Do(reviewReq)
-				if err == nil {
-					if reviewResp.StatusCode == http.StatusOK {
-						var review storage.Review
-						if json.NewDecoder(reviewResp.Body).Decode(&review) == nil {
-							if len(review.Output) > lastOutputLen {
-								// First output - add newline after waiting dots
-								if lastOutputLen == 0 && waitDots > 0 {
-									fmt.Fprintln(output)
-								}
-								fmt.Fprint(output, review.Output[lastOutputLen:])
-								lastOutputLen = len(review.Output)
-							}
-						}
-					}
-					reviewResp.Body.Close()
+			review, err := api.getReview(ctx, jobID, "review")
+			if err == nil && len(review.Output) > lastOutputLen {
+				// First output - add newline after waiting dots
+				if lastOutputLen == 0 && waitDots > 0 {
+					fmt.Fprintln(output)
 				}
+				fmt.Fprint(output, review.Output[lastOutputLen:])
+				lastOutputLen = len(review.Output)
 			}
 		}
 
 		switch job.Status {
 		case storage.JobStatusDone:
-			// Fetch final review
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
+			review, err := api.getReview(ctx, jobID, "review")
 			if err != nil {
-				return nil, fmt.Errorf("create review request: %w", err)
-			}
-
-			reviewResp, err := client.Do(reviewReq)
-			if err != nil {
-				return nil, fmt.Errorf("fetch review: %w", err)
-			}
-			defer reviewResp.Body.Close()
-
-			if reviewResp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(reviewResp.Body)
-				return nil, fmt.Errorf("fetch review (%d): %s", reviewResp.StatusCode, body)
-			}
-
-			var review storage.Review
-			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
-				return nil, fmt.Errorf("parse review: %w", err)
+				return nil, err
 			}
 
 			// Print any remaining output
@@ -141,7 +89,7 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 				fmt.Fprint(output, review.Output[lastOutputLen:])
 			}
 
-			return &review, nil
+			return review, nil
 
 		case storage.JobStatusFailed:
 			return nil, fmt.Errorf("job failed: %s", job.Error)

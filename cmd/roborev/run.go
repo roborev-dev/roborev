@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -195,8 +197,11 @@ var promptPollInterval = 500 * time.Millisecond
 // Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
 // jobs don't have PASS/FAIL verdicts.
 func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool, pollInterval time.Duration) error {
-	serverAddr := ep.BaseURL()
-	client := ep.HTTPClient(5 * time.Second)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(5*time.Second))
 
 	if pollInterval <= 0 {
 		pollInterval = promptPollInterval
@@ -212,36 +217,15 @@ func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64,
 	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
 	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
+		job, err := api.getJob(ctx, jobID)
 		if err != nil {
 			return fmt.Errorf("failed to check job status: %w", err)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
-		}
-
-		var jobsResp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
-			return fmt.Errorf("failed to parse job status: %w", err)
-		}
-		resp.Body.Close()
-
-		if len(jobsResp.Jobs) == 0 {
-			return fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := jobsResp.Jobs[0]
-
 		switch job.Status {
 		case storage.JobStatusDone:
 			// Pass done message to showPromptResult - it prints after successful fetch
-			return showPromptResult(cmd, serverAddr, jobID, quiet, " done!\n\n")
+			return showPromptResult(cmd, ep.BaseURL(), jobID, quiet, " done!\n\n")
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -285,24 +269,17 @@ func waitForPromptJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64,
 // Unlike showReview, this doesn't apply verdict-based exit codes.
 // The doneMsg parameter is printed before the result on success (used for "done!" message).
 func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, doneMsg string) error {
-	client := getDaemonHTTPClient(5 * time.Second)
-	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
-	if err != nil {
-		return fmt.Errorf("failed to fetch result: %w", err)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
+	api := newDaemonReviewAPI(addr, getDaemonHTTPClient(5*time.Second))
+	review, err := api.getReview(ctx, jobID, "result")
+	if errors.Is(err, errReviewNotFound) {
 		return fmt.Errorf("no result found for job %d", jobID)
 	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server error fetching result (%d): %s", resp.StatusCode, body)
-	}
-
-	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-		return fmt.Errorf("failed to parse result: %w", err)
+	if err != nil {
+		return err
 	}
 
 	// Only print after successful fetch to avoid "done!" followed by error

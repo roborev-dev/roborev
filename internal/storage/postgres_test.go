@@ -762,11 +762,19 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NotNil(t, storedWT)
 		assert.Equal(t, "/worktrees/feature-x", *storedWT)
 
-		// Also verify PullJobs returns the field: use a different
-		// valid UUID to exclude, and scope via cursor to avoid
-		// scanning the entire table.
+		// Also verify PullJobs returns the field. Scope the pull cursor to just before
+		// this row so the test doesn't depend on table size or test shuffle order.
+		var pulledCursor string
+		var rowID int64
+		var updatedAt time.Time
+		err = pool.pool.QueryRow(ctx,
+			`SELECT updated_at, id FROM review_jobs WHERE uuid = $1`, wtJobUUID,
+		).Scan(&updatedAt, &rowID)
+		require.NoError(t, err)
+		pulledCursor = fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
+
 		otherMachine := uuid.NewString()
-		pulled, _, err := pool.PullJobs(ctx, otherMachine, "", 100)
+		pulled, _, err := pool.PullJobs(ctx, otherMachine, pulledCursor, 100)
 		require.NoError(t, err)
 
 		var found *PulledJob

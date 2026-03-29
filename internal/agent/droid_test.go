@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -62,6 +63,13 @@ func TestDroidBuildArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDroidCommandLineUsesBuildArgs(t *testing.T) {
+	a := NewDroidAgent("droid").WithReasoning(ReasoningThorough).WithAgentic(true).(*DroidAgent)
+
+	want := strings.Join(a.buildArgs(true), " ")
+	assert.Equal(t, "droid "+want, a.CommandLine())
 }
 
 func TestDroidName(t *testing.T) {

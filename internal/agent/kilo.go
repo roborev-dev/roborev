@@ -27,48 +27,42 @@ func NewKiloAgent(command string) *KiloAgent {
 	return &KiloAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-func (a *KiloAgent) WithReasoning(level ReasoningLevel) Agent {
+func (a *KiloAgent) clone(opts ...agentCloneOption) *KiloAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		a.SessionID,
+		opts...,
+	)
 	return &KiloAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+		SessionID: cfg.SessionID,
 	}
 }
 
+func (a *KiloAgent) WithReasoning(level ReasoningLevel) Agent {
+	return a.clone(withClonedReasoning(level))
+}
+
 func (a *KiloAgent) WithAgentic(agentic bool) Agent {
-	return &KiloAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 func (a *KiloAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &KiloAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *KiloAgent) WithSessionID(sessionID string) Agent {
-	return &KiloAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: sanitizedResumeSessionID(sessionID),
-	}
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 func (a *KiloAgent) Name() string {

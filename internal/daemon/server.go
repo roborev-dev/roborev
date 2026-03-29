@@ -780,13 +780,17 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent for workflow at this reasoning level
 	cfg := s.configWatcher.Config()
-	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, cfg, workflow, reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoRoot, cfg, workflow)
+	resolution := agent.ResolveWorkflowConfig(
+		req.Agent, repoRoot, cfg, workflow, reasoning,
+	)
+	agentName := resolution.PreferredAgent
 
 	// Resolve to an installed agent: if the configured agent isn't available,
 	// try the backup agent before the hardcoded fallback chain.
 	// Unknown agent names (typos) return 400; no agents at all returns 503.
-	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent); err != nil {
+	if resolved, err := agent.GetAvailableWithConfig(
+		agentName, cfg, resolution.BackupAgent,
+	); err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid agent: %v", err))
@@ -798,26 +802,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		agentName = resolved.Name()
 	}
 
-	// Detect whether the resolved agent is the backup (not the preferred).
-	// When the backup agent is used and no explicit model was requested,
-	// use the backup model instead of the default model.
-	preferredAgent := config.ResolveAgentForWorkflow(
-		req.Agent, repoRoot, cfg, workflow, reasoning,
-	)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(agentName) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(agentName) != agent.CanonicalName(preferredAgent)
-
-	var model string
-	if usingBackup && req.Model == "" {
-		model = config.ResolveBackupModelForWorkflow(
-			repoRoot, cfg, workflow,
-		)
-	} else {
-		model = agent.ResolveWorkflowModelForAgent(
-			agentName, req.Model, repoRoot, cfg, workflow, reasoning,
-		)
-	}
+	model := resolution.ModelForSelectedAgent(agentName, req.Model)
 
 	if req.JobType == storage.JobTypeInsights {
 		if req.Since == "" {
@@ -2325,9 +2310,13 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
 	reasoning := "standard"
-	agentName := config.ResolveAgentForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(parentJob.RepoPath, cfg, "fix")
-	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent); err != nil {
+	resolution := agent.ResolveWorkflowConfig(
+		"", parentJob.RepoPath, cfg, "fix", reasoning,
+	)
+	agentName := resolution.PreferredAgent
+	if resolved, err := agent.GetAvailableWithConfig(
+		agentName, cfg, resolution.BackupAgent,
+	); err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid agent: %v", err))
@@ -2339,17 +2328,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		agentName = resolved.Name()
 	}
 
-	// Use backup model when the backup agent was selected
-	preferredAgent := config.ResolveAgentForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
-	usingBackup := backupAgent != "" &&
-		agent.CanonicalName(agentName) == agent.CanonicalName(backupAgent) &&
-		agent.CanonicalName(agentName) != agent.CanonicalName(preferredAgent)
-	var model string
-	if usingBackup {
-		model = config.ResolveBackupModelForWorkflow(parentJob.RepoPath, cfg, "fix")
-	} else {
-		model = config.ResolveModelForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
-	}
+	model := resolution.ModelForSelectedAgent(agentName, "")
 
 	// Normalize and validate user-provided git ref to prevent option
 	// injection (e.g. " --something") when passed to git worktree add.

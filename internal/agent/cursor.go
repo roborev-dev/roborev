@@ -23,36 +23,38 @@ func NewCursorAgent(command string) *CursorAgent {
 	return &CursorAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns a copy with the reasoning level stored.
-// The agent CLI has no reasoning flag; callers can map reasoning to model selection instead.
-func (a *CursorAgent) WithReasoning(level ReasoningLevel) Agent {
+func (a *CursorAgent) clone(opts ...agentCloneOption) *CursorAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
 	return &CursorAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
 	}
 }
 
+// WithReasoning returns a copy with the reasoning level stored.
+// The agent CLI has no reasoning flag; callers can map reasoning to model selection instead.
+func (a *CursorAgent) WithReasoning(level ReasoningLevel) Agent {
+	return a.clone(withClonedReasoning(level))
+}
+
 func (a *CursorAgent) WithAgentic(agentic bool) Agent {
-	return &CursorAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 func (a *CursorAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &CursorAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 func (a *CursorAgent) Name() string {
@@ -65,18 +67,7 @@ func (a *CursorAgent) CommandName() string {
 
 func (a *CursorAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	// Show flags without the prompt (piped via stdin)
-	args := []string{"-p", "--output-format", "stream-json"}
-	model := a.Model
-	if model == "" {
-		model = "auto"
-	}
-	args = append(args, "--model", model)
-	if agenticMode {
-		args = append(args, "--force")
-	} else {
-		args = append(args, "--mode", "plan")
-	}
+	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
 

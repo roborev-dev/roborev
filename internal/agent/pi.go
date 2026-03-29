@@ -31,32 +31,37 @@ func NewPiAgent(command string) *PiAgent {
 	return &PiAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *PiAgent) clone(opts ...agentCloneOption) *PiAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		a.SessionID,
+		opts...,
+	)
+	return &PiAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Provider:  a.Provider,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+		SessionID: cfg.SessionID,
+	}
+}
+
 func (a *PiAgent) Name() string {
 	return "pi"
 }
 
 // WithReasoning returns a copy of the agent configured with the specified reasoning level.
 func (a *PiAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &PiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Provider:  a.Provider,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *PiAgent) WithAgentic(agentic bool) Agent {
-	return &PiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Provider:  a.Provider,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -64,14 +69,7 @@ func (a *PiAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &PiAgent{
-		Command:   a.Command,
-		Model:     model,
-		Provider:  a.Provider,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 // WithProvider returns a copy of the agent configured to use the specified provider.
@@ -79,26 +77,14 @@ func (a *PiAgent) WithProvider(provider string) Agent {
 	if provider == "" {
 		return a
 	}
-	return &PiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Provider:  provider,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: a.SessionID,
-	}
+	cloned := a.clone()
+	cloned.Provider = provider
+	return cloned
 }
 
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *PiAgent) WithSessionID(sessionID string) Agent {
-	return &PiAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Provider:  a.Provider,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-		SessionID: sanitizedResumeSessionID(sessionID),
-	}
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 func (a *PiAgent) CommandName() string {
@@ -107,18 +93,13 @@ func (a *PiAgent) CommandName() string {
 
 func (a *PiAgent) CommandLine() string {
 	args := a.buildArgs("")
-	if len(args) == 0 {
-		args = []string{"-p", "--mode", "json"}
-	}
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *PiAgent) buildArgs(repoPath string) []string {
+func (a *PiAgent) buildArgs(sessionPath string) []string {
 	args := []string{"-p", "--mode", "json"}
-	if repoPath != "" {
-		if sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID)); sessionPath != "" {
-			args = append(args, "--session", sessionPath)
-		}
+	if sessionPath != "" {
+		args = append(args, "--session", sessionPath)
 	}
 	if a.Provider != "" {
 		args = append(args, "--provider", a.Provider)
@@ -165,7 +146,8 @@ func (a *PiAgent) Review(
 		return "", fmt.Errorf("close temp prompt file: %w", err)
 	}
 
-	args := a.buildArgs(repoPath)
+	sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID))
+	args := a.buildArgs(sessionPath)
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

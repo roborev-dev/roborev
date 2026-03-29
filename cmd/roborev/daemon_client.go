@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,8 +21,11 @@ import (
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
 func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
-	serverAddr := ep.BaseURL()
-	client := ep.HTTPClient(5 * time.Second)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(5*time.Second))
 
 	if !quiet {
 		cmd.Printf("Waiting for review to complete...")
@@ -33,32 +38,10 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
 	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
+		job, err := api.getJob(ctx, jobID)
 		if err != nil {
 			return fmt.Errorf("failed to check job status: %w", err)
 		}
-
-		// Handle non-200 responses
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
-		}
-
-		var jobsResp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
-			return fmt.Errorf("failed to parse job status: %w", err)
-		}
-		resp.Body.Close()
-
-		if len(jobsResp.Jobs) == 0 {
-			return fmt.Errorf("%w: %d", ErrJobNotFound, jobID)
-		}
-
-		job := jobsResp.Jobs[0]
 
 		switch job.Status {
 		case storage.JobStatusDone:
@@ -111,24 +94,17 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 // showReview fetches and displays a review by job ID
 // When quiet is true, suppresses output but still returns exit code based on verdict.
 func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
-	client := ep.HTTPClient(5 * time.Second)
-	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", ep.BaseURL(), jobID))
-	if err != nil {
-		return fmt.Errorf("failed to fetch review: %w", err)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
+	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(5*time.Second))
+	review, err := api.getReview(ctx, jobID, "review")
+	if errors.Is(err, errReviewNotFound) {
 		return fmt.Errorf("no review found for job %d", jobID)
 	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server error fetching review (%d): %s", resp.StatusCode, body)
-	}
-
-	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-		return fmt.Errorf("failed to parse review: %w", err)
+	if err != nil {
+		return err
 	}
 
 	if !quiet {
@@ -234,59 +210,12 @@ func waitForReview(jobID int64) (*storage.Review, error) {
 }
 
 func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
-	ep := getDaemonEndpoint()
-	addr := ep.BaseURL()
-	client := ep.HTTPClient(10 * time.Second)
-
-	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
-		if err != nil {
-			return nil, fmt.Errorf("polling job %d: %w", jobID, err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
-		}
-
-		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
-		}
-		resp.Body.Close()
-
-		if len(result.Jobs) == 0 {
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := result.Jobs[0]
-		switch job.Status {
-		case storage.JobStatusDone:
-			// Get the review
-			reviewResp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
-			if err != nil {
-				return nil, err
-			}
-			defer reviewResp.Body.Close()
-
-			var review storage.Review
-			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
-				return nil, err
-			}
-			return &review, nil
-
-		case storage.JobStatusFailed:
-			return nil, fmt.Errorf("job failed: %s", job.Error)
-
-		case storage.JobStatusCanceled:
-			return nil, fmt.Errorf("job was canceled")
-		}
-
-		time.Sleep(pollInterval)
+	client, err := daemon.NewHTTPClientFromRuntime()
+	if err != nil {
+		return nil, err
 	}
+	client.SetPollInterval(pollInterval)
+	return client.WaitForReview(jobID)
 }
 
 // enqueueReview enqueues a review job and returns the job ID

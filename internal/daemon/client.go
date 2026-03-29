@@ -87,8 +87,8 @@ func (c *HTTPClient) SetPollInterval(interval time.Duration) {
 	c.pollInterval = interval
 }
 
-func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?sha=%s", c.baseURL, sha))
+func (c *HTTPClient) getReview(url string) (*storage.Review, error) {
+	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,6 @@ func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned %s", resp.Status)
 	}
@@ -106,31 +105,15 @@ func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
 		return nil, err
 	}
-
 	return &review, nil
 }
 
+func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
+	return c.getReview(fmt.Sprintf("%s/api/review?sha=%s", c.baseURL, sha))
+}
+
 func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/review?job_id=%d", c.baseURL, jobID))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned %s", resp.Status)
-	}
-
-	var review storage.Review
-	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-		return nil, err
-	}
-
-	return &review, nil
+	return c.getReview(fmt.Sprintf("%s/api/review?job_id=%d", c.baseURL, jobID))
 }
 
 func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
@@ -200,33 +183,36 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 	return job.ID, nil
 }
 
+func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/jobs?id=%d", c.baseURL, jobID))
+	if err != nil {
+		return nil, fmt.Errorf("polling job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
+	}
+
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
+	}
+	if len(result.Jobs) == 0 {
+		return nil, fmt.Errorf("job %d not found", jobID)
+	}
+	return &result.Jobs[0], nil
+}
+
 func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
 	missingReviewAttempts := 0
 	for {
-		resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/jobs?id=%d", c.baseURL, jobID))
+		job, err := c.getJobByID(jobID)
 		if err != nil {
-			return nil, fmt.Errorf("polling job %d: %w", jobID, err)
+			return nil, err
 		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
-		}
-
-		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
-		}
-		resp.Body.Close()
-
-		if len(result.Jobs) == 0 {
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := result.Jobs[0]
 		switch job.Status {
 		case storage.JobStatusDone:
 			review, err := c.GetReviewByJobID(jobID)

@@ -6,6 +6,74 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
+// WorkflowConfig captures the workflow-specific agent resolution context
+// shared by CLI, daemon, and batch review callers.
+type WorkflowConfig struct {
+	RepoPath       string
+	GlobalConfig   *config.Config
+	Workflow       string
+	Reasoning      string
+	PreferredAgent string
+	BackupAgent    string
+}
+
+// ResolveWorkflowConfig resolves the preferred and backup agents for a
+// workflow while retaining the workflow and reasoning context needed to
+// resolve the final model after an agent has been selected.
+func ResolveWorkflowConfig(
+	cliAgent, repoPath string,
+	globalCfg *config.Config,
+	workflow, reasoning string,
+) WorkflowConfig {
+	return WorkflowConfig{
+		RepoPath:       repoPath,
+		GlobalConfig:   globalCfg,
+		Workflow:       workflow,
+		Reasoning:      reasoning,
+		PreferredAgent: config.ResolveAgentForWorkflow(cliAgent, repoPath, globalCfg, workflow, reasoning),
+		BackupAgent:    config.ResolveBackupAgentForWorkflow(repoPath, globalCfg, workflow),
+	}
+}
+
+// AgentMatches reports whether two agent names refer to the same logical
+// agent after alias and ACP-name normalization.
+func (w WorkflowConfig) AgentMatches(left, right string) bool {
+	return workflowModelComparableAgentName(left, w.GlobalConfig) ==
+		workflowModelComparableAgentName(right, w.GlobalConfig)
+}
+
+// UsesBackupAgent reports whether the selected agent is the configured
+// backup rather than the preferred primary for this workflow.
+func (w WorkflowConfig) UsesBackupAgent(selectedAgent string) bool {
+	return w.BackupAgent != "" &&
+		w.AgentMatches(selectedAgent, w.BackupAgent) &&
+		!w.AgentMatches(selectedAgent, w.PreferredAgent)
+}
+
+// BackupModel returns the workflow backup model override, if any.
+func (w WorkflowConfig) BackupModel() string {
+	return config.ResolveBackupModelForWorkflow(
+		w.RepoPath, w.GlobalConfig, w.Workflow,
+	)
+}
+
+// ModelForSelectedAgent resolves the model for the actual selected
+// agent. Backup agents use the workflow backup model when no explicit
+// CLI model was provided; otherwise the workflow/default precedence used
+// by ResolveWorkflowModelForAgent is preserved.
+func (w WorkflowConfig) ModelForSelectedAgent(
+	selectedAgent, cliModel string,
+) string {
+	if w.UsesBackupAgent(selectedAgent) &&
+		strings.TrimSpace(cliModel) == "" {
+		return w.BackupModel()
+	}
+	return ResolveWorkflowModelForAgent(
+		selectedAgent, cliModel, w.RepoPath,
+		w.GlobalConfig, w.Workflow, w.Reasoning,
+	)
+}
+
 // ResolveWorkflowModelForAgent resolves a workflow model for the actual
 // agent that will run. If that agent differs from the generic default
 // agent and no explicit model was provided, generic default_model is

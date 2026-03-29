@@ -162,7 +162,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Resolve agents
-	agents := resolveAgentList(
+	agents := config.ResolveCIAgents(
 		opts.agents, repoCfg, globalCfg)
 	if len(agents) == 0 {
 		return fmt.Errorf("no agents configured " +
@@ -170,7 +170,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Resolve review types
-	reviewTypes := resolveReviewTypes(
+	reviewTypes := config.ResolveCIReviewTypes(
 		opts.reviewTypes, repoCfg, globalCfg)
 	if len(reviewTypes) == 0 {
 		return fmt.Errorf("no review types configured " +
@@ -183,21 +183,21 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Resolve reasoning
-	reasoningLevel, err := resolveCIReasoning(
+	reasoningLevel, err := config.ResolveCIReasoning(
 		opts.reasoning, repoCfg, globalCfg)
 	if err != nil {
 		return err
 	}
 
 	// Resolve min severity
-	minSev, err := resolveCIMinSeverity(
+	minSev, err := config.ResolveCIMinSeverity(
 		opts.minSeverity, repoCfg, globalCfg)
 	if err != nil {
 		return err
 	}
 
 	// Resolve synthesis agent
-	synthAgent := resolveCISynthesisAgent(
+	synthAgent := config.ResolveCISynthesisAgent(
 		opts.synthesisAgent, repoCfg, globalCfg)
 
 	log.Printf(
@@ -264,7 +264,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 			prNumber = detected
 		}
 
-		upsert := resolveCIUpsertComments(
+		upsert := config.ResolveCIUpsertComments(
 			repoCfg, globalCfg)
 		if err := postCIComment(
 			ctx, ghRepo, prNumber, comment, upsert,
@@ -283,118 +283,6 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	return nil
-}
-
-func resolveAgentList(
-	flag string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) []string {
-	if flag != "" {
-		return splitTrimmed(flag)
-	}
-	if repoCfg != nil && len(repoCfg.CI.Agents) > 0 {
-		return repoCfg.CI.Agents
-	}
-	if globalCfg != nil && len(globalCfg.CI.Agents) > 0 {
-		return globalCfg.CI.Agents
-	}
-	// Default: empty string = auto-detect
-	return []string{""}
-}
-
-func resolveReviewTypes(
-	flag string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) []string {
-	if flag != "" {
-		return splitTrimmed(flag)
-	}
-	if repoCfg != nil && len(repoCfg.CI.ReviewTypes) > 0 {
-		return repoCfg.CI.ReviewTypes
-	}
-	if globalCfg != nil && len(globalCfg.CI.ReviewTypes) > 0 {
-		return globalCfg.CI.ReviewTypes
-	}
-	return []string{config.ReviewTypeSecurity}
-}
-
-func resolveCIReasoning(
-	flag string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) (string, error) {
-	if flag != "" {
-		n, err := config.NormalizeReasoning(flag)
-		if err != nil {
-			return "", err
-		}
-		return n, nil
-	}
-	if repoCfg != nil && repoCfg.CI.Reasoning != "" {
-		if n, err := config.NormalizeReasoning(
-			repoCfg.CI.Reasoning); err == nil {
-			return n, nil
-		}
-	}
-	return "thorough", nil
-}
-
-func resolveCIMinSeverity(
-	flag string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) (string, error) {
-	if flag != "" {
-		n, err := config.NormalizeMinSeverity(flag)
-		if err != nil {
-			return "", err
-		}
-		return n, nil
-	}
-	if repoCfg != nil && repoCfg.CI.MinSeverity != "" {
-		if n, err := config.NormalizeMinSeverity(
-			repoCfg.CI.MinSeverity); err == nil {
-			return n, nil
-		}
-	}
-	if globalCfg != nil && globalCfg.CI.MinSeverity != "" {
-		if n, err := config.NormalizeMinSeverity(
-			globalCfg.CI.MinSeverity); err == nil {
-			return n, nil
-		}
-	}
-	return "", nil
-}
-
-func resolveCISynthesisAgent(
-	flag string,
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) string {
-	if flag != "" {
-		return flag
-	}
-	if globalCfg != nil && globalCfg.CI.SynthesisAgent != "" {
-		return globalCfg.CI.SynthesisAgent
-	}
-	return ""
-}
-
-// resolveCIUpsertComments determines whether to upsert PR comments.
-// Priority: repo config > global config > false.
-func resolveCIUpsertComments(
-	repoCfg *config.RepoConfig,
-	globalCfg *config.Config,
-) bool {
-	if repoCfg != nil && repoCfg.CI.UpsertComments != nil {
-		return *repoCfg.CI.UpsertComments
-	}
-	if globalCfg != nil {
-		return globalCfg.CI.UpsertComments
-	}
-	return false
 }
 
 func splitTrimmed(s string) []string {

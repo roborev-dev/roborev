@@ -50,16 +50,7 @@ var copilotReviewDenyTools = []string{
 // In review mode, destructive tools are denied. In agentic mode, all tools
 // are allowed without restriction.
 func (a *CopilotAgent) buildArgs(agenticMode bool) []string {
-	args := []string{"-s", "--allow-all-tools"}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
-	if !agenticMode {
-		for _, tool := range copilotReviewDenyTools {
-			args = append(args, "--deny-tool", tool)
-		}
-	}
-	return args
+	return a.commandArgs(agenticMode, true)
 }
 
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
@@ -78,26 +69,33 @@ func NewCopilotAgent(command string) *CopilotAgent {
 	return &CopilotAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+func (a *CopilotAgent) clone(opts ...agentCloneOption) *CopilotAgent {
+	cfg := newAgentCloneConfig(
+		a.Command,
+		a.Model,
+		a.Reasoning,
+		a.Agentic,
+		"",
+		opts...,
+	)
+	return &CopilotAgent{
+		Command:   cfg.Command,
+		Model:     cfg.Model,
+		Reasoning: cfg.Reasoning,
+		Agentic:   cfg.Agentic,
+	}
+}
+
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: level,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedReasoning(level))
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 // In agentic mode, all tools are allowed without restriction. In review mode
 // (default), destructive tools are denied via --deny-tool flags.
 func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     a.Model,
-		Reasoning: a.Reasoning,
-		Agentic:   agentic,
-	}
+	return a.clone(withClonedAgentic(agentic))
 }
 
 // WithModel returns a copy of the agent configured to use the specified model.
@@ -105,12 +103,7 @@ func (a *CopilotAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return &CopilotAgent{
-		Command:   a.Command,
-		Model:     model,
-		Reasoning: a.Reasoning,
-		Agentic:   a.Agentic,
-	}
+	return a.clone(withClonedModel(model))
 }
 
 func (a *CopilotAgent) Name() string {
@@ -122,10 +115,8 @@ func (a *CopilotAgent) CommandName() string {
 }
 
 func (a *CopilotAgent) CommandLine() string {
-	var args []string
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.commandArgs(agenticMode, false)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
@@ -139,11 +130,9 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 
 	var args []string
 	if supported {
-		args = a.buildArgs(agenticMode)
+		args = a.commandArgs(agenticMode, true)
 	} else {
-		if a.Model != "" {
-			args = append(args, "--model", a.Model)
-		}
+		args = a.commandArgs(agenticMode, false)
 	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
@@ -173,6 +162,22 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	}
 
 	return result, nil
+}
+
+func (a *CopilotAgent) commandArgs(agenticMode, includePermissions bool) []string {
+	args := []string{}
+	if includePermissions {
+		args = append(args, "-s", "--allow-all-tools")
+	}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if includePermissions && !agenticMode {
+		for _, tool := range copilotReviewDenyTools {
+			args = append(args, "--deny-tool", tool)
+		}
+	}
+	return args
 }
 
 func init() {

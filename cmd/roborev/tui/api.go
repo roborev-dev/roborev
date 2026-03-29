@@ -56,6 +56,30 @@ func (m model) getJSON(path string, out any) error {
 	return nil
 }
 
+// getText performs a GET request and returns the raw response body as text.
+// Returns errNotFound for 404 responses. Other errors include the server's message.
+func (m model) getText(path string) (string, error) {
+	url := m.endpoint.BaseURL() + path
+	resp, err := m.client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: %s", errNotFound, readErrorBody(resp.Body, resp.Status))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("%s", readErrorBody(resp.Body, resp.Status))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	return string(data), nil
+}
+
 // postJSON performs a POST request with a JSON body and decodes the response into out.
 // If out is nil, the response body is discarded.
 // Returns errNotFound (wrapped with server message) for 404 responses.

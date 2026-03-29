@@ -311,29 +311,18 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		ctx = context.Background()
 	}
 
-	workDir, err := os.Getwd()
+	roots, err := resolveCurrentRepoRoots()
 	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-	// Use worktree root for branch detection, main repo root for
-	// API queries (daemon stores jobs under the main repo path).
-	localRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		localRoot = root
-	}
-	repoRoot := workDir
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		repoRoot = root
+		return err
 	}
 
-	branchFilter := opts.branch
-	if !opts.allBranches && branchFilter == "" {
-		branchFilter = git.GetCurrentBranch(localRoot)
-	}
+	branchFilter := resolveCurrentBranchFilter(
+		roots.worktreeRoot, opts.branch, opts.allBranches,
+	)
 
 	// Query and limit jobs, excluding non-review types (compact, task)
 	// to prevent recursive self-compaction loops
-	allJobs, err := queryOpenJobs(ctx, repoRoot, branchFilter)
+	allJobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branchFilter)
 	if err != nil {
 		return err
 	}
@@ -392,7 +381,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	}
 
 	// Enqueue consolidation job
-	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, repoRoot, jobReviews, branchFilter, opts)
+	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, roots.mainRepoRoot, jobReviews, branchFilter, opts)
 	if err != nil {
 		return err
 	}

@@ -112,7 +112,11 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.selectedJobID = m.jobs[m.selectedIdx].ID
 			}
-		} else if !m.isJobVisible(m.jobs[m.selectedIdx]) {
+		} else if !m.isJobVisible(m.jobs[m.selectedIdx]) && m.currentView == viewQueue {
+			// Only adjust selection in queue view. In review/prompt/log
+			// views, ←/→ navigation is relative to the viewed job's
+			// position; normalizeSelectionIfHidden handles it on return
+			// to queue.
 			firstVisible := m.findFirstVisibleJob()
 			if firstVisible >= 0 {
 				m.selectedIdx = firstVisible
