@@ -492,6 +492,60 @@ func TestIsDaemonAliveLegacyStatusCodes(t *testing.T) {
 	}
 }
 
+func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
+	// Regression test: when a zombie's socket matches the target
+	// (e.g. a systemd-managed socket), cleanup must remove the
+	// runtime file but preserve the socket — even when killProcess
+	// returns true because the PID was reused by a non-roborev
+	// process.
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
+
+	dataDir := testenv.SetDataDir(t)
+	assert := assert.New(t)
+
+	// Create a real Unix socket as the "target" (stands in for the
+	// systemd-managed socket). Use a short path to stay under the
+	// Unix socket name length limit on macOS.
+	socketDir, err := os.MkdirTemp("/tmp", "rr-test-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "d.sock")
+	ln, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	target := DaemonEndpoint{Network: "unix", Address: socketPath}
+
+	// Write a stale runtime file that points at the target socket.
+	// Use the current PID so isProcessAlive returns true (the PID
+	// exists), but mock identifyProcess to say it's not roborev
+	// (simulating PID reuse).
+	stalePID := os.Getpid()
+	runtimeJSON, err := json.Marshal(map[string]any{
+		"pid":     stalePID,
+		"addr":    socketPath,
+		"port":    0,
+		"network": "unix",
+		"version": "stale",
+	})
+	require.NoError(t, err)
+	runtimePath := filepath.Join(
+		dataDir, fmt.Sprintf("daemon.%d.json", stalePID))
+	require.NoError(t, os.WriteFile(runtimePath, runtimeJSON, 0644))
+
+	mockIdentifyProcess(t, func(pid int) processIdentity {
+		return processNotRoborev
+	})
+
+	cleaned := CleanupZombieDaemons(target)
+
+	assert.Equal(1, cleaned, "should count stale daemon as cleaned")
+	assert.NoFileExists(runtimePath, "runtime file should be removed")
+	assert.FileExists(socketPath, "target socket must be preserved")
+}
+
 func TestRuntimeInfo_Endpoint(t *testing.T) {
 	assert := assert.New(t)
 
