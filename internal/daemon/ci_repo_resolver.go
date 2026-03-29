@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"os/exec"
 	"path"
 	"sort"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	ghpkg "github.com/roborev-dev/roborev/internal/github"
 )
 
 // repoRefreshInterval is the fixed interval between wildcard repo
@@ -20,7 +19,7 @@ import (
 const repoRefreshInterval = time.Hour
 
 // RepoResolver expands wildcard patterns in CI repo config into concrete
-// "owner/repo" entries by querying the GitHub API via the gh CLI. Results
+// "owner/repo" entries by querying the GitHub API. Results
 // are cached for the refresh interval and automatically invalidated when
 // the config changes.
 type RepoResolver struct {
@@ -31,19 +30,17 @@ type RepoResolver struct {
 	cacheKey string // derived from pattern+exclusion lists+max_repos for invalidation
 
 	// listReposFn is a test seam. When non-nil it replaces the real
-	// gh repo list call. Signature: (ctx, owner, env) → []nameWithOwner.
-	listReposFn func(ctx context.Context, owner string, env []string) ([]string, error)
+	// GitHub repo list call. Signature: (ctx, owner, token) -> []nameWithOwner.
+	listReposFn func(ctx context.Context, owner, token string) ([]string, error)
 }
 
-// ghEnvFn produces the environment slice for gh CLI calls targeting a
-// specific owner. The caller typically passes a closure around
-// CIPoller.ghEnvForRepo.
-type ghEnvFn func(owner string) []string
+// githubTokenFn resolves an auth token for a given owner.
+type githubTokenFn func(owner string) string
 
 // Resolve returns the list of concrete "owner/repo" entries to poll.
 // It uses a cached result when the TTL has not expired and the config
 // has not changed, otherwise it re-expands wildcard patterns.
-func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn ghEnvFn) ([]string, error) {
+func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, error) {
 	key := r.buildCacheKey(ci)
 	ttl := repoRefreshInterval
 
@@ -56,7 +53,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn g
 	}
 	r.mu.Unlock()
 
-	repos, degraded, err := r.expand(ctx, ci, envFn)
+	repos, degraded, err := r.expand(ctx, ci, tokenFn)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +100,7 @@ func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
 // The returned degraded flag is true when one or more API calls failed
 // during wildcard expansion. The caller should avoid caching degraded
 // results so that the next poll retries the failed API calls.
-func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn ghEnvFn) ([]string, bool, error) {
+func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, bool, error) {
 	var exact []string
 	// owner → list of full patterns like "owner/pattern"
 	wildcardsByOwner := make(map[string][]string)
@@ -140,12 +137,12 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn gh
 			return nil, false, ctx.Err()
 		}
 
-		var env []string
-		if envFn != nil {
-			env = envFn(owner)
+		var token string
+		if tokenFn != nil {
+			token = tokenFn(owner)
 		}
 
-		repos, err := r.callListRepos(ctx, owner, env)
+		repos, err := r.callListRepos(ctx, owner, token)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, false, ctx.Err()
@@ -210,48 +207,20 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn gh
 	return result, degraded, nil
 }
 
-// callListRepos invokes the gh CLI or the test seam to list repos for an owner.
-func (r *RepoResolver) callListRepos(ctx context.Context, owner string, env []string) ([]string, error) {
+// callListRepos invokes the GitHub client or the test seam to list repos for an owner.
+func (r *RepoResolver) callListRepos(ctx context.Context, owner, token string) ([]string, error) {
 	if r.listReposFn != nil {
-		return r.listReposFn(ctx, owner, env)
+		return r.listReposFn(ctx, owner, token)
 	}
-	return ghListRepos(ctx, owner, env)
+	return ghListRepos(ctx, owner, token)
 }
 
-// ghRepoEntry represents a single entry from `gh repo list --json`.
-type ghRepoEntry struct {
-	NameWithOwner string `json:"nameWithOwner"`
-}
-
-// ghListRepos calls `gh repo list <owner> --json nameWithOwner --no-archived --limit 1000`
-// and returns the list of "owner/repo" strings.
-func ghListRepos(ctx context.Context, owner string, env []string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "gh", "repo", "list", owner,
-		"--json", "nameWithOwner",
-		"--no-archived",
-		"--limit", "1000",
-	)
-	if env != nil {
-		cmd.Env = env
-	}
-	out, err := cmd.Output()
+func ghListRepos(ctx context.Context, owner, token string) ([]string, error) {
+	client, err := ghpkg.NewClient(token)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh repo list %s: %s", owner, string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("gh repo list %s: %w", owner, err)
+		return nil, err
 	}
-
-	var entries []ghRepoEntry
-	if err := json.Unmarshal(out, &entries); err != nil {
-		return nil, fmt.Errorf("parse gh repo list output for %s: %w", owner, err)
-	}
-
-	repos := make([]string, len(entries))
-	for i, e := range entries {
-		repos[i] = e.NameWithOwner
-	}
-	return repos, nil
+	return client.ListOwnerRepos(ctx, owner, 1000)
 }
 
 // applyExclusions filters repos matching any of the exclusion patterns.

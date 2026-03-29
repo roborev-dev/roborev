@@ -1,15 +1,13 @@
 package github
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
-	"os/exec"
-	"strconv"
 	"strings"
 
+	googlegithub "github.com/google/go-github/v84/github"
 	"github.com/roborev-dev/roborev/internal/review"
 )
 
@@ -18,53 +16,38 @@ import (
 // instead of creating duplicates.
 const CommentMarker = "<!-- roborev-pr-comment -->"
 
-// Test seam for subprocess creation.
-var execCommand = exec.CommandContext
-
 // FindExistingComment searches for an existing roborev comment on the
 // given PR. It returns the comment ID if found, or 0 if no match exists.
-// env, when non-nil, is set on the subprocess (e.g. for GitHub App tokens).
-func FindExistingComment(ctx context.Context, ghRepo string, prNumber int, env []string) (int64, error) {
-	jqFilter := fmt.Sprintf(
-		`[.[] | select(.body | contains(%q)) | .id] | last // empty`,
-		CommentMarker,
-	)
-
-	cmd := execCommand(ctx, "gh", "api",
-		fmt.Sprintf("repos/%s/issues/%d/comments", ghRepo, prNumber),
-		"--paginate",
-		"--jq", jqFilter,
-	)
-	if env != nil {
-		cmd.Env = env
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("gh api list comments: %w: %s", err, stderr.String())
-	}
-
-	// With --paginate, --jq runs per page so stdout may contain
-	// multiple lines when several pages match. Use the last non-empty
-	// line (the newest matching comment — most likely writable by the
-	// current token).
-	lastLine := ""
-	for line := range strings.SplitSeq(stdout.String(), "\n") {
-		if s := strings.TrimSpace(line); s != "" {
-			lastLine = s
-		}
-	}
-	if lastLine == "" {
-		return 0, nil
-	}
-
-	id, err := strconv.ParseInt(lastLine, 10, 64)
+func (c *Client) FindExistingComment(ctx context.Context, ghRepo string, prNumber int) (int64, error) {
+	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
-		return 0, fmt.Errorf("parse comment ID %q: %w", lastLine, err)
+		return 0, err
 	}
-	return id, nil
+
+	opts := &googlegithub.IssueListCommentsOptions{
+		Sort:      ptr("created"),
+		Direction: ptr("asc"),
+		ListOptions: googlegithub.ListOptions{
+			PerPage: 100,
+		},
+	}
+
+	var lastID int64
+	for {
+		comments, resp, err := c.api.Issues.ListComments(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return 0, fmt.Errorf("list issue comments: %w", err)
+		}
+		for _, comment := range comments {
+			if strings.Contains(comment.GetBody(), CommentMarker) {
+				lastID = comment.GetID()
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return lastID, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // prepareBody prepends the CommentMarker and truncates to
@@ -83,75 +66,70 @@ func prepareBody(body string) string {
 // CreatePRComment posts a new roborev PR comment. It prepends the
 // CommentMarker and truncates to review.MaxCommentLen, then always
 // creates a new comment (no find/patch).
-func CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
-	return createComment(ctx, ghRepo, prNumber, prepareBody(body), env)
+func (c *Client) CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
+	body = prepareBody(body)
+
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.api.Issues.CreateComment(ctx, owner, repo, prNumber, &googlegithub.IssueComment{
+		Body: ptr(body),
+	})
+	if err != nil {
+		return fmt.Errorf("create PR comment: %w", err)
+	}
+	return nil
 }
 
 // UpsertPRComment creates or updates a roborev PR comment. It prepends
 // the CommentMarker, truncates to review.MaxCommentLen, and either
 // patches an existing comment or creates a new one.
-func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
+func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
 	body = prepareBody(body)
 
-	existingID, err := FindExistingComment(ctx, ghRepo, prNumber, env)
+	existingID, err := c.FindExistingComment(ctx, ghRepo, prNumber)
 	if err != nil {
 		return fmt.Errorf("find existing comment: %w", err)
 	}
 
 	if existingID > 0 {
-		if err := patchComment(ctx, ghRepo, existingID, body, env); err != nil {
-			msg := err.Error()
-			if strings.Contains(msg, "HTTP 403") ||
-				strings.Contains(msg, "HTTP 404") {
-				// Comment belongs to a different actor/token.
-				// Fall back to creating a new one.
-				log.Printf(
-					"warning: patch comment %d: %v "+
-						"(falling back to new comment)",
-					existingID, err)
+		if err := c.patchComment(ctx, ghRepo, existingID, body); err != nil {
+			if isGitHubStatus(err, 403, 404) {
+				log.Printf("warning: patch comment %d: %v (falling back to new comment)", existingID, err)
 			} else {
-				return fmt.Errorf("patch comment %d: %w",
-					existingID, err)
+				return fmt.Errorf("patch comment %d: %w", existingID, err)
 			}
 		} else {
 			return nil
 		}
 	}
-	return createComment(ctx, ghRepo, prNumber, body, env)
+	return c.CreatePRComment(ctx, ghRepo, prNumber, body)
 }
 
-func patchComment(ctx context.Context, ghRepo string, commentID int64, body string, env []string) error {
-	payload, err := json.Marshal(map[string]string{"body": body})
+func (c *Client) patchComment(ctx context.Context, ghRepo string, commentID int64, body string) error {
+	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
-		return fmt.Errorf("marshal PATCH payload: %w", err)
+		return err
 	}
-	cmd := execCommand(ctx, "gh", "api",
-		"-X", "PATCH",
-		fmt.Sprintf("repos/%s/issues/comments/%d", ghRepo, commentID),
-		"--input", "-",
-	)
-	cmd.Stdin = bytes.NewReader(payload)
-	if env != nil {
-		cmd.Env = env
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh api PATCH comment: %w: %s", err, string(out))
+	_, _, err = c.api.Issues.EditComment(ctx, owner, repo, commentID, &googlegithub.IssueComment{
+		Body: ptr(body),
+	})
+	if err != nil {
+		return fmt.Errorf("edit issue comment: %w", err)
 	}
 	return nil
 }
 
-func createComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
-	cmd := execCommand(ctx, "gh", "pr", "comment",
-		"--repo", ghRepo,
-		strconv.Itoa(prNumber),
-		"--body-file", "-",
-	)
-	cmd.Stdin = strings.NewReader(body)
-	if env != nil {
-		cmd.Env = env
+func isGitHubStatus(err error, statuses ...int) bool {
+	var githubErr *googlegithub.ErrorResponse
+	if !errors.As(err, &githubErr) {
+		return false
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh pr comment: %w: %s", err, string(out))
+	for _, status := range statuses {
+		if githubErr.Response != nil && githubErr.Response.StatusCode == status {
+			return true
+		}
 	}
-	return nil
+	return false
 }

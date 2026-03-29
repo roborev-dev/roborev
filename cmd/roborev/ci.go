@@ -392,8 +392,23 @@ func postCIComment(
 	body string,
 	upsert bool,
 ) error {
-	if upsert {
-		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
+	client, err := ciGitHubClient()
+	if err != nil {
+		return err
 	}
-	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, nil)
+	if upsert {
+		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
+	}
+	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
+}
+
+func ciGitHubClient() (*ghpkg.Client, error) {
+	token := strings.TrimSpace(os.Getenv("GH_TOKEN"))
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	}
+	if token == "" {
+		return nil, fmt.Errorf("GitHub authentication required: set GH_TOKEN or GITHUB_TOKEN")
+	}
+	return ghpkg.NewClient(token)
 }
