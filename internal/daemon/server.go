@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
+	"github.com/coreos/go-systemd/v22/daemon"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -256,6 +257,10 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := WriteRuntime(ep, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
+
+	// Notify systemd that the daemon is ready. No-op when not running
+	// under systemd (NOTIFY_SOCKET is unset).
+	_, _ = daemon.SdNotify(false, daemon.SdNotifyReady)
 
 	// Log daemon start after runtime publication.
 	if s.activityLog != nil {

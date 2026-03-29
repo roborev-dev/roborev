@@ -466,8 +466,21 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 			continue
 		}
 
-		// Unresponsive - try to kill it
-		if KillDaemon(info) {
+		// Unresponsive — try to kill it. When the zombie's
+		// socket matches the target (e.g. a systemd-managed
+		// socket we're about to serve on), kill the process
+		// and clean up the runtime file but preserve the socket.
+		if ep.IsUnix() && ep.Address == target.Address {
+			if info.PID > 0 {
+				killProcess(info.PID)
+			}
+			if info.SourcePath != "" {
+				os.Remove(info.SourcePath)
+			} else if info.PID > 0 {
+				RemoveRuntimeForPID(info.PID)
+			}
+			cleaned++
+		} else if KillDaemon(info) {
 			cleaned++
 		}
 	}
