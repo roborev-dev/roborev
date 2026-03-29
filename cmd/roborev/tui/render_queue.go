@@ -526,16 +526,26 @@ func (m model) renderQueueView() string {
 				return s
 			})
 
+		// Always set headers — lipgloss table drops the last data row
+		// when Headers() is not called.
+		headers := make([]string, len(visCols))
 		if !compact {
-			headers := make([]string, len(visCols))
 			for vi, c := range visCols {
 				headers[vi] = allHeaders[c]
 			}
-			t = t.Headers(headers...)
 		}
+		t = t.Headers(headers...)
 		t = t.Rows(rows...)
 
 		tableStr := t.Render()
+
+		// In compact mode, strip the empty header line we added as a
+		// workaround (it renders as a row of spaces).
+		if compact {
+			if idx := strings.Index(tableStr, "\n"); idx >= 0 {
+				tableStr = tableStr[idx+1:]
+			}
+		}
 		b.WriteString(tableStr)
 		b.WriteString("\x1b[K\n")
 

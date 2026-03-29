@@ -347,6 +347,46 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	assert.Contains(t, output, "JobID")
 }
 
+// Regression test for #586: distraction-free mode lost the last queue entry.
+// The lipgloss table drops the last data row when Headers() is not called,
+// so compact mode must still supply (empty) headers and strip the resulting
+// blank line.
+func TestTUIQueueDistractionFreePreservesLastJob(t *testing.T) {
+	assert := assert.New(t)
+	for _, h := range []int{20, 24, 30} {
+		for _, n := range []int{10, 25, 40} {
+			t.Run(fmt.Sprintf("h%d_jobs%d", h, n), func(t *testing.T) {
+				m := newTuiModel("http://localhost")
+				m.currentView = tuiViewQueue
+				m.width = 120
+				m.height = h
+				for i := range n {
+					m.jobs = append(m.jobs, makeJob(int64(9300+i)))
+				}
+				lastJobID := fmt.Sprintf("%d", 9300+n-1)
+				// Select near the end so the last job is in the scroll window.
+				m.selectedIdx = n - 2
+				m.selectedJobID = int64(9300 + n - 2)
+
+				normalOutput := m.View()
+				normalHasLast := strings.Contains(normalOutput, lastJobID)
+
+				m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+				compactOutput := m2.View()
+				compactHasLast := strings.Contains(compactOutput, lastJobID)
+
+				if normalHasLast {
+					assert.True(compactHasLast,
+						"h=%d n=%d: job %s visible before D but missing after", h, n, lastJobID)
+				}
+				compactLines := strings.Count(compactOutput, "\n") + 1
+				assert.LessOrEqual(compactLines, h,
+					"h=%d n=%d: output %d lines exceeds terminal height", h, n, compactLines)
+			})
+		}
+	}
+}
+
 func TestTUITasksMouseClickSelectsRow(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
