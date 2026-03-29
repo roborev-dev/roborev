@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"bytes"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +19,14 @@ import (
 // inline and no snapshot file path was provided. Callers should write
 // the diff to a file and retry with BuildWithDiffFile.
 var ErrDiffTruncatedNoFile = errors.New("diff too large to inline and no snapshot file available")
+
+// escapeXML escapes XML special characters so untrusted text cannot
+// break out of an XML-like wrapper tag (e.g. </commit-message>).
+func escapeXML(s string) string {
+	var buf bytes.Buffer
+	xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
 // New code should use Builder.maxPromptSize() which respects config.
@@ -652,10 +662,10 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	var currentOverflow strings.Builder
 	currentOverflow.WriteString("<commit-message context-only=\"true\">\n")
-	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", info.Subject)
-	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", escapeXML(info.Subject))
+	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", escapeXML(info.Author))
 	if info.Body != "" {
-		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n", info.Body)
+		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n", escapeXML(info.Body))
 	}
 	currentOverflow.WriteString("</commit-message>\n\n")
 
@@ -768,7 +778,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		info, err := git.GetCommitInfo(repoPath, sha)
 		shortSHA := git.ShortSHA(sha)
 		if err == nil {
-			fmt.Fprintf(&currentOverflow, "- %s %s\n", shortSHA, info.Subject)
+			fmt.Fprintf(&currentOverflow, "- %s %s\n", shortSHA, escapeXML(info.Subject))
 		} else {
 			fmt.Fprintf(&currentOverflow, "- %s\n", shortSHA)
 		}
