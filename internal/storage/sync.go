@@ -260,35 +260,38 @@ func (db *DB) GetRepoByIdentityCaseInsensitive(identity string) (*Repo, error) {
 
 // SyncableJob contains job data needed for sync
 type SyncableJob struct {
-	ID              int64
-	UUID            string
-	RepoID          int64
-	RepoIdentity    string
-	CommitID        *int64
-	CommitSHA       string
-	CommitAuthor    string
-	CommitSubject   string
-	CommitTimestamp time.Time
-	GitRef          string
-	SessionID       string
-	Agent           string
-	Model           string
-	Reasoning       string
-	JobType         string
-	ReviewType      string
-	PatchID         string
-	Status          string
-	Agentic         bool
-	EnqueuedAt      time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	Prompt          string
-	DiffContent     *string
-	Error           string
-	TokenUsage      string
-	WorktreePath    string
-	SourceMachineID string
-	UpdatedAt       time.Time
+	ID                int64
+	UUID              string
+	RepoID            int64
+	RepoIdentity      string
+	CommitID          *int64
+	CommitSHA         string
+	CommitAuthor      string
+	CommitSubject     string
+	CommitTimestamp   time.Time
+	GitRef            string
+	SessionID         string
+	Agent             string
+	Model             string
+	Provider          string
+	RequestedModel    string
+	RequestedProvider string
+	Reasoning         string
+	JobType           string
+	ReviewType        string
+	PatchID           string
+	Status            string
+	Agentic           bool
+	EnqueuedAt        time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	Prompt            string
+	DiffContent       *string
+	Error             string
+	TokenUsage        string
+	WorktreePath      string
+	SourceMachineID   string
+	UpdatedAt         time.Time
 }
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
@@ -298,7 +301,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
+			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), j.source_machine_id, j.updated_at
@@ -333,7 +336,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
+			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.SourceMachineID, &updatedAt,
@@ -577,15 +580,18 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(`
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, session_id, agent, model, reasoning, job_type, review_type, patch_id, status, agentic,
+			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
 			worktree_path, source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
 			error = excluded.error,
-			model = COALESCE(excluded.model, review_jobs.model),
+			model = excluded.model,
+			provider = excluded.provider,
+			requested_model = excluded.requested_model,
+			requested_provider = excluded.requested_provider,
 			git_ref = excluded.git_ref,
 			session_id = COALESCE(excluded.session_id, review_jobs.session_id),
 			commit_id = excluded.commit_id,
@@ -594,7 +600,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			updated_at = excluded.updated_at,
 			synced_at = ?
-	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), j.Reasoning, j.JobType,
+	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(j.Error), nullStr(j.TokenUsage),

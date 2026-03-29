@@ -453,7 +453,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	tabWidth := 2
 	columnBorders := false
 	tasksEnabled := false
-	hiddenCols := map[int]bool{}
+	hiddenCols := parseHiddenColumns(nil)
 	colOrder := parseColumnOrder(nil)
 	taskColOrder := parseTaskColumnOrder(nil)
 	var cwdRepoRoot, cwdBranch string

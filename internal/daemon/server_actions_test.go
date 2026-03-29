@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -356,6 +357,41 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 	})
 
+	t.Run("rerun reevaluates implicit effective model", func(t *testing.T) {
+		isolatedDB, isolatedDir := testutil.OpenTestDBWithDir(t)
+		server := NewServer(isolatedDB, config.DefaultConfig(), "")
+
+		repo, err := isolatedDB.GetOrCreateRepo(isolatedDir)
+		require.NoError(t, err)
+		commit, err := isolatedDB.GetOrCreateCommit(repo.ID, "rerun-implicit-model", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		job, err := isolatedDB.EnqueueJob(storage.EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "rerun-implicit-model",
+			Agent:    "opencode",
+			Model:    "minimax-m2.5-free",
+		})
+		require.NoError(t, err)
+
+		claimed, err := isolatedDB.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		require.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, isolatedDB.CompleteJob(job.ID, "opencode", "prompt", "output"))
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusQueued, updated.Status)
+		assert.Empty(t, updated.Model, "rerun should recompute implicit model instead of preserving stale effective value")
+	})
+
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-queued", Agent: "test"})
@@ -410,6 +446,27 @@ func TestHandleRerunJob(t *testing.T) {
 			}, "Expected status 405 for GET, got %d", w.Code)
 		}
 	})
+}
+
+func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
+	mainRepo := t.TempDir()
+	worktreeRepo := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(worktreeRepo, ".roborev.toml"), []byte("review_model = \"worktree-model\"\n"), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:        "test",
+		JobType:      storage.JobTypeReview,
+		ReviewType:   config.ReviewTypeDefault,
+		Reasoning:    "thorough",
+		RepoPath:     mainRepo,
+		WorktreePath: worktreeRepo,
+	}
+
+	model, provider := resolveRerunModelProvider(job, config.DefaultConfig())
+	assert.Equal(t, "worktree-model", model)
+	assert.Empty(t, provider)
 }
 
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs

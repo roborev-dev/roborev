@@ -40,25 +40,27 @@ func parseSQLiteTime(s string) time.Time {
 //   - CommitID > 0 → "review" (single commit)
 //   - otherwise → "range" (commit range)
 type EnqueueOpts struct {
-	RepoID       int64
-	CommitID     int64  // >0 for single-commit reviews
-	GitRef       string // SHA, "start..end" range, or "dirty"
-	Branch       string
-	SessionID    string
-	Agent        string
-	Model        string
-	Provider     string // e.g. "anthropic", "openai"
-	Reasoning    string
-	ReviewType   string // e.g. "security" — changes which system prompt is used
-	PatchID      string // Stable patch-id for rebase tracking
-	DiffContent  string // For dirty reviews (captured at enqueue time)
-	Prompt       string // For task jobs (pre-stored prompt)
-	OutputPrefix string // Prefix to prepend to review output
-	Agentic      bool   // Allow file edits and command execution
-	Label        string // Display label in TUI for task jobs (default: "prompt")
-	JobType      string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
-	ParentJobID  int64  // Parent job being fixed (for fix jobs)
-	WorktreePath string // Worktree checkout path (empty = use main repo root)
+	RepoID            int64
+	CommitID          int64  // >0 for single-commit reviews
+	GitRef            string // SHA, "start..end" range, or "dirty"
+	Branch            string
+	SessionID         string
+	Agent             string
+	Model             string // Effective model for this run
+	Provider          string // Effective provider for this run (e.g. "anthropic", "openai")
+	RequestedModel    string // Explicitly requested model; empty means reevaluate on rerun
+	RequestedProvider string // Explicitly requested provider; empty means reevaluate on rerun
+	Reasoning         string
+	ReviewType        string // e.g. "security" — changes which system prompt is used
+	PatchID           string // Stable patch-id for rebase tracking
+	DiffContent       string // For dirty reviews (captured at enqueue time)
+	Prompt            string // For task jobs (pre-stored prompt)
+	OutputPrefix      string // Prefix to prepend to review output
+	Agentic           bool   // Allow file edits and command execution
+	Label             string // Display label in TUI for task jobs (default: "prompt")
+	JobType           string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
+	ParentJobID       int64  // Parent job being fixed (for fix jobs)
+	WorktreePath      string // Worktree checkout path (empty = use main repo root)
 }
 
 // EnqueueJob creates a new review job. The job type is inferred from opts.
@@ -118,12 +120,12 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, requested_model, requested_provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
-		opts.Agent, nullString(opts.Model), nullString(opts.Provider), reasoning,
+		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
@@ -134,27 +136,29 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 
 	id, _ := result.LastInsertId()
 	job := &ReviewJob{
-		ID:              id,
-		RepoID:          opts.RepoID,
-		GitRef:          gitRef,
-		Branch:          opts.Branch,
-		SessionID:       opts.SessionID,
-		Agent:           opts.Agent,
-		Model:           opts.Model,
-		Provider:        opts.Provider,
-		Reasoning:       reasoning,
-		JobType:         jobType,
-		ReviewType:      opts.ReviewType,
-		PatchID:         opts.PatchID,
-		Status:          JobStatusQueued,
-		EnqueuedAt:      now,
-		Prompt:          opts.Prompt,
-		Agentic:         opts.Agentic,
-		OutputPrefix:    opts.OutputPrefix,
-		UUID:            uid,
-		SourceMachineID: machineID,
-		UpdatedAt:       &now,
-		WorktreePath:    opts.WorktreePath,
+		ID:                id,
+		RepoID:            opts.RepoID,
+		GitRef:            gitRef,
+		Branch:            opts.Branch,
+		SessionID:         opts.SessionID,
+		Agent:             opts.Agent,
+		Model:             opts.Model,
+		Provider:          opts.Provider,
+		RequestedModel:    opts.RequestedModel,
+		RequestedProvider: opts.RequestedProvider,
+		Reasoning:         reasoning,
+		JobType:           jobType,
+		ReviewType:        opts.ReviewType,
+		PatchID:           opts.PatchID,
+		Status:            JobStatusQueued,
+		EnqueuedAt:        now,
+		Prompt:            opts.Prompt,
+		Agentic:           opts.Agentic,
+		OutputPrefix:      opts.OutputPrefix,
+		UUID:              uid,
+		SourceMachineID:   machineID,
+		UpdatedAt:         &now,
+		WorktreePath:      opts.WorktreePath,
 	}
 	if opts.ParentJobID > 0 {
 		job.ParentJobID = &opts.ParentJobID
@@ -202,7 +206,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var job ReviewJob
 	var fields reviewJobScanFields
 	err = db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
@@ -211,7 +215,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE j.worker_id = ? AND j.status = 'running'
 		ORDER BY j.started_at DESC
 		LIMIT 1
-	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
+	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
 		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.JobType, &fields.ReviewType,
 		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath)
 	if err != nil {
@@ -514,10 +518,15 @@ func (db *DB) MarkJobRebased(jobID int64) error {
 	return nil
 }
 
+type ReenqueueOpts struct {
+	Model    string
+	Provider string
+}
+
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
-func (db *DB) ReenqueueJob(jobID int64) error {
+func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -543,12 +552,15 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 		return err
 	}
 
-	// Reset job status
+	nowStr := time.Now().Format(time.RFC3339)
+
+	// Reset job status and replace effective execution settings with the
+	// newly resolved values for this rerun.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?, updated_at = ?
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
-	`, jobID)
+	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {
 		return err
 	}
@@ -771,7 +783,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.provider, j.token_usage, COALESCE(j.worktree_path, '')
+		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -809,7 +821,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-			&fields.ParentJobID, &fields.Provider, &fields.TokenUsage, &fields.WorktreePath)
+			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath)
 		if err != nil {
 			return nil, err
 		}
@@ -858,7 +870,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject, j.model, j.provider, j.job_type, j.review_type, j.patch_id,
+		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -866,7 +878,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
-		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
+		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath)
 	if err != nil {
 		return nil, err

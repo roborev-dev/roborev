@@ -2200,12 +2200,22 @@ func TestParseColumnOrderAppendsMissing(t *testing.T) {
 	assert.True(t, slices.Equal(got[:len(wantPrefix)], wantPrefix))
 
 	pfCount := 0
+	requestedModelCount := 0
+	requestedProviderCount := 0
 	for _, c := range got {
 		if c == colPF {
 			pfCount++
 		}
+		if c == colRequestedModel {
+			requestedModelCount++
+		}
+		if c == colRequestedProvider {
+			requestedProviderCount++
+		}
 	}
 	assert.Equal(t, 1, pfCount)
+	assert.Equal(t, 1, requestedModelCount)
+	assert.Equal(t, 1, requestedProviderCount)
 }
 
 func TestDefaultColumnOrderDetection(t *testing.T) {
@@ -2220,4 +2230,11 @@ func TestDefaultColumnOrderDetection(t *testing.T) {
 	customOrder[0], customOrder[1] = customOrder[1], customOrder[0]
 
 	assert.False(t, slices.Equal(customOrder, toggleableColumns))
+}
+
+func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
+	hidden := parseHiddenColumns(nil)
+	assert.True(t, hidden[colSessionID])
+	assert.True(t, hidden[colRequestedModel])
+	assert.True(t, hidden[colRequestedProvider])
 }

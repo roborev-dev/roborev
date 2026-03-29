@@ -2569,6 +2569,7 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 					return false
 				}, "model = %q, want %q", job.Model, tt.wantModel)
 			}
+			assert.Equal(t, tt.reqModel, job.RequestedModel)
 		})
 	}
 }

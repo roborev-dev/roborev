@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   session_id TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
+  requested_model TEXT,
+  requested_provider TEXT,
   reasoning TEXT NOT NULL DEFAULT 'thorough',
   status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased')) DEFAULT 'queued',
   enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -334,6 +336,9 @@ func (db *DB) migrate() error {
 				session_id TEXT,
 				agent TEXT NOT NULL DEFAULT 'codex',
 				model TEXT,
+				provider TEXT,
+				requested_model TEXT,
+				requested_provider TEXT,
 				reasoning TEXT NOT NULL DEFAULT 'thorough',
 				status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased')) DEFAULT 'queued',
 				enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -352,8 +357,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasBranch, hasSessionID bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'branch', 'session_id')`)
+		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasProvider, hasRequestedModel, hasRequestedProvider, hasBranch, hasSessionID bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'provider', 'requested_model', 'requested_provider', 'branch', 'session_id')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -367,6 +372,12 @@ func (db *DB) migrate() error {
 					hasAgentic = true
 				case "model":
 					hasModel = true
+				case "provider":
+					hasProvider = true
+				case "requested_model":
+					hasRequestedModel = true
+				case "requested_provider":
+					hasRequestedProvider = true
 				case "branch":
 					hasBranch = true
 				case "session_id":
@@ -390,6 +401,15 @@ func (db *DB) migrate() error {
 		baseCols = append(baseCols, "agent")
 		if hasModel {
 			baseCols = append(baseCols, "model")
+		}
+		if hasProvider {
+			baseCols = append(baseCols, "provider")
+		}
+		if hasRequestedModel {
+			baseCols = append(baseCols, "requested_model")
+		}
+		if hasRequestedProvider {
+			baseCols = append(baseCols, "requested_provider")
 		}
 		if hasReasoning {
 			baseCols = append(baseCols, "reasoning")
@@ -692,6 +712,30 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN provider TEXT`)
 		if err != nil {
 			return fmt.Errorf("add provider column: %w", err)
+		}
+	}
+
+	// Migration: add requested_model column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'requested_model'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check requested_model column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN requested_model TEXT`)
+		if err != nil {
+			return fmt.Errorf("add requested_model column: %w", err)
+		}
+	}
+
+	// Migration: add requested_provider column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'requested_provider'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check requested_provider column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN requested_provider TEXT`)
+		if err != nil {
+			return fmt.Errorf("add requested_provider column: %w", err)
 		}
 	}
 

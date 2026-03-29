@@ -14,12 +14,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 9
+const pgSchemaVersion = 10
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v9.sql
+//go:embed schemas/postgres_v10.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -288,6 +288,20 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("migrate to v9 (add worktree_path column): %w", err)
 			}
 		}
+		if currentVersion < 10 {
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS provider TEXT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v10 (add provider column): %w", err)
+			}
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS requested_model TEXT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v10 (add requested_model column): %w", err)
+			}
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS requested_provider TEXT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v10 (add requested_provider column): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -539,15 +553,18 @@ func (p *PgPool) Tx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, pgCommitID *int64) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, session_id, agent, model, reasoning, job_type, review_type, patch_id, status, agentic,
+			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
 			worktree_path, source_machine_id, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
-			model = COALESCE(EXCLUDED.model, review_jobs.model),
+			model = EXCLUDED.model,
+			provider = EXCLUDED.provider,
+			requested_model = EXCLUDED.requested_model,
+			requested_provider = EXCLUDED.requested_provider,
 			git_ref = EXCLUDED.git_ref,
 			session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
 			commit_id = EXCLUDED.commit_id,
@@ -555,7 +572,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
 			worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 			updated_at = NOW()
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Reasoning),
+	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), j.SourceMachineID)
 	return err
@@ -590,32 +607,35 @@ func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 
 // PulledJob represents a job pulled from PostgreSQL
 type PulledJob struct {
-	UUID            string
-	RepoIdentity    string
-	CommitSHA       string
-	CommitAuthor    string
-	CommitSubject   string
-	CommitTimestamp time.Time
-	GitRef          string
-	SessionID       string
-	Agent           string
-	Model           string
-	Reasoning       string
-	JobType         string
-	ReviewType      string
-	PatchID         string
-	Status          string
-	Agentic         bool
-	EnqueuedAt      time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	Prompt          string
-	DiffContent     *string
-	Error           string
-	TokenUsage      string
-	WorktreePath    string
-	SourceMachineID string
-	UpdatedAt       time.Time
+	UUID              string
+	RepoIdentity      string
+	CommitSHA         string
+	CommitAuthor      string
+	CommitSubject     string
+	CommitTimestamp   time.Time
+	GitRef            string
+	SessionID         string
+	Agent             string
+	Model             string
+	Provider          string
+	RequestedModel    string
+	RequestedProvider string
+	Reasoning         string
+	JobType           string
+	ReviewType        string
+	PatchID           string
+	Status            string
+	Agentic           bool
+	EnqueuedAt        time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	Prompt            string
+	DiffContent       *string
+	Error             string
+	TokenUsage        string
+	WorktreePath      string
+	SourceMachineID   string
+	UpdatedAt         time.Time
 }
 
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
@@ -636,7 +656,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
+			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), j.source_machine_id, j.updated_at, j.id
@@ -663,7 +683,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 
 		err := rows.Scan(
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
+			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.SourceMachineID, &j.UpdatedAt, &lastID,

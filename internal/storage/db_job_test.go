@@ -808,7 +808,7 @@ func TestReenqueueJob(t *testing.T) {
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "", "some error")
 
-		err := db.ReenqueueJob(job.ID)
+		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
@@ -822,7 +822,7 @@ func TestReenqueueJob(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-canceled")
 		db.CancelJob(job.ID)
 
-		err := db.ReenqueueJob(job.ID)
+		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
@@ -844,7 +844,7 @@ func TestReenqueueJob(t *testing.T) {
 		}
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
-		err := db.ReenqueueJob(job.ID)
+		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		updated, _ := db.GetJobByID(job.ID)
@@ -854,7 +854,7 @@ func TestReenqueueJob(t *testing.T) {
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-queued")
 
-		err := db.ReenqueueJob(job.ID)
+		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.Error(t, err)
 	})
 
@@ -862,13 +862,50 @@ func TestReenqueueJob(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-running")
 		db.ClaimJob("worker-1")
 
-		err := db.ReenqueueJob(job.ID)
+		err := db.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.Error(t, err)
 	})
 
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
-		err := db.ReenqueueJob(99999)
+		err := db.ReenqueueJob(99999, ReenqueueOpts{})
 		require.Error(t, err)
+	})
+
+	t.Run("rerun updates effective model and preserves requested model", func(t *testing.T) {
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+
+		repo := createRepo(t, isolatedDB, "/tmp/rerun-requested-model")
+		commit := createCommit(t, isolatedDB, repo.ID, "rerun-requested-model-sha")
+
+		job, err := isolatedDB.EnqueueJob(EnqueueOpts{
+			RepoID:            repo.ID,
+			CommitID:          commit.ID,
+			GitRef:            "rerun-requested-model-sha",
+			Agent:             "opencode",
+			Model:             "minimax-m2.5-free",
+			RequestedModel:    "minimax-m2.5-free",
+			RequestedProvider: "anthropic",
+			Provider:          "anthropic",
+		})
+		require.NoError(t, err)
+
+		claimed, err := isolatedDB.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		assert.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, isolatedDB.CompleteJob(job.ID, "opencode", "prompt", "output"))
+
+		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{Model: "openai/gpt-5", Provider: "openai"})
+		require.NoError(t, err)
+
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusQueued, updated.Status)
+		assert.Equal(t, "openai/gpt-5", updated.Model)
+		assert.Equal(t, "openai", updated.Provider)
+		assert.Equal(t, "minimax-m2.5-free", updated.RequestedModel)
+		assert.Equal(t, "anthropic", updated.RequestedProvider)
 	})
 
 	t.Run("rerun preserves worktree_path", func(t *testing.T) {
@@ -895,7 +932,7 @@ func TestReenqueueJob(t *testing.T) {
 		err = isolatedDB.CompleteJob(job.ID, "test", "prompt", "output")
 		require.NoError(t, err)
 
-		err = isolatedDB.ReenqueueJob(job.ID)
+		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err)
 
 		updated, err := isolatedDB.GetJobByID(job.ID)
@@ -924,7 +961,7 @@ func TestReenqueueJob(t *testing.T) {
 		assert.Equal(t, "first output", review1.Output)
 
 		// Re-enqueue the done job
-		err = isolatedDB.ReenqueueJob(job.ID)
+		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
 		// Verify review was deleted
@@ -1113,7 +1150,7 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	err = db.CancelJob(job.ID)
 	require.NoError(t, err, "CancelJob: %v", err)
 
-	err = db.ReenqueueJob(job.ID)
+	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
 	require.NoError(t, err, "ReenqueueJob: %v", err)
 
 	j, err = db.GetJobByID(job.ID)

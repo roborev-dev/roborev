@@ -7,31 +7,33 @@ type sqlScanner interface {
 }
 
 type reviewJobScanFields struct {
-	EnqueuedAt      string
-	StartedAt       sql.NullString
-	FinishedAt      sql.NullString
-	WorkerID        sql.NullString
-	Error           sql.NullString
-	Prompt          sql.NullString
-	SourceMachineID sql.NullString
-	UUID            sql.NullString
-	Model           sql.NullString
-	Provider        sql.NullString
-	Branch          sql.NullString
-	SessionID       sql.NullString
-	CommitID        sql.NullInt64
-	CommitSubject   sql.NullString
-	JobType         sql.NullString
-	ReviewType      sql.NullString
-	PatchID         sql.NullString
-	ParentJobID     sql.NullInt64
-	Patch           sql.NullString
-	DiffContent     sql.NullString
-	OutputPrefix    sql.NullString
-	TokenUsage      sql.NullString
-	Agentic         int
-	Closed          sql.NullInt64
-	WorktreePath    string
+	EnqueuedAt        string
+	StartedAt         sql.NullString
+	FinishedAt        sql.NullString
+	WorkerID          sql.NullString
+	Error             sql.NullString
+	Prompt            sql.NullString
+	SourceMachineID   sql.NullString
+	UUID              sql.NullString
+	Model             sql.NullString
+	Provider          sql.NullString
+	RequestedModel    sql.NullString
+	RequestedProvider sql.NullString
+	Branch            sql.NullString
+	SessionID         sql.NullString
+	CommitID          sql.NullInt64
+	CommitSubject     sql.NullString
+	JobType           sql.NullString
+	ReviewType        sql.NullString
+	PatchID           sql.NullString
+	ParentJobID       sql.NullInt64
+	Patch             sql.NullString
+	DiffContent       sql.NullString
+	OutputPrefix      sql.NullString
+	TokenUsage        sql.NullString
+	Agentic           int
+	Closed            sql.NullInt64
+	WorktreePath      string
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
@@ -52,6 +54,12 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	if fields.Provider.Valid {
 		job.Provider = fields.Provider.String
+	}
+	if fields.RequestedModel.Valid {
+		job.RequestedModel = fields.RequestedModel.String
+	}
+	if fields.RequestedProvider.Valid {
+		job.RequestedProvider = fields.RequestedProvider.String
 	}
 	if fields.JobType.Valid {
 		job.JobType = fields.JobType.String

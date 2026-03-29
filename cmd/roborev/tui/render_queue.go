@@ -100,19 +100,21 @@ func (m model) getVisibleSelectedIdx() int {
 
 // Queue table column indices.
 const (
-	colSel       = iota // "> " selection indicator
-	colJobID            // Job ID
-	colRef              // Git ref (short SHA or range)
-	colBranch           // Branch name
-	colRepo             // Repository display name
-	colAgent            // Agent name
-	colQueued           // Enqueue timestamp
-	colElapsed          // Elapsed time
-	colStatus           // Job status
-	colPF               // Pass/Fail verdict
-	colHandled          // Done status
-	colSessionID        // Session ID
-	colCount            // total number of columns
+	colSel               = iota // "> " selection indicator
+	colJobID                    // Job ID
+	colRef                      // Git ref (short SHA or range)
+	colBranch                   // Branch name
+	colRepo                     // Repository display name
+	colAgent                    // Agent name
+	colQueued                   // Enqueue timestamp
+	colElapsed                  // Elapsed time
+	colStatus                   // Job status
+	colPF                       // Pass/Fail verdict
+	colHandled                  // Done status
+	colSessionID                // Session ID
+	colRequestedModel           // Explicitly requested model
+	colRequestedProvider        // Explicitly requested provider
+	colCount                    // total number of columns
 )
 
 func (m model) renderQueueView() string {
@@ -309,15 +311,17 @@ func (m model) renderQueueView() string {
 
 		// Fixed-width columns: exact sizes (content + padding, not counting inter-column spacing)
 		fixedWidth := map[int]int{
-			colSel:       2,
-			colJobID:     idWidth,
-			colStatus:    max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
-			colQueued:    12,
-			colElapsed:   8,
-			colPF:        3,                                           // "P/F" header = 3
-			colHandled:   max(contentWidth[colHandled], 6),            // "Closed" header = 6
-			colAgent:     min(max(contentWidth[colAgent], 5), 12),     // "Agent" header = 5, cap at 12
-			colSessionID: min(max(contentWidth[colSessionID], 7), 12), // "Session" header = 7, cap at 12
+			colSel:               2,
+			colJobID:             idWidth,
+			colStatus:            max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
+			colQueued:            12,
+			colElapsed:           8,
+			colPF:                3,                                                    // "P/F" header = 3
+			colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
+			colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
+			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
+			colRequestedModel:    min(max(contentWidth[colRequestedModel], 15), 24),    // "Req Model" header = 9
+			colRequestedProvider: min(max(contentWidth[colRequestedProvider], 18), 24), // "Req Provider" header = 12
 		}
 
 		// Flexible columns absorb excess space
@@ -593,8 +597,8 @@ func (m model) renderQueueView() string {
 }
 
 // jobCells returns plain text cell values for a job row.
-// Order: ref, branch, repo, agent, queued, elapsed, status, pf, handled
-// (colRef through colHandled, 9 values).
+// Order: ref, branch, repo, agent, queued, elapsed, status, pf, handled,
+// session, requested model, requested provider.
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -645,7 +649,10 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		sessionID = string(runes[:12])
 	}
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID}
+	requestedModel := stripControlChars(job.RequestedModel)
+	requestedProvider := stripControlChars(job.RequestedProvider)
+
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider}
 }
 
 // statusLabel returns a capitalized display label for the job status.
@@ -770,34 +777,38 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colSessionID}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
-	colRef:       "Ref",
-	colBranch:    "Branch",
-	colRepo:      "Repo",
-	colAgent:     "Agent",
-	colStatus:    "Status",
-	colQueued:    "Queued",
-	colElapsed:   "Elapsed",
-	colPF:        "P/F",
-	colHandled:   "Closed",
-	colSessionID: "Session",
+	colRef:               "Ref",
+	colBranch:            "Branch",
+	colRepo:              "Repo",
+	colAgent:             "Agent",
+	colStatus:            "Status",
+	colQueued:            "Queued",
+	colElapsed:           "Elapsed",
+	colPF:                "P/F",
+	colHandled:           "Closed",
+	colSessionID:         "Session",
+	colRequestedModel:    "Req Model",
+	colRequestedProvider: "Req Provider",
 }
 
 // columnConfigNames maps column constants to config file names (lowercase).
 var columnConfigNames = map[int]string{
-	colRef:       "ref",
-	colBranch:    "branch",
-	colRepo:      "repo",
-	colAgent:     "agent",
-	colStatus:    "status",
-	colQueued:    "queued",
-	colElapsed:   "elapsed",
-	colPF:        "pf",
-	colHandled:   "closed",
-	colSessionID: "session_id",
+	colRef:               "ref",
+	colBranch:            "branch",
+	colRepo:              "repo",
+	colAgent:             "agent",
+	colStatus:            "status",
+	colQueued:            "queued",
+	colElapsed:           "elapsed",
+	colPF:                "pf",
+	colHandled:           "closed",
+	colSessionID:         "session_id",
+	colRequestedModel:    "requested_model",
+	colRequestedProvider: "requested_provider",
 }
 
 // drainFlexOverflow reduces flex column widths to absorb overflow,
@@ -838,7 +849,9 @@ func columnDisplayName(col int) string {
 // defaultHiddenColumns lists columns that are hidden by default.
 // Users can enable them via the column options modal.
 var defaultHiddenColumns = map[int]bool{
-	colSessionID: true,
+	colSessionID:         true,
+	colRequestedModel:    true,
+	colRequestedProvider: true,
 }
 
 // parseHiddenColumns converts config hidden_columns strings to column ID set.

@@ -89,7 +89,7 @@ const (
 )
 
 // columnOption represents an item in the column options modal.
-// id is a column constant (colRef..colHandled) or a sentinel option ID.
+// id is a queue column constant or a sentinel option ID.
 type columnOption struct {
 	id      int    // column constant or sentinel option ID
 	name    string // display label

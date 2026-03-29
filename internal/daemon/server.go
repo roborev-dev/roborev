@@ -642,6 +642,31 @@ func (s *Server) writeInternalError(w http.ResponseWriter, msg string) {
 	}
 }
 
+func workflowForJob(jobType, reviewType string) string {
+	// "default" uses the standard "review" workflow; others use their own name.
+	// Compact jobs use the "fix" workflow since they're part of that pipeline.
+	workflow := "review"
+	if jobType == storage.JobTypeCompact {
+		return "fix"
+	}
+	if !config.IsDefaultReviewType(reviewType) {
+		return reviewType
+	}
+	return workflow
+}
+
+func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string) {
+	workflow := workflowForJob(job.JobType, job.ReviewType)
+	resolutionPath := job.RepoPath
+	if strings.TrimSpace(job.WorktreePath) != "" {
+		resolutionPath = job.WorktreePath
+	}
+	resolution := agent.ResolveWorkflowConfig("", resolutionPath, cfg, workflow, job.Reasoning)
+	model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
+	provider := strings.TrimSpace(job.RequestedProvider)
+	return model, provider
+}
+
 func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -754,15 +779,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Map review_type to config workflow for agent/model resolution.
-	// "default" uses the standard "review" workflow; others use their own name.
-	// Compact jobs use the "fix" workflow since they're part of that pipeline.
-	workflow := "review"
-	if req.JobType == "compact" {
-		workflow = "fix"
-	} else if !config.IsDefaultReviewType(req.ReviewType) {
-		workflow = req.ReviewType
-	}
+	workflow := workflowForJob(req.JobType, req.ReviewType)
 
 	// Resolve reasoning level for the determined workflow.
 	// Compact jobs use fix reasoning (default "standard"), not review
@@ -777,6 +794,9 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	requestedModel := strings.TrimSpace(req.Model)
+	requestedProvider := strings.TrimSpace(req.Provider)
 
 	// Resolve agent for workflow at this reasoning level
 	cfg := s.configWatcher.Config()
@@ -802,7 +822,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		agentName = resolved.Name()
 	}
 
-	model := resolution.ModelForSelectedAgent(agentName, req.Model)
+	model := resolution.ModelForSelectedAgent(agentName, requestedModel)
 
 	if req.JobType == storage.JobTypeInsights {
 		if req.Since == "" {
@@ -854,19 +874,21 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:       repo.ID,
-			Branch:       req.Branch,
-			Agent:        agentName,
-			Model:        model,
-			Reasoning:    reasoning,
-			ReviewType:   req.ReviewType,
-			Prompt:       req.CustomPrompt,
-			OutputPrefix: req.OutputPrefix,
-			Agentic:      req.Agentic,
-			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
-			JobType:      req.JobType,
-			Provider:     req.Provider,
-			WorktreePath: worktreePath,
+			RepoID:            repo.ID,
+			Branch:            req.Branch,
+			Agent:             agentName,
+			Model:             model,
+			Reasoning:         reasoning,
+			ReviewType:        req.ReviewType,
+			Prompt:            req.CustomPrompt,
+			OutputPrefix:      req.OutputPrefix,
+			Agentic:           req.Agentic,
+			Label:             gitRef, // Use git_ref as TUI label (run, analyze type, custom)
+			JobType:           req.JobType,
+			Provider:          requestedProvider,
+			RequestedModel:    requestedModel,
+			RequestedProvider: requestedProvider,
+			WorktreePath:      worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
@@ -876,17 +898,19 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Dirty review - use pre-captured diff
 		targetSHA, _ := git.ResolveSHA(checkoutRoot, "HEAD")
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:       repo.ID,
-			GitRef:       gitRef,
-			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, targetSHA),
-			Agent:        agentName,
-			Model:        model,
-			Reasoning:    reasoning,
-			ReviewType:   req.ReviewType,
-			DiffContent:  req.DiffContent,
-			Provider:     req.Provider,
-			WorktreePath: worktreePath,
+			RepoID:            repo.ID,
+			GitRef:            gitRef,
+			Branch:            req.Branch,
+			SessionID:         s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, targetSHA),
+			Agent:             agentName,
+			Model:             model,
+			Reasoning:         reasoning,
+			ReviewType:        req.ReviewType,
+			DiffContent:       req.DiffContent,
+			Provider:          requestedProvider,
+			RequestedModel:    requestedModel,
+			RequestedProvider: requestedProvider,
+			WorktreePath:      worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
@@ -951,16 +975,18 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		}
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:       repo.ID,
-			GitRef:       fullRef,
-			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, endSHA),
-			Agent:        agentName,
-			Model:        model,
-			Reasoning:    reasoning,
-			ReviewType:   req.ReviewType,
-			Provider:     req.Provider,
-			WorktreePath: worktreePath,
+			RepoID:            repo.ID,
+			GitRef:            fullRef,
+			Branch:            req.Branch,
+			SessionID:         s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, endSHA),
+			Agent:             agentName,
+			Model:             model,
+			Reasoning:         reasoning,
+			ReviewType:        req.ReviewType,
+			Provider:          requestedProvider,
+			RequestedModel:    requestedModel,
+			RequestedProvider: requestedProvider,
+			WorktreePath:      worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -1001,18 +1027,20 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		patchID := git.GetPatchID(checkoutRoot, sha)
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:       repo.ID,
-			CommitID:     commit.ID,
-			GitRef:       sha,
-			Branch:       req.Branch,
-			SessionID:    s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, sha),
-			Agent:        agentName,
-			Model:        model,
-			Reasoning:    reasoning,
-			ReviewType:   req.ReviewType,
-			PatchID:      patchID,
-			Provider:     req.Provider,
-			WorktreePath: worktreePath,
+			RepoID:            repo.ID,
+			CommitID:          commit.ID,
+			GitRef:            sha,
+			Branch:            req.Branch,
+			SessionID:         s.findReusableSessionID(checkoutRoot, repo.ID, req.Branch, agentName, req.ReviewType, worktreePath, sha),
+			Agent:             agentName,
+			Model:             model,
+			Reasoning:         reasoning,
+			ReviewType:        req.ReviewType,
+			PatchID:           patchID,
+			Provider:          requestedProvider,
+			RequestedModel:    requestedModel,
+			RequestedProvider: requestedProvider,
+			WorktreePath:      worktreePath,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -1698,7 +1726,19 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.ReenqueueJob(req.JobID); err != nil {
+	job, err := s.db.GetJobByID(req.JobID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "job not found or not rerunnable")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("load job: %v", err))
+		return
+	}
+
+	model, provider := resolveRerunModelProvider(job, s.configWatcher.Config())
+
+	if err := s.db.ReenqueueJob(req.JobID, storage.ReenqueueOpts{Model: model, Provider: provider}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "job not found or not rerunnable")
 			return
