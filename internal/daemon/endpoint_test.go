@@ -76,11 +76,25 @@ func TestDefaultSocketPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix sockets not supported on Windows")
 	}
-	path := DefaultSocketPath()
-	assert.Less(t, len(path), MaxUnixPathLen,
-		"default socket path %q (%d bytes) exceeds limit %d", path, len(path), MaxUnixPathLen)
-	assert.Contains(t, path, "roborev-")
-	assert.True(t, strings.HasSuffix(path, "daemon.sock"))
+
+	t.Run("UsesXDGRuntimeDirWhenSet", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+		path := DefaultSocketPath()
+		assert.Less(t, len(path), MaxUnixPathLen,
+			"default socket path %q (%d bytes) exceeds limit %d",
+			path, len(path), MaxUnixPathLen)
+		assert.Equal(t, "/run/user/1000/roborev/daemon.sock", path)
+	})
+
+	t.Run("UsesTempdirOtherwise", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "")
+		path := DefaultSocketPath()
+		assert.Less(t, len(path), MaxUnixPathLen,
+			"default socket path %q (%d bytes) exceeds limit %d",
+			path, len(path), MaxUnixPathLen)
+		assert.Contains(t, path, fmt.Sprintf("roborev-%d", os.Getuid()))
+		assert.True(t, strings.HasSuffix(path, "daemon.sock"))
+	})
 }
 
 func TestDaemonEndpoint_BaseURL(t *testing.T) {

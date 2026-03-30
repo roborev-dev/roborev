@@ -79,8 +79,12 @@ func parseUnixEndpoint(raw string) (DaemonEndpoint, error) {
 	return DaemonEndpoint{Network: "unix", Address: path}, nil
 }
 
-// DefaultSocketPath returns the auto-generated socket path under os.TempDir().
+// DefaultSocketPath returns the auto-generated socket path under os.TempDir(),
+// or $XDG_RUNTIME_DIR when set.
 func DefaultSocketPath() string {
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		return filepath.Join(xdg, "roborev", "daemon.sock")
+	}
 	return filepath.Join(os.TempDir(), fmt.Sprintf("roborev-%d", os.Getuid()), "daemon.sock")
 }
 
