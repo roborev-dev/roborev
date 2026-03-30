@@ -218,7 +218,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 	}
 
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handleStatusMsg processes daemon status updates.
@@ -707,17 +707,53 @@ func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.
 	return m, nil
 }
 
+// handleSSEEventMsg processes real-time events from the daemon's NDJSON stream.
+// Triggers an immediate data refresh and re-subscribes for the next event.
+// If a fetch is already in flight, sets a pending flag so the refresh runs
+// after the current load completes (avoiding stale data).
+func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
+	if m.loadingMore || m.loadingJobs {
+		m.ssePendingRefresh = true
+		return m, waitForSSE(m.sseCh, m.sseStop)
+	}
+	m.loadingJobs = true
+	cmds := []tea.Cmd{
+		m.fetchJobs(),
+		m.fetchStatus(),
+		waitForSSE(m.sseCh, m.sseStop),
+	}
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
+		cmds = append(cmds, m.fetchFixJobs())
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// consumeSSEPendingRefresh returns the full SSE refresh command set if
+// an event arrived while a fetch was in flight, then clears the flag.
+// Returns nil if no refresh is pending.
+func (m *model) consumeSSEPendingRefresh() tea.Cmd {
+	if !m.ssePendingRefresh {
+		return nil
+	}
+	m.ssePendingRefresh = false
+	m.loadingJobs = true
+	cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
+		cmds = append(cmds, m.fetchFixJobs())
+	}
+	return tea.Batch(cmds...)
+}
+
 // handleReconnectMsg processes daemon reconnection attempts.
 func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconnecting = false
-	if msg.err == nil && msg.endpoint != m.endpoint {
+	if msg.err != nil {
+		return m, nil
+	}
+
+	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
-		m.consecutiveErrors = 0
-		m.err = nil
-		if msg.version != "" {
-			m.daemonVersion = msg.version
-		}
 		// Update runtime metadata so external tools see the
 		// new daemon address after reconnect.
 		if m.controlSocket != "" {
@@ -731,17 +767,35 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 				)
 			}
 		}
-		m.clearFetchFailed()
-		m.loadingJobs = true
-		cmds := []tea.Cmd{
-			m.fetchJobs(), m.fetchStatus(), m.fetchRepoNames(),
-		}
-		if cmd := m.fetchUnloadedBranches(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		return m, tea.Batch(cmds...)
 	}
-	return m, nil
+
+	// Restart SSE subscription on any successful reconnect, not just
+	// endpoint changes. The old goroutine may be stuck in backoff
+	// after a same-address daemon restart.
+	if m.sseStop != nil {
+		close(m.sseStop)
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)
+	}
+
+	m.consecutiveErrors = 0
+	m.err = nil
+	if msg.version != "" {
+		m.daemonVersion = msg.version
+	}
+	m.clearFetchFailed()
+	m.loadingJobs = true
+	cmds := []tea.Cmd{
+		m.fetchJobs(), m.fetchStatus(), m.fetchRepoNames(),
+	}
+	if cmd := m.fetchUnloadedBranches(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.sseCh != nil {
+		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // handleWindowSizeMsg processes terminal resize events.
@@ -826,7 +880,7 @@ func (m model) handleJobsErrMsg(
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd
 	}
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handlePaginationErrMsg processes pagination fetch errors.
@@ -844,7 +898,7 @@ func (m model) handlePaginationErrMsg(
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd
 	}
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handleErrMsg processes generic error messages.

@@ -1147,6 +1147,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	s.broadcaster.Broadcast(Event{
+		Type:     "job.enqueued",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     repo.RootPath,
+		RepoName: repo.Name,
+		SHA:      job.GitRef,
+		Agent:    agentName,
+	})
+
 	writeCreatedJSON(w, job)
 }
 
@@ -2092,6 +2102,23 @@ func (s *Server) handleCloseReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("mark closed: %v", err))
 		return
 	}
+
+	eventType := "review.closed"
+	if !req.Closed {
+		eventType = "review.reopened"
+	}
+	evt := Event{
+		Type:  eventType,
+		TS:    time.Now(),
+		JobID: req.JobID,
+	}
+	if job, err := s.db.GetJobByID(req.JobID); err == nil {
+		evt.Repo = job.RepoPath
+		evt.RepoName = job.RepoName
+		evt.SHA = job.GitRef
+		evt.Agent = job.Agent
+	}
+	s.broadcaster.Broadcast(evt)
 
 	writeJSON(w, map[string]any{"success": true})
 }

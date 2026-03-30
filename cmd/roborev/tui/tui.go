@@ -26,11 +26,10 @@ import (
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-// Tick intervals for local redraws and adaptive polling.
+// Tick intervals for local redraws and fallback polling.
 const (
-	displayTickInterval = 1 * time.Second  // Repaint only (elapsed counters, flash expiry)
-	tickIntervalActive  = 2 * time.Second  // Poll frequently when jobs are running/pending
-	tickIntervalIdle    = 10 * time.Second // Poll less when queue is idle
+	displayTickInterval  = 1 * time.Second  // Repaint only (elapsed counters, flash expiry)
+	tickIntervalFallback = 15 * time.Second // Fallback poll; SSE handles real-time updates
 )
 
 // TUI styles using AdaptiveColor for light/dark terminal support.
@@ -374,13 +373,16 @@ type model struct {
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
 
-	distractionFree bool // hide status line, headers, footer, scroll indicator
-	clipboard       ClipboardWriter
-	tasksEnabled    bool          // Enables advanced tasks workflow in the TUI
-	mouseEnabled    bool          // Enables mouse capture and mouse-driven interactions in the TUI
-	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
-	controlSocket   string        // Socket path for runtime metadata updates (empty if disabled)
-	ready           chan struct{} // Closed on first Update; signals event loop is running
+	distractionFree   bool // hide status line, headers, footer, scroll indicator
+	clipboard         ClipboardWriter
+	tasksEnabled      bool          // Enables advanced tasks workflow in the TUI
+	mouseEnabled      bool          // Enables mouse capture and mouse-driven interactions in the TUI
+	noQuit            bool          // Suppress keyboard quit (for managed TUI instances)
+	controlSocket     string        // Socket path for runtime metadata updates (empty if disabled)
+	ready             chan struct{} // Closed on first Update; signals event loop is running
+	sseCh             chan struct{} // Signals from SSE goroutine; nil when external IO disabled
+	sseStop           chan struct{} // Close to stop SSE goroutine; nil when external IO disabled
+	ssePendingRefresh bool          // True when an SSE event arrived during an in-flight fetch
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -494,6 +496,14 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		}
 	}
 
+	var sseCh chan struct{}
+	var sseStop chan struct{}
+	if !opt.disableExternalIO {
+		sseCh = make(chan struct{}, 1)
+		sseStop = make(chan struct{})
+		go startSSESubscription(ep, sseCh, sseStop)
+	}
+
 	// Test overrides for auto-filter simulation
 	if opt.autoFilterRepo {
 		autoFilterRepo = true
@@ -573,6 +583,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		mouseEnabled:        mouseEnabled,
 		noQuit:              opt.noQuit,
 		ready:               make(chan struct{}),
+		sseCh:               sseCh,
+		sseStop:             sseStop,
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -583,15 +595,19 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		tea.WindowSize(), // request initial window size
+	cmds := []tea.Cmd{
+		tea.WindowSize(),
 		m.displayTick(),
 		m.tick(),
 		m.fetchJobs(),
 		m.fetchStatus(),
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
-	)
+	}
+	if m.sseCh != nil {
+		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) tasksWorkflowEnabled() bool {
@@ -780,6 +796,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleErrMsg(msg)
 	case reconnectMsg:
 		result, cmd = m.handleReconnectMsg(msg)
+	case sseEventMsg:
+		result, cmd = m.handleSSEEventMsg()
 	case fixJobsMsg:
 		result, cmd = m.handleFixJobsMsg(msg)
 	case fixTriggerResultMsg:
@@ -987,7 +1005,13 @@ func Run(cfg Config) error {
 		close(cleanupDone)
 	}
 
-	_, err := p.Run()
+	finalModel, err := p.Run()
+	// Stop SSE subscription goroutine. Use the final model (not the
+	// initial m) because reconnect may have replaced sseStop — closing
+	// the original would double-close.
+	if fm, ok := finalModel.(model); ok && fm.sseStop != nil {
+		close(fm.sseStop)
+	}
 	close(programDone)
 	<-cleanupDone
 	return err

@@ -371,56 +371,22 @@ func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
 }
 
 func TestTUITickInterval(t *testing.T) {
+	// tickInterval returns a constant fallback interval now that SSE
+	// handles real-time updates. Verify it doesn't vary with queue state.
 	tests := []struct {
-		name              string
-		statusFetchedOnce bool
-		runningJobs       int
-		queuedJobs        int
-		wantInterval      time.Duration
+		name        string
+		runningJobs int
 	}{
-		{
-			name:              "before first status fetch uses active interval",
-			statusFetchedOnce: false,
-			runningJobs:       0,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "running jobs uses active interval",
-			statusFetchedOnce: true,
-			runningJobs:       1,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "queued jobs uses active interval",
-			statusFetchedOnce: true,
-			runningJobs:       0,
-			queuedJobs:        3,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "idle queue uses idle interval",
-			statusFetchedOnce: true,
-			runningJobs:       0,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalIdle,
-		},
+		{"idle queue", 0},
+		{"active queue", 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newModel(testEndpoint, withExternalIODisabled())
-			m.statusFetchedOnce = tt.statusFetchedOnce
 			m.status.RunningJobs = tt.runningJobs
-			m.status.QueuedJobs = tt.queuedJobs
 
-			got := m.tickInterval()
-			if got != tt.wantInterval {
-				assert.Condition(t, func() bool {
-					return false
-				}, "tickInterval() = %v, want %v", got, tt.wantInterval)
-			}
+			assert.Equal(t, tickIntervalFallback, m.tickInterval())
 		})
 	}
 }
@@ -1003,9 +969,10 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			initialErrors:    3,
 			reconnecting:     true,
 			msg:              reconnectMsg{endpoint: testEndpoint},
-			wantErrors:       3,
+			wantErrors:       0,
 			wantReconnecting: false,
-			wantCmd:          false,
+			wantCmd:          true,
+			wantErrNil:       true,
 			wantBaseURL:      testEndpoint.BaseURL(),
 		},
 		{
@@ -2137,4 +2104,74 @@ func TestNewTuiModelOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSSEEventTriggersRefresh(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.sseCh = make(chan struct{}, 1)
+	m.loadingJobs = false
+
+	m, cmd := updateModel(t, m, sseEventMsg{})
+
+	assert.NotNil(t, cmd, "expected commands from SSE event")
+}
+
+func TestSSEEventSkipsRefreshWhileLoading(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.sseCh = make(chan struct{}, 1)
+	m.loadingJobs = true
+
+	m, cmd := updateModel(t, m, sseEventMsg{})
+
+	assert.NotNil(t, cmd, "expected re-subscribe command even while loading")
+}
+
+func TestSSEDisabledInTestMode(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+
+	assert.Nil(t, m.sseCh, "sseCh should be nil when external IO is disabled")
+	assert.Nil(t, m.sseStop, "sseStop should be nil when external IO is disabled")
+}
+
+func TestSSEPendingRefreshStateMachine(t *testing.T) {
+	t.Run("set during loadingJobs and drained on jobs completion", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingJobs = true
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.True(m.ssePendingRefresh, "expected ssePendingRefresh to be set")
+
+		m, cmd := updateModel(t, m, jobsMsg{seq: m.fetchSeq})
+		assert.False(m.ssePendingRefresh, "expected ssePendingRefresh to be cleared")
+		assert.NotNil(cmd, "expected deferred refresh command")
+	})
+
+	t.Run("set during loadingMore and drained on pagination completion", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingMore = true
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.True(m.ssePendingRefresh)
+
+		m, cmd := updateModel(t, m, jobsMsg{append: true, seq: m.fetchSeq})
+		assert.False(m.ssePendingRefresh)
+		assert.NotNil(cmd)
+	})
+
+	t.Run("not set when no fetch in flight", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingJobs = false
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.False(m.ssePendingRefresh, "should not set flag when not loading")
+	})
 }
