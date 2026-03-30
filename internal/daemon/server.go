@@ -1153,7 +1153,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		JobID:    job.ID,
 		Repo:     repo.RootPath,
 		RepoName: repo.Name,
-		SHA:      gitRef,
+		SHA:      job.GitRef,
 		Agent:    agentName,
 	})
 
@@ -2107,11 +2107,18 @@ func (s *Server) handleCloseReview(w http.ResponseWriter, r *http.Request) {
 	if !req.Closed {
 		eventType = "review.reopened"
 	}
-	s.broadcaster.Broadcast(Event{
+	evt := Event{
 		Type:  eventType,
 		TS:    time.Now(),
 		JobID: req.JobID,
-	})
+	}
+	if job, err := s.db.GetJobByID(req.JobID); err == nil {
+		evt.Repo = job.RepoPath
+		evt.RepoName = job.RepoName
+		evt.SHA = job.GitRef
+		evt.Agent = job.Agent
+	}
+	s.broadcaster.Broadcast(evt)
 
 	writeJSON(w, map[string]any{"success": true})
 }
