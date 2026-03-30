@@ -610,6 +610,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	// Auto-close passing reviews when configured.
+	if !job.IsFixJob() && storage.ParseVerdict(output) == "P" {
+		cfg := wp.cfgGetter.Config()
+		if config.ResolveAutoClosePassingReviews(job.RepoPath, cfg) {
+			if err := wp.db.MarkReviewClosedByJobID(job.ID, true); err != nil {
+				log.Printf("[%s] Warning: auto-close passing review for job %d: %v", workerID, job.ID, err)
+			}
+		}
+	}
+
 	// Fetch token usage from agentsview (best-effort).
 	// Only collect for fresh sessions (where we captured a new session ID).
 	// Resumed sessions report cumulative totals across all turns, which

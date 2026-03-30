@@ -165,6 +165,9 @@ type Config struct {
 	// Analysis settings
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 
+	// Behavior
+	AutoClosePassingReviews bool `toml:"auto_close_passing_reviews" comment:"Automatically close reviews that pass with no findings."`
+
 	// UI preferences
 	HideClosedByDefault    bool     `toml:"hide_closed_by_default" comment:"Hide closed reviews by default in the TUI queue."`
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
@@ -673,6 +676,9 @@ type RepoConfig struct {
 	SecurityBackupModel string `toml:"security_backup_model" comment:"Backup model for security review in this repo."`
 	DesignBackupModel   string `toml:"design_backup_model" comment:"Backup model for design review in this repo."`
 
+	// Behavior
+	AutoClosePassingReviews *bool `toml:"auto_close_passing_reviews" comment:"Automatically close reviews that pass with no findings in this repo."`
+
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
 
@@ -1115,6 +1121,20 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.JobTimeoutMinutes)
 	}
 	return resolve(30, repoVal, globalVal)
+}
+
+// ResolveAutoClosePassingReviews returns whether passing reviews should
+// be automatically closed. Per-repo config overrides global.
+func ResolveAutoClosePassingReviews(repoPath string, globalCfg *Config) bool {
+	var repoVal *bool
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = repoCfg.AutoClosePassingReviews
+	}
+	var globalVal bool
+	if globalCfg != nil {
+		globalVal = globalCfg.AutoClosePassingReviews
+	}
+	return resolveBool(globalVal, repoVal)
 }
 
 // ResolveExcludePatterns returns the merged exclude patterns from

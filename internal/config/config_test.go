@@ -347,6 +347,45 @@ func TestResolveJobTimeout(t *testing.T) {
 	}
 }
 
+func TestResolveAutoClosePassingReviews(t *testing.T) {
+	tests := []struct {
+		name         string
+		repoConfig   string
+		globalConfig *Config
+		want         bool
+	}{
+		{
+			name: "default false",
+			want: false,
+		},
+		{
+			name:         "global enabled",
+			globalConfig: &Config{AutoClosePassingReviews: true},
+			want:         true,
+		},
+		{
+			name:         "repo overrides global to true",
+			repoConfig:   `auto_close_passing_reviews = true`,
+			globalConfig: &Config{AutoClosePassingReviews: false},
+			want:         true,
+		},
+		{
+			name:         "repo overrides global to false",
+			repoConfig:   `auto_close_passing_reviews = false`,
+			globalConfig: &Config{AutoClosePassingReviews: true},
+			want:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			got := ResolveAutoClosePassingReviews(tmpDir, tt.globalConfig)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestResolveReasoning(t *testing.T) {
 	type resolverFunc func(explicit string, dir string) (string, error)
 

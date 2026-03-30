@@ -1156,3 +1156,48 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 		}, "model=%q, want backup-model", updated.Model)
 	}
 }
+
+func TestAutoClosePassingReviews(t *testing.T) {
+	t.Parallel()
+
+	// Register a test agent whose output parses as a clear pass verdict.
+	const passAgentName = "auto-close-pass-agent"
+	agent.Register(&agent.FakeAgent{
+		NameStr: passAgentName,
+		ReviewFn: func(_ context.Context, _, _, _ string, w io.Writer) (string, error) {
+			out := "No issues found."
+			_, _ = w.Write([]byte(out))
+			return out, nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(passAgentName) })
+
+	tests := []struct {
+		name       string
+		enabled    bool
+		wantClosed bool
+	}{
+		{"enabled", true, true},
+		{"disabled", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.AutoClosePassingReviews = tt.enabled
+			tc.reconfigurePool(cfg)
+
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, passAgentName)
+
+			tc.Pool.processJob(testWorkerID, job)
+
+			tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+			review, err := tc.DB.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantClosed, review.Closed)
+		})
+	}
+}
