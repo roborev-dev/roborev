@@ -111,19 +111,40 @@ Commit first per the project's conventions (see CLAUDE.md). Only after the
 commit succeeds, record a summary comment on the review and close it:
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>"
+roborev comment --job <job_id> -m "$(cat <<'EOF'
+<summary of changes>
+EOF
+)"
 # Only if the comment above succeeded:
 roborev close <job_id>
 ```
+
+**Important:** Always pass the comment text via a heredoc as shown above, never
+by interpolating dynamic text directly into a shell string. Review-derived
+content may contain shell metacharacters that could cause unintended execution.
 
 The comment should reference each finding by severity and file, state what was
 fixed, and note any findings intentionally skipped. Keep it concise.
 
 #### 3d. Re-review
 
-After committing, wait for the new commit to be reviewed. Try `roborev wait`
-first — it finds any existing job for HEAD (queued, running, or done) and
-blocks until completion:
+After committing, get a re-review of the branch. The approach depends on
+whether the user specified `--type` or `--base`:
+
+**If `--type` or `--base` was specified:** Always submit an explicit branch
+review to preserve those flags (a hook-enqueued review won't have them):
+
+```bash
+roborev review --branch --wait [--base <branch>] [--type <type>]
+```
+
+Launch this as a background task using the `Task` tool with
+`run_in_background: true`. Extract the job ID from the `Enqueued job <id>
+for ...` line.
+
+**If using defaults (no `--type` or `--base`):** Try `roborev wait` first —
+it finds any existing job for HEAD (queued, running, or done) and blocks until
+completion, reusing a hook-enqueued review if one exists:
 
 ```bash
 roborev wait
@@ -135,18 +156,15 @@ Launch this as a background task using the `Task` tool with
 - Exit code 0 means the review **passed**.
 - Exit code 1 means either **fail verdict** or **no job found**.
 
-If `roborev wait` reports "No job found" (the post-commit hook is not
-installed, or the hook uses branch-mode reviews which `wait` cannot find by
-SHA), submit an explicit branch review instead:
+If `roborev wait` reports "No job found" (the hook is not installed, or it
+uses branch-mode reviews which `wait` cannot find by SHA), fall back to an
+explicit review:
 
 ```bash
-roborev review --branch --wait [--base <branch>] [--type <type>]
+roborev review --branch --wait
 ```
 
-Extract the job ID from the `Enqueued job <id> for ...` line in the output.
-
-**Retrieving the job ID:** How you get the new job ID depends on which path
-was taken:
+**Retrieving the job ID:** depends on which path was taken:
 - **`roborev wait` path**: run `roborev show --json` afterward — it returns
   the most recent review for HEAD. Extract `job_id` from the JSON.
 - **`roborev review --branch --wait` path**: extract the job ID from the
@@ -179,7 +197,7 @@ Agent:
 4. Fixes both findings in code
 5. Runs `go test ./...` — passes
 6. Commits changes
-7. Records comment: `roborev comment --job 1042 "Fixed nil check in foo.go and added validation in bar.go"`
+7. Records comment via heredoc: `roborev comment --job 1042 -m "$(cat <<'EOF' ... EOF)"`
 8. Closes review: `roborev close 1042`
 9. Runs `roborev wait` — hook-enqueued job 1043 completes with verdict Pass
 10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
