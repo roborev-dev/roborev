@@ -143,15 +143,17 @@ SHA), submit an explicit branch review instead:
 roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
-After the review completes (via either path), retrieve the job ID for the new
-commit so you can comment on and close it in the next iteration:
+Extract the job ID from the `Enqueued job <id> for ...` line in the output.
 
-```bash
-roborev show --json
-```
+**Retrieving the job ID:** How you get the new job ID depends on which path
+was taken:
+- **`roborev wait` path**: run `roborev show --json` afterward — it returns
+  the most recent review for HEAD. Extract `job_id` from the JSON.
+- **`roborev review --branch --wait` path**: extract the job ID from the
+  `Enqueued job <id> for ...` line in that command's output.
 
-This returns the most recent review for HEAD. Extract the `job_id` from the
-JSON output — this replaces the previous iteration's job ID.
+This job ID replaces the previous iteration's job ID for subsequent
+comment/close steps.
 
 - If the review **passed**: inform the user and stop. The branch is clean.
 - If the review **failed**: continue to the next iteration (back to step 3a)
