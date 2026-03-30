@@ -613,8 +613,10 @@ func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error)
 }
 
 // GetExpiredBatches returns unsynthesized batches that have at least one
-// terminal job (done, failed, or canceled), at least one non-terminal job,
-// and were created more than timeout ago. These batches should post early.
+// done or failed job, at least one non-terminal job, and were created more
+// than timeout ago. These batches should post early with available results.
+// Only done/failed jobs qualify — user-canceled jobs are not meaningful
+// results worth posting.
 func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 	secs := max(int(timeout.Seconds()), 1)
 	rows, err := db.Query(`
@@ -627,7 +629,7 @@ func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status IN ('done', 'failed', 'canceled')
+			AND j.status IN ('done', 'failed')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj

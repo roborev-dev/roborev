@@ -4105,3 +4105,33 @@ func TestBatchTimeout_FailedPlusHungExpires(t *testing.T) {
 	// Comment should be posted (all-failed path)
 	require.Len(t, *comments, 1)
 }
+
+func TestBatchTimeout_UserCanceledDoesNotTriggerExpiry(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureComments()
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	// Batch: 1 user-canceled job + 1 queued job — no usable results
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "canceled", Error: "user canceled"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	// Increment failed counter for the canceled job
+	_, err := h.DB.IncrementBatchFailed(batch.ID)
+	require.NoError(t, err)
+
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	h.Poller.reconcileStaleBatches()
+
+	// Gemini should still be queued — user cancellation is not a
+	// meaningful result, so the batch should not expire early.
+	geminiJob, err := h.DB.GetJobByID(jobs[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, geminiJob.Status)
+}
