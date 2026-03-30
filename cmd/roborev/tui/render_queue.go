@@ -783,16 +783,14 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		}
 	}
 
-	// Version 1: backfill requested-model/provider columns into
-	// existing hidden_columns configs. Only runs once — the version
-	// marker prevents re-hiding columns a user later unhides.
+	// Version 1: backfill only the columns introduced in d2d671f6.
+	// Do not touch session_id — it was already a default-hidden
+	// column, so its absence from the list is a deliberate choice.
 	if cfg.ColumnConfigVersion < 1 &&
 		len(cfg.HiddenColumns) > 0 &&
 		cfg.HiddenColumns[0] != config.HiddenColumnsNoneSentinel {
-		for _, col := range toggleableColumns {
-			if !defaultHiddenColumns[col] {
-				continue
-			}
+		v1NewColumns := []int{colRequestedModel, colRequestedProvider}
+		for _, col := range v1NewColumns {
 			name := columnConfigNames[col]
 			if !slices.Contains(cfg.HiddenColumns, name) {
 				cfg.HiddenColumns = append(

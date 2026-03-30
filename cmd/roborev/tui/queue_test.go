@@ -2212,8 +2212,15 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
 		},
 		{
-			name:        "stale hidden_columns backfills new defaults",
+			name:        "stale hidden_columns backfills only new columns",
 			hiddenCols:  []string{"branch"},
+			wantDirty:   true,
+			wantHidden:  []string{"branch", "requested_model", "requested_provider"},
+			wantVersion: 1,
+		},
+		{
+			name:        "visible session_id preserved during backfill",
+			hiddenCols:  []string{"branch", "session_id"},
 			wantDirty:   true,
 			wantHidden:  []string{"branch", "session_id", "requested_model", "requested_provider"},
 			wantVersion: 1,
@@ -2381,14 +2388,11 @@ func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
 	migrateColumnConfig(staleCfg)
 	migratedHidden := parseHiddenColumns(staleCfg.HiddenColumns)
 
-	// Every default-hidden column must be hidden after migration
-	for col, hide := range defaultHiddenColumns {
-		if hide {
-			assert.True(t, migratedHidden[col],
-				"column %q should be hidden after migration",
-				columnConfigNames[col])
-		}
-	}
+	// New columns must be hidden after migration
+	assert.True(t, migratedHidden[colRequestedModel],
+		"requested_model should be hidden after migration")
+	assert.True(t, migratedHidden[colRequestedProvider],
+		"requested_provider should be hidden after migration")
 
 	// Render with migrated config — flex columns must not be
 	// starved by phantom visible columns
