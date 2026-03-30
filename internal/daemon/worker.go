@@ -611,7 +611,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Auto-close passing reviews when configured.
-	if !job.IsFixJob() && storage.ParseVerdict(output) == "P" {
+	if job.IsReviewJob() && storage.ParseVerdict(output) == "P" {
 		cfg := wp.cfgGetter.Config()
 		if config.ResolveAutoClosePassingReviews(job.RepoPath, cfg) {
 			if err := wp.db.MarkReviewClosedByJobID(job.ID, true); err != nil {
