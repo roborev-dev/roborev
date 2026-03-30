@@ -1200,4 +1200,36 @@ func TestAutoClosePassingReviews(t *testing.T) {
 			assert.Equal(t, tt.wantClosed, review.Closed)
 		})
 	}
+
+	// Non-review job types must never be auto-closed, even with the setting enabled.
+	t.Run("skips_non_review_jobs", func(t *testing.T) {
+		t.Parallel()
+		tc := newWorkerTestContext(t, 1)
+		cfg := config.DefaultConfig()
+		cfg.AutoClosePassingReviews = true
+		tc.reconfigurePool(cfg)
+
+		sha := testutil.GetHeadSHA(t, tc.TmpDir)
+		commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+			RepoID:   tc.Repo.ID,
+			CommitID: commit.ID,
+			GitRef:   sha,
+			Agent:    passAgentName,
+			JobType:  "task",
+			Prompt:   "test prompt",
+		})
+		require.NoError(t, err)
+		claimed, err := tc.DB.ClaimJob(testWorkerID)
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+
+		tc.Pool.processJob(testWorkerID, claimed)
+
+		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		review, err := tc.DB.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		assert.False(t, review.Closed, "task job should not be auto-closed")
+	})
 }
