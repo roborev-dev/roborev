@@ -51,16 +51,23 @@ of fix-review cycles, not the total number of reviews.
 
 ### 2. Run the initial branch review
 
-Build and run the review command:
+Build the review command:
 
 ```bash
 roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
-Launch this as a background task so the user can continue working. Tell the
-user the branch review has been submitted.
+Launch this as a background task using the `Task` tool with
+`run_in_background: true` so the user can continue working. Tell the user the
+branch review has been submitted.
 
-When the review completes, read and parse the output.
+**Note:** `--wait` exits with code 1 when the verdict is Fail. This is
+expected — always capture the command output regardless of exit code and
+inspect it to determine pass vs fail.
+
+When the review completes, read and parse the output. Extract the job ID from
+the `Enqueued job <id> for ...` line or the review header — you will need it
+for commenting and closing later.
 
 If the command output contains an error (daemon not running, repo not
 initialized, review errored), report it. Suggest `roborev status` to check the
@@ -98,9 +105,10 @@ go test ./...
 Or whatever test command the project uses. If tests fail, fix the regressions
 before proceeding.
 
-#### 3c. Record comment, close review, and commit
+#### 3c. Commit, then record comment and close review
 
-Record a summary comment on the review and close it:
+Commit first per the project's conventions (see CLAUDE.md). Only after the
+commit succeeds, record a summary comment on the review and close it:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>"
@@ -111,8 +119,6 @@ roborev close <job_id>
 The comment should reference each finding by severity and file, state what was
 fixed, and note any findings intentionally skipped. Keep it concise.
 
-Then commit per the project's conventions (see CLAUDE.md).
-
 #### 3d. Re-review
 
 Run the branch review again:
@@ -121,7 +127,9 @@ Run the branch review again:
 roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
-Launch this as a background task. When the review completes:
+Launch this as a background task using the `Task` tool with
+`run_in_background: true`. Remember that exit code 1 means fail verdict, not
+an error. When the review completes:
 
 - If the review **passed**: inform the user and stop. The branch is clean.
 - If the review **failed**: continue to the next iteration (back to step 3a).
@@ -145,9 +153,9 @@ Agent:
 3. Review returns verdict Fail with 2 findings (HIGH in foo.go:42, MEDIUM in bar.go:10)
 4. Fixes both findings in code
 5. Runs `go test ./...` — passes
-6. Records comment: `roborev comment --job 1042 "Fixed nil check in foo.go and added validation in bar.go"`
-7. Closes review: `roborev close 1042`
-8. Commits changes
+6. Commits changes
+7. Records comment: `roborev comment --job 1042 "Fixed nil check in foo.go and added validation in bar.go"`
+8. Closes review: `roborev close 1042`
 9. Launches background task: `roborev review --branch --wait`
 10. Review returns verdict Pass
 11. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
