@@ -2467,3 +2467,66 @@ func TestSaveColumnOptionStampsVersion(t *testing.T) {
 			"trigger migration")
 	assert.Equal(t, 1, unstampedCfg.ColumnConfigVersion)
 }
+
+// TestSaveColumnOptionsWritesVersion exercises the real
+// saveColumnOptions → config.LoadGlobal/SaveGlobal path and
+// verifies ColumnConfigVersion is persisted.
+func TestSaveColumnOptionsWritesVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Seed a version-0 config with sentinel hidden_columns
+	seedCfg := &config.Config{
+		HiddenColumns: []string{config.HiddenColumnsNoneSentinel},
+	}
+	require.NoError(t, config.SaveGlobal(seedCfg))
+
+	// Build a model that will save column preferences
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.hiddenColumns = map[int]bool{colBranch: true}
+
+	// Execute the save command
+	cmd := m.saveColumnOptions()
+	msg := cmd()
+	assert.Nil(t, msg, "saveColumnOptions should succeed")
+
+	// Reload and verify version was stamped
+	loaded, err := config.LoadGlobal()
+	require.NoError(t, err)
+	assert.Equal(t, 1, loaded.ColumnConfigVersion,
+		"ColumnConfigVersion must be persisted by saveColumnOptions")
+
+	// Verify the saved config survives migration without changes
+	dirty := migrateColumnConfig(loaded)
+	assert.False(t, dirty,
+		"freshly saved config must not trigger migration")
+}
+
+// TestMigratePreV1ConfigWithVisibleNewColumns documents the
+// migration behavior for the edge case where a user was briefly on
+// the buggy version (d2d671f6) and explicitly saved preferences
+// showing the new columns before ColumnConfigVersion existed.
+//
+// The migration cannot distinguish this from a stale config, so it
+// backfills. This is the correct tradeoff: the buggy window was
+// brief and the columns being visible caused broken layouts.
+func TestMigratePreV1ConfigWithVisibleNewColumns(t *testing.T) {
+	// User saved ["branch"] during buggy window, intending to show
+	// requested_model and requested_provider. No version stamp.
+	cfg := &config.Config{
+		HiddenColumns: []string{"branch"},
+	}
+
+	dirty := migrateColumnConfig(cfg)
+	assert.True(t, dirty)
+	assert.Equal(t, 1, cfg.ColumnConfigVersion)
+
+	// Migration backfills — user must re-unhide via options modal
+	hidden := parseHiddenColumns(cfg.HiddenColumns)
+	assert.True(t, hidden[colRequestedModel])
+	assert.True(t, hidden[colRequestedProvider])
+
+	// Second run: version stamp prevents re-migration
+	dirty = migrateColumnConfig(cfg)
+	assert.False(t, dirty)
+}
