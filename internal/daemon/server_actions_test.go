@@ -665,6 +665,37 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 	}
 }
 
+func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
+	assert := assert.New(t)
+	server, _, tmpDir := newTestServer(t)
+
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	testutil.InitTestGitRepo(t, repoDir)
+	sha := testutil.GetHeadSHA(t, repoDir)
+
+	_, eventCh := server.broadcaster.Subscribe("")
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   sha,
+		Agent:    "test",
+	})
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	assert.Equal(http.StatusCreated, w.Code)
+
+	select {
+	case event := <-eventCh:
+		assert.Equal("job.enqueued", event.Type)
+		assert.Equal(repoDir, event.Repo)
+		assert.Equal(sha, event.SHA)
+		assert.Equal("test", event.Agent)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for job.enqueued event")
+	}
+}
+
 func TestHandleListCommentsJobIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	testInvalidIDParsing(t, server.handleListComments, "/api/comments?job_id=%s")

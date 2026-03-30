@@ -1147,6 +1147,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	s.broadcaster.Broadcast(Event{
+		Type:     "job.enqueued",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     repo.RootPath,
+		RepoName: repo.Name,
+		SHA:      gitRef,
+		Agent:    agentName,
+	})
+
 	writeCreatedJSON(w, job)
 }
 
