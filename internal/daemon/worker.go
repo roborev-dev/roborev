@@ -831,6 +831,8 @@ func isQuotaError(errMsg string) bool {
 		"quota_exhausted",
 		"insufficient_quota",
 		"exhausted your capacity",
+		"capacity_exhausted",
+		"capacity exhausted",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
