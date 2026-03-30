@@ -707,12 +707,36 @@ func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.
 	return m, nil
 }
 
+// handleSSEEventMsg processes real-time events from the daemon's NDJSON stream.
+// Triggers an immediate data refresh and re-subscribes for the next event.
+func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
+	if m.loadingMore || m.loadingJobs {
+		return m, waitForSSE(m.sseCh)
+	}
+	cmds := []tea.Cmd{
+		m.fetchJobs(),
+		m.fetchStatus(),
+		waitForSSE(m.sseCh),
+	}
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
+		cmds = append(cmds, m.fetchFixJobs())
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // handleReconnectMsg processes daemon reconnection attempts.
 func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconnecting = false
 	if msg.err == nil && msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
+		// Restart SSE subscription with the new endpoint.
+		if m.sseStop != nil {
+			close(m.sseStop)
+			m.sseCh = make(chan struct{}, 1)
+			m.sseStop = make(chan struct{})
+			go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)
+		}
 		m.consecutiveErrors = 0
 		m.err = nil
 		if msg.version != "" {
@@ -738,6 +762,9 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		}
 		if cmd := m.fetchUnloadedBranches(); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+		if m.sseCh != nil {
+			cmds = append(cmds, waitForSSE(m.sseCh))
 		}
 		return m, tea.Batch(cmds...)
 	}

@@ -381,6 +381,8 @@ type model struct {
 	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
 	controlSocket   string        // Socket path for runtime metadata updates (empty if disabled)
 	ready           chan struct{} // Closed on first Update; signals event loop is running
+	sseCh           chan struct{} // Signals from SSE goroutine; nil when external IO disabled
+	sseStop         chan struct{} // Close to stop SSE goroutine; nil when external IO disabled
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -494,6 +496,14 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		}
 	}
 
+	var sseCh chan struct{}
+	var sseStop chan struct{}
+	if !opt.disableExternalIO {
+		sseCh = make(chan struct{}, 1)
+		sseStop = make(chan struct{})
+		go startSSESubscription(ep, sseCh, sseStop)
+	}
+
 	// Test overrides for auto-filter simulation
 	if opt.autoFilterRepo {
 		autoFilterRepo = true
@@ -573,6 +583,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		mouseEnabled:        mouseEnabled,
 		noQuit:              opt.noQuit,
 		ready:               make(chan struct{}),
+		sseCh:               sseCh,
+		sseStop:             sseStop,
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -583,15 +595,19 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		tea.WindowSize(), // request initial window size
+	cmds := []tea.Cmd{
+		tea.WindowSize(),
 		m.displayTick(),
 		m.tick(),
 		m.fetchJobs(),
 		m.fetchStatus(),
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
-	)
+	}
+	if m.sseCh != nil {
+		cmds = append(cmds, waitForSSE(m.sseCh))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) tasksWorkflowEnabled() bool {
@@ -780,6 +796,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleErrMsg(msg)
 	case reconnectMsg:
 		result, cmd = m.handleReconnectMsg(msg)
+	case sseEventMsg:
+		result, cmd = m.handleSSEEventMsg()
 	case fixJobsMsg:
 		result, cmd = m.handleFixJobsMsg(msg)
 	case fixTriggerResultMsg:
@@ -988,6 +1006,10 @@ func Run(cfg Config) error {
 	}
 
 	_, err := p.Run()
+	// Stop SSE subscription goroutine.
+	if m.sseStop != nil {
+		close(m.sseStop)
+	}
 	close(programDone)
 	<-cleanupDone
 	return err

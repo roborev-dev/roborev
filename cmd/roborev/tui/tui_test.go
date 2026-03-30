@@ -2138,3 +2138,30 @@ func TestNewTuiModelOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestSSEEventTriggersRefresh(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.sseCh = make(chan struct{}, 1)
+	m.loadingJobs = false
+
+	m, cmd := updateModel(t, m, sseEventMsg{})
+
+	assert.NotNil(t, cmd, "expected commands from SSE event")
+}
+
+func TestSSEEventSkipsRefreshWhileLoading(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.sseCh = make(chan struct{}, 1)
+	m.loadingJobs = true
+
+	m, cmd := updateModel(t, m, sseEventMsg{})
+
+	assert.NotNil(t, cmd, "expected re-subscribe command even while loading")
+}
+
+func TestSSEDisabledInTestMode(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+
+	assert.Nil(t, m.sseCh, "sseCh should be nil when external IO is disabled")
+	assert.Nil(t, m.sseStop, "sseStop should be nil when external IO is disabled")
+}
