@@ -969,9 +969,10 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			initialErrors:    3,
 			reconnecting:     true,
 			msg:              reconnectMsg{endpoint: testEndpoint},
-			wantErrors:       3,
+			wantErrors:       0,
 			wantReconnecting: false,
-			wantCmd:          false,
+			wantCmd:          true,
+			wantErrNil:       true,
 			wantBaseURL:      testEndpoint.BaseURL(),
 		},
 		{

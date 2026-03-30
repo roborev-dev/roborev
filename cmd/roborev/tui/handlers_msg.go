@@ -746,23 +746,13 @@ func (m *model) consumeSSEPendingRefresh() tea.Cmd {
 // handleReconnectMsg processes daemon reconnection attempts.
 func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconnecting = false
-	if msg.err == nil && msg.endpoint != m.endpoint {
+	if msg.err != nil {
+		return m, nil
+	}
+
+	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
-		// Restart SSE subscription with the new endpoint. Closing
-		// sseStop exits the old goroutine and unblocks any in-flight
-		// waitForSSE (which selects on both sseCh and sseStop).
-		if m.sseStop != nil {
-			close(m.sseStop)
-			m.sseCh = make(chan struct{}, 1)
-			m.sseStop = make(chan struct{})
-			go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)
-		}
-		m.consecutiveErrors = 0
-		m.err = nil
-		if msg.version != "" {
-			m.daemonVersion = msg.version
-		}
 		// Update runtime metadata so external tools see the
 		// new daemon address after reconnect.
 		if m.controlSocket != "" {
@@ -776,20 +766,35 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 				)
 			}
 		}
-		m.clearFetchFailed()
-		m.loadingJobs = true
-		cmds := []tea.Cmd{
-			m.fetchJobs(), m.fetchStatus(), m.fetchRepoNames(),
-		}
-		if cmd := m.fetchUnloadedBranches(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		if m.sseCh != nil {
-			cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
-		}
-		return m, tea.Batch(cmds...)
 	}
-	return m, nil
+
+	// Restart SSE subscription on any successful reconnect, not just
+	// endpoint changes. The old goroutine may be stuck in backoff
+	// after a same-address daemon restart.
+	if m.sseStop != nil {
+		close(m.sseStop)
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)
+	}
+
+	m.consecutiveErrors = 0
+	m.err = nil
+	if msg.version != "" {
+		m.daemonVersion = msg.version
+	}
+	m.clearFetchFailed()
+	m.loadingJobs = true
+	cmds := []tea.Cmd{
+		m.fetchJobs(), m.fetchStatus(), m.fetchRepoNames(),
+	}
+	if cmd := m.fetchUnloadedBranches(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if m.sseCh != nil {
+		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // handleWindowSizeMsg processes terminal resize events.
