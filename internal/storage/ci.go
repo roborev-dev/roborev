@@ -72,7 +72,7 @@ type BatchReviewResult struct {
 	Agent      string `json:"agent"`
 	ReviewType string `json:"review_type"`
 	Output     string `json:"output"`
-	Status     string `json:"status"` // "done" or "failed"
+	Status     string `json:"status"` // "done", "failed", or "canceled"
 	Error      string `json:"error"`
 }
 

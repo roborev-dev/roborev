@@ -53,6 +53,8 @@ func BuildSynthesisPrompt(
 			i+1, r.Agent, r.ReviewType)
 		if IsQuotaFailure(r) {
 			b.WriteString(" [SKIPPED]")
+		} else if IsTimeoutCancellation(r) {
+			b.WriteString(" [SKIPPED]")
 		} else if r.Status == ResultFailed {
 			b.WriteString(" [FAILED]")
 		}
@@ -60,6 +62,9 @@ func BuildSynthesisPrompt(
 		if IsQuotaFailure(r) {
 			b.WriteString(
 				"(review skipped — agent quota exhausted)")
+		} else if IsTimeoutCancellation(r) {
+			b.WriteString(
+				"(review skipped — batch posted early)")
 		} else if r.Output != "" {
 			output := r.Output
 			if len(output) > maxPerReview {
