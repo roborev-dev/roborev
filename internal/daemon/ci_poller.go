@@ -1131,9 +1131,21 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 				log.Printf("CI poller: batch %d exceeded timeout, expiring remaining jobs",
 					updated.ID)
 				p.expireBatchJobs(updated)
-				// Don't return — the canceled jobs will trigger events
-				// that eventually complete the batch. The reconciler
-				// provides a backup if events are lost.
+				// Reconcile immediately so we post without waiting
+				// for the next poll cycle. Queued jobs that were
+				// canceled don't emit events, so relying on events
+				// alone would delay posting by up to one poll interval.
+				reconciled, err := p.db.ReconcileBatch(updated.ID)
+				if err != nil {
+					log.Printf("CI poller: error reconciling expired batch %d: %v",
+						updated.ID, err)
+				} else if reconciled.CompletedJobs+reconciled.FailedJobs >= reconciled.TotalJobs &&
+					!reconciled.Synthesized {
+					log.Printf("CI poller: batch %d complete after expiry (%d succeeded, %d failed), posting results",
+						reconciled.ID, reconciled.CompletedJobs, reconciled.FailedJobs)
+					p.postBatchResults(reconciled)
+					return
+				}
 			}
 		}
 		log.Printf("CI poller: batch %d progress: %d/%d completed, %d failed (job %d)",

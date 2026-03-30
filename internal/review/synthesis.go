@@ -176,16 +176,18 @@ func FormatAllFailedComment(
 	headSHA string,
 ) string {
 	quotaSkips := CountQuotaFailures(reviews)
-	allQuota := len(reviews) > 0 && quotaSkips == len(reviews)
+	timeoutSkips := CountTimeoutCancellations(reviews)
+	allSkipped := len(reviews) > 0 &&
+		quotaSkips+timeoutSkips == len(reviews)
 
 	var b strings.Builder
-	if allQuota {
+	if allSkipped {
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
 			git.ShortSHA(headSHA))
 		b.WriteString(
 			"All review agents were skipped " +
-				"due to quota exhaustion.\n\n")
+				"due to quota exhaustion or timeout.\n\n")
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",
@@ -199,6 +201,10 @@ func FormatAllFailedComment(
 			fmt.Fprintf(&b,
 				"- **%s** (%s): skipped (quota)\n",
 				r.Agent, r.ReviewType)
+		} else if IsTimeoutCancellation(r) {
+			fmt.Fprintf(&b,
+				"- **%s** (%s): skipped (timeout)\n",
+				r.Agent, r.ReviewType)
 		} else {
 			fmt.Fprintf(&b,
 				"- **%s** (%s): failed\n",
@@ -206,7 +212,7 @@ func FormatAllFailedComment(
 		}
 	}
 
-	if !allQuota {
+	if !allSkipped {
 		b.WriteString("\nCheck CI logs for error details.")
 	}
 

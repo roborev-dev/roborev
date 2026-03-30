@@ -591,21 +591,25 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// For compact jobs, verify the job actually completed (not
-	// silently skipped due to cancel race) before marking source
-	// jobs as closed. CompleteJob no-ops when status != running.
-	if job.JobType == "compact" {
+	// Verify the job actually completed (not silently skipped due to
+	// cancel race). CompleteJob/CompleteFixJob no-ops when status !=
+	// running, so a job canceled between agent finish and DB update
+	// must not broadcast review.completed or the batch counters will
+	// over-count successes.
+	{
 		j, err := wp.db.GetJobByID(job.ID)
 		if err != nil {
-			// Transient read error — skip source marking but don't
-			// suppress the completion broadcast below.
-			log.Printf("[%s] Compact job %d: failed to verify status: %v", workerID, job.ID, err)
+			log.Printf("[%s] Job %d: failed to verify status: %v", workerID, job.ID, err)
 		} else if j.Status != storage.JobStatusDone {
-			// Job was canceled between agent finish and CompleteJob.
-			// No review was stored, so skip broadcast too.
-			log.Printf("[%s] Compact job %d not completed (status=%s), skipping source marking", workerID, job.ID, j.Status)
+			log.Printf("[%s] Job %d not completed (status=%s), skipping broadcast", workerID, job.ID, j.Status)
 			return
-		} else if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
+		}
+	}
+
+	// For compact jobs, mark source jobs as closed now that we've
+	// confirmed the compact job completed.
+	if job.JobType == "compact" {
+		if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
 			log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
 		}
 	}

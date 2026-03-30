@@ -3938,10 +3938,6 @@ func TestReconcileStaleBatches_ExpiresTimedOutBatch(t *testing.T) {
 	assert.Equal(t, storage.JobStatusCanceled, geminiJob.Status)
 	assert.Contains(t, geminiJob.Error, "timeout:")
 
-	// Reconciler should also trigger synthesis for the now-all-terminal batch.
-	// Run reconciliation again to pick up the completed batch.
-	h.Poller.reconcileStaleBatches()
-
 	// Verify comment was posted
 	require.Len(t, *comments, 1)
 	assert.Equal(t, "acme/api", (*comments)[0].Repo)
@@ -4011,9 +4007,7 @@ func TestBatchTimeout_EndToEnd(t *testing.T) {
 		batch.ID)
 	require.NoError(t, err)
 
-	// Run reconciliation — should expire gemini, then post
-	h.Poller.reconcileStaleBatches()
-	// Run again to reconcile the now-all-terminal batch
+	// Run reconciliation — should expire gemini and post in one pass
 	h.Poller.reconcileStaleBatches()
 
 	// Verify comment was posted with synthesis
