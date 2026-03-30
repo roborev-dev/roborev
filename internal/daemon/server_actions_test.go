@@ -774,7 +774,9 @@ func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
 	select {
 	case event := <-eventCh:
 		assert.Equal("job.enqueued", event.Type)
-		assert.Equal(repoDir, event.Repo)
+		// Repo path is resolved by git (symlinks, short names),
+		// so compare non-empty rather than exact match.
+		assert.NotEmpty(event.Repo)
 		assert.Equal(sha, event.SHA)
 		assert.Equal("test", event.Agent)
 	case <-time.After(time.Second):

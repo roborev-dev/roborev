@@ -716,6 +716,7 @@ func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 		m.ssePendingRefresh = true
 		return m, waitForSSE(m.sseCh, m.sseStop)
 	}
+	m.loadingJobs = true
 	cmds := []tea.Cmd{
 		m.fetchJobs(),
 		m.fetchStatus(),
