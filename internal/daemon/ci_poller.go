@@ -1167,6 +1167,7 @@ func (p *CIPoller) expireBatchJobs(batch *storage.CIPRBatch) {
 	}
 
 	errMsg := reviewpkg.TimeoutErrorPrefix + "batch posted early with available results"
+	expired := 0
 	for _, jid := range jobIDs {
 		if err := p.db.CancelJobWithError(jid, errMsg); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -1175,13 +1176,16 @@ func (p *CIPoller) expireBatchJobs(batch *storage.CIPRBatch) {
 			log.Printf("CI poller: error canceling timed-out job %d: %v", jid, err)
 			continue
 		}
+		expired++
 		if p.jobCancelFn != nil {
 			p.jobCancelFn(jid)
 		}
 	}
 
-	log.Printf("CI poller: expired %d timed-out jobs in batch %d for %s#%d",
-		len(jobIDs), batch.ID, batch.GithubRepo, batch.PRNumber)
+	if expired > 0 {
+		log.Printf("CI poller: expired %d timed-out jobs in batch %d for %s#%d",
+			expired, batch.ID, batch.GithubRepo, batch.PRNumber)
+	}
 }
 
 // expireTimedOutBatches finds batches with partial results that have
