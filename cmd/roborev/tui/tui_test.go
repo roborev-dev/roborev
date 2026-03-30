@@ -582,6 +582,34 @@ func TestTUIFixJobsStaleFlagTriggersFollowUp(t *testing.T) {
 	assert.NotNil(cmd, "should return follow-up command on error path")
 }
 
+func TestTUIStatusStaleFlagTriggersFollowUp(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(testEndpoint, withExternalIODisabled())
+
+	// Simulate: a fetch is in flight and an SSE event marks data as stale.
+	m.loadingStatus = true
+	m.statusStale = true
+
+	// When the in-flight fetch returns, it should dispatch a follow-up.
+	m2, cmd := updateModel(t, m, statusMsg{})
+	assert.True(m2.loadingStatus, "should re-dispatch fetch when stale")
+	assert.False(m2.statusStale, "stale flag should be cleared")
+	assert.NotNil(cmd, "should return a follow-up fetch command")
+
+	// Without the stale flag, no follow-up.
+	m3, cmd := updateModel(t, m2, statusMsg{})
+	assert.False(m3.loadingStatus, "should not re-dispatch without stale flag")
+	assert.Nil(cmd, "should return no command without stale flag")
+
+	// Error path should also honor the stale flag.
+	m.loadingStatus = true
+	m.statusStale = true
+	m4, cmd := updateModel(t, m, statusErrMsg{err: fmt.Errorf("connection refused")})
+	assert.True(m4.loadingStatus, "should re-dispatch on error when stale")
+	assert.False(m4.statusStale, "stale flag should be cleared on error path")
+	assert.NotNil(cmd, "should return follow-up command on error path")
+}
+
 func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 

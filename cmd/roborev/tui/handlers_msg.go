@@ -240,6 +240,11 @@ func (m model) handleStatusMsg(msg statusMsg) (tea.Model, tea.Cmd) {
 	}
 	m.lastConfigReloadCounter = m.status.ConfigReloadCounter
 	m.statusFetchedOnce = true
+	if m.statusStale {
+		m.statusStale = false
+		m.loadingStatus = true
+		return m, m.fetchStatus()
+	}
 	return m, nil
 }
 
@@ -736,11 +741,13 @@ func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 		m.fetchJobs(),
 		waitForSSE(m.sseCh, m.sseStop),
 	}
-	if cmd := m.startFetchStatus(); cmd != nil {
+	// SSE events signal daemon state changes — use the stale-aware
+	// helpers so a skipped fetch gets retried after the in-flight one.
+	if cmd := m.requestFetchStatus(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
-		if cmd := m.startFetchFixJobs(); cmd != nil {
+		if cmd := m.requestFetchFixJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -757,11 +764,11 @@ func (m *model) consumeSSEPendingRefresh() tea.Cmd {
 	m.ssePendingRefresh = false
 	m.loadingJobs = true
 	cmds := []tea.Cmd{m.fetchJobs()}
-	if cmd := m.startFetchStatus(); cmd != nil {
+	if cmd := m.requestFetchStatus(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
-		if cmd := m.startFetchFixJobs(); cmd != nil {
+		if cmd := m.requestFetchFixJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -814,6 +821,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	// Force fetches on reconnect — previous in-flight requests
 	// were against the old connection and will fail or be stale.
 	m.loadingStatus = true
+	m.statusStale = false
 	cmds = append(cmds, m.fetchStatus())
 	if m.tasksWorkflowEnabled() {
 		m.loadingFixJobs = true
@@ -947,6 +955,11 @@ func (m model) handleStatusErrMsg(
 ) (tea.Model, tea.Cmd) {
 	m.loadingStatus = false
 	m.err = msg.err
+	if m.statusStale {
+		m.statusStale = false
+		m.loadingStatus = true
+		return m, m.fetchStatus()
+	}
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd
 	}

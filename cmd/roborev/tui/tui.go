@@ -287,7 +287,8 @@ type model struct {
 	loadingJobs    bool     // true if currently loading jobs (full refresh)
 	loadingStatus  bool     // true if currently loading daemon status
 	loadingFixJobs bool     // true if currently loading fix jobs
-	fixJobsStale   bool     // true if a mutation occurred while fix-jobs fetch was in flight
+	statusStale    bool     // true if a state change occurred while status fetch was in flight
+	fixJobsStale   bool     // true if a state change occurred while fix-jobs fetch was in flight
 	heightDetected bool     // true after first WindowSizeMsg (real terminal height known)
 	fetchSeq       int      // incremented on filter changes; stale fetch responses are discarded
 	paginateNav    viewKind // non-zero: auto-navigate in this view after pagination loads

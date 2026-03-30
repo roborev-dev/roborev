@@ -227,6 +227,19 @@ func (m *model) startFetchStatus() tea.Cmd {
 	return m.fetchStatus()
 }
 
+// requestFetchStatus is like startFetchStatus but for paths triggered by
+// daemon state changes (SSE events). If a fetch is already in flight, it
+// marks the current data as stale so handleStatusMsg will dispatch a
+// follow-up fetch when the in-flight one returns.
+func (m *model) requestFetchStatus() tea.Cmd {
+	if m.loadingStatus {
+		m.statusStale = true
+		return nil
+	}
+	m.loadingStatus = true
+	return m.fetchStatus()
+}
+
 func (m model) checkForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
