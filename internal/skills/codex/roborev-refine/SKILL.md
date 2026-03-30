@@ -107,9 +107,9 @@ Commit first per the project's conventions (see CLAUDE.md). Only after the
 commit succeeds, record a summary comment on the review and close it:
 
 ```bash
-roborev comment --job <job_id> -m "$(cat <<'EOF'
+roborev comment --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
 <summary of changes>
-EOF
+ROBOREV_COMMENT
 )"
 # Only if the comment above succeeded:
 roborev close <job_id>
@@ -188,7 +188,7 @@ Agent:
 3. Fixes both findings in code
 4. Runs `go test ./...` — passes
 5. Commits changes
-6. Records comment via heredoc: `roborev comment --job 1042 -m "$(cat <<'EOF' ... EOF)"`
+6. Records comment via heredoc: `roborev comment --job 1042 -m "$(cat <<'ROBOREV_COMMENT' ... ROBOREV_COMMENT)"`
 7. Closes review: `roborev close 1042`
 8. Runs `roborev wait` — hook-enqueued job 1043 completes with verdict Pass
 9. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
