@@ -122,15 +122,20 @@ fixed, and note any findings intentionally skipped. Keep it concise.
 #### 3d. Re-review
 
 After committing, check whether the post-commit hook already enqueued a review
-for the new commit. Wait a moment (~2 seconds), then check:
+for the new commit. Wait ~2 seconds, then check:
 
 ```bash
-roborev show --ref HEAD --json
+roborev show --json
 ```
 
-If this returns a review (the hook auto-enqueued one), use its job ID and
-result — do NOT submit a redundant review. If it returns an error or no review
-is found (hook not installed), submit an explicit branch review:
+(With no argument, this checks HEAD.)
+
+- If it returns a review, the hook already enqueued one (either a commit
+  review or a branch review, depending on repo config). If the review is
+  still running, wait for it with `roborev show --job <id> --json` or
+  poll until it completes. Do NOT submit a redundant review.
+- If it returns "no review found" (hook not installed), submit an explicit
+  branch review:
 
 ```bash
 roborev review --branch --wait [--base <branch>] [--type <type>]
