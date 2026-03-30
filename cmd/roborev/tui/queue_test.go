@@ -2434,3 +2434,36 @@ func TestQueueRenderPostMigrationUserChoice(t *testing.T) {
 	assert.Equal(t, []string{"branch"}, postCfg.HiddenColumns,
 		"user's explicit column choices must be preserved")
 }
+
+// TestSaveColumnOptionStampsVersion simulates the save-then-reload
+// cycle: a user starts from a version-0 config (e.g., sentinel or
+// nil hidden_columns), customizes column visibility through the TUI
+// options modal, and saves. On next startup, the saved config must
+// not be re-migrated — saveColumnOptions stamps ColumnConfigVersion.
+func TestSaveColumnOptionStampsVersion(t *testing.T) {
+	// Simulate what saveColumnOptions writes: the user chose to hide
+	// only "branch", showing all default-hidden columns.
+	// saveColumnOptions now stamps ColumnConfigVersion = 1.
+	savedCfg := &config.Config{
+		HiddenColumns:       []string{"branch"},
+		ColumnConfigVersion: 1, // stamped by saveColumnOptions
+	}
+
+	// Next startup: migrateColumnConfig must not backfill
+	dirty := migrateColumnConfig(savedCfg)
+	assert.False(t, dirty)
+	assert.Equal(t, []string{"branch"}, savedCfg.HiddenColumns,
+		"saved column preferences must survive reload")
+	assert.Equal(t, 1, savedCfg.ColumnConfigVersion)
+
+	// Contrast: without the version stamp, migration would backfill
+	unstampedCfg := &config.Config{
+		HiddenColumns:       []string{"branch"},
+		ColumnConfigVersion: 0, // missing stamp (the bug)
+	}
+	dirty = migrateColumnConfig(unstampedCfg)
+	assert.True(t, dirty,
+		"version-0 config with explicit hidden_columns must "+
+			"trigger migration")
+	assert.Equal(t, 1, unstampedCfg.ColumnConfigVersion)
+}

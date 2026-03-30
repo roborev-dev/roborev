@@ -1016,6 +1016,7 @@ func (m model) saveColumnOptions() tea.Cmd {
 		cfg.ColumnOrder = colOrd
 		cfg.TaskColumnOrder = taskColOrd
 		cfg.Advanced.TasksEnabled = tasksEnabled
+		cfg.ColumnConfigVersion = 1
 		if err := config.SaveGlobal(cfg); err != nil {
 			return configSaveErrMsg{err: fmt.Errorf("save config: %w", err)}
 		}
