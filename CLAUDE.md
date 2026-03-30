@@ -365,6 +365,17 @@ Sanitize untrusted strings before TUI display: `stripControlChars()` for table c
 
 - **Daemon tasks must not modify the git working tree.** Background jobs (reviews, CI polling, synthesis) are read-only with respect to the user's repo checkout. They read source files and write results to the database only. CLI commands like `roborev fix` run synchronously in the foreground and may modify files. Background `fix` jobs run agents in isolated git worktrees (via `internal/worktree`) and store resulting patches in the database — patches are only applied to the working tree when the user explicitly confirms in the TUI.
 
+## Agent Skills
+
+Skills in `internal/skills/` provide agent-specific instructions (Claude Code and Codex variants) for common workflows. Several skills mirror CLI commands (`refine`, `fix`, `review`).
+
+**Keeping skills in sync with the CLI:** When modifying a skill that has a CLI counterpart (e.g., `roborev-refine` ↔ `cmd/roborev/refine.go`), check that flags, default values, and loop semantics still match. Key sync points:
+- Default `--max-iterations` must match the CLI constant
+- Review/fix/commit/re-review loop order must match
+- CLI commands referenced in skills (`roborev wait`, `roborev review --branch --wait`, etc.) must use valid flags and syntax
+
+When modifying a CLI command that has a skill counterpart, update the corresponding skills in both `internal/skills/claude/` and `internal/skills/codex/`.
+
 ## Pull Requests
 
 When creating PRs, do NOT include a "Test plan" section. The PR body should contain only a Summary section with bullet points describing what changed.
