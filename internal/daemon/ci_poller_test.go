@@ -4070,3 +4070,38 @@ func TestBatchTimeout_LateCanceledEventIgnored(t *testing.T) {
 	assert.Equal(t, failedBefore, after.FailedJobs,
 		"late canceled event should not increment FailedJobs on a synthesized batch")
 }
+
+func TestBatchTimeout_FailedPlusHungExpires(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	h.CaptureCommitStatuses()
+	h.Poller.synthesizeFn = func(_ *storage.CIPRBatch, _ []storage.BatchReviewResult, _ *config.Config) (string, error) {
+		return "synthesized", nil
+	}
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	// Batch: 1 failed codex job + 1 hung gemini job (no successes)
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent crashed"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	_, err := h.DB.IncrementBatchFailed(batch.ID)
+	require.NoError(t, err)
+
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	h.Poller.reconcileStaleBatches()
+
+	// Gemini should be canceled
+	geminiJob, err := h.DB.GetJobByID(jobs[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, geminiJob.Status)
+
+	// Comment should be posted (all-failed path)
+	require.Len(t, *comments, 1)
+}

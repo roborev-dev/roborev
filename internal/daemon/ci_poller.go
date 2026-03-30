@@ -1103,14 +1103,6 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 // handleBatchJobDone processes a completed or failed job within a batch.
 // When all jobs are done, it posts the combined results.
 func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, success bool) {
-	// Skip counter updates for already-synthesized batches. Late events
-	// (e.g., review.canceled from a worker whose job was expired) can
-	// arrive after the batch has been posted; incrementing counters
-	// at that point would corrupt the final tally.
-	if batch.Synthesized {
-		return
-	}
-
 	var updated *storage.CIPRBatch
 	var err error
 	if success {
@@ -1122,15 +1114,23 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 		log.Printf("CI poller: error updating batch %d for job %d: %v", batch.ID, jobID, err)
 		return
 	}
+	// Increment returns nil when the batch is already synthesized
+	// (the UPDATE is conditional on synthesized=0 to prevent late
+	// events from corrupting counters after posting).
+	if updated == nil {
+		return
+	}
 
 	// Check if all jobs are done
 	if updated.CompletedJobs+updated.FailedJobs < updated.TotalJobs {
 		// Check if we should expire remaining jobs due to timeout.
-		// Only expire if at least one job succeeded (otherwise there's
-		// nothing useful to post).
+		// Expire when any terminal result exists (success, failure, or
+		// quota skip) — not just successes. A batch with one failed
+		// review and one hung review should still post, not stay stuck.
 		cfg := p.cfgGetter.Config()
 		timeout := cfg.CI.ResolvedBatchTimeout()
-		if timeout > 0 && updated.CompletedJobs > 0 {
+		terminalJobs := updated.CompletedJobs + updated.FailedJobs
+		if timeout > 0 && terminalJobs > 0 {
 			expired, err := p.db.IsBatchExpired(updated.ID, timeout)
 			if err != nil {
 				log.Printf("CI poller: error checking batch %d expiry: %v",

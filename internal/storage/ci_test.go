@@ -815,6 +815,19 @@ func TestIsBatchExpired(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, expired)
 	})
+
+	t.Run("sub-second timeout floors to 1s", func(t *testing.T) {
+		// Reset to fresh
+		_, err := db.Exec(
+			`UPDATE ci_pr_batches SET created_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			batch.ID)
+		require.NoError(t, err)
+
+		// 500ms should floor to 1s, so a fresh batch is not expired
+		expired, err := db.IsBatchExpired(batch.ID, 500*time.Millisecond)
+		require.NoError(t, err)
+		assert.False(t, expired, "sub-second timeout should floor to 1s, not 0")
+	})
 }
 
 func TestGetExpiredBatches(t *testing.T) {

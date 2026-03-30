@@ -190,8 +190,9 @@ func (db *DB) RecordBatchJob(batchID, jobID int64) error {
 }
 
 // IncrementBatchCompleted atomically increments completed_jobs and returns the updated batch.
-// Uses BEGIN IMMEDIATE to serialize concurrent writers in WAL mode.
-// Only the caller that sees completed_jobs+failed_jobs == total_jobs should trigger synthesis.
+// The increment is conditional on synthesized=0 so late events arriving after
+// the batch has been posted don't corrupt counters. Returns nil batch (no error)
+// when the batch is already synthesized.
 func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -199,11 +200,16 @@ func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// BEGIN IMMEDIATE is not directly available via database/sql, but SQLite WAL + busy_timeout
-	// handles contention. The UPDATE + SELECT in a single tx is atomic enough.
-	_, err = tx.Exec(`UPDATE ci_pr_batches SET completed_jobs = completed_jobs + 1 WHERE id = ?`, batchID)
+	result, err := tx.Exec(
+		`UPDATE ci_pr_batches SET completed_jobs = completed_jobs + 1 WHERE id = ? AND synthesized = 0`,
+		batchID)
 	if err != nil {
 		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		// Already synthesized — skip to avoid counter corruption.
+		return nil, nil
 	}
 
 	var batch CIPRBatch
@@ -222,6 +228,9 @@ func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 }
 
 // IncrementBatchFailed atomically increments failed_jobs and returns the updated batch.
+// The increment is conditional on synthesized=0 so late events arriving after
+// the batch has been posted don't corrupt counters. Returns nil batch (no error)
+// when the batch is already synthesized.
 func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -229,9 +238,15 @@ func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.Exec(`UPDATE ci_pr_batches SET failed_jobs = failed_jobs + 1 WHERE id = ?`, batchID)
+	result, err := tx.Exec(
+		`UPDATE ci_pr_batches SET failed_jobs = failed_jobs + 1 WHERE id = ? AND synthesized = 0`,
+		batchID)
 	if err != nil {
 		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, nil
 	}
 
 	var batch CIPRBatch
@@ -584,7 +599,7 @@ func (db *DB) GetNonTerminalBatchJobIDs(batchID int64) ([]int64, error) {
 // IsBatchExpired reports whether a batch was created more than timeout
 // ago. Used to check if a partially-complete batch should post early.
 func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error) {
-	secs := int(timeout.Seconds())
+	secs := max(int(timeout.Seconds()), 1)
 	var count int
 	err := db.QueryRow(`
 		SELECT COUNT(*) FROM ci_pr_batches
@@ -598,10 +613,10 @@ func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error)
 }
 
 // GetExpiredBatches returns unsynthesized batches that have at least one
-// completed job, at least one non-terminal job, and were created more
-// than timeout ago. These batches should post early with available results.
+// terminal job (done, failed, or canceled), at least one non-terminal job,
+// and were created more than timeout ago. These batches should post early.
 func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
-	secs := int(timeout.Seconds())
+	secs := max(int(timeout.Seconds()), 1)
 	rows, err := db.Query(`
 		SELECT b.id, b.github_repo, b.pr_number, b.head_sha,
 		       b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
@@ -611,7 +626,8 @@ func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
-			WHERE bj.batch_id = b.id AND j.status = 'done'
+			WHERE bj.batch_id = b.id
+			AND j.status IN ('done', 'failed', 'canceled')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
