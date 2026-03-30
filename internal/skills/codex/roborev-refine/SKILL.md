@@ -117,10 +117,9 @@ fixed, and note any findings intentionally skipped. Keep it concise.
 
 #### 3d. Re-review
 
-After committing, use `roborev wait` to wait for the review result. This
-command finds any existing job for HEAD (including hook-enqueued ones that are
-still queued or running) and blocks until completion. If no job exists (hook
-not installed), it returns immediately with an error.
+After committing, wait for the new commit to be reviewed. Try `roborev wait`
+first — it finds any existing job for HEAD (queued, running, or done) and
+blocks until completion:
 
 ```bash
 roborev wait
@@ -129,15 +128,23 @@ roborev wait
 - Exit code 0 means the review **passed**.
 - Exit code 1 means either **fail verdict** or **no job found**.
 
-If `roborev wait` fails because no job was found (output contains "no job
-found"), the hook is not installed — submit an explicit branch review instead:
+If `roborev wait` reports "No job found" (the post-commit hook is not
+installed, or the hook uses branch-mode reviews which `wait` cannot find by
+SHA), submit an explicit branch review instead:
 
 ```bash
 roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
-Extract the job ID from the `roborev wait` or `roborev review` output — this
-replaces the previous iteration's job ID for subsequent comment/close steps.
+After the review completes (via either path), retrieve the job ID for the new
+commit so you can comment on and close it in the next iteration:
+
+```bash
+roborev show --json
+```
+
+This returns the most recent review for HEAD. Extract the `job_id` from the
+JSON output — this replaces the previous iteration's job ID.
 
 - If the review **passed**: inform the user and stop. The branch is clean.
 - If the review **failed**: continue to the next iteration (back to step 3a)
