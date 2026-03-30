@@ -2103,8 +2103,12 @@ func (s *Server) handleCloseReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eventType := "review.closed"
+	if !req.Closed {
+		eventType = "review.reopened"
+	}
 	s.broadcaster.Broadcast(Event{
-		Type:  "review.closed",
+		Type:  eventType,
 		TS:    time.Now(),
 		JobID: req.JobID,
 	})

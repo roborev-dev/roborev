@@ -727,16 +727,20 @@ func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// consumeSSEPendingRefresh returns a fetchJobs command if an SSE event
-// arrived while a fetch was in flight, then clears the flag. Returns nil
-// if no refresh is pending.
+// consumeSSEPendingRefresh returns the full SSE refresh command set if
+// an event arrived while a fetch was in flight, then clears the flag.
+// Returns nil if no refresh is pending.
 func (m *model) consumeSSEPendingRefresh() tea.Cmd {
 	if !m.ssePendingRefresh {
 		return nil
 	}
 	m.ssePendingRefresh = false
 	m.loadingJobs = true
-	return m.fetchJobs()
+	cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
+		cmds = append(cmds, m.fetchFixJobs())
+	}
+	return tea.Batch(cmds...)
 }
 
 // handleReconnectMsg processes daemon reconnection attempts.
@@ -888,7 +892,7 @@ func (m model) handlePaginationErrMsg(
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd
 	}
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handleErrMsg processes generic error messages.
