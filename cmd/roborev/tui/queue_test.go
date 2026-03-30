@@ -2290,3 +2290,118 @@ func TestDefaultHiddenColumnsIncludeRequestedFields(t *testing.T) {
 	assert.True(t, hidden[colRequestedModel])
 	assert.True(t, hidden[colRequestedProvider])
 }
+
+// --- Column smoke tests ---
+//
+// These invariant tests prevent a class of bug where new columns
+// are added to the column enum but one or more metadata structures
+// (allHeaders, columnNames, columnConfigNames, fixedWidth,
+// defaultHiddenColumns, migrateColumnConfig) are not updated.
+
+// TestColumnMetadataComplete verifies every toggleable column has
+// entries in all required metadata maps.
+func TestColumnMetadataComplete(t *testing.T) {
+	assert := assert.New(t)
+
+	// toggleableColumns should cover all columns except colSel
+	// and colJobID (which are always visible).
+	assert.Len(toggleableColumns, colCount-2,
+		"toggleableColumns count must equal colCount-2; "+
+			"did you add a column to the enum without adding "+
+			"it to toggleableColumns?")
+
+	for _, col := range toggleableColumns {
+		assert.NotEmpty(columnNames[col],
+			"column %d missing from columnNames", col)
+		assert.NotEmpty(columnConfigNames[col],
+			"column %d missing from columnConfigNames", col)
+	}
+}
+
+// TestAllColumnsVisibleHeadersPresent renders the queue with every
+// column visible and checks that each column header appears in the
+// rendered output. Catches missing entries in the allHeaders array
+// inside renderQueueView.
+func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 300 // wide enough for all columns
+	m.height = 20
+	m.hiddenColumns = map[int]bool{} // show all
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"),
+			withRepoName("repo"), withAgent("test")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+
+	// Find the header line (contains "Status" and "P/F")
+	var headerLine string
+	for line := range strings.SplitSeq(output, "\n") {
+		stripped := stripTestANSI(line)
+		if strings.Contains(stripped, "Status") &&
+			strings.Contains(stripped, "P/F") {
+			headerLine = stripped
+			break
+		}
+	}
+	require.NotEmpty(t, headerLine, "could not find header line")
+
+	for _, col := range toggleableColumns {
+		name := columnNames[col]
+		assert.Contains(t, headerLine, name,
+			"header missing column %q (col=%d)", name, col)
+	}
+}
+
+// TestQueueRenderWithStaleHiddenConfig simulates an existing user
+// whose hidden_columns config predates newly added columns. After
+// migration, new default-hidden columns must be hidden and flex
+// columns (Ref, Branch, Repo) must retain usable widths.
+func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
+	// Pre-upgrade config: only session_id hidden (predates new cols)
+	staleCfg := &config.Config{
+		HiddenColumns: []string{"session_id"},
+	}
+	migrateColumnConfig(staleCfg)
+	migratedHidden := parseHiddenColumns(staleCfg.HiddenColumns)
+
+	// Every default-hidden column must be hidden after migration
+	for col, hide := range defaultHiddenColumns {
+		if hide {
+			assert.True(t, migratedHidden[col],
+				"column %q should be hidden after migration",
+				columnConfigNames[col])
+		}
+	}
+
+	// Render with migrated config — flex columns must not be
+	// starved by phantom visible columns
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 120
+	m.height = 20
+	m.hiddenColumns = migratedHidden
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("my-project"),
+			withBranch("feature/branch"),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	found := false
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.Contains(stripTestANSI(line), "my-project") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"repo name should not be truncated with migrated config "+
+			"at width=120")
+}
