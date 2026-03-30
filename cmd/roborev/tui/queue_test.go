@@ -2494,11 +2494,13 @@ func TestSaveColumnOptionsWritesVersion(t *testing.T) {
 	msg := cmd()
 	assert.Nil(t, msg, "saveColumnOptions should succeed")
 
-	// Reload and verify version was stamped
+	// Reload and verify both version and hidden columns were persisted
 	loaded, err := config.LoadGlobal()
 	require.NoError(t, err)
 	assert.Equal(t, 1, loaded.ColumnConfigVersion,
 		"ColumnConfigVersion must be persisted by saveColumnOptions")
+	assert.Equal(t, []string{"branch"}, loaded.HiddenColumns,
+		"HiddenColumns must match the user's selection")
 
 	// Verify the saved config survives migration without changes
 	dirty := migrateColumnConfig(loaded)
