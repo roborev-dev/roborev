@@ -3274,3 +3274,22 @@ func TestSeverityInstruction(t *testing.T) {
 		})
 	}
 }
+
+func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		c := CIConfig{}
+		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+	})
+	t.Run("custom", func(t *testing.T) {
+		c := CIConfig{BatchTimeout: "5m"}
+		assert.Equal(t, 5*time.Minute, c.ResolvedBatchTimeout())
+	})
+	t.Run("disabled", func(t *testing.T) {
+		c := CIConfig{BatchTimeout: "0"}
+		assert.Equal(t, time.Duration(0), c.ResolvedBatchTimeout())
+	})
+	t.Run("invalid_falls_back", func(t *testing.T) {
+		c := CIConfig{BatchTimeout: "garbage"}
+		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+	})
+}
