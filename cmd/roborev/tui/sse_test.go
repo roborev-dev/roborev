@@ -36,7 +36,7 @@ func TestSSESubscription_ReceivesEvents(t *testing.T) {
 	case <-sseCh:
 		// Got the signal
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE event signal")
+		require.FailNow(t, "timed out waiting for SSE event signal")
 	}
 }
 
@@ -64,7 +64,7 @@ func TestSSESubscription_StopsOnStopChannel(t *testing.T) {
 	case <-done:
 		// Goroutine exited
 	case <-time.After(2 * time.Second):
-		t.Fatal("SSE goroutine did not exit after stop signal")
+		require.FailNow(t, "SSE goroutine did not exit after stop signal")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestSSESubscription_ReconnectsOnError(t *testing.T) {
 	case <-sseCh:
 		require.GreaterOrEqual(t, int(attempt.Load()), 2, "should have reconnected")
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for reconnected SSE event")
+		require.FailNow(t, "timed out waiting for reconnected SSE event")
 	}
 }
 

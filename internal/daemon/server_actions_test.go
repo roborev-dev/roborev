@@ -661,7 +661,7 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 		assert.Equal("review.closed", event.Type)
 		assert.Equal(job.ID, event.JobID)
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for review.closed event")
+		require.FailNow(t, "timed out waiting for review.closed event")
 	}
 }
 
@@ -694,7 +694,7 @@ func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
 		assert.Equal("review.reopened", event.Type)
 		assert.Equal(job.ID, event.JobID)
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for review.reopened event")
+		require.FailNow(t, "timed out waiting for review.reopened event")
 	}
 }
 
@@ -725,7 +725,7 @@ func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
 		assert.Equal(sha, event.SHA)
 		assert.Equal("test", event.Agent)
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for job.enqueued event")
+		require.FailNow(t, "timed out waiting for job.enqueued event")
 	}
 }
 

@@ -45,9 +45,7 @@ func startSSESubscription(
 		case <-time.After(backoff):
 		}
 
-		if backoff < maxBackoff {
-			backoff *= 2
-		}
+		backoff = min(backoff*2, maxBackoff)
 	}
 }
 
