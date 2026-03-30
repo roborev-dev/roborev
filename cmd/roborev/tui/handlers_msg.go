@@ -730,9 +730,12 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil && msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
-		// Restart SSE subscription with the new endpoint.
+		// Restart SSE subscription with the new endpoint. Closing
+		// sseCh unblocks any in-flight waitForSSE, which returns nil
+		// (harmless) — the new waitForSSE below takes over.
 		if m.sseStop != nil {
 			close(m.sseStop)
+			close(m.sseCh)
 			m.sseCh = make(chan struct{}, 1)
 			m.sseStop = make(chan struct{})
 			go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)

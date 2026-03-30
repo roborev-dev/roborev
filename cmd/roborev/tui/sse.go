@@ -27,9 +27,15 @@ func startSSESubscription(
 	backoff := time.Second
 
 	for {
-		err := sseReadLoop(endpoint, sseCh, stopCh)
+		connected, err := sseReadLoop(endpoint, sseCh, stopCh)
 		if err == nil {
 			return
+		}
+
+		// Reset backoff after a connection that successfully read events,
+		// since the next failure is likely a fresh problem (daemon restart).
+		if connected {
+			backoff = time.Second
 		}
 
 		select {
@@ -45,13 +51,14 @@ func startSSESubscription(
 }
 
 // sseReadLoop connects to the event stream and reads NDJSON lines until
-// the connection drops or stopCh fires. Returns nil when stopCh is
-// closed, non-nil error on connection/decode failure.
+// the connection drops or stopCh fires. Returns (false, nil) when stopCh
+// is closed, (connected, err) on connection/decode failure. connected is
+// true if at least one event was successfully read.
 func sseReadLoop(
 	endpoint daemon.DaemonEndpoint,
 	sseCh chan<- struct{},
 	stopCh <-chan struct{},
-) error {
+) (connected bool, err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -69,11 +76,11 @@ func sseReadLoop(
 		endpoint.BaseURL()+"/api/stream/events", nil,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 
@@ -83,11 +90,12 @@ func sseReadLoop(
 		if err := decoder.Decode(&event); err != nil {
 			select {
 			case <-stopCh:
-				return nil
+				return connected, nil
 			default:
-				return err
+				return connected, err
 			}
 		}
+		connected = true
 
 		select {
 		case sseCh <- struct{}{}:

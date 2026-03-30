@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,14 +14,12 @@ import (
 )
 
 func TestSSESubscription_ReceivesEvents(t *testing.T) {
-	eventWritten := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/stream/events", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		json.NewEncoder(w).Encode(daemon.Event{Type: "review.closed", JobID: 42})
 		w.(http.Flusher).Flush()
-		close(eventWritten)
 
 		<-r.Context().Done()
 	}))
@@ -70,10 +69,10 @@ func TestSSESubscription_StopsOnStopChannel(t *testing.T) {
 }
 
 func TestSSESubscription_ReconnectsOnError(t *testing.T) {
-	var attempt int
+	var attempt atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempt++
-		if attempt == 1 {
+		n := attempt.Add(1)
+		if n == 1 {
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -92,7 +91,7 @@ func TestSSESubscription_ReconnectsOnError(t *testing.T) {
 
 	select {
 	case <-sseCh:
-		require.GreaterOrEqual(t, attempt, 2, "should have reconnected")
+		require.GreaterOrEqual(t, int(attempt.Load()), 2, "should have reconnected")
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for reconnected SSE event")
 	}
