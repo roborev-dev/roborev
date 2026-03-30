@@ -632,6 +632,39 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	}
 }
 
+func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+
+	// Create a completed job (which creates a review)
+	job := createTestJob(t, db, tmpDir, "abc123", "test")
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+
+	// Subscribe to broadcaster before the close call
+	_, eventCh := server.broadcaster.Subscribe("")
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/review/close", CloseReviewRequest{
+		JobID:  job.ID,
+		Closed: true,
+	})
+	w := httptest.NewRecorder()
+	server.handleCloseReview(w, req)
+
+	assert.Equal(http.StatusOK, w.Code)
+
+	// Verify event was broadcast
+	select {
+	case event := <-eventCh:
+		assert.Equal("review.closed", event.Type)
+		assert.Equal(job.ID, event.JobID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for review.closed event")
+	}
+}
+
 func TestHandleListCommentsJobIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	testInvalidIDParsing(t, server.handleListComments, "/api/comments?job_id=%s")

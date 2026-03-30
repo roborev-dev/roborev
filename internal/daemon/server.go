@@ -2093,6 +2093,12 @@ func (s *Server) handleCloseReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.broadcaster.Broadcast(Event{
+		Type:  "review.closed",
+		TS:    time.Now(),
+		JobID: req.JobID,
+	})
+
 	writeJSON(w, map[string]any{"success": true})
 }
 
