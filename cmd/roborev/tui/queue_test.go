@@ -2163,9 +2163,11 @@ func TestMigrateColumnConfig(t *testing.T) {
 		name         string
 		columnOrder  []string
 		hiddenCols   []string
+		version      int
 		wantDirty    bool
 		wantColOrder []string
 		wantHidden   []string
+		wantVersion  int
 	}{
 		{
 			name:         "nil config unchanged",
@@ -2210,16 +2212,18 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
 		},
 		{
-			name:       "existing hidden_columns backfills new defaults",
-			hiddenCols: []string{"branch"},
-			wantDirty:  true,
-			wantHidden: []string{"branch", "session_id", "requested_model", "requested_provider"},
+			name:        "stale hidden_columns backfills new defaults",
+			hiddenCols:  []string{"branch"},
+			wantDirty:   true,
+			wantHidden:  []string{"branch", "session_id", "requested_model", "requested_provider"},
+			wantVersion: 1,
 		},
 		{
-			name:       "hidden_columns already has new defaults",
-			hiddenCols: []string{"session_id", "requested_model", "requested_provider"},
-			wantDirty:  false,
-			wantHidden: []string{"session_id", "requested_model", "requested_provider"},
+			name:        "hidden_columns already has new defaults",
+			hiddenCols:  []string{"session_id", "requested_model", "requested_provider"},
+			wantDirty:   true,
+			wantHidden:  []string{"session_id", "requested_model", "requested_provider"},
+			wantVersion: 1,
 		},
 		{
 			name:       "sentinel preserves show-all intent",
@@ -2227,18 +2231,28 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantDirty:  false,
 			wantHidden: []string{"_"},
 		},
+		{
+			name:        "version 1 config not re-migrated",
+			hiddenCols:  []string{"branch"},
+			version:     1,
+			wantDirty:   false,
+			wantHidden:  []string{"branch"},
+			wantVersion: 1,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				ColumnOrder:   slices.Clone(tt.columnOrder),
-				HiddenColumns: slices.Clone(tt.hiddenCols),
+				ColumnOrder:         slices.Clone(tt.columnOrder),
+				HiddenColumns:       slices.Clone(tt.hiddenCols),
+				ColumnConfigVersion: tt.version,
 			}
 			dirty := migrateColumnConfig(cfg)
 			assert.Equal(t, tt.wantDirty, dirty)
 			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder))
 			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden))
+			assert.Equal(t, tt.wantVersion, cfg.ColumnConfigVersion)
 		})
 	}
 }
@@ -2360,7 +2374,7 @@ func TestAllColumnsVisibleHeadersPresent(t *testing.T) {
 // migration, new default-hidden columns must be hidden and flex
 // columns (Ref, Branch, Repo) must retain usable widths.
 func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
-	// Pre-upgrade config: only session_id hidden (predates new cols)
+	// Pre-upgrade config (version 0): only session_id hidden
 	staleCfg := &config.Config{
 		HiddenColumns: []string{"session_id"},
 	}
@@ -2404,4 +2418,19 @@ func TestQueueRenderWithStaleHiddenConfig(t *testing.T) {
 	assert.True(t, found,
 		"repo name should not be truncated with migrated config "+
 			"at width=120")
+}
+
+// TestQueueRenderPostMigrationUserChoice verifies that after the
+// version-1 migration, a user who explicitly unhides new columns
+// keeps their choice on subsequent startups.
+func TestQueueRenderPostMigrationUserChoice(t *testing.T) {
+	// Post-migration config: user unhid all default-hidden columns
+	postCfg := &config.Config{
+		HiddenColumns:       []string{"branch"},
+		ColumnConfigVersion: 1,
+	}
+	dirty := migrateColumnConfig(postCfg)
+	assert.False(t, dirty, "version-1 config should not be re-migrated")
+	assert.Equal(t, []string{"branch"}, postCfg.HiddenColumns,
+		"user's explicit column choices must be preserved")
 }

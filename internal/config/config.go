@@ -176,6 +176,7 @@ type Config struct {
 	ColumnBorders          bool     `toml:"column_borders" comment:"Show column borders in the TUI queue."`    // Show ▕ separators between columns
 	ColumnOrder            []string `toml:"column_order" comment:"Custom queue column order in the TUI."`      // Custom queue column display order
 	TaskColumnOrder        []string `toml:"task_column_order" comment:"Custom Tasks column order in the TUI."` // Custom task column display order
+	ColumnConfigVersion    int      `toml:"column_config_version"`                                             // Tracks column migration version to avoid re-running one-shot migrations
 
 	// Advanced feature flags
 	Advanced AdvancedConfig `toml:"advanced"`

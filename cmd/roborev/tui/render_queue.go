@@ -783,22 +783,25 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		}
 	}
 
-	// Backfill new default-hidden columns into existing configs.
-	// When hidden_columns is explicitly set (non-nil, non-sentinel),
-	// columns added after the config was saved won't be in the list
-	// and will appear visible — stealing width from flex columns.
-	if len(cfg.HiddenColumns) > 0 &&
+	// Version 1: backfill requested-model/provider columns into
+	// existing hidden_columns configs. Only runs once — the version
+	// marker prevents re-hiding columns a user later unhides.
+	if cfg.ColumnConfigVersion < 1 &&
+		len(cfg.HiddenColumns) > 0 &&
 		cfg.HiddenColumns[0] != config.HiddenColumnsNoneSentinel {
-		for col, hide := range defaultHiddenColumns {
-			if !hide {
+		for _, col := range toggleableColumns {
+			if !defaultHiddenColumns[col] {
 				continue
 			}
 			name := columnConfigNames[col]
 			if !slices.Contains(cfg.HiddenColumns, name) {
-				cfg.HiddenColumns = append(cfg.HiddenColumns, name)
-				dirty = true
+				cfg.HiddenColumns = append(
+					cfg.HiddenColumns, name,
+				)
 			}
 		}
+		cfg.ColumnConfigVersion = 1
+		dirty = true
 	}
 
 	return dirty
