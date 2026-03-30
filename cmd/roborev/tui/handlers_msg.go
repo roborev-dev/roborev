@@ -711,12 +711,12 @@ func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.
 // Triggers an immediate data refresh and re-subscribes for the next event.
 func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 	if m.loadingMore || m.loadingJobs {
-		return m, waitForSSE(m.sseCh)
+		return m, waitForSSE(m.sseCh, m.sseStop)
 	}
 	cmds := []tea.Cmd{
 		m.fetchJobs(),
 		m.fetchStatus(),
-		waitForSSE(m.sseCh),
+		waitForSSE(m.sseCh, m.sseStop),
 	}
 	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
 		cmds = append(cmds, m.fetchFixJobs())
@@ -731,11 +731,10 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
 		// Restart SSE subscription with the new endpoint. Closing
-		// sseCh unblocks any in-flight waitForSSE, which returns nil
-		// (harmless) — the new waitForSSE below takes over.
+		// sseStop exits the old goroutine and unblocks any in-flight
+		// waitForSSE (which selects on both sseCh and sseStop).
 		if m.sseStop != nil {
 			close(m.sseStop)
-			close(m.sseCh)
 			m.sseCh = make(chan struct{}, 1)
 			m.sseStop = make(chan struct{})
 			go startSSESubscription(m.endpoint, m.sseCh, m.sseStop)
@@ -767,7 +766,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if m.sseCh != nil {
-			cmds = append(cmds, waitForSSE(m.sseCh))
+			cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
 		}
 		return m, tea.Batch(cmds...)
 	}

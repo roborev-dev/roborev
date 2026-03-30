@@ -605,7 +605,7 @@ func (m model) Init() tea.Cmd {
 		m.checkForUpdate(),
 	}
 	if m.sseCh != nil {
-		cmds = append(cmds, waitForSSE(m.sseCh))
+		cmds = append(cmds, waitForSSE(m.sseCh, m.sseStop))
 	}
 	return tea.Batch(cmds...)
 }
@@ -1005,10 +1005,12 @@ func Run(cfg Config) error {
 		close(cleanupDone)
 	}
 
-	_, err := p.Run()
-	// Stop SSE subscription goroutine.
-	if m.sseStop != nil {
-		close(m.sseStop)
+	finalModel, err := p.Run()
+	// Stop SSE subscription goroutine. Use the final model (not the
+	// initial m) because reconnect may have replaced sseStop — closing
+	// the original would double-close.
+	if fm, ok := finalModel.(model); ok && fm.sseStop != nil {
+		close(fm.sseStop)
 	}
 	close(programDone)
 	<-cleanupDone

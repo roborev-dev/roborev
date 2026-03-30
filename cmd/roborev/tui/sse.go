@@ -105,13 +105,16 @@ func sseReadLoop(
 }
 
 // waitForSSE returns a tea.Cmd that blocks until a signal arrives on
-// sseCh, then delivers an sseEventMsg to the Bubbletea event loop.
-func waitForSSE(sseCh <-chan struct{}) tea.Cmd {
+// sseCh or stopCh is closed, then delivers an sseEventMsg (or nil on
+// stop) to the Bubbletea event loop. Accepting stopCh avoids the need
+// to close sseCh on reconnect, which would race with the producer goroutine.
+func waitForSSE(sseCh <-chan struct{}, stopCh <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
-		_, ok := <-sseCh
-		if !ok {
+		select {
+		case <-sseCh:
+			return sseEventMsg{}
+		case <-stopCh:
 			return nil
 		}
-		return sseEventMsg{}
 	}
 }

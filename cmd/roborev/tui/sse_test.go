@@ -99,21 +99,23 @@ func TestSSESubscription_ReconnectsOnError(t *testing.T) {
 
 func TestWaitForSSE_ReturnsOnSignal(t *testing.T) {
 	ch := make(chan struct{}, 1)
+	stopCh := make(chan struct{})
 	ch <- struct{}{}
 
-	cmd := waitForSSE(ch)
+	cmd := waitForSSE(ch, stopCh)
 	msg := cmd()
 
 	_, ok := msg.(sseEventMsg)
 	assert.True(t, ok, "expected sseEventMsg, got %T", msg)
 }
 
-func TestWaitForSSE_ReturnsNilOnClosedChannel(t *testing.T) {
+func TestWaitForSSE_ReturnsNilOnStop(t *testing.T) {
 	ch := make(chan struct{}, 1)
-	close(ch)
+	stopCh := make(chan struct{})
+	close(stopCh)
 
-	cmd := waitForSSE(ch)
+	cmd := waitForSSE(ch, stopCh)
 	msg := cmd()
 
-	assert.Nil(t, msg, "expected nil on closed channel")
+	assert.Nil(t, msg, "expected nil on stop")
 }
