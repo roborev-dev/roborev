@@ -1124,13 +1124,12 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 	// Check if all jobs are done
 	if updated.CompletedJobs+updated.FailedJobs < updated.TotalJobs {
 		// Check if we should expire remaining jobs due to timeout.
-		// Expire when any terminal result exists (success, failure, or
-		// quota skip) — not just successes. A batch with one failed
-		// review and one hung review should still post, not stay stuck.
+		// Only expire if there's at least one done or failed job (a
+		// result worth posting). User-canceled jobs don't qualify.
 		cfg := p.cfgGetter.Config()
 		timeout := cfg.CI.ResolvedBatchTimeout()
-		terminalJobs := updated.CompletedJobs + updated.FailedJobs
-		if timeout > 0 && terminalJobs > 0 {
+		hasMeaningful, _ := p.db.HasMeaningfulBatchResult(updated.ID)
+		if timeout > 0 && hasMeaningful {
 			expired, err := p.db.IsBatchExpired(updated.ID, timeout)
 			if err != nil {
 				log.Printf("CI poller: error checking batch %d expiry: %v",

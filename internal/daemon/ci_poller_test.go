@@ -4135,3 +4135,37 @@ func TestBatchTimeout_UserCanceledDoesNotTriggerExpiry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusQueued, geminiJob.Status)
 }
+
+func TestBatchTimeout_UserCanceledEventDoesNotTriggerExpiry(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureComments()
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	// Batch: 2 jobs, both queued initially
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "queued"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	// Backdate past timeout
+	_, err := h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	// User cancels the codex job (no review output)
+	require.NoError(t, h.DB.CancelJob(jobs[0].ID))
+
+	// The review.canceled event arrives -> handleBatchJobDone(success=false)
+	h.Poller.handleReviewFailed(Event{
+		Type:  "review.canceled",
+		JobID: jobs[0].ID,
+	})
+
+	// Gemini should still be queued — a user cancellation with no
+	// meaningful review output should not trigger batch expiry.
+	geminiJob, err := h.DB.GetJobByID(jobs[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, geminiJob.Status)
+}

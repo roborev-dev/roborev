@@ -612,6 +612,23 @@ func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error)
 	return count > 0, nil
 }
 
+// HasMeaningfulBatchResult reports whether a batch has at least one
+// done or failed job (a result worth posting). User-canceled jobs
+// without review output are excluded.
+func (db *DB) HasMeaningfulBatchResult(batchID int64) (bool, error) {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM ci_pr_batch_jobs bj
+		JOIN review_jobs j ON j.id = bj.job_id
+		WHERE bj.batch_id = ?
+		AND j.status IN ('done', 'failed')`,
+		batchID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // GetExpiredBatches returns unsynthesized batches that have at least one
 // done or failed job, at least one non-terminal job, and were created more
 // than timeout ago. These batches should post early with available results.
