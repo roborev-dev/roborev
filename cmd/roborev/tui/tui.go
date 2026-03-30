@@ -285,6 +285,8 @@ type model struct {
 	hasMore        bool     // true if there are more jobs to load
 	loadingMore    bool     // true if currently loading more jobs (pagination)
 	loadingJobs    bool     // true if currently loading jobs (full refresh)
+	loadingStatus  bool     // true if currently loading daemon status
+	loadingFixJobs bool     // true if currently loading fix jobs
 	heightDetected bool     // true after first WindowSizeMsg (real terminal height known)
 	fetchSeq       int      // incremented on filter changes; stale fetch responses are discarded
 	paginateNav    viewKind // non-zero: auto-navigate in this view after pagination loads
@@ -566,6 +568,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		width:               80, // sensible defaults until we get WindowSizeMsg
 		height:              24,
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
+		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
 		hideClosed:          hideClosed,
 		activeRepoFilter:    activeRepoFilter,
 		activeBranchFilter:  activeBranchFilter,
@@ -793,6 +796,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleJobsErrMsg(msg)
 	case paginationErrMsg:
 		result, cmd = m.handlePaginationErrMsg(msg)
+	case statusErrMsg:
+		result, cmd = m.handleStatusErrMsg(msg)
 	case errMsg:
 		result, cmd = m.handleErrMsg(msg)
 	case reconnectMsg:

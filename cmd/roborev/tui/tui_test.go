@@ -463,6 +463,97 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUITickInFlightGuards(t *testing.T) {
+	tests := []struct {
+		name           string
+		loadingStatus  bool
+		loadingFixJobs bool
+		tasksEnabled   bool
+		view           viewKind
+		wantStatus     bool // loadingStatus after tick
+		wantFixJobs    bool // loadingFixJobs after tick
+	}{
+		{
+			name:          "skips status fetch when already loading",
+			loadingStatus: true,
+			tasksEnabled:  false,
+			wantStatus:    true, // stays true, no new fetch dispatched
+			wantFixJobs:   false,
+		},
+		{
+			name:          "dispatches status fetch when idle",
+			loadingStatus: false,
+			tasksEnabled:  false,
+			wantStatus:    true, // set to true by dispatch
+			wantFixJobs:   false,
+		},
+		{
+			name:           "skips fix-jobs fetch when already loading",
+			loadingFixJobs: true,
+			tasksEnabled:   true,
+			view:           viewTasks,
+			wantStatus:     true,
+			wantFixJobs:    true, // stays true, no new fetch dispatched
+		},
+		{
+			name:           "dispatches fix-jobs fetch when idle on tasks view",
+			loadingFixJobs: false,
+			tasksEnabled:   true,
+			view:           viewTasks,
+			wantStatus:     true,
+			wantFixJobs:    true, // set to true by dispatch
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			m := newModel(testEndpoint, withExternalIODisabled())
+			m.loadingJobs = false
+			m.loadingMore = false
+			m.loadingStatus = tt.loadingStatus
+			m.loadingFixJobs = tt.loadingFixJobs
+			m.tasksEnabled = tt.tasksEnabled
+			if tt.view != 0 {
+				m.currentView = tt.view
+			}
+
+			m2, cmd := updateModel(t, m, tickMsg(time.Now()))
+
+			assert.NotNil(cmd, "tick should always return commands")
+			assert.Equal(tt.wantStatus, m2.loadingStatus)
+			assert.Equal(tt.wantFixJobs, m2.loadingFixJobs)
+		})
+	}
+}
+
+func TestTUIStatusResponseClearsLoadingFlag(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(testEndpoint, withExternalIODisabled())
+	m.loadingStatus = true
+
+	m2, _ := updateModel(t, m, statusMsg{})
+	assert.False(m2.loadingStatus, "statusMsg should clear loadingStatus")
+
+	// Error path should also clear the flag.
+	m.loadingStatus = true
+	m3, _ := updateModel(t, m, statusErrMsg{err: fmt.Errorf("connection refused")})
+	assert.False(m3.loadingStatus, "statusErrMsg should clear loadingStatus")
+}
+
+func TestTUIFixJobsResponseClearsLoadingFlag(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(testEndpoint, withExternalIODisabled())
+	m.loadingFixJobs = true
+
+	m2, _ := updateModel(t, m, fixJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}})
+	assert.False(m2.loadingFixJobs, "fixJobsMsg should clear loadingFixJobs")
+
+	// Error path should also clear the flag.
+	m.loadingFixJobs = true
+	m3, _ := updateModel(t, m, fixJobsMsg{err: fmt.Errorf("connection refused")})
+	assert.False(m3.loadingFixJobs, "fixJobsMsg with error should clear loadingFixJobs")
+}
+
 func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 

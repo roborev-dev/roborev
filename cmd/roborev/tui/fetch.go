@@ -211,7 +211,7 @@ func (m model) fetchStatus() tea.Cmd {
 	return func() tea.Msg {
 		var status storage.DaemonStatus
 		if err := m.getJSON("/api/status", &status); err != nil {
-			return errMsg(err)
+			return statusErrMsg{err: err}
 		}
 		return statusMsg(status)
 	}

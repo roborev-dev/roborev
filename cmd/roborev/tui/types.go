@@ -167,6 +167,7 @@ type rerunResultMsg struct {
 	err           error
 }
 type errMsg error
+type statusErrMsg struct{ err error }
 type configSaveErrMsg struct{ err error }
 type jobsErrMsg struct {
 	err error
