@@ -58,3 +58,8 @@ func TrimPartialRune(s string) string {
 // fails due to agent quota exhaustion rather than a real error.
 // Matches the prefix set by internal/daemon/worker.go.
 const QuotaErrorPrefix = "quota: "
+
+// TimeoutErrorPrefix is prepended to error messages when a batch job
+// is canceled because the batch exceeded its timeout and results were
+// posted with the available reviews.
+const TimeoutErrorPrefix = "timeout: "

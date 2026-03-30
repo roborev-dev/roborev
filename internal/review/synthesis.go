@@ -137,6 +137,8 @@ func FormatRawBatchComment(
 		status := r.Status
 		if IsQuotaFailure(r) {
 			status = "skipped (quota)"
+		} else if IsTimeoutCancellation(r) {
+			status = "skipped (timeout)"
 		}
 		fmt.Fprintf(&b, "### %s — %s (%s)\n\n",
 			r.Agent, r.ReviewType, status)
@@ -144,7 +146,10 @@ func FormatRawBatchComment(
 		if IsQuotaFailure(r) {
 			b.WriteString(
 				"Review skipped — agent quota exhausted.\n\n")
-		} else if r.Status == ResultFailed {
+		} else if IsTimeoutCancellation(r) {
+			b.WriteString(
+				"Review skipped — batch posted early.\n\n")
+		} else if r.Status == ResultFailed || r.Status == "canceled" {
 			b.WriteString(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
@@ -176,10 +181,12 @@ func FormatAllFailedComment(
 	headSHA string,
 ) string {
 	quotaSkips := CountQuotaFailures(reviews)
-	allQuota := len(reviews) > 0 && quotaSkips == len(reviews)
+	timeoutSkips := CountTimeoutCancellations(reviews)
+	allSkipped := len(reviews) > 0 &&
+		quotaSkips+timeoutSkips == len(reviews)
 
 	var b strings.Builder
-	if allQuota {
+	if allSkipped {
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
 			git.ShortSHA(headSHA))
@@ -199,6 +206,10 @@ func FormatAllFailedComment(
 			fmt.Fprintf(&b,
 				"- **%s** (%s): skipped (quota)\n",
 				r.Agent, r.ReviewType)
+		} else if IsTimeoutCancellation(r) {
+			fmt.Fprintf(&b,
+				"- **%s** (%s): skipped (timeout)\n",
+				r.Agent, r.ReviewType)
 		} else {
 			fmt.Fprintf(&b,
 				"- **%s** (%s): failed\n",
@@ -206,7 +217,7 @@ func FormatAllFailedComment(
 		}
 	}
 
-	if !allQuota {
+	if !allSkipped {
 		b.WriteString("\nCheck CI logs for error details.")
 	}
 
@@ -236,29 +247,55 @@ func CountQuotaFailures(reviews []ReviewResult) int {
 	return n
 }
 
-// SkippedAgentNote returns a markdown note listing agents that
-// were skipped due to quota exhaustion. Returns "" if none.
-func SkippedAgentNote(reviews []ReviewResult) string {
-	agents := make(map[string]struct{})
+// IsTimeoutCancellation returns true if a review was canceled
+// because the batch timed out and posted early.
+func IsTimeoutCancellation(r ReviewResult) bool {
+	return r.Status == "canceled" &&
+		strings.HasPrefix(r.Error, TimeoutErrorPrefix)
+}
+
+// CountTimeoutCancellations returns the number of reviews that
+// were canceled due to batch timeout.
+func CountTimeoutCancellations(reviews []ReviewResult) int {
+	n := 0
 	for _, r := range reviews {
-		if IsQuotaFailure(r) {
-			agents[r.Agent] = struct{}{}
+		if IsTimeoutCancellation(r) {
+			n++
 		}
 	}
-	if len(agents) == 0 {
+	return n
+}
+
+// SkippedAgentNote returns a markdown note listing agents that
+// were skipped due to quota or timeout. Returns "" if none.
+func SkippedAgentNote(reviews []ReviewResult) string {
+	quotaAgents := make(map[string]struct{})
+	timeoutAgents := make(map[string]struct{})
+	for _, r := range reviews {
+		if IsQuotaFailure(r) {
+			quotaAgents[r.Agent] = struct{}{}
+		} else if IsTimeoutCancellation(r) {
+			timeoutAgents[r.Agent] = struct{}{}
+		}
+	}
+
+	var parts []string
+	if len(quotaAgents) > 0 {
+		names := sortedKeys(quotaAgents)
+		parts = append(parts,
+			strings.Join(names, ", ")+" (quota)")
+	}
+	if len(timeoutAgents) > 0 {
+		names := sortedKeys(timeoutAgents)
+		parts = append(parts,
+			strings.Join(names, ", ")+" (timeout)")
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	names := sortedKeys(agents)
-	if len(names) == 1 {
-		return fmt.Sprintf(
-			"\n*Note: %s review skipped "+
-				"(agent quota exhausted)*\n",
-			names[0])
-	}
 	return fmt.Sprintf(
-		"\n*Note: %s reviews skipped "+
-			"(agent quota exhausted)*\n",
-		strings.Join(names, ", "))
+		"\n*Note: %s review(s) skipped*\n",
+		strings.Join(parts, "; "))
 }
 
 func sortedKeys(m map[string]struct{}) []string {
