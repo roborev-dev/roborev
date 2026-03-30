@@ -2131,3 +2131,46 @@ func TestSSEDisabledInTestMode(t *testing.T) {
 	assert.Nil(t, m.sseCh, "sseCh should be nil when external IO is disabled")
 	assert.Nil(t, m.sseStop, "sseStop should be nil when external IO is disabled")
 }
+
+func TestSSEPendingRefreshStateMachine(t *testing.T) {
+	t.Run("set during loadingJobs and drained on jobs completion", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingJobs = true
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.True(m.ssePendingRefresh, "expected ssePendingRefresh to be set")
+
+		m, cmd := updateModel(t, m, jobsMsg{seq: m.fetchSeq})
+		assert.False(m.ssePendingRefresh, "expected ssePendingRefresh to be cleared")
+		assert.NotNil(cmd, "expected deferred refresh command")
+	})
+
+	t.Run("set during loadingMore and drained on pagination completion", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingMore = true
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.True(m.ssePendingRefresh)
+
+		m, cmd := updateModel(t, m, jobsMsg{append: true, seq: m.fetchSeq})
+		assert.False(m.ssePendingRefresh)
+		assert.NotNil(cmd)
+	})
+
+	t.Run("not set when no fetch in flight", func(t *testing.T) {
+		assert := assert.New(t)
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.sseCh = make(chan struct{}, 1)
+		m.sseStop = make(chan struct{})
+		m.loadingJobs = false
+
+		m, _ = updateModel(t, m, sseEventMsg{})
+		assert.False(m.ssePendingRefresh, "should not set flag when not loading")
+	})
+}

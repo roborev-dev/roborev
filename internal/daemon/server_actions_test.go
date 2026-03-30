@@ -665,6 +665,39 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 	}
 }
 
+func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+
+	job := createTestJob(t, db, tmpDir, "reopen123", "test")
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+
+	// Close first, then reopen
+	require.NoError(t, db.MarkReviewClosedByJobID(job.ID, true))
+
+	_, eventCh := server.broadcaster.Subscribe("")
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/review/close", CloseReviewRequest{
+		JobID:  job.ID,
+		Closed: false,
+	})
+	w := httptest.NewRecorder()
+	server.handleCloseReview(w, req)
+
+	assert.Equal(http.StatusOK, w.Code)
+
+	select {
+	case event := <-eventCh:
+		assert.Equal("review.reopened", event.Type)
+		assert.Equal(job.ID, event.JobID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for review.reopened event")
+	}
+}
+
 func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
 	assert := assert.New(t)
 	server, _, tmpDir := newTestServer(t)
