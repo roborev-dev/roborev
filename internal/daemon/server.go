@@ -644,9 +644,10 @@ func (s *Server) writeInternalError(w http.ResponseWriter, msg string) {
 
 func workflowForJob(jobType, reviewType string) string {
 	// "default" uses the standard "review" workflow; others use their own name.
-	// Compact jobs use the "fix" workflow since they're part of that pipeline.
+	// Fix and compact jobs use the "fix" workflow since they're part of
+	// that pipeline.
 	workflow := "review"
-	if jobType == storage.JobTypeCompact {
+	if jobType == storage.JobTypeFix || jobType == storage.JobTypeCompact {
 		return "fix"
 	}
 	if !config.IsDefaultReviewType(reviewType) {

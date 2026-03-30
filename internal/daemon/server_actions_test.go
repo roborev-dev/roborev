@@ -448,6 +448,14 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 }
 
+func TestWorkflowForJobFixType(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal("fix", workflowForJob(storage.JobTypeFix, config.ReviewTypeDefault))
+	assert.Equal("fix", workflowForJob(storage.JobTypeCompact, config.ReviewTypeDefault))
+	assert.Equal("review", workflowForJob(storage.JobTypeReview, config.ReviewTypeDefault))
+	assert.Equal("security", workflowForJob(storage.JobTypeReview, "security"))
+}
+
 func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
 	worktreeRepo := t.TempDir()
