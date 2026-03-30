@@ -739,3 +739,155 @@ func TestCancelClosedPRBatches_SkipsClaimedBatch(t *testing.T) {
 	}
 	assertEq(t, "claimed batch should survive", count, 1)
 }
+
+func TestCancelJobWithError(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-cancel-err")
+	require.NoError(t, err)
+
+	t.Run("sets error on cancel", func(t *testing.T) {
+		job := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+		err := db.CancelJobWithError(job.ID, "timeout: posted early")
+		require.NoError(t, err)
+
+		updated, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusCanceled, updated.Status)
+		assert.Equal(t, "timeout: posted early", updated.Error)
+	})
+
+	t.Run("returns ErrNoRows for terminal job", func(t *testing.T) {
+		job := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+		setJobStatus(t, db, job.ID, JobStatusDone)
+
+		err := db.CancelJobWithError(job.ID, "timeout: posted early")
+		require.ErrorIs(t, err, sql.ErrNoRows)
+	})
+}
+
+func TestGetNonTerminalBatchJobIDs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-nonterminal")
+	require.NoError(t, err)
+
+	batch, _, err := db.CreateCIBatch("acme/api", 1, "abc123", 3)
+	require.NoError(t, err)
+
+	j1 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	j2 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	j3 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	for _, jid := range []int64{j1.ID, j2.ID, j3.ID} {
+		require.NoError(t, db.RecordBatchJob(batch.ID, jid))
+	}
+
+	setJobStatus(t, db, j1.ID, JobStatusDone)
+	setJobStatus(t, db, j2.ID, JobStatusFailed)
+
+	ids, err := db.GetNonTerminalBatchJobIDs(batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{j3.ID}, ids)
+}
+
+func TestIsBatchExpired(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	batch, _, err := db.CreateCIBatch("acme/api", 1, "abc123", 2)
+	require.NoError(t, err)
+
+	t.Run("fresh batch is not expired", func(t *testing.T) {
+		expired, err := db.IsBatchExpired(batch.ID, 3*time.Minute)
+		require.NoError(t, err)
+		assert.False(t, expired)
+	})
+
+	t.Run("old batch is expired", func(t *testing.T) {
+		_, err := db.Exec(
+			`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+			batch.ID)
+		require.NoError(t, err)
+
+		expired, err := db.IsBatchExpired(batch.ID, 3*time.Minute)
+		require.NoError(t, err)
+		assert.True(t, expired)
+	})
+
+	t.Run("sub-second timeout floors to 1s", func(t *testing.T) {
+		// Reset to fresh
+		_, err := db.Exec(
+			`UPDATE ci_pr_batches SET created_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			batch.ID)
+		require.NoError(t, err)
+
+		// 500ms should floor to 1s, so a fresh batch is not expired
+		expired, err := db.IsBatchExpired(batch.ID, 500*time.Millisecond)
+		require.NoError(t, err)
+		assert.False(t, expired, "sub-second timeout should floor to 1s, not 0")
+	})
+}
+
+func TestGetExpiredBatches(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-expired")
+	require.NoError(t, err)
+
+	// Batch 1: old, has a completed job and a non-terminal job → returned
+	b1, _, err := db.CreateCIBatch("acme/api", 1, "sha1", 2)
+	require.NoError(t, err)
+	j1 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	j2 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	require.NoError(t, db.RecordBatchJob(b1.ID, j1.ID))
+	require.NoError(t, db.RecordBatchJob(b1.ID, j2.ID))
+	setJobStatus(t, db, j1.ID, JobStatusDone)
+	_, err = db.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		b1.ID)
+	require.NoError(t, err)
+
+	// Batch 2: old but all jobs terminal → NOT returned
+	b2, _, err := db.CreateCIBatch("acme/api", 2, "sha2", 1)
+	require.NoError(t, err)
+	j3 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	require.NoError(t, db.RecordBatchJob(b2.ID, j3.ID))
+	setJobStatus(t, db, j3.ID, JobStatusDone)
+	_, err = db.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		b2.ID)
+	require.NoError(t, err)
+
+	// Batch 3: old, has non-terminal jobs but NO completed jobs → NOT returned
+	b3, _, err := db.CreateCIBatch("acme/api", 3, "sha3", 2)
+	require.NoError(t, err)
+	j4 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	j5 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	require.NoError(t, db.RecordBatchJob(b3.ID, j4.ID))
+	require.NoError(t, db.RecordBatchJob(b3.ID, j5.ID))
+	_, err = db.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		b3.ID)
+	require.NoError(t, err)
+
+	// Batch 4: fresh with mixed status → NOT returned (not expired)
+	b4, _, err := db.CreateCIBatch("acme/api", 4, "sha4", 2)
+	require.NoError(t, err)
+	j6 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	j7 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	require.NoError(t, db.RecordBatchJob(b4.ID, j6.ID))
+	require.NoError(t, db.RecordBatchJob(b4.ID, j7.ID))
+	setJobStatus(t, db, j6.ID, JobStatusDone)
+
+	batches, err := db.GetExpiredBatches(3 * time.Minute)
+	require.NoError(t, err)
+	require.Len(t, batches, 1)
+	assert.Equal(t, b1.ID, batches[0].ID)
+
+	_ = b2
+	_ = b3
+	_ = b4
+}

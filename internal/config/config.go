@@ -354,6 +354,11 @@ type CIConfig struct {
 	// comment and patches it. Default: false (create a new comment each run).
 	UpsertComments bool `toml:"upsert_comments"`
 
+	// BatchTimeout is how long to wait for all batch jobs to complete before
+	// posting results with available reviews. Jobs still running after this
+	// timeout are canceled. Default: "3m". Set to "0" to disable.
+	BatchTimeout string `toml:"batch_timeout"`
+
 	// GitHub App authentication (optional — comments appear as bot instead of personal account)
 	GitHubAppConfig
 }
@@ -453,6 +458,23 @@ func (c *CIConfig) ResolvedThrottleInterval() time.Duration {
 	d, err := time.ParseDuration(c.ThrottleInterval)
 	if err != nil || d < 0 {
 		return time.Hour
+	}
+	return d
+}
+
+// ResolvedBatchTimeout returns how long to wait for all batch jobs
+// before posting early with available results. Default: 3 minutes.
+// Returns 0 (disabled) if explicitly set to "0".
+func (c *CIConfig) ResolvedBatchTimeout() time.Duration {
+	if c.BatchTimeout == "" {
+		return 3 * time.Minute
+	}
+	if c.BatchTimeout == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(c.BatchTimeout)
+	if err != nil || d < 0 {
+		return 3 * time.Minute
 	}
 	return d
 }

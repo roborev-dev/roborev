@@ -74,6 +74,50 @@ func TestCountQuotaFailures(t *testing.T) {
 	assert.Equal(t, 2, CountQuotaFailures(reviews))
 }
 
+func TestIsTimeoutCancellation(t *testing.T) {
+	tests := []struct {
+		name string
+		r    ReviewResult
+		want bool
+	}{
+		{
+			name: "timeout canceled",
+			r:    ReviewResult{Status: "canceled", Error: TimeoutErrorPrefix + "posted early"},
+			want: true,
+		},
+		{
+			name: "regular canceled",
+			r:    ReviewResult{Status: "canceled", Error: "user canceled"},
+			want: false,
+		},
+		{
+			name: "failed with timeout prefix",
+			r:    ReviewResult{Status: ResultFailed, Error: TimeoutErrorPrefix + "posted early"},
+			want: false,
+		},
+		{
+			name: "done",
+			r:    ReviewResult{Status: ResultDone},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsTimeoutCancellation(tt.r))
+		})
+	}
+}
+
+func TestCountTimeoutCancellations(t *testing.T) {
+	reviews := []ReviewResult{
+		{Status: "canceled", Error: TimeoutErrorPrefix + "posted early"},
+		{Status: ResultDone, Output: "ok"},
+		{Status: "canceled", Error: "user canceled"},
+		{Status: "canceled", Error: TimeoutErrorPrefix + "batch expired"},
+	}
+	assert.Equal(t, 2, CountTimeoutCancellations(reviews))
+}
+
 func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 	reviews := []ReviewResult{
 		{

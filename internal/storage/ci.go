@@ -190,8 +190,9 @@ func (db *DB) RecordBatchJob(batchID, jobID int64) error {
 }
 
 // IncrementBatchCompleted atomically increments completed_jobs and returns the updated batch.
-// Uses BEGIN IMMEDIATE to serialize concurrent writers in WAL mode.
-// Only the caller that sees completed_jobs+failed_jobs == total_jobs should trigger synthesis.
+// The increment is conditional on synthesized=0 so late events arriving after
+// the batch has been posted don't corrupt counters. Returns nil batch (no error)
+// when the batch is already synthesized.
 func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -199,11 +200,16 @@ func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// BEGIN IMMEDIATE is not directly available via database/sql, but SQLite WAL + busy_timeout
-	// handles contention. The UPDATE + SELECT in a single tx is atomic enough.
-	_, err = tx.Exec(`UPDATE ci_pr_batches SET completed_jobs = completed_jobs + 1 WHERE id = ?`, batchID)
+	result, err := tx.Exec(
+		`UPDATE ci_pr_batches SET completed_jobs = completed_jobs + 1 WHERE id = ? AND synthesized = 0`,
+		batchID)
 	if err != nil {
 		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		// Already synthesized — skip to avoid counter corruption.
+		return nil, nil
 	}
 
 	var batch CIPRBatch
@@ -222,6 +228,9 @@ func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
 }
 
 // IncrementBatchFailed atomically increments failed_jobs and returns the updated batch.
+// The increment is conditional on synthesized=0 so late events arriving after
+// the batch has been posted don't corrupt counters. Returns nil batch (no error)
+// when the batch is already synthesized.
 func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -229,9 +238,15 @@ func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.Exec(`UPDATE ci_pr_batches SET failed_jobs = failed_jobs + 1 WHERE id = ?`, batchID)
+	result, err := tx.Exec(
+		`UPDATE ci_pr_batches SET failed_jobs = failed_jobs + 1 WHERE id = ? AND synthesized = 0`,
+		batchID)
 	if err != nil {
 		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, nil
 	}
 
 	var batch CIPRBatch
@@ -532,6 +547,131 @@ func (db *DB) CancelClosedPRBatches(
 	}
 
 	return canceledIDs, nil
+}
+
+// CancelJobWithError cancels a queued or running job and sets an error
+// message explaining why it was canceled. Returns sql.ErrNoRows if the
+// job is already terminal.
+func (db *DB) CancelJobWithError(jobID int64, errMsg string) error {
+	now := time.Now().Format(time.RFC3339)
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'canceled', error = ?, finished_at = ?, updated_at = ?
+		WHERE id = ? AND status IN ('queued', 'running')
+	`, errMsg, now, now, jobID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// GetNonTerminalBatchJobIDs returns job IDs in a batch that are still
+// queued or running (not done, failed, or canceled).
+func (db *DB) GetNonTerminalBatchJobIDs(batchID int64) ([]int64, error) {
+	rows, err := db.Query(`
+		SELECT bj.job_id FROM ci_pr_batch_jobs bj
+		JOIN review_jobs j ON j.id = bj.job_id
+		WHERE bj.batch_id = ?
+		AND j.status NOT IN ('done', 'failed', 'canceled')`,
+		batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// IsBatchExpired reports whether a batch was created more than timeout
+// ago. Used to check if a partially-complete batch should post early.
+func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error) {
+	secs := max(int(timeout.Seconds()), 1)
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM ci_pr_batches
+		WHERE id = ?
+		AND created_at < datetime('now', '-' || ? || ' seconds')`,
+		batchID, secs).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// HasMeaningfulBatchResult reports whether a batch has at least one
+// done or failed job (a result worth posting). User-canceled jobs
+// without review output are excluded.
+func (db *DB) HasMeaningfulBatchResult(batchID int64) (bool, error) {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM ci_pr_batch_jobs bj
+		JOIN review_jobs j ON j.id = bj.job_id
+		WHERE bj.batch_id = ?
+		AND j.status IN ('done', 'failed')`,
+		batchID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetExpiredBatches returns unsynthesized batches that have at least one
+// done or failed job, at least one non-terminal job, and were created more
+// than timeout ago. These batches should post early with available results.
+// Only done/failed jobs qualify — user-canceled jobs are not meaningful
+// results worth posting.
+func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
+	secs := max(int(timeout.Seconds()), 1)
+	rows, err := db.Query(`
+		SELECT b.id, b.github_repo, b.pr_number, b.head_sha,
+		       b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
+		FROM ci_pr_batches b
+		WHERE b.synthesized = 0
+		AND b.created_at < datetime('now', '-' || ? || ' seconds')
+		AND EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj
+			JOIN review_jobs j ON j.id = bj.job_id
+			WHERE bj.batch_id = b.id
+			AND j.status IN ('done', 'failed')
+		)
+		AND EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj
+			JOIN review_jobs j ON j.id = bj.job_id
+			WHERE bj.batch_id = b.id
+			AND j.status NOT IN ('done', 'failed', 'canceled')
+		)`, secs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var batches []CIPRBatch
+	for rows.Next() {
+		var b CIPRBatch
+		var synthesized int
+		if err := rows.Scan(&b.ID, &b.GithubRepo, &b.PRNumber,
+			&b.HeadSHA, &b.TotalJobs, &b.CompletedJobs,
+			&b.FailedJobs, &synthesized); err != nil {
+			return nil, err
+		}
+		b.Synthesized = synthesized != 0
+		batches = append(batches, b)
+	}
+	return batches, rows.Err()
 }
 
 // ReconcileBatch corrects the completed/failed counts for a batch by

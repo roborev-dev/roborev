@@ -1114,9 +1114,47 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 		log.Printf("CI poller: error updating batch %d for job %d: %v", batch.ID, jobID, err)
 		return
 	}
+	// Increment returns nil when the batch is already synthesized
+	// (the UPDATE is conditional on synthesized=0 to prevent late
+	// events from corrupting counters after posting).
+	if updated == nil {
+		return
+	}
 
 	// Check if all jobs are done
 	if updated.CompletedJobs+updated.FailedJobs < updated.TotalJobs {
+		// Check if we should expire remaining jobs due to timeout.
+		// Only expire if there's at least one done or failed job (a
+		// result worth posting). User-canceled jobs don't qualify.
+		cfg := p.cfgGetter.Config()
+		timeout := cfg.CI.ResolvedBatchTimeout()
+		hasMeaningful, _ := p.db.HasMeaningfulBatchResult(updated.ID)
+		if timeout > 0 && hasMeaningful {
+			expired, err := p.db.IsBatchExpired(updated.ID, timeout)
+			if err != nil {
+				log.Printf("CI poller: error checking batch %d expiry: %v",
+					updated.ID, err)
+			} else if expired {
+				log.Printf("CI poller: batch %d exceeded timeout, expiring remaining jobs",
+					updated.ID)
+				p.expireBatchJobs(updated)
+				// Reconcile immediately so we post without waiting
+				// for the next poll cycle. Queued jobs that were
+				// canceled don't emit events, so relying on events
+				// alone would delay posting by up to one poll interval.
+				reconciled, err := p.db.ReconcileBatch(updated.ID)
+				if err != nil {
+					log.Printf("CI poller: error reconciling expired batch %d: %v",
+						updated.ID, err)
+				} else if reconciled.CompletedJobs+reconciled.FailedJobs >= reconciled.TotalJobs &&
+					!reconciled.Synthesized {
+					log.Printf("CI poller: batch %d complete after expiry (%d succeeded, %d failed), posting results",
+						reconciled.ID, reconciled.CompletedJobs, reconciled.FailedJobs)
+					p.postBatchResults(reconciled)
+					return
+				}
+			}
+		}
 		log.Printf("CI poller: batch %d progress: %d/%d completed, %d failed (job %d)",
 			updated.ID, updated.CompletedJobs, updated.TotalJobs, updated.FailedJobs, jobID)
 		return
@@ -1133,11 +1171,75 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 	p.postBatchResults(updated)
 }
 
+// expireBatchJobs cancels all non-terminal jobs in a batch due to
+// timeout, tagging them with a timeout error so they appear as
+// "skipped (timeout)" in the PR comment.
+func (p *CIPoller) expireBatchJobs(batch *storage.CIPRBatch) {
+	jobIDs, err := p.db.GetNonTerminalBatchJobIDs(batch.ID)
+	if err != nil {
+		log.Printf("CI poller: error getting non-terminal jobs for batch %d: %v",
+			batch.ID, err)
+		return
+	}
+	if len(jobIDs) == 0 {
+		return
+	}
+
+	errMsg := reviewpkg.TimeoutErrorPrefix + "batch posted early with available results"
+	expired := 0
+	for _, jid := range jobIDs {
+		if err := p.db.CancelJobWithError(jid, errMsg); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue // already terminal
+			}
+			log.Printf("CI poller: error canceling timed-out job %d: %v", jid, err)
+			continue
+		}
+		expired++
+		if p.jobCancelFn != nil {
+			p.jobCancelFn(jid)
+		}
+	}
+
+	if expired > 0 {
+		log.Printf("CI poller: expired %d timed-out jobs in batch %d for %s#%d",
+			expired, batch.ID, batch.GithubRepo, batch.PRNumber)
+	}
+}
+
+// expireTimedOutBatches finds batches with partial results that have
+// exceeded the configured batch timeout, cancels their remaining jobs,
+// so the reconciler can pick them up and post results.
+func (p *CIPoller) expireTimedOutBatches() {
+	cfg := p.cfgGetter.Config()
+	timeout := cfg.CI.ResolvedBatchTimeout()
+	if timeout <= 0 {
+		return
+	}
+
+	batches, err := p.db.GetExpiredBatches(timeout)
+	if err != nil {
+		log.Printf("CI poller: error checking expired batches: %v", err)
+		return
+	}
+
+	for _, batch := range batches {
+		log.Printf("CI poller: batch %d for %s#%d exceeded timeout (%v), expiring remaining jobs",
+			batch.ID, batch.GithubRepo, batch.PRNumber, timeout)
+		p.expireBatchJobs(&batch)
+	}
+}
+
 // reconcileStaleBatches finds batches where all linked jobs are terminal
 // but the event-driven counters are behind (due to dropped events or
 // unhandled terminal states), corrects the counts from DB state, and
 // triggers synthesis if the batch is now complete.
 func (p *CIPoller) reconcileStaleBatches() {
+	// Expire batches that have partial results but exceeded the timeout.
+	// This cancels stuck jobs so they become terminal, allowing the
+	// stale batch reconciliation below to pick them up and post results.
+	p.expireTimedOutBatches()
+
 	// Clean up empty batches left by daemon crashes during enqueue.
 	if n, err := p.db.DeleteEmptyBatches(); err != nil {
 		log.Printf("CI poller: error cleaning empty batches: %v", err)
@@ -1263,16 +1365,18 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	//   all failures are quota skips → success (with note)
 	//   mixed real failures          → failure
 	//   all failed (real)            → error
-	quotaSkips := reviewpkg.CountQuotaFailures(toReviewResults(reviews))
-	realFailures := batch.FailedJobs - quotaSkips
+	results := toReviewResults(reviews)
+	quotaSkips := reviewpkg.CountQuotaFailures(results)
+	timeoutSkips := reviewpkg.CountTimeoutCancellations(results)
+	skippedTotal := quotaSkips + timeoutSkips
+	realFailures := max(batch.FailedJobs-quotaSkips-timeoutSkips, 0)
 	statusState := "success"
 	statusDesc := "Review complete"
 	switch {
-	case batch.CompletedJobs == 0 && realFailures == 0 && quotaSkips > 0:
-		// All failures are quota skips — not the code's fault
+	case batch.CompletedJobs == 0 && realFailures == 0 && skippedTotal > 0:
 		statusDesc = fmt.Sprintf(
-			"Review complete (%d agent(s) skipped — quota)",
-			quotaSkips,
+			"Review complete (%d agent(s) skipped)",
+			skippedTotal,
 		)
 	case batch.CompletedJobs == 0:
 		statusState = "error"
@@ -1283,10 +1387,10 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 			"Review complete (%d/%d jobs failed)",
 			realFailures, batch.TotalJobs,
 		)
-	case quotaSkips > 0:
+	case skippedTotal > 0:
 		statusDesc = fmt.Sprintf(
-			"Review complete (%d agent(s) skipped — quota)",
-			quotaSkips,
+			"Review complete (%d agent(s) skipped)",
+			skippedTotal,
 		)
 	}
 	if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, statusState, statusDesc); err != nil {

@@ -481,6 +481,8 @@ func TestIsQuotaError(t *testing.T) {
 		{"insufficient_quota: limit reached", true},
 		{"You have exhausted your capacity", true},
 		{"RESOURCE EXHAUSTED: try later", true},
+		{"MODEL_CAPACITY_EXHAUSTED: The model is overloaded", true},
+		{"capacity_exhausted", true},
 		// Transient rate limits — should NOT trigger cooldown (use retries)
 		{"Rate limit reached", false},
 		{"rate_limit_error: too fast", false},
