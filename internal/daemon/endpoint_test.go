@@ -86,6 +86,18 @@ func TestDefaultSocketPath(t *testing.T) {
 		assert.Equal(t, "/run/user/1000/roborev/daemon.sock", path)
 	})
 
+	t.Run("FallsBackWhenXDGPathTooLong", func(t *testing.T) {
+		long := "/" + strings.Repeat("x", MaxUnixPathLen)
+		t.Setenv("XDG_RUNTIME_DIR", long)
+		path := DefaultSocketPath()
+		assert.Less(t, len(path), MaxUnixPathLen,
+			"default socket path %q (%d bytes) exceeds limit %d",
+			path, len(path), MaxUnixPathLen)
+		assert.NotContains(t, path, long,
+			"should fall back to tempdir, not use overlong XDG path")
+		assert.Contains(t, path, fmt.Sprintf("roborev-%d", os.Getuid()))
+	})
+
 	t.Run("UsesTempdirOtherwise", func(t *testing.T) {
 		t.Setenv("XDG_RUNTIME_DIR", "")
 		path := DefaultSocketPath()
