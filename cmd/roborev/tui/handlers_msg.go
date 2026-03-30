@@ -218,7 +218,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 	}
 
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handleStatusMsg processes daemon status updates.
@@ -709,8 +709,11 @@ func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.
 
 // handleSSEEventMsg processes real-time events from the daemon's NDJSON stream.
 // Triggers an immediate data refresh and re-subscribes for the next event.
+// If a fetch is already in flight, sets a pending flag so the refresh runs
+// after the current load completes (avoiding stale data).
 func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 	if m.loadingMore || m.loadingJobs {
+		m.ssePendingRefresh = true
 		return m, waitForSSE(m.sseCh, m.sseStop)
 	}
 	cmds := []tea.Cmd{
@@ -722,6 +725,18 @@ func (m model) handleSSEEventMsg() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.fetchFixJobs())
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// consumeSSEPendingRefresh returns a fetchJobs command if an SSE event
+// arrived while a fetch was in flight, then clears the flag. Returns nil
+// if no refresh is pending.
+func (m *model) consumeSSEPendingRefresh() tea.Cmd {
+	if !m.ssePendingRefresh {
+		return nil
+	}
+	m.ssePendingRefresh = false
+	m.loadingJobs = true
+	return m.fetchJobs()
 }
 
 // handleReconnectMsg processes daemon reconnection attempts.
@@ -855,7 +870,7 @@ func (m model) handleJobsErrMsg(
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd
 	}
-	return m, nil
+	return m, m.consumeSSEPendingRefresh()
 }
 
 // handlePaginationErrMsg processes pagination fetch errors.

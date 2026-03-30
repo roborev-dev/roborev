@@ -381,8 +381,9 @@ type model struct {
 	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
 	controlSocket   string        // Socket path for runtime metadata updates (empty if disabled)
 	ready           chan struct{} // Closed on first Update; signals event loop is running
-	sseCh           chan struct{} // Signals from SSE goroutine; nil when external IO disabled
-	sseStop         chan struct{} // Close to stop SSE goroutine; nil when external IO disabled
+	sseCh             chan struct{} // Signals from SSE goroutine; nil when external IO disabled
+	sseStop           chan struct{} // Close to stop SSE goroutine; nil when external IO disabled
+	ssePendingRefresh bool          // True when an SSE event arrived during an in-flight fetch
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)

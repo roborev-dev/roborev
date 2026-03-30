@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -83,6 +84,10 @@ func sseReadLoop(
 		return false, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("stream events: %s", resp.Status)
+	}
 
 	decoder := json.NewDecoder(resp.Body)
 	for {
