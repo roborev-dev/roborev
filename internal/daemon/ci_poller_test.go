@@ -2799,7 +2799,7 @@ func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
 
 	assertContainsAll(t, comment, "comment",
 		"skipped (quota)",
-		"gemini (quota) review(s) skipped",
+		"gemini review skipped",
 	)
 }
 

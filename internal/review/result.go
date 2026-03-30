@@ -10,7 +10,7 @@ type ReviewResult struct {
 	Agent      string
 	ReviewType string
 	Output     string
-	Status     string // ResultDone, ResultFailed, or "canceled"
+	Status     string // ResultDone or ResultFailed
 	Error      string
 }
 

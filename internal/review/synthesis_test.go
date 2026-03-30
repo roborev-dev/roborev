@@ -309,17 +309,6 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assert.NotContains(t, comment, "<details>", "raw batch comment should not use <details> blocks")
 }
 
-func TestFormatRawBatchComment_TimeoutSkip(t *testing.T) {
-	reviews := []ReviewResult{
-		{Agent: "codex", ReviewType: "security", Status: ResultDone, Output: "looks good"},
-		{Agent: "gemini", ReviewType: "security", Status: "canceled", Error: TimeoutErrorPrefix + "posted early"},
-	}
-	comment := FormatRawBatchComment(reviews, "abc123def456")
-	assert.Contains(t, comment, "skipped (timeout)")
-	assert.Contains(t, comment, "batch posted early")
-	assert.Contains(t, comment, "looks good")
-}
-
 func TestFormatAllFailedComment(t *testing.T) {
 	t.Run("real failures", func(t *testing.T) {
 		reviews := []ReviewResult{
@@ -357,16 +346,6 @@ func TestFormatAllFailedComment(t *testing.T) {
 	})
 }
 
-func TestFormatAllFailedComment_AllTimeoutSkips(t *testing.T) {
-	reviews := []ReviewResult{
-		{Agent: "gemini", ReviewType: "security", Status: "canceled", Error: TimeoutErrorPrefix + "posted early"},
-	}
-	comment := FormatAllFailedComment(reviews, "abc123def456")
-	assert.Contains(t, comment, "Skipped")
-	assert.Contains(t, comment, "batch posted early")
-	assert.Contains(t, comment, "skipped (timeout)")
-}
-
 func TestSkippedAgentNote(t *testing.T) {
 	t.Run("no skips", func(t *testing.T) {
 		reviews := []ReviewResult{
@@ -375,7 +354,7 @@ func TestSkippedAgentNote(t *testing.T) {
 		assert.Empty(t, SkippedAgentNote(reviews))
 	})
 
-	t.Run("one quota skip", func(t *testing.T) {
+	t.Run("one skip", func(t *testing.T) {
 		reviews := []ReviewResult{
 			{
 				Agent:  "gemini",
@@ -385,10 +364,10 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"gemini", "review(s) skipped"})
+		assertContainsAll(t, note, []string{"gemini", "review skipped"})
 	})
 
-	t.Run("multiple quota skips", func(t *testing.T) {
+	t.Run("multiple skips", func(t *testing.T) {
 		reviews := []ReviewResult{
 			{
 				Agent:  "codex",
@@ -402,35 +381,6 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"review(s) skipped"})
-	})
-
-	t.Run("timeout skip", func(t *testing.T) {
-		reviews := []ReviewResult{
-			{
-				Agent:  "codex",
-				Status: "canceled",
-				Error:  TimeoutErrorPrefix + "batch expired",
-			},
-		}
-		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"codex", "timeout", "review(s) skipped"})
-	})
-
-	t.Run("mixed quota and timeout", func(t *testing.T) {
-		reviews := []ReviewResult{
-			{
-				Agent:  "codex",
-				Status: "failed",
-				Error:  QuotaErrorPrefix + "x",
-			},
-			{
-				Agent:  "gemini",
-				Status: "canceled",
-				Error:  TimeoutErrorPrefix + "y",
-			},
-		}
-		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"codex", "quota", "gemini", "timeout", "review(s) skipped"})
+		assertContainsAll(t, note, []string{"reviews skipped"})
 	})
 }
