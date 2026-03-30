@@ -1,0 +1,109 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/roborev-dev/roborev/internal/daemon"
+)
+
+// sseEventMsg signals that the daemon broadcast an event.
+// The TUI uses this to trigger an immediate data refresh.
+type sseEventMsg struct{}
+
+// startSSESubscription maintains a persistent NDJSON connection to the
+// daemon's /api/stream/events endpoint. On each received event it sends
+// a non-blocking signal to sseCh. The goroutine reconnects with
+// exponential backoff on errors and exits when stopCh is closed.
+func startSSESubscription(
+	endpoint daemon.DaemonEndpoint,
+	sseCh chan<- struct{},
+	stopCh <-chan struct{},
+) {
+	const maxBackoff = 30 * time.Second
+	backoff := time.Second
+
+	for {
+		err := sseReadLoop(endpoint, sseCh, stopCh)
+		if err == nil {
+			return
+		}
+
+		select {
+		case <-stopCh:
+			return
+		case <-time.After(backoff):
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
+	}
+}
+
+// sseReadLoop connects to the event stream and reads NDJSON lines until
+// the connection drops or stopCh fires. Returns nil when stopCh is
+// closed, non-nil error on connection/decode failure.
+func sseReadLoop(
+	endpoint daemon.DaemonEndpoint,
+	sseCh chan<- struct{},
+	stopCh <-chan struct{},
+) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	client := endpoint.HTTPClient(0)
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodGet,
+		endpoint.BaseURL()+"/api/stream/events", nil,
+	)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var event daemon.Event
+		if err := decoder.Decode(&event); err != nil {
+			select {
+			case <-stopCh:
+				return nil
+			default:
+				return err
+			}
+		}
+
+		select {
+		case sseCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// waitForSSE returns a tea.Cmd that blocks until a signal arrives on
+// sseCh, then delivers an sseEventMsg to the Bubbletea event loop.
+func waitForSSE(sseCh <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		_, ok := <-sseCh
+		if !ok {
+			return nil
+		}
+		return sseEventMsg{}
+	}
+}
