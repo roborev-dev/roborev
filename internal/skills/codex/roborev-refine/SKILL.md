@@ -103,8 +103,11 @@ before proceeding.
 
 #### 3c. Commit, then record comment and close review
 
-Commit first per the project's conventions (see CLAUDE.md). Only after the
-commit succeeds, record a summary comment on the review and close it:
+Commit first per the project's conventions (see CLAUDE.md), but use
+`git commit --no-verify` to skip the post-commit hook — the hook would trigger
+a redundant single-commit review, and this skill already re-reviews the full
+branch in step 3d. Only after the commit succeeds, record a summary comment on
+the review and close it:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>"
