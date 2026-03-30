@@ -33,18 +33,10 @@ func (m model) displayTick() tea.Cmd {
 	})
 }
 
-// tickInterval returns the appropriate polling interval based on queue activity.
-// Uses faster polling when jobs are running or pending, slower when idle.
+// tickInterval returns the polling interval. Now that SSE handles real-time
+// updates, polling is only a fallback for missed events or disconnections.
 func (m model) tickInterval() time.Duration {
-	// Before first status fetch, use active interval to be responsive on startup
-	if !m.statusFetchedOnce {
-		return tickIntervalActive
-	}
-	// Poll frequently when there's activity
-	if m.status.RunningJobs > 0 || m.status.QueuedJobs > 0 {
-		return tickIntervalActive
-	}
-	return tickIntervalIdle
+	return tickIntervalFallback
 }
 
 type jobsPageResult struct {

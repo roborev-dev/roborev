@@ -26,11 +26,10 @@ import (
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-// Tick intervals for local redraws and adaptive polling.
+// Tick intervals for local redraws and fallback polling.
 const (
-	displayTickInterval = 1 * time.Second  // Repaint only (elapsed counters, flash expiry)
-	tickIntervalActive  = 2 * time.Second  // Poll frequently when jobs are running/pending
-	tickIntervalIdle    = 10 * time.Second // Poll less when queue is idle
+	displayTickInterval  = 1 * time.Second  // Repaint only (elapsed counters, flash expiry)
+	tickIntervalFallback = 15 * time.Second // Fallback poll; SSE handles real-time updates
 )
 
 // TUI styles using AdaptiveColor for light/dark terminal support.
@@ -374,13 +373,13 @@ type model struct {
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
 
-	distractionFree bool // hide status line, headers, footer, scroll indicator
-	clipboard       ClipboardWriter
-	tasksEnabled    bool          // Enables advanced tasks workflow in the TUI
-	mouseEnabled    bool          // Enables mouse capture and mouse-driven interactions in the TUI
-	noQuit          bool          // Suppress keyboard quit (for managed TUI instances)
-	controlSocket   string        // Socket path for runtime metadata updates (empty if disabled)
-	ready           chan struct{} // Closed on first Update; signals event loop is running
+	distractionFree   bool // hide status line, headers, footer, scroll indicator
+	clipboard         ClipboardWriter
+	tasksEnabled      bool          // Enables advanced tasks workflow in the TUI
+	mouseEnabled      bool          // Enables mouse capture and mouse-driven interactions in the TUI
+	noQuit            bool          // Suppress keyboard quit (for managed TUI instances)
+	controlSocket     string        // Socket path for runtime metadata updates (empty if disabled)
+	ready             chan struct{} // Closed on first Update; signals event loop is running
 	sseCh             chan struct{} // Signals from SSE goroutine; nil when external IO disabled
 	sseStop           chan struct{} // Close to stop SSE goroutine; nil when external IO disabled
 	ssePendingRefresh bool          // True when an SSE event arrived during an in-flight fetch

@@ -371,56 +371,22 @@ func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
 }
 
 func TestTUITickInterval(t *testing.T) {
+	// tickInterval returns a constant fallback interval now that SSE
+	// handles real-time updates. Verify it doesn't vary with queue state.
 	tests := []struct {
-		name              string
-		statusFetchedOnce bool
-		runningJobs       int
-		queuedJobs        int
-		wantInterval      time.Duration
+		name        string
+		runningJobs int
 	}{
-		{
-			name:              "before first status fetch uses active interval",
-			statusFetchedOnce: false,
-			runningJobs:       0,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "running jobs uses active interval",
-			statusFetchedOnce: true,
-			runningJobs:       1,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "queued jobs uses active interval",
-			statusFetchedOnce: true,
-			runningJobs:       0,
-			queuedJobs:        3,
-			wantInterval:      tickIntervalActive,
-		},
-		{
-			name:              "idle queue uses idle interval",
-			statusFetchedOnce: true,
-			runningJobs:       0,
-			queuedJobs:        0,
-			wantInterval:      tickIntervalIdle,
-		},
+		{"idle queue", 0},
+		{"active queue", 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newModel(testEndpoint, withExternalIODisabled())
-			m.statusFetchedOnce = tt.statusFetchedOnce
 			m.status.RunningJobs = tt.runningJobs
-			m.status.QueuedJobs = tt.queuedJobs
 
-			got := m.tickInterval()
-			if got != tt.wantInterval {
-				assert.Condition(t, func() bool {
-					return false
-				}, "tickInterval() = %v, want %v", got, tt.wantInterval)
-			}
+			assert.Equal(t, tickIntervalFallback, m.tickInterval())
 		})
 	}
 }
