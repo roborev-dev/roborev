@@ -4021,3 +4021,52 @@ func TestBatchTimeout_EndToEnd(t *testing.T) {
 	last := (*statuses)[len(*statuses)-1]
 	assert.Equal(t, "success", last.State)
 }
+
+func TestBatchTimeout_LateCanceledEventIgnored(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureComments()
+	h.CaptureCommitStatuses()
+	h.Poller.synthesizeFn = func(_ *storage.CIPRBatch, _ []storage.BatchReviewResult, _ *config.Config) (string, error) {
+		return "synthesized", nil
+	}
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	// 1 done codex job, 1 running gemini job (simulating in-progress agent)
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "ok"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	_, err := h.DB.IncrementBatchCompleted(batch.ID)
+	require.NoError(t, err)
+
+	// Backdate the batch past timeout
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	// Expire + reconcile + post in one pass
+	h.Poller.reconcileStaleBatches()
+
+	// Batch should now be synthesized and finalized
+	h.AssertBatchState(t, batch.ID, 1, false)
+
+	// Record counters after posting
+	posted, err := h.DB.ReconcileBatch(batch.ID)
+	require.NoError(t, err)
+	failedBefore := posted.FailedJobs
+
+	// Simulate the late review.canceled event from the killed worker
+	h.Poller.handleReviewFailed(Event{
+		Type:  "review.canceled",
+		JobID: jobs[1].ID,
+	})
+
+	// Counters should be unchanged — the event should be ignored
+	after, err := h.DB.ReconcileBatch(batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, failedBefore, after.FailedJobs,
+		"late canceled event should not increment FailedJobs on a synthesized batch")
+}

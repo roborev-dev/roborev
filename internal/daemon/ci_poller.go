@@ -1103,6 +1103,14 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 // handleBatchJobDone processes a completed or failed job within a batch.
 // When all jobs are done, it posts the combined results.
 func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, success bool) {
+	// Skip counter updates for already-synthesized batches. Late events
+	// (e.g., review.canceled from a worker whose job was expired) can
+	// arrive after the batch has been posted; incrementing counters
+	// at that point would corrupt the final tally.
+	if batch.Synthesized {
+		return
+	}
+
 	var updated *storage.CIPRBatch
 	var err error
 	if success {
