@@ -190,9 +190,20 @@ func FormatAllFailedComment(
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
 			git.ShortSHA(headSHA))
-		b.WriteString(
-			"All review agents were skipped " +
-				"due to quota exhaustion.\n\n")
+		switch {
+		case quotaSkips > 0 && timeoutSkips > 0:
+			b.WriteString(
+				"All review agents were skipped " +
+					"(quota exhaustion and timeout).\n\n")
+		case timeoutSkips > 0:
+			b.WriteString(
+				"All review agents were skipped " +
+					"(batch posted early).\n\n")
+		default:
+			b.WriteString(
+				"All review agents were skipped " +
+					"due to quota exhaustion.\n\n")
+		}
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",

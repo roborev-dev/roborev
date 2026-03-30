@@ -363,6 +363,7 @@ func TestFormatAllFailedComment_AllTimeoutSkips(t *testing.T) {
 	}
 	comment := FormatAllFailedComment(reviews, "abc123def456")
 	assert.Contains(t, comment, "Skipped")
+	assert.Contains(t, comment, "batch posted early")
 	assert.Contains(t, comment, "skipped (timeout)")
 }
 
