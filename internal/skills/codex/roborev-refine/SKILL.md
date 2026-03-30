@@ -124,10 +124,12 @@ roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
 Remember that exit code 1 means fail verdict, not an error. When the review
-completes:
+completes, extract the new job ID from the output — this replaces the previous
+iteration's job ID for subsequent comment/close steps.
 
 - If the review **passed**: inform the user and stop. The branch is clean.
-- If the review **failed**: continue to the next iteration (back to step 3a).
+- If the review **failed**: continue to the next iteration (back to step 3a)
+  using the new job ID.
 
 ### 4. Iteration limit reached
 
@@ -162,10 +164,10 @@ Agent:
 1. Validates `develop`: `git rev-parse --verify -- develop`
 2. Executes `roborev review --branch --wait --base develop --type security`
 3. Review returns verdict Fail
-4. Fixes findings, tests, comments, closes, commits
+4. Fixes findings, tests, commits, comments, closes
 5. Re-reviews: `roborev review --branch --wait --base develop --type security`
 6. Review returns verdict Fail (1 remaining finding)
-7. Fixes remaining finding, tests, comments, closes, commits
+7. Fixes remaining finding, tests, commits, comments, closes
 8. Re-reviews: `roborev review --branch --wait --base develop --type security`
 9. Review returns verdict Pass
 10. Tells user: "Security review passed after 2 fix iterations."
