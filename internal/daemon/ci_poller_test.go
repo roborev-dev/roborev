@@ -3903,3 +3903,77 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 		}, "expected repo config (true) to override global (false)")
 	}
 }
+
+func TestReconcileStaleBatches_ExpiresTimedOutBatch(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+	h.Poller.synthesizeFn = func(_ *storage.CIPRBatch, reviews []storage.BatchReviewResult, _ *config.Config) (string, error) {
+		return "synthesized output", nil
+	}
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "looks good"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	// Set completed count to 1 (codex done)
+	_, err := h.DB.IncrementBatchCompleted(batch.ID)
+	require.NoError(t, err)
+
+	// Backdate the batch
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	// Run reconciliation — should detect expired batch, cancel gemini, and post
+	h.Poller.reconcileStaleBatches()
+
+	// Verify gemini job was canceled with timeout error
+	geminiJob, err := h.DB.GetJobByID(jobs[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, geminiJob.Status)
+	assert.Contains(t, geminiJob.Error, "timeout:")
+
+	// Reconciler should also trigger synthesis for the now-all-terminal batch.
+	// Run reconciliation again to pick up the completed batch.
+	h.Poller.reconcileStaleBatches()
+
+	// Verify comment was posted
+	require.Len(t, *comments, 1)
+	assert.Equal(t, "acme/api", (*comments)[0].Repo)
+	assert.Equal(t, 1, (*comments)[0].PR)
+
+	// Verify commit status is success (timeout skips are not real failures)
+	require.NotEmpty(t, *statuses)
+	last := (*statuses)[len(*statuses)-1]
+	assert.Equal(t, "success", last.State)
+}
+
+func TestReconcileStaleBatches_NoExpiryWhenDisabled(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureComments()
+
+	h.Cfg.CI.BatchTimeout = "0"
+
+	batch, jobs := h.seedBatchWithJobs(t, 1, "abc123",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "ok"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+	_, err := h.DB.IncrementBatchCompleted(batch.ID)
+	require.NoError(t, err)
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	h.Poller.reconcileStaleBatches()
+
+	// Gemini job should still be queued (not canceled)
+	geminiJob, err := h.DB.GetJobByID(jobs[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, geminiJob.Status)
+}

@@ -1117,6 +1117,25 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 
 	// Check if all jobs are done
 	if updated.CompletedJobs+updated.FailedJobs < updated.TotalJobs {
+		// Check if we should expire remaining jobs due to timeout.
+		// Only expire if at least one job succeeded (otherwise there's
+		// nothing useful to post).
+		cfg := p.cfgGetter.Config()
+		timeout := cfg.CI.ResolvedBatchTimeout()
+		if timeout > 0 && updated.CompletedJobs > 0 {
+			expired, err := p.db.IsBatchExpired(updated.ID, timeout)
+			if err != nil {
+				log.Printf("CI poller: error checking batch %d expiry: %v",
+					updated.ID, err)
+			} else if expired {
+				log.Printf("CI poller: batch %d exceeded timeout, expiring remaining jobs",
+					updated.ID)
+				p.expireBatchJobs(updated)
+				// Don't return — the canceled jobs will trigger events
+				// that eventually complete the batch. The reconciler
+				// provides a backup if events are lost.
+			}
+		}
 		log.Printf("CI poller: batch %d progress: %d/%d completed, %d failed (job %d)",
 			updated.ID, updated.CompletedJobs, updated.TotalJobs, updated.FailedJobs, jobID)
 		return
@@ -1133,11 +1152,71 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 	p.postBatchResults(updated)
 }
 
+// expireBatchJobs cancels all non-terminal jobs in a batch due to
+// timeout, tagging them with a timeout error so they appear as
+// "skipped (timeout)" in the PR comment.
+func (p *CIPoller) expireBatchJobs(batch *storage.CIPRBatch) {
+	jobIDs, err := p.db.GetNonTerminalBatchJobIDs(batch.ID)
+	if err != nil {
+		log.Printf("CI poller: error getting non-terminal jobs for batch %d: %v",
+			batch.ID, err)
+		return
+	}
+	if len(jobIDs) == 0 {
+		return
+	}
+
+	errMsg := reviewpkg.TimeoutErrorPrefix + "batch posted early with available results"
+	for _, jid := range jobIDs {
+		if err := p.db.CancelJobWithError(jid, errMsg); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue // already terminal
+			}
+			log.Printf("CI poller: error canceling timed-out job %d: %v", jid, err)
+			continue
+		}
+		if p.jobCancelFn != nil {
+			p.jobCancelFn(jid)
+		}
+	}
+
+	log.Printf("CI poller: expired %d timed-out jobs in batch %d for %s#%d",
+		len(jobIDs), batch.ID, batch.GithubRepo, batch.PRNumber)
+}
+
+// expireTimedOutBatches finds batches with partial results that have
+// exceeded the configured batch timeout, cancels their remaining jobs,
+// so the reconciler can pick them up and post results.
+func (p *CIPoller) expireTimedOutBatches() {
+	cfg := p.cfgGetter.Config()
+	timeout := cfg.CI.ResolvedBatchTimeout()
+	if timeout <= 0 {
+		return
+	}
+
+	batches, err := p.db.GetExpiredBatches(timeout)
+	if err != nil {
+		log.Printf("CI poller: error checking expired batches: %v", err)
+		return
+	}
+
+	for _, batch := range batches {
+		log.Printf("CI poller: batch %d for %s#%d exceeded timeout (%v), expiring remaining jobs",
+			batch.ID, batch.GithubRepo, batch.PRNumber, timeout)
+		p.expireBatchJobs(&batch)
+	}
+}
+
 // reconcileStaleBatches finds batches where all linked jobs are terminal
 // but the event-driven counters are behind (due to dropped events or
 // unhandled terminal states), corrects the counts from DB state, and
 // triggers synthesis if the batch is now complete.
 func (p *CIPoller) reconcileStaleBatches() {
+	// Expire batches that have partial results but exceeded the timeout.
+	// This cancels stuck jobs so they become terminal, allowing the
+	// stale batch reconciliation below to pick them up and post results.
+	p.expireTimedOutBatches()
+
 	// Clean up empty batches left by daemon crashes during enqueue.
 	if n, err := p.db.DeleteEmptyBatches(); err != nil {
 		log.Printf("CI poller: error cleaning empty batches: %v", err)
@@ -1263,16 +1342,18 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	//   all failures are quota skips → success (with note)
 	//   mixed real failures          → failure
 	//   all failed (real)            → error
-	quotaSkips := reviewpkg.CountQuotaFailures(toReviewResults(reviews))
-	realFailures := batch.FailedJobs - quotaSkips
+	results := toReviewResults(reviews)
+	quotaSkips := reviewpkg.CountQuotaFailures(results)
+	timeoutSkips := reviewpkg.CountTimeoutCancellations(results)
+	skippedTotal := quotaSkips + timeoutSkips
+	realFailures := max(batch.FailedJobs-quotaSkips-timeoutSkips, 0)
 	statusState := "success"
 	statusDesc := "Review complete"
 	switch {
-	case batch.CompletedJobs == 0 && realFailures == 0 && quotaSkips > 0:
-		// All failures are quota skips — not the code's fault
+	case batch.CompletedJobs == 0 && realFailures == 0 && skippedTotal > 0:
 		statusDesc = fmt.Sprintf(
-			"Review complete (%d agent(s) skipped — quota)",
-			quotaSkips,
+			"Review complete (%d agent(s) skipped)",
+			skippedTotal,
 		)
 	case batch.CompletedJobs == 0:
 		statusState = "error"
@@ -1283,10 +1364,10 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 			"Review complete (%d/%d jobs failed)",
 			realFailures, batch.TotalJobs,
 		)
-	case quotaSkips > 0:
+	case skippedTotal > 0:
 		statusDesc = fmt.Sprintf(
-			"Review complete (%d agent(s) skipped — quota)",
-			quotaSkips,
+			"Review complete (%d agent(s) skipped)",
+			skippedTotal,
 		)
 	}
 	if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, statusState, statusDesc); err != nil {
