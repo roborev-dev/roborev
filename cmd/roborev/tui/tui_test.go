@@ -554,6 +554,26 @@ func TestTUIFixJobsResponseClearsLoadingFlag(t *testing.T) {
 	assert.False(m3.loadingFixJobs, "fixJobsMsg with error should clear loadingFixJobs")
 }
 
+func TestTUIFixJobsStaleFlagTriggersFollowUp(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(testEndpoint, withExternalIODisabled())
+
+	// Simulate: a fetch is in flight and a mutation marks data as stale.
+	m.loadingFixJobs = true
+	m.fixJobsStale = true
+
+	// When the in-flight fetch returns, it should dispatch a follow-up.
+	m2, cmd := updateModel(t, m, fixJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}})
+	assert.True(m2.loadingFixJobs, "should re-dispatch fetch when stale")
+	assert.False(m2.fixJobsStale, "stale flag should be cleared")
+	assert.NotNil(cmd, "should return a follow-up fetch command")
+
+	// Without the stale flag, no follow-up.
+	m3, cmd := updateModel(t, m2, fixJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}})
+	assert.False(m3.loadingFixJobs, "should not re-dispatch without stale flag")
+	assert.Nil(cmd, "should return no command without stale flag")
+}
+
 func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 

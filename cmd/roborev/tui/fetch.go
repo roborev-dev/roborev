@@ -840,3 +840,16 @@ func (m *model) startFetchFixJobs() tea.Cmd {
 	m.loadingFixJobs = true
 	return m.fetchFixJobs()
 }
+
+// requestFetchFixJobs is like startFetchFixJobs but for handlers that follow
+// state-mutating operations (fix enqueue, patch apply). If a fetch is already
+// in flight, it marks the current data as stale so handleFixJobsMsg will
+// dispatch a follow-up fetch when the in-flight one returns.
+func (m *model) requestFetchFixJobs() tea.Cmd {
+	if m.loadingFixJobs {
+		m.fixJobsStale = true
+		return nil
+	}
+	m.loadingFixJobs = true
+	return m.fetchFixJobs()
+}

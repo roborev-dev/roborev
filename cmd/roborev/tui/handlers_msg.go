@@ -447,6 +447,14 @@ func (m model) handleFixJobsMsg(
 			m.fixSelectedIdx = len(m.fixJobs) - 1
 		}
 	}
+	// A state-mutating handler requested a refresh while this fetch was
+	// in flight. The data we just received predates that mutation, so
+	// dispatch a follow-up fetch to pick up the latest state.
+	if m.fixJobsStale {
+		m.fixJobsStale = false
+		m.loadingFixJobs = true
+		return m, m.fetchFixJobs()
+	}
 	return m, nil
 }
 
@@ -798,6 +806,11 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	// were against the old connection and will fail or be stale.
 	m.loadingStatus = true
 	cmds = append(cmds, m.fetchStatus())
+	if m.tasksWorkflowEnabled() {
+		m.loadingFixJobs = true
+		m.fixJobsStale = false
+		cmds = append(cmds, m.fetchFixJobs())
+	}
 	if cmd := m.fetchUnloadedBranches(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -952,12 +965,12 @@ func (m model) handleFixTriggerResultMsg(
 		), 3*time.Second, viewTasks)
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
-		return m, m.startFetchFixJobs()
+		return m, m.requestFetchFixJobs()
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Fix job #%d enqueued", msg.job.ID,
 		), 3*time.Second, viewTasks)
-		return m, m.startFetchFixJobs()
+		return m, m.requestFetchFixJobs()
 	}
 	return m, nil
 }
@@ -995,7 +1008,7 @@ func (m model) handleApplyPatchResultMsg(
 				" - triggering rebase", msg.jobID,
 		), 5*time.Second, viewTasks)
 		cmds := []tea.Cmd{m.triggerRebase(msg.jobID)}
-		if cmd := m.startFetchFixJobs(); cmd != nil {
+		if cmd := m.requestFetchFixJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		return m, tea.Batch(cmds...)
@@ -1019,7 +1032,7 @@ func (m model) handleApplyPatchResultMsg(
 			msg.jobID,
 		), 3*time.Second, viewTasks)
 		cmds := []tea.Cmd{}
-		if cmd := m.startFetchFixJobs(); cmd != nil {
+		if cmd := m.requestFetchFixJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		if msg.parentJobID > 0 {
