@@ -3292,4 +3292,8 @@ func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
 		c := CIConfig{BatchTimeout: "garbage"}
 		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
 	})
+	t.Run("negative_falls_back", func(t *testing.T) {
+		c := CIConfig{BatchTimeout: "-5m"}
+		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+	})
 }
