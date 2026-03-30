@@ -3977,3 +3977,53 @@ func TestReconcileStaleBatches_NoExpiryWhenDisabled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusQueued, geminiJob.Status)
 }
+
+func TestBatchTimeout_EndToEnd(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+	h.Poller.synthesizeFn = func(_ *storage.CIPRBatch, reviews []storage.BatchReviewResult, _ *config.Config) (string, error) {
+		var agents []string
+		for _, r := range reviews {
+			agents = append(agents, r.Agent+":"+r.Status)
+		}
+		return fmt.Sprintf("Synthesized from %v", agents), nil
+	}
+
+	h.Cfg.CI.BatchTimeout = "1s"
+
+	// Simulate: 2 codex jobs done, 1 gemini job stuck
+	batch, _ := h.seedBatchWithJobs(t, 42, "deadbeef",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "security ok"},
+		jobSpec{Agent: "codex", ReviewType: "default", Status: "done", Output: "code ok"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "queued"},
+	)
+
+	// Set batch counters: 2 completed, 0 failed
+	_, err := h.DB.IncrementBatchCompleted(batch.ID)
+	require.NoError(t, err)
+	_, err = h.DB.IncrementBatchCompleted(batch.ID)
+	require.NoError(t, err)
+
+	// Backdate the batch past the timeout
+	_, err = h.DB.Exec(
+		`UPDATE ci_pr_batches SET created_at = datetime('now', '-10 minutes') WHERE id = ?`,
+		batch.ID)
+	require.NoError(t, err)
+
+	// Run reconciliation — should expire gemini, then post
+	h.Poller.reconcileStaleBatches()
+	// Run again to reconcile the now-all-terminal batch
+	h.Poller.reconcileStaleBatches()
+
+	// Verify comment was posted with synthesis
+	require.Len(t, *comments, 1)
+	assert.Equal(t, "acme/api", (*comments)[0].Repo)
+	assert.Equal(t, 42, (*comments)[0].PR)
+	assert.Contains(t, (*comments)[0].Body, "Synthesized")
+
+	// Verify commit status is success (timeout skips don't count as failures)
+	require.NotEmpty(t, *statuses)
+	last := (*statuses)[len(*statuses)-1]
+	assert.Equal(t, "success", last.State)
+}
