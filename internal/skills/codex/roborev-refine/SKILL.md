@@ -103,11 +103,8 @@ before proceeding.
 
 #### 3c. Commit, then record comment and close review
 
-Commit first per the project's conventions (see CLAUDE.md). Note: if the repo
-has a roborev post-commit hook installed, the commit will automatically enqueue
-a single-commit review — this is expected and harmless. Ignore it; the branch
-re-review in step 3d is what drives the loop. Only after the commit succeeds,
-record a summary comment on the review and close it:
+Commit first per the project's conventions (see CLAUDE.md). Only after the
+commit succeeds, record a summary comment on the review and close it:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>"
@@ -120,15 +117,25 @@ fixed, and note any findings intentionally skipped. Keep it concise.
 
 #### 3d. Re-review
 
-Run the branch review again:
+After committing, check whether the post-commit hook already enqueued a review
+for the new commit. Wait a moment (~2 seconds), then check:
+
+```bash
+roborev show --ref HEAD --json
+```
+
+If this returns a review (the hook auto-enqueued one), use its job ID and
+result — do NOT submit a redundant review. If it returns an error or no review
+is found (hook not installed), submit an explicit branch review:
 
 ```bash
 roborev review --branch --wait [--base <branch>] [--type <type>]
 ```
 
-Remember that exit code 1 means fail verdict, not an error. When the review
-completes, extract the new job ID from the output — this replaces the previous
-iteration's job ID for subsequent comment/close steps.
+Remember that exit code 1 means fail verdict, not an error.
+
+In either case, extract the new job ID from the output — this replaces the
+previous iteration's job ID for subsequent comment/close steps.
 
 - If the review **passed**: inform the user and stop. The branch is clean.
 - If the review **failed**: continue to the next iteration (back to step 3a)
@@ -155,9 +162,8 @@ Agent:
 5. Commits changes
 6. Records comment: `roborev comment --job 1042 "Fixed nil check in foo.go and added validation in bar.go"`
 7. Closes review: `roborev close 1042`
-8. Executes `roborev review --branch --wait`
-9. Review returns verdict Pass
-10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
+8. Waits ~2s, runs `roborev show --ref HEAD --json` — hook already enqueued job 1043, verdict Pass
+9. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
 
 **Security review with base branch:**
 
