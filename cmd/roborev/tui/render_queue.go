@@ -263,7 +263,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -320,8 +320,8 @@ func (m model) renderQueueView() string {
 			colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
 			colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
 			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
-			colRequestedModel:    min(max(contentWidth[colRequestedModel], 15), 24),    // "Req Model" header = 9
-			colRequestedProvider: min(max(contentWidth[colRequestedProvider], 18), 24), // "Req Provider" header = 12
+			colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
+			colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
 		}
 
 		// Flexible columns absorb excess space
@@ -782,6 +782,25 @@ func migrateColumnConfig(cfg *config.Config) bool {
 			break
 		}
 	}
+
+	// Backfill new default-hidden columns into existing configs.
+	// When hidden_columns is explicitly set (non-nil, non-sentinel),
+	// columns added after the config was saved won't be in the list
+	// and will appear visible — stealing width from flex columns.
+	if len(cfg.HiddenColumns) > 0 &&
+		cfg.HiddenColumns[0] != config.HiddenColumnsNoneSentinel {
+		for col, hide := range defaultHiddenColumns {
+			if !hide {
+				continue
+			}
+			name := columnConfigNames[col]
+			if !slices.Contains(cfg.HiddenColumns, name) {
+				cfg.HiddenColumns = append(cfg.HiddenColumns, name)
+				dirty = true
+			}
+		}
+	}
+
 	return dirty
 }
 

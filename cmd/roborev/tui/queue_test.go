@@ -2210,10 +2210,22 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
 		},
 		{
-			name:       "existing hidden_columns preserved without backfill",
+			name:       "existing hidden_columns backfills new defaults",
 			hiddenCols: []string{"branch"},
+			wantDirty:  true,
+			wantHidden: []string{"branch", "session_id", "requested_model", "requested_provider"},
+		},
+		{
+			name:       "hidden_columns already has new defaults",
+			hiddenCols: []string{"session_id", "requested_model", "requested_provider"},
 			wantDirty:  false,
-			wantHidden: []string{"branch"},
+			wantHidden: []string{"session_id", "requested_model", "requested_provider"},
+		},
+		{
+			name:       "sentinel preserves show-all intent",
+			hiddenCols: []string{"_"},
+			wantDirty:  false,
+			wantHidden: []string{"_"},
 		},
 	}
 
