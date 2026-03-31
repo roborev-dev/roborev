@@ -5,21 +5,28 @@ description: Iterative review-fix loop for the current branch — reviews via da
 
 # roborev-refine
 
-Iterative review-fix loop: review the branch, fix findings, commit, re-review,
-and repeat until all reviews pass or the iteration limit is reached.
+Iterative review-fix loop: review the current branch or commit range, fix
+findings, commit, re-review, and repeat until all reviews pass or the
+iteration limit is reached.
 
 Unlike `/roborev-fix` (single-pass fix without re-review), refine closes the
 loop by re-reviewing after each fix to verify the findings are resolved.
 
+This skill should perform the refine workflow inside the current coding agent
+CLI. Do not simply shell out to `roborev refine`.
+
 ## Usage
 
 ```
-/roborev-refine [--base <branch>] [--type security|design] [--max-iterations <n>]
+/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]
 ```
 
-- `--base <branch>`: base branch to diff against (default: auto-detect)
-- `--type security|design`: review type (default: standard code review)
+- `--since <commit>`: refine commits after this commit (exclusive); required on the default branch
+- `--branch <name>`: validate that the current branch matches before refining
 - `--max-iterations <n>`: maximum fix-review cycles (default: 10)
+
+This skill intentionally focuses on the current branch flow. It does not expose
+`roborev refine --all-branches` or `roborev refine --list`.
 
 ## When NOT to invoke this skill
 
@@ -29,41 +36,53 @@ results, or when they only want a single review without fixing. Use
 
 ## IMPORTANT
 
-You must **execute bash commands** to complete this task. Skip steps already
-satisfied by conversation context. Defer to CLAUDE.md when it conflicts.
+This skill requires you to **execute bash commands** to validate inputs, launch
+reviews, and wait for re-review. The task is not complete until the refine loop
+finishes and you present the result to the user.
+
+These instructions are guidelines, not a rigid script. Use the conversation
+context. Skip steps that are already satisfied. Defer to project-level
+CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `/roborev-refine [--base <branch>] [--type security|design] [--max-iterations <n>]`:
+When the user invokes `/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]`:
 
-### 1. Validate inputs
+### 1. Validate inputs and refine context
 
-If a base branch is provided, verify it resolves to a valid ref:
+If `--branch` is provided, verify the current branch matches before doing any
+work. If it does not, stop and tell the user.
 
-```bash
-git rev-parse --verify -- <branch>
-```
+If `--since` is provided, verify it resolves to a valid commit and is an
+ancestor of `HEAD`.
 
-If validation fails, inform the user the ref is invalid. Do not proceed.
+If `--since` is not provided, ensure you are not refining the default branch.
+This matches `roborev refine`, which refuses to run on the default branch
+without `--since`.
 
 Parse `--max-iterations` if provided (default: 10). This is the maximum number
 of fix-review cycles, not the total number of reviews.
 
-### 2. Run the initial branch review
+### 2. Run the initial review
 
-Build the review command:
+Choose the review command that matches the requested scope:
 
 ```bash
-roborev review --branch --wait [--base <branch>] [--type <type>]
+roborev review --since <commit> --wait
 ```
 
-Launch this as a background task using the `Task` tool with
-`run_in_background: true` so the user can continue working. Tell the user the
-branch review has been submitted.
+or, if `--since` was not provided:
+
+```bash
+roborev review --branch --wait
+```
+
+`--since` is the closest manual equivalent to `roborev refine --since`.
+`--branch` reviews the current branch relative to its merge-base.
 
 **Note:** `--wait` exits with code 1 when the verdict is Fail. This is
-expected — always capture the command output regardless of exit code and
-inspect it to determine pass vs fail.
+expected. Always capture the command output regardless of exit code and inspect
+it to determine pass vs fail.
 
 When the review completes, read and parse the output. Extract the job ID from
 the `Enqueued job <id> for ...` line or the review header — you will need it
@@ -128,37 +147,23 @@ fixed, and note any findings intentionally skipped. Keep it concise.
 
 #### 3d. Re-review
 
-After committing, get a re-review of the branch. The approach depends on
-whether the user specified `--type` or `--base`:
-
-**If `--type` or `--base` was specified:** Always submit an explicit branch
-review to preserve those flags (a hook-enqueued review won't have them):
-
-```bash
-roborev review --branch --wait [--base <branch>] [--type <type>]
-```
-
-Launch this as a background task using the `Task` tool with
-`run_in_background: true`. Extract the job ID from the `Enqueued job <id>
-for ...` line.
-
-**If using defaults (no `--type` or `--base`):** Try `roborev wait` first —
-it finds any existing job for HEAD (queued, running, or done) and blocks until
-completion, reusing a hook-enqueued review if one exists:
+After committing, wait for the post-commit review of the new commit:
 
 ```bash
 roborev wait
 ```
 
-Launch this as a background task using the `Task` tool with
-`run_in_background: true`.
-
 - Exit code 0 means the review **passed**.
 - Exit code 1 means either **fail verdict** or **no job found**.
 
-If `roborev wait` reports "No job found" (the hook is not installed, or it
-uses branch-mode reviews which `wait` cannot find by SHA), fall back to an
-explicit review:
+If `roborev wait` reports "No job found", fall back to the same explicit review
+mode used at the start:
+
+```bash
+roborev review --since <commit> --wait
+```
+
+or, without `--since`:
 
 ```bash
 roborev review --branch --wait
@@ -166,8 +171,8 @@ roborev review --branch --wait
 
 **Retrieving the job ID:** depends on which path was taken:
 - **`roborev wait` path**: run `roborev show --json` afterward — it returns
-  the most recent review for HEAD. Extract `job_id` from the JSON.
-- **`roborev review --branch --wait` path**: extract the job ID from the
+  the most recent review for `HEAD`. Extract `job_id` from the JSON.
+- **Explicit review path**: extract the job ID from the
   `Enqueued job <id> for ...` line in that command's output.
 
 This job ID replaces the previous iteration's job ID for subsequent
@@ -186,47 +191,32 @@ pass.
 
 ## Examples
 
-**Default refine:**
+**Default refine on a feature branch:**
 
 User: `/roborev-refine`
 
 Agent:
-1. Launches background task: `roborev review --branch --wait`
-2. Tells user: "Branch review submitted. I'll present the results when it completes."
-3. Review returns verdict Fail with 2 findings (HIGH in foo.go:42, MEDIUM in bar.go:10)
+1. Validates that the current branch is not the default branch
+2. Runs `roborev review --branch --wait`
+3. Review returns verdict Fail with 2 findings
 4. Fixes both findings in code
 5. Runs `go test ./...` — passes
 6. Commits changes
-7. Records comment via heredoc: `roborev comment --job 1042 -m "$(cat <<'ROBOREV_COMMENT' ... ROBOREV_COMMENT)"`
-8. Closes review: `roborev close 1042`
-9. Runs `roborev wait` — hook-enqueued job 1043 completes with verdict Pass
-10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
+7. Records comment and closes the old review
+8. Runs `roborev wait` — hook-enqueued job completes with verdict Pass
+9. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
 
-**Security review with base branch:**
+**Refine from a specific starting commit:**
 
-User: `/roborev-refine --base develop --type security`
+User: `/roborev-refine --since abc123 --max-iterations 3`
 
 Agent:
-1. Validates `develop`: `git rev-parse --verify -- develop`
-2. Launches background task: `roborev review --branch --wait --base develop --type security`
+1. Validates `abc123` resolves and is an ancestor of `HEAD`
+2. Runs `roborev review --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Re-reviews: `roborev review --branch --wait --base develop --type security`
-6. Review returns verdict Fail (1 remaining finding)
-7. Fixes remaining finding, tests, commits, comments, closes
-8. Re-reviews: `roborev review --branch --wait --base develop --type security`
-9. Review returns verdict Pass
-10. Tells user: "Security review passed after 2 fix iterations."
-
-**Max iterations reached:**
-
-User: `/roborev-refine --max-iterations 2`
-
-Agent:
-1. Submits review, gets Fail
-2. Fixes findings, commits, re-reviews — still Fail
-3. Fixes again, commits, re-reviews — still Fail
-4. Tells user: "Reached maximum of 2 iterations. 1 finding remains: MEDIUM in baz.go:55. You can address it manually or run `/roborev-fix` for a targeted pass."
+5. Re-reviews with `roborev wait`, falling back to `roborev review --since abc123 --wait` if needed
+6. Continues until pass or 3 iterations are exhausted
 
 ## See also
 
