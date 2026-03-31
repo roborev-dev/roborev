@@ -160,13 +160,7 @@ func (m *model) logHelpRows() [][]helpItem {
 // Call this when returning to queue view from review view.
 func (m *model) normalizeSelectionIfHidden() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
-		idx := m.findPrevVisibleJob(m.selectedIdx)
-		if idx < 0 {
-			idx = m.findNextVisibleJob(m.selectedIdx)
-		}
-		if idx < 0 {
-			idx = m.findFirstVisibleJob()
-		}
+		idx := m.findNearestVisibleJob(m.selectedIdx)
 		if idx >= 0 {
 			m.selectedIdx = idx
 			m.updateSelectedJobID()
@@ -220,6 +214,25 @@ func (m *model) maybePrefetch(idx int) tea.Cmd {
 		return m.fetchMoreJobs()
 	}
 	return nil
+}
+
+// findNearestVisibleJob returns the nearest visible job to fromIdx.
+// It checks fromIdx itself first, then searches older jobs (higher
+// indices), then newer jobs (lower indices), then falls back to the
+// first visible job in the list.
+func (m model) findNearestVisibleJob(fromIdx int) int {
+	if fromIdx >= 0 && fromIdx < len(m.jobs) &&
+		m.isJobVisible(m.jobs[fromIdx]) {
+		return fromIdx
+	}
+	idx := m.findPrevVisibleJob(fromIdx)
+	if idx < 0 {
+		idx = m.findNextVisibleJob(fromIdx)
+	}
+	if idx < 0 {
+		idx = m.findFirstVisibleJob()
+	}
+	return idx
 }
 
 // findFirstVisibleJob returns the index of the first visible job.

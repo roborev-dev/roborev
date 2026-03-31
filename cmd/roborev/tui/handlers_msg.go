@@ -101,10 +101,10 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		if !found {
 			m.selectedIdx = max(0, min(len(m.jobs)-1, m.selectedIdx))
 			if len(m.activeRepoFilter) > 0 || m.hideClosed {
-				firstVisible := m.findFirstVisibleJob()
-				if firstVisible >= 0 {
-					m.selectedIdx = firstVisible
-					m.selectedJobID = m.jobs[firstVisible].ID
+				idx := m.findNearestVisibleJob(m.selectedIdx)
+				if idx >= 0 {
+					m.selectedIdx = idx
+					m.selectedJobID = m.jobs[idx].ID
 				} else {
 					m.selectedIdx = -1
 					m.selectedJobID = 0
@@ -117,10 +117,10 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 			// views, ←/→ navigation is relative to the viewed job's
 			// position; normalizeSelectionIfHidden handles it on return
 			// to queue.
-			firstVisible := m.findFirstVisibleJob()
-			if firstVisible >= 0 {
-				m.selectedIdx = firstVisible
-				m.selectedJobID = m.jobs[firstVisible].ID
+			idx := m.findNearestVisibleJob(m.selectedIdx)
+			if idx >= 0 {
+				m.selectedIdx = idx
+				m.selectedJobID = m.jobs[idx].ID
 			} else {
 				m.selectedIdx = -1
 				m.selectedJobID = 0

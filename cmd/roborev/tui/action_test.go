@@ -481,6 +481,57 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 	assertSelection(t, m, 1, 2)
 }
 
+// Regression: closing the last open job from review view, then
+// receiving an SSE-triggered refresh that excludes the closed job,
+// should keep the cursor near the bottom — not jump to the top.
+func TestCloseFromReviewViewRefreshKeepsCursorNearBottom(t *testing.T) {
+	assert := assert.New(t)
+
+	// 5 open jobs; user is on the last one (index 4, ID 1).
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewReview
+		m.hideClosed = true
+		m.selectedIdx = 4
+		m.selectedJobID = 1
+		m.currentReview = &storage.Review{
+			ID:     10,
+			Closed: false,
+			Job:    &storage.ReviewJob{ID: 1, Status: storage.JobStatusDone},
+		}
+		m.jobStats = storage.JobStats{Done: 5, Closed: 0, Open: 5}
+		m.pendingClosed = make(map[int64]pendingState)
+		m.pendingReviewClosed = make(map[int64]pendingState)
+	})
+
+	// Close the review from review view (press 'a').
+	result, _ := m.handleCloseKey()
+	m = result.(model)
+
+	// Simulate SSE refresh: server returns only open jobs (job 1 filtered
+	// out server-side because closed=false was sent).
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+		stats: storage.JobStats{Done: 5, Closed: 1, Open: 4},
+	})
+
+	// Cursor should be on the last job (index 3, ID 2) — not the top.
+	assert.Equal(3, m.selectedIdx,
+		"cursor should stay near bottom, not jump to top")
+	assert.Equal(int64(2), m.selectedJobID,
+		"should select the nearest visible job (ID 2)")
+}
+
 func TestTUISetJobClosedHelper(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
