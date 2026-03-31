@@ -147,47 +147,41 @@ fixed, and note any findings intentionally skipped. Keep it concise.
 
 #### 3d. Re-review
 
-After committing, wait for the post-commit review of the new commit:
+After committing, run an explicit full-scope re-review that matches the
+original refine scope. Do not treat a passing `roborev wait` result for the new
+commit as sufficient to stop — the full branch or commit-range review must pass
+before you report success.
 
-```bash
-roborev wait
-```
-
-- Exit code 0 means the review **passed**.
-- Exit code 1 means either **fail verdict** or **no job found**.
-
-If `roborev wait` reports "No job found", fall back to the same explicit review
-mode used at the start:
+If refining with `--since`:
 
 ```bash
 roborev review --since <commit> --wait
 ```
 
-or, without `--since`:
+If refining without `--since`:
 
 ```bash
 roborev review --branch --wait
 ```
 
-**Retrieving the job ID:** depends on which path was taken:
-- **`roborev wait` path**: run `roborev show --json` afterward — it returns
-  the most recent review for `HEAD`. Extract `job_id` from the JSON.
-- **Explicit review path**: extract the job ID from the
-  `Enqueued job <id> for ...` line in that command's output.
+You may optionally use `roborev wait` first to observe a hook-enqueued review
+for the new commit, but only as additional context. Always run the explicit
+full-scope review above before deciding that refinement is complete.
 
-This job ID replaces the previous iteration's job ID for subsequent
-comment/close steps.
+**Retrieving the job ID:** extract it from the
+`Enqueued job <id> for ...` line in the explicit review command output.
 
-- If the review **passed**: inform the user and stop. The branch is clean.
-- If the review **failed**: continue to the next iteration (back to step 3a)
-  using the new job ID.
+- If the explicit full-scope review **passed**: inform the user and stop. The
+  branch or requested commit range is clean.
+- If the explicit full-scope review **failed**: continue to the next iteration
+  (back to step 3a) using the new job ID.
 
 ### 4. Iteration limit reached
 
-If the maximum iterations are exhausted and the review still fails, inform the
-user how many iterations were completed, what findings remain, and suggest they
-review the remaining findings manually or run `$roborev-fix` for a targeted
-pass.
+If the maximum iterations are exhausted and the explicit full-scope review
+still fails, inform the user how many iterations were completed, what findings
+remain, and suggest they review the remaining findings manually or run
+`$roborev-fix` for a targeted pass.
 
 ## Examples
 
@@ -203,8 +197,9 @@ Agent:
 5. Runs `go test ./...` — passes
 6. Commits changes
 7. Records comment and closes the old review
-8. Runs `roborev wait` — hook-enqueued job completes with verdict Pass
-9. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
+8. Runs `roborev review --branch --wait`
+9. Full branch review returns Pass
+10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
 
 **Refine from a specific starting commit:**
 
@@ -215,8 +210,8 @@ Agent:
 2. Runs `roborev review --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Re-reviews with `roborev wait`, falling back to `roborev review --since abc123 --wait` if needed
-6. Continues until pass or 3 iterations are exhausted
+5. Re-reviews with `roborev review --since abc123 --wait`
+6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also
 
