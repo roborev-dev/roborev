@@ -698,6 +698,29 @@ func TestReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
 		"selectedJobID should be preserved in review-anchored prompt view")
 }
 
+// Regression: review-anchored log view without currentReview should
+// still preserve selectedJobID on empty-list refresh.
+func TestLogReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
+	assert := assert.New(t)
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewLog
+		m.logReviewAnchored = true
+		m.hideClosed = true
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		// No currentReview — log view doesn't require it.
+	})
+
+	m, _ = updateModel(t, m, jobsMsg{jobs: []storage.ReviewJob{}})
+
+	assert.Equal(-1, m.selectedIdx)
+	assert.Equal(int64(1), m.selectedJobID,
+		"selectedJobID should be preserved in review-anchored log view")
+}
+
 // Regression: prompt view opened from queue should normalize selection
 // when a refresh removes the viewed job, so esc/q doesn't leave stale
 // selectedIdx.
