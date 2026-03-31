@@ -601,6 +601,7 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 func (m model) openLogView(
 	jobID int64, status storage.JobStatus, fromView viewKind,
 ) (tea.Model, tea.Cmd) {
+	m.logReviewAnchored = m.isReviewAnchored()
 	m.logJobID = jobID
 	m.logLines = nil
 	m.logScroll = 0

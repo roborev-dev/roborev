@@ -590,7 +590,9 @@ func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
 		"next viewable should be Job 2 (adjacent to removed Job 1)")
 }
 
-// Regression: log view opened from review should preserve the anchor.
+// Regression: log view opened from a review-rooted context (e.g.,
+// review → prompt → log) should preserve the anchor. logReviewAnchored
+// is set by openLogView based on the calling view's isReviewAnchored().
 func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 	assert := assert.New(t)
 
@@ -600,7 +602,8 @@ func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewLog
-		m.logFromView = viewReview
+		m.logFromView = viewQueue // real value from review→prompt→log
+		m.logReviewAnchored = true
 		m.hideClosed = true
 		m.selectedIdx = 2
 		m.selectedJobID = 1
@@ -618,6 +621,33 @@ func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 		"selectedIdx should be unchanged in log-from-review")
 	assert.Equal(int64(1), m.selectedJobID,
 		"selectedJobID should be unchanged in log-from-review")
+}
+
+// Regression: empty-list refresh in a review-anchored view should
+// preserve selectedJobID so esc back to review doesn't lose context.
+func TestReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
+	assert := assert.New(t)
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewKindPrompt
+		m.promptFromQueue = false
+		m.hideClosed = true
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		m.currentReview = &storage.Review{
+			ID:  10,
+			Job: &storage.ReviewJob{ID: 1, Status: storage.JobStatusDone},
+		}
+	})
+
+	// Refresh returns empty list.
+	m, _ = updateModel(t, m, jobsMsg{jobs: []storage.ReviewJob{}})
+
+	assert.Equal(-1, m.selectedIdx)
+	assert.Equal(int64(1), m.selectedJobID,
+		"selectedJobID should be preserved in review-anchored prompt view")
 }
 
 // Regression: prompt view opened from queue should normalize selection

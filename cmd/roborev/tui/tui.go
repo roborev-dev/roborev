@@ -359,16 +359,17 @@ type model struct {
 	helpScroll   int      // Scroll position in help view
 
 	// Log view state
-	logJobID     int64                // Job being viewed
-	logLines     []logLine            // Buffer of output lines
-	logScroll    int                  // Scroll position
-	logStreaming bool                 // True if job is still running
-	logFromView  viewKind             // View to return to
-	logFollow    bool                 // True if auto-scrolling to bottom (follow mode)
-	logOffset    int64                // Byte offset for next incremental fetch
-	logFmtr      *streamfmt.Formatter // Persistent formatter across polls
-	logLoading   bool                 // True while a fetch is in-flight
-	logFetchSeq  uint64               // Monotonic seq to drop stale responses
+	logJobID          int64                // Job being viewed
+	logLines          []logLine            // Buffer of output lines
+	logScroll         int                  // Scroll position
+	logStreaming      bool                 // True if job is still running
+	logFromView       viewKind             // View to return to
+	logReviewAnchored bool                 // Opened from a review-rooted context
+	logFollow         bool                 // True if auto-scrolling to bottom (follow mode)
+	logOffset         int64                // Byte offset for next incremental fetch
+	logFmtr           *streamfmt.Formatter // Persistent formatter across polls
+	logLoading        bool                 // True while a fetch is in-flight
+	logFetchSeq       uint64               // Monotonic seq to drop stale responses
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache

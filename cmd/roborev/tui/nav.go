@@ -22,7 +22,7 @@ func (m model) isReviewAnchored() bool {
 	case viewKindPrompt:
 		return !m.promptFromQueue
 	case viewLog:
-		return m.logFromView == viewReview
+		return m.logReviewAnchored
 	default:
 		return false
 	}

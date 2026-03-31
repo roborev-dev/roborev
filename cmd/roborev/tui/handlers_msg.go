@@ -85,7 +85,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 	// Selection management
 	if len(m.jobs) == 0 {
 		m.selectedIdx = -1
-		if m.currentView != viewReview || m.currentReview == nil || m.currentReview.Job == nil {
+		if !m.isReviewAnchored() || m.currentReview == nil || m.currentReview.Job == nil {
 			m.selectedJobID = 0
 		}
 	} else if m.selectedJobID > 0 {
