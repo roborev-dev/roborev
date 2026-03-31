@@ -152,17 +152,33 @@ original refine scope. Do not treat a passing `roborev wait` result for the new
 commit as sufficient to stop — the full branch or commit-range review must pass
 before you report success.
 
-If a post-commit hook may have enqueued a commit-scoped review for the new
-commit, check for it first so you can clean it up afterward:
+First, check whether the post-commit hook already enqueued a review:
 
 ```bash
 roborev wait
+```
+
+If `roborev wait` finds a job for `HEAD`, retrieve its details:
+
+```bash
 roborev show --json
 ```
 
-If `roborev wait` finds a review for `HEAD`, extract its `job_id` from
-`roborev show --json` and remember it as the hook review job. If `roborev wait`
-reports "No job found", continue without a hook review job.
+Inspect the `job.git_ref` field in the JSON output to determine the hook
+review's scope:
+
+- **Branch/range ref** (contains `..`, e.g. `abc123..def456`): The hook
+  enqueued a full branch review. If this matches the refine scope (same base),
+  **reuse it** — use its `job_id` and verdict directly. Skip the explicit
+  review below.
+- **Single commit SHA**: The hook enqueued a commit-scoped review. Remember
+  its `job_id` as the hook review job to close later, then proceed with the
+  explicit full-scope review below.
+
+If `roborev wait` reports "No job found", the hook is not installed — proceed
+directly with the explicit review.
+
+**Explicit full-scope review** (skip if reusing a hook branch review above):
 
 If refining with `--since`:
 
@@ -176,25 +192,20 @@ If refining without `--since`:
 roborev review --branch --wait
 ```
 
-You may optionally use `roborev wait` first to observe a hook-enqueued review
-for the new commit, but only as additional context. Always run the explicit
-full-scope review above before deciding that refinement is complete.
-
 **Retrieving the job ID:** extract it from the
 `Enqueued job <id> for ...` line in the explicit review command output.
 
-If you recorded a hook review job earlier, close it after the explicit
-full-scope review completes so refine does not leave stale commit-level reviews
-open:
+If you recorded a hook commit review job earlier, close it after the explicit
+full-scope review completes so refine does not leave stale reviews open:
 
 ```bash
 roborev close <hook_job_id>
 ```
 
-- If the explicit full-scope review **passed**: inform the user and stop. The
-  branch or requested commit range is clean.
-- If the explicit full-scope review **failed**: continue to the next iteration
-  (back to step 3a) using the new job ID.
+- If the review (reused hook or explicit) **passed**: inform the user and
+  stop. The branch or requested commit range is clean.
+- If the review **failed**: continue to the next iteration (back to step 3a)
+  using the new job ID.
 
 ### 4. Iteration limit reached
 
@@ -217,11 +228,12 @@ Agent:
 5. Runs `go test ./...` — passes
 6. Commits changes
 7. Records comment and closes the old review
-8. Runs `roborev wait` and captures the hook review job ID for the new commit
-9. Runs `roborev review --branch --wait`
-10. Closes the hook review job
-11. Full branch review returns Pass
-12. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
+8. Runs `roborev wait` — finds hook review, checks `job.git_ref`:
+   - If branch ref matching scope: reuses it directly
+   - If commit SHA: remembers hook job ID, runs `roborev review --branch --wait`, closes hook job
+   - If no job found: runs `roborev review --branch --wait`
+9. Review passes
+10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
 
 **Refine from a specific starting commit:**
 
@@ -232,10 +244,8 @@ Agent:
 2. Runs `roborev review --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Runs `roborev wait` and captures any hook review job ID for the new commit
-6. Re-reviews with `roborev review --since abc123 --wait`
-7. Closes the hook review job if one was created
-8. Continues until the full requested range passes or 3 iterations are exhausted
+5. Checks for hook review via `roborev wait` — reuses if branch scope matches, otherwise runs explicit `roborev review --since abc123 --wait` and closes any commit-scoped hook review
+6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also
 
