@@ -12,6 +12,22 @@ func (m *model) updateSelectedJobID() {
 	}
 }
 
+// isReviewAnchored reports whether the current view is part of a
+// review-rooted view chain (review, prompt-from-review, log-from-review)
+// where selectedIdx must stay anchored to the displayed review's position.
+func (m model) isReviewAnchored() bool {
+	switch m.currentView {
+	case viewReview:
+		return true
+	case viewKindPrompt:
+		return !m.promptFromQueue
+	case viewLog:
+		return m.logFromView == viewReview
+	default:
+		return false
+	}
+}
+
 // findPrevViewableJob finds the previous (older, lower ID) viewable job.
 // Respects active filters. Returns the index or -1 if none found.
 func (m *model) findPrevViewableJob() int {

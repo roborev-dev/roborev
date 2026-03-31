@@ -98,11 +98,11 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if !found && m.currentView == viewReview {
-			// viewReview: leave selectedIdx/selectedJobID as-is so
-			// ←/→ navigation stays anchored to the displayed review's
-			// position. normalizeSelectionIfHidden adjusts on return
-			// to queue.
+		if !found && m.isReviewAnchored() {
+			// Review-rooted views: leave selectedIdx/selectedJobID
+			// as-is so ←/→ navigation stays anchored to the displayed
+			// review's position. normalizeSelectionIfHidden adjusts
+			// on return to queue.
 		} else if !found {
 			m.selectedIdx = max(0, min(len(m.jobs)-1, m.selectedIdx))
 			if len(m.activeRepoFilter) > 0 || m.hideClosed {
