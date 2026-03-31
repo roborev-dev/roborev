@@ -230,7 +230,7 @@ Agent:
 2. Runs `roborev review --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Checks for hook review via `roborev wait` — reuses if branch scope matches, otherwise runs explicit `roborev review --since abc123 --wait` and closes any commit-scoped hook review
+5. Checks for hook review via `roborev wait` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --since abc123 --wait`
 6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also
