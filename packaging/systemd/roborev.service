@@ -1,0 +1,12 @@
+[Unit]
+Description=roborev code review daemon
+Documentation=https://github.com/roborev-dev/roborev
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/roborev daemon run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
