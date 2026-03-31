@@ -1160,9 +1160,10 @@ func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
 }
 
 func TestAutoClosePassingReviews(t *testing.T) {
-	t.Parallel()
-
-	// Register a test agent whose output parses as a clear pass verdict.
+	// Not parallel at the outer level: Register/Unregister modify the
+	// global agent registry which isn't synchronized. Running this test
+	// sequentially ensures no other test reads the registry concurrently.
+	// Subtests below are still parallel with each other.
 	const passAgentName = "auto-close-pass-agent"
 	agent.Register(&agent.FakeAgent{
 		NameStr: passAgentName,
