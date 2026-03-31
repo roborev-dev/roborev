@@ -156,10 +156,28 @@ func (m *model) logHelpRows() [][]helpItem {
 }
 
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
-// selection is hidden (e.g., marked closed with hideClosed filter active).
+// selection is hidden or out of bounds (e.g., job removed while in review
+// view, or marked closed with hideClosed filter active).
 // Call this when returning to queue view from review view.
 func (m *model) normalizeSelectionIfHidden() {
-	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
+	if len(m.jobs) == 0 {
+		m.selectedIdx = -1
+		m.selectedJobID = 0
+		return
+	}
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) {
+		clamped := max(0, min(len(m.jobs)-1, m.selectedIdx))
+		idx := m.findNearestVisibleJob(clamped)
+		if idx >= 0 {
+			m.selectedIdx = idx
+			m.updateSelectedJobID()
+		} else {
+			m.selectedIdx = -1
+			m.selectedJobID = 0
+		}
+		return
+	}
+	if !m.isJobVisible(m.jobs[m.selectedIdx]) {
 		idx := m.findNearestVisibleJob(m.selectedIdx)
 		if idx >= 0 {
 			m.selectedIdx = idx

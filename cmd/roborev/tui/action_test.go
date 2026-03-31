@@ -483,8 +483,9 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 
 // Regression: closing the last open job from review view, then
 // receiving an SSE-triggered refresh that excludes the closed job,
-// should keep the cursor near the bottom — not jump to the top.
-func TestCloseFromReviewViewRefreshKeepsCursorNearBottom(t *testing.T) {
+// should preserve the anchor so ←/→ navigation and escape-to-queue
+// both land near the bottom — not at the top.
+func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 	assert := assert.New(t)
 
 	// 5 open jobs; user is on the last one (index 4, ID 1).
@@ -525,11 +526,27 @@ func TestCloseFromReviewViewRefreshKeepsCursorNearBottom(t *testing.T) {
 		stats: storage.JobStats{Done: 5, Closed: 1, Open: 4},
 	})
 
-	// Cursor should be on the last job (index 3, ID 2) — not the top.
+	// Anchor should be preserved (out of bounds) so navigation stays
+	// relative to the closed review's original position.
+	assert.Equal(4, m.selectedIdx,
+		"selectedIdx should be unchanged in review view")
+	assert.Equal(int64(1), m.selectedJobID,
+		"selectedJobID should be unchanged in review view")
+
+	// → (next newer) should navigate to the immediate adjacent review
+	// (Job 2 at index 3), not skip it.
+	nextIdx := m.findNextViewableJob()
+	assert.Equal(3, nextIdx,
+		"next viewable should be Job 2 (adjacent to closed Job 1)")
+	assert.Equal(int64(2), m.jobs[nextIdx].ID)
+
+	// Escape to queue: normalizeSelectionIfHidden should clamp to the
+	// nearest visible job near the bottom.
+	m.currentView = viewQueue
+	m.normalizeSelectionIfHidden()
 	assert.Equal(3, m.selectedIdx,
-		"cursor should stay near bottom, not jump to top")
-	assert.Equal(int64(2), m.selectedJobID,
-		"should select the nearest visible job (ID 2)")
+		"escape to queue should land near bottom, not top")
+	assert.Equal(int64(2), m.selectedJobID)
 }
 
 func TestTUISetJobClosedHelper(t *testing.T) {

@@ -98,7 +98,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if !found {
+		if !found && m.currentView == viewQueue {
 			m.selectedIdx = max(0, min(len(m.jobs)-1, m.selectedIdx))
 			if len(m.activeRepoFilter) > 0 || m.hideClosed {
 				idx := m.findNearestVisibleJob(m.selectedIdx)
@@ -112,6 +112,11 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.selectedJobID = m.jobs[m.selectedIdx].ID
 			}
+		} else if !found {
+			// Non-queue views: leave selectedIdx/selectedJobID as-is
+			// so ←/→ navigation stays anchored to the displayed
+			// review's position. normalizeSelectionIfHidden adjusts
+			// on return to queue.
 		} else if !m.isJobVisible(m.jobs[m.selectedIdx]) && m.currentView == viewQueue {
 			// Only adjust selection in queue view. In review/prompt/log
 			// views, ←/→ navigation is relative to the viewed job's
