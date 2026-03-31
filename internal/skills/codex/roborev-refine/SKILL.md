@@ -152,6 +152,18 @@ original refine scope. Do not treat a passing `roborev wait` result for the new
 commit as sufficient to stop — the full branch or commit-range review must pass
 before you report success.
 
+If a post-commit hook may have enqueued a commit-scoped review for the new
+commit, check for it first so you can clean it up afterward:
+
+```bash
+roborev wait
+roborev show --json
+```
+
+If `roborev wait` finds a review for `HEAD`, extract its `job_id` from
+`roborev show --json` and remember it as the hook review job. If `roborev wait`
+reports "No job found", continue without a hook review job.
+
 If refining with `--since`:
 
 ```bash
@@ -170,6 +182,14 @@ full-scope review above before deciding that refinement is complete.
 
 **Retrieving the job ID:** extract it from the
 `Enqueued job <id> for ...` line in the explicit review command output.
+
+If you recorded a hook review job earlier, close it after the explicit
+full-scope review completes so refine does not leave stale commit-level reviews
+open:
+
+```bash
+roborev close <hook_job_id>
+```
 
 - If the explicit full-scope review **passed**: inform the user and stop. The
   branch or requested commit range is clean.
@@ -197,9 +217,11 @@ Agent:
 5. Runs `go test ./...` — passes
 6. Commits changes
 7. Records comment and closes the old review
-8. Runs `roborev review --branch --wait`
-9. Full branch review returns Pass
-10. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
+8. Runs `roborev wait` and captures the hook review job ID for the new commit
+9. Runs `roborev review --branch --wait`
+10. Closes the hook review job
+11. Full branch review returns Pass
+12. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
 
 **Refine from a specific starting commit:**
 
@@ -210,8 +232,10 @@ Agent:
 2. Runs `roborev review --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Re-reviews with `roborev review --since abc123 --wait`
-6. Continues until the full requested range passes or 3 iterations are exhausted
+5. Runs `roborev wait` and captures any hook review job ID for the new commit
+6. Re-reviews with `roborev review --since abc123 --wait`
+7. Closes the hook review job if one was created
+8. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also
 
