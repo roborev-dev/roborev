@@ -549,6 +549,66 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 	assert.Equal(int64(2), m.selectedJobID)
 }
 
+// Regression: prompt view opened from queue should normalize selection
+// when a refresh removes the viewed job, so esc/q doesn't leave stale
+// selectedIdx.
+func TestPromptFromQueueRefreshNormalizesSelection(t *testing.T) {
+	assert := assert.New(t)
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewKindPrompt
+		m.promptFromQueue = true
+		m.hideClosed = true
+		m.selectedIdx = 2
+		m.selectedJobID = 1
+	})
+
+	// Refresh removes Job 1 (server-side filter).
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+	})
+
+	// Unlike viewReview, prompt view should clamp selection.
+	assert.True(m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs),
+		"selectedIdx should be in bounds after refresh in prompt view")
+}
+
+// Regression: log view should normalize selection when a refresh removes
+// the viewed job, so esc/q doesn't leave stale selectedIdx.
+func TestLogViewRefreshNormalizesSelection(t *testing.T) {
+	assert := assert.New(t)
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewLog
+		m.logFromView = viewQueue
+		m.hideClosed = true
+		m.selectedIdx = 2
+		m.selectedJobID = 1
+	})
+
+	// Refresh removes Job 1.
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+	})
+
+	assert.True(m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs),
+		"selectedIdx should be in bounds after refresh in log view")
+}
+
 func TestTUISetJobClosedHelper(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
