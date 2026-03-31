@@ -78,12 +78,43 @@ func TestDefaultSocketPath(t *testing.T) {
 	}
 
 	t.Run("UsesXDGRuntimeDirWhenSet", func(t *testing.T) {
-		t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+		// Use a short path so the socket path stays under MaxUnixPathLen
+		// (104 on macOS). t.TempDir() paths are too long on macOS.
+		dir, err := os.MkdirTemp("/tmp", "rr-xdg-*")
+		require.NoError(t, err)
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		t.Setenv("XDG_RUNTIME_DIR", dir)
 		path := DefaultSocketPath()
 		assert.Less(t, len(path), MaxUnixPathLen,
 			"default socket path %q (%d bytes) exceeds limit %d",
 			path, len(path), MaxUnixPathLen)
-		assert.Equal(t, "/run/user/1000/roborev/daemon.sock", path)
+		assert.Equal(t, filepath.Join(dir, "roborev", "daemon.sock"), path)
+	})
+
+	t.Run("FallsBackWhenXDGIsRelative", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "relative/path")
+		path := DefaultSocketPath()
+		assert.NotContains(t, path, "relative/path",
+			"should fall back to tempdir for relative XDG_RUNTIME_DIR")
+		assert.Contains(t, path, fmt.Sprintf("roborev-%d", os.Getuid()))
+	})
+
+	t.Run("FallsBackWhenXDGDoesNotExist", func(t *testing.T) {
+		t.Setenv("XDG_RUNTIME_DIR", "/nonexistent-roborev-test-dir")
+		path := DefaultSocketPath()
+		assert.NotContains(t, path, "nonexistent-roborev-test-dir",
+			"should fall back to tempdir for missing XDG_RUNTIME_DIR")
+		assert.Contains(t, path, fmt.Sprintf("roborev-%d", os.Getuid()))
+	})
+
+	t.Run("FallsBackWhenXDGIsAFile", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "not-a-dir")
+		require.NoError(t, os.WriteFile(f, nil, 0o600))
+		t.Setenv("XDG_RUNTIME_DIR", f)
+		path := DefaultSocketPath()
+		assert.NotContains(t, path, "not-a-dir",
+			"should fall back to tempdir when XDG_RUNTIME_DIR is a file")
+		assert.Contains(t, path, fmt.Sprintf("roborev-%d", os.Getuid()))
 	})
 
 	t.Run("FallsBackWhenXDGPathTooLong", func(t *testing.T) {
