@@ -93,7 +93,11 @@ type SessionAgent interface {
 }
 
 // Registry holds available agents
-var registry = make(map[string]Agent)
+var (
+	registryMu sync.RWMutex
+	registry   = make(map[string]Agent)
+)
+
 var allowUnsafeAgents atomic.Bool
 var anthropicAPIKey atomic.Value
 
@@ -140,13 +144,17 @@ func CanonicalName(name string) string {
 
 // Register adds an agent to the registry
 func Register(a Agent) {
+	registryMu.Lock()
 	registry[a.Name()] = a
+	registryMu.Unlock()
 }
 
 // Get returns an agent by name (supports aliases like "claude" for "claude-code")
 func Get(name string) (Agent, error) {
 	name = resolveAlias(name)
+	registryMu.RLock()
 	a, ok := registry[name]
+	registryMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown agent: %s", name)
 	}
@@ -155,10 +163,12 @@ func Get(name string) (Agent, error) {
 
 // Available returns the names of all registered agents
 func Available() []string {
+	registryMu.RLock()
 	names := make([]string, 0, len(registry))
 	for name := range registry {
 		names = append(names, name)
 	}
+	registryMu.RUnlock()
 	return names
 }
 
@@ -166,7 +176,9 @@ func Available() []string {
 // Supports aliases like "claude" for "claude-code"
 func IsAvailable(name string) bool {
 	name = resolveAlias(name)
+	registryMu.RLock()
 	a, ok := registry[name]
+	registryMu.RUnlock()
 	if !ok {
 		return false
 	}
@@ -195,7 +207,10 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 	// Reject unknown agent names (typos, config mistakes).
 	// Known-but-unavailable agents still fall back below.
 	if preferred != "" {
-		if _, ok := registry[preferred]; !ok {
+		registryMu.RLock()
+		_, ok := registry[preferred]
+		registryMu.RUnlock()
+		if !ok {
 			known := Available()
 			sort.Strings(known)
 			return nil, &UnknownAgentError{
@@ -216,7 +231,10 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		if b == "" || b == preferred {
 			continue
 		}
-		if _, ok := registry[b]; ok && IsAvailable(b) {
+		registryMu.RLock()
+		_, ok := registry[b]
+		registryMu.RUnlock()
+		if ok && IsAvailable(b) {
 			return Get(b)
 		}
 	}
@@ -229,11 +247,13 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 
 	// List what's actually available for error message (exclude test agent)
 	var available []string
+	registryMu.RLock()
 	for name := range registry {
 		if name != "test" && IsAvailable(name) {
 			available = append(available, name)
 		}
 	}
+	registryMu.RUnlock()
 
 	if len(available) == 0 {
 		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))
@@ -268,5 +288,7 @@ func (sw *syncWriter) Write(p []byte) (n int, err error) {
 
 // Unregister removes an agent from the registry (useful for testing)
 func Unregister(name string) {
+	registryMu.Lock()
 	delete(registry, name)
+	registryMu.Unlock()
 }

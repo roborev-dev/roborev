@@ -58,7 +58,10 @@ func resolveAvailableBackupWithConfig(preferred string, backups []string, cfg *c
 		if backup == "" || backup == preferred {
 			continue
 		}
-		if _, ok := registry[backup]; ok && isAvailableWithConfig(backup, cfg) {
+		registryMu.RLock()
+		_, inReg := registry[backup]
+		registryMu.RUnlock()
+		if inReg && isAvailableWithConfig(backup, cfg) {
 			agent, _ := Get(backup)
 			return applyCommandOverrides(agent, cfg), true
 		}
@@ -72,7 +75,9 @@ func resolveAvailableBackupWithConfig(preferred string, backups []string, cfg *c
 // available even when the default command isn't in PATH.
 func isAvailableWithConfig(name string, cfg *config.Config) bool {
 	name = resolveAlias(name)
+	registryMu.RLock()
 	a, ok := registry[name]
+	registryMu.RUnlock()
 	if !ok {
 		return false
 	}
@@ -132,7 +137,10 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 	// claude_code_cmd = "/usr/local/bin/claude-wrapper") would be
 	// missed when the default binary isn't in PATH.
 	if preferred != "" && cfg != nil {
-		if _, ok := registry[preferred]; !ok {
+		registryMu.RLock()
+		_, knownAgent := registry[preferred]
+		registryMu.RUnlock()
+		if !knownAgent {
 			// Unknown agent — let GetAvailable produce the error.
 			return GetAvailable(preferred, backups...)
 		}
