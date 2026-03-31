@@ -549,6 +549,54 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 	assert.Equal(int64(2), m.selectedJobID)
 }
 
+// Regression: when a job is removed from the middle of the list while
+// in a review-anchored view, selectedIdx stays in bounds but points to
+// a different job. normalizeSelectionIfHidden must resync selectedJobID.
+func TestNormalizeResyncsStaleJobID(t *testing.T) {
+	assert := assert.New(t)
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewReview
+		m.hideClosed = true
+		m.selectedIdx = 2
+		m.selectedJobID = 3
+		m.currentReview = &storage.Review{
+			ID:  10,
+			Job: &storage.ReviewJob{ID: 3, Status: storage.JobStatusDone},
+		}
+		m.pendingClosed = make(map[int64]pendingState)
+		m.pendingReviewClosed = make(map[int64]pendingState)
+	})
+
+	// Refresh removes Job 3 from the middle.
+	m, _ = updateModel(t, m, jobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		},
+	})
+
+	// Anchor preserved in review view (selectedIdx=2, selectedJobID=3).
+	assert.Equal(2, m.selectedIdx)
+	assert.Equal(int64(3), m.selectedJobID)
+
+	// Escape to queue: selectedIdx=2 is in bounds but points to Job 2.
+	// normalizeSelectionIfHidden must resync selectedJobID.
+	m.currentView = viewQueue
+	m.normalizeSelectionIfHidden()
+	assert.Equal(2, m.selectedIdx)
+	assert.Equal(int64(2), m.selectedJobID,
+		"selectedJobID should be resynced to match jobs[selectedIdx]")
+}
+
 // Regression: prompt view opened from review should preserve the anchor
 // so esc back to review keeps ←/→ navigation correct.
 func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {

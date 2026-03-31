@@ -199,6 +199,10 @@ func (m *model) normalizeSelectionIfHidden() {
 			m.selectedIdx = idx
 			m.updateSelectedJobID()
 		}
+	} else if m.selectedJobID != m.jobs[m.selectedIdx].ID {
+		// Resync stale selectedJobID (e.g., a job was removed from
+		// the middle while in a review-anchored view).
+		m.updateSelectedJobID()
 	}
 }
 
