@@ -2015,7 +2015,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 	var responses []storage.Response
 	var err error
 
-	// Support lookup by job_id (preferred) or sha (legacy)
+	// Support lookup by job_id (preferred), commit_id, or sha (legacy)
 	if jobIDStr := r.URL.Query().Get("job_id"); jobIDStr != "" {
 		jobID, parseErr := strconv.ParseInt(jobIDStr, 10, 64)
 		if parseErr != nil {
@@ -2027,6 +2027,17 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("get responses: %v", err))
 			return
 		}
+	} else if cidStr := r.URL.Query().Get("commit_id"); cidStr != "" {
+		commitID, parseErr := strconv.ParseInt(cidStr, 10, 64)
+		if parseErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid commit_id")
+			return
+		}
+		responses, err = s.db.GetCommentsForCommit(commitID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("get responses: %v", err))
+			return
+		}
 	} else if sha := r.URL.Query().Get("sha"); sha != "" {
 		responses, err = s.db.GetCommentsForCommitSHA(sha)
 		if err != nil {
@@ -2034,7 +2045,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		writeError(w, http.StatusBadRequest, "job_id or sha parameter required")
+		writeError(w, http.StatusBadRequest, "job_id, commit_id, or sha parameter required")
 		return
 	}
 

@@ -149,27 +149,14 @@ Examples:
 				fmt.Println(review.Output)
 			}
 
-			// Fetch and display comments
-			commentsURL := addr + fmt.Sprintf(
-				"/api/comments?job_id=%d", review.JobID,
-			)
-			commentsResp, cErr := client.Get(commentsURL)
-			if cErr == nil {
-				defer commentsResp.Body.Close()
-				if commentsResp.StatusCode == http.StatusOK {
-					var result struct {
-						Responses []storage.Response `json:"responses"`
-					}
-					if json.NewDecoder(commentsResp.Body).Decode(&result) == nil &&
-						len(result.Responses) > 0 {
-						fmt.Println()
-						fmt.Println("--- Comments ---")
-						for _, r := range result.Responses {
-							ts := r.CreatedAt.Format("Jan 02 15:04")
-							fmt.Printf("\n[%s] %s:\n", ts, r.Responder)
-							fmt.Println(r.Response)
-						}
-					}
+			// Fetch and display comments (including legacy commit-based)
+			if allComments := fetchShowComments(client, addr, review); len(allComments) > 0 {
+				fmt.Println()
+				fmt.Println("--- Comments ---")
+				for _, r := range allComments {
+					ts := r.CreatedAt.Format("Jan 02 15:04")
+					fmt.Printf("\n[%s] %s:\n", ts, r.Responder)
+					fmt.Println(r.Response)
 				}
 			}
 
@@ -211,11 +198,17 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 		}
 	}
 
-	// Also fetch legacy SHA-based comments for single commits
-	if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
-		shaURL := addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
-		if resp, err := client.Get(shaURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not fetch legacy comments for %s: %v\n", review.Job.GitRef, err)
+	// Also fetch legacy commit-based comments and merge.
+	// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
+	var legacyURL string
+	if review.Job != nil && review.Job.CommitID != nil {
+		legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", *review.Job.CommitID)
+	} else if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
+		legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
+	}
+	if legacyURL != "" {
+		if resp, err := client.Get(legacyURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch legacy comments: %v\n", err)
 		} else if resp != nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

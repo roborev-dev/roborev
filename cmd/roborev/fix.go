@@ -844,12 +844,16 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
-	// Fetch user comments for context (including legacy SHA-based comments)
+	// Fetch user comments for context (including legacy commit-based comments)
+	var commitID int64
 	var gitRef string
 	if job != nil {
+		if job.CommitID != nil {
+			commitID = *job.CommitID
+		}
 		gitRef = job.GitRef
 	}
-	comments, commentsErr := fetchComments(ctx, addr, jobID, gitRef)
+	comments, commentsErr := fetchComments(ctx, addr, jobID, commitID, gitRef)
 	if commentsErr != nil && !opts.quiet {
 		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
 	}
@@ -1016,11 +1020,15 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			continue
 		}
+		var batchCommitID int64
 		var batchGitRef string
 		if job != nil {
+			if job.CommitID != nil {
+				batchCommitID = *job.CommitID
+			}
 			batchGitRef = job.GitRef
 		}
-		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchGitRef)
+		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchCommitID, batchGitRef)
 		if commentsErr != nil && !opts.quiet {
 			cmd.Printf("Warning: could not fetch comments for job %d: %v\n", id, commentsErr)
 		}
@@ -1300,8 +1308,8 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 }
 
 // fetchComments retrieves comments/responses for a job, including legacy
-// SHA-based comments when gitRef refers to a single commit (mirroring
-// the TUI's loadResponses merge logic).
+// commit-based comments. Prefers commit_id (unambiguous) when available,
+// falls back to SHA for legacy jobs without commit linkage.
 //
 // NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
@@ -1309,7 +1317,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 //   - cmd/roborev/tui/fetch.go     loadResponses()
 //
 // Keep all four in sync when changing the merge logic.
-func fetchComments(ctx context.Context, serverAddr string, jobID int64, gitRef string) ([]storage.Response, error) {
+func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
 		client := getDaemonHTTPClient(30 * time.Second)
 
@@ -1338,24 +1346,30 @@ func fetchComments(ctx context.Context, serverAddr string, jobID int64, gitRef s
 		}
 		responses := result.Responses
 
-		// Also fetch legacy SHA-based comments for single commits
-		// (not ranges or dirty reviews) and merge with job responses.
-		if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
-			shaReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef), nil)
+		// Also fetch legacy commit-based comments and merge.
+		// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
+		var legacyURL string
+		if commitID > 0 {
+			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
+		} else if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
+			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
+		}
+		if legacyURL != "" {
+			legacyReq, err := http.NewRequestWithContext(ctx, "GET", legacyURL, nil)
 			if err == nil {
-				shaResp, err := client.Do(shaReq)
+				legacyResp, err := client.Do(legacyReq)
 				if err == nil {
-					defer shaResp.Body.Close()
-					if shaResp.StatusCode == http.StatusOK {
-						var shaResult struct {
+					defer legacyResp.Body.Close()
+					if legacyResp.StatusCode == http.StatusOK {
+						var legacyResult struct {
 							Responses []storage.Response `json:"responses"`
 						}
-						if json.NewDecoder(shaResp.Body).Decode(&shaResult) == nil {
+						if json.NewDecoder(legacyResp.Body).Decode(&legacyResult) == nil {
 							seen := make(map[int64]bool)
 							for _, r := range responses {
 								seen[r.ID] = true
 							}
-							for _, r := range shaResult.Responses {
+							for _, r := range legacyResult.Responses {
 								if !seen[r.ID] {
 									seen[r.ID] = true
 									responses = append(responses, r)
