@@ -530,6 +530,12 @@ func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 // commit-based comments when commitID is non-zero. Uses commit_id
 // directly rather than SHA to avoid ambiguity when the same SHA
 // exists in multiple repos.
+//
+// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in two HTTP-
+// based callers that can't use the DB directly:
+//   - cmd/roborev/fix.go   fetchComments()
+//   - cmd/roborev/show.go  fetchShowComments()
+// Keep all three in sync when changing the merge logic.
 func (db *DB) GetAllCommentsForJob(jobID, commitID int64) ([]Response, error) {
 	responses, err := db.GetCommentsForJob(jobID)
 	if err != nil {

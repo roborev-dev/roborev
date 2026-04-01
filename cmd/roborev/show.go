@@ -185,6 +185,11 @@ Examples:
 
 // fetchShowComments retrieves comments for a review, merging legacy
 // SHA-based comments for single-commit reviews (mirroring TUI/CLI fix).
+//
+// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
+//   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
+//   - cmd/roborev/fix.go           fetchComments()
+// Keep all three in sync when changing the merge logic.
 func fetchShowComments(client *http.Client, addr string, review storage.Review) []storage.Response {
 	var responses []storage.Response
 

@@ -1302,6 +1302,11 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 // fetchComments retrieves comments/responses for a job, including legacy
 // SHA-based comments when gitRef refers to a single commit (mirroring
 // the TUI's loadResponses merge logic).
+//
+// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
+//   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
+//   - cmd/roborev/show.go          fetchShowComments()
+// Keep all three in sync when changing the merge logic.
 func fetchComments(ctx context.Context, serverAddr string, jobID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
 		client := getDaemonHTTPClient(30 * time.Second)
