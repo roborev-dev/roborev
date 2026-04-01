@@ -411,9 +411,9 @@ func ciGitHubClient() (*ghpkg.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Resolve the hostname for gh auth token --hostname so the
-	// CLI fallback fetches the Enterprise-specific token.
-	host := ghpkg.DefaultGitHubHost()
+	// Derive hostname from the resolved API base URL so the
+	// gh auth token fallback targets the same host as the client.
+	host := ghpkg.HostnameFromAPIBaseURL(apiBaseURL)
 	token := ghpkg.ResolveAuthToken(context.Background(), ghpkg.EnvironmentToken(), host)
 	if token == "" {
 		return nil, fmt.Errorf("GitHub authentication required: set GH_TOKEN or GITHUB_TOKEN, or authenticate with gh auth login")

@@ -763,6 +763,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add prompt_prebuilt column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'prompt_prebuilt'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check prompt_prebuilt column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN prompt_prebuilt INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("add prompt_prebuilt column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

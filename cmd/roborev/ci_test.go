@@ -302,6 +302,18 @@ func TestCIGitHubClient_UsesGHAuthTokenFallback(t *testing.T) {
 	require.NotNil(t, client)
 }
 
+func TestCIGitHubClient_UsesGitHubAPIURLForHostname(t *testing.T) {
+	installFakeGHAuthToken(t, "enterprise-token")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_HOST", "")
+	t.Setenv("GITHUB_API_URL", "https://ghe.example.com/api/v3/")
+
+	client, err := ciGitHubClient()
+	require.NoError(t, err)
+	require.NotNil(t, client)
+}
+
 func TestResolveCIMinSeverity(t *testing.T) {
 	t.Run("explicit flag wins", func(t *testing.T) {
 		got, err := config.ResolveCIMinSeverity("HIGH", nil, nil)

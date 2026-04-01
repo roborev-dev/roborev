@@ -382,8 +382,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var promptToPersist string
 	storedPromptValue := job.Prompt
 	var err error
-	if job.JobType == storage.JobTypeRange && storedPromptValue != "" {
-		// CI-enqueued range review with prebuilt prompt (includes PR
+	if job.PromptPrebuilt && storedPromptValue != "" {
+		// CI-enqueued review with prebuilt prompt (includes PR
 		// discussion context and system prompt). Use as-is so the
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue

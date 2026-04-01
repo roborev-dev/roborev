@@ -32,6 +32,7 @@ type reviewJobScanFields struct {
 	OutputPrefix      sql.NullString
 	TokenUsage        sql.NullString
 	Agentic           int
+	PromptPrebuilt    int
 	Closed            sql.NullInt64
 	WorktreePath      string
 }
@@ -101,6 +102,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.TokenUsage = fields.TokenUsage.String
 	}
 	job.Agentic = fields.Agentic != 0
+	job.PromptPrebuilt = fields.PromptPrebuilt != 0
 	if fields.EnqueuedAt != "" {
 		job.EnqueuedAt = parseSQLiteTime(fields.EnqueuedAt)
 	}

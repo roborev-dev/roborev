@@ -630,14 +630,15 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:     repo.ID,
-			GitRef:     gitRef,
-			Agent:      resolvedAgent,
-			Model:      resolvedModel,
-			Reasoning:  reasoning,
-			ReviewType: rt,
-			Prompt:     storedPrompt,
-			JobType:    storage.JobTypeRange,
+			RepoID:         repo.ID,
+			GitRef:         gitRef,
+			Agent:          resolvedAgent,
+			Model:          resolvedModel,
+			Reasoning:      reasoning,
+			ReviewType:     rt,
+			Prompt:         storedPrompt,
+			PromptPrebuilt: storedPrompt != "",
+			JobType:        storage.JobTypeRange,
 		})
 		if err != nil {
 			rollback("Review enqueue failed")

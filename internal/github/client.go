@@ -110,6 +110,26 @@ func DefaultGitHubHost() string {
 	return defaultGitHubHost()
 }
 
+// HostnameFromAPIBaseURL extracts the hostname from a resolved API
+// base URL (e.g., "https://api.github.com/" → "github.com",
+// "https://ghe.example.com/api/v3/" → "ghe.example.com"). Falls
+// back to DefaultGitHubHost when the URL is empty or unparseable.
+func HostnameFromAPIBaseURL(apiBaseURL string) string {
+	apiBaseURL = strings.TrimSpace(apiBaseURL)
+	if apiBaseURL == "" {
+		return defaultGitHubHost()
+	}
+	parsed, err := url.Parse(apiBaseURL)
+	if err != nil || parsed.Host == "" {
+		return defaultGitHubHost()
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "api.github.com") {
+		return "github.com"
+	}
+	return host
+}
+
 func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	cfg := clientOptions{}
 	for _, opt := range opts {

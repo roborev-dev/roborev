@@ -139,6 +139,31 @@ func TestCloneURLForBase_UsesEnterpriseHost(t *testing.T) {
 	assert.Equal(t, "https://ghe.example.com/owner/repo.git", plain)
 }
 
+func TestHostnameFromAPIBaseURL(t *testing.T) {
+	t.Setenv("GH_HOST", "")
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"public api", "https://api.github.com/", "github.com"},
+		{"enterprise", "https://ghe.example.com/api/v3/", "ghe.example.com"},
+		{"enterprise no trailing slash", "https://ghe.corp.net/api/v3", "ghe.corp.net"},
+		{"empty falls back to default", "", "github.com"},
+		{"invalid falls back to default", "://bad", "github.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, HostnameFromAPIBaseURL(tt.url))
+		})
+	}
+}
+
+func TestHostnameFromAPIBaseURL_RespectsGHHost(t *testing.T) {
+	t.Setenv("GH_HOST", "ghe.fallback.com")
+	assert.Equal(t, "ghe.fallback.com", HostnameFromAPIBaseURL(""))
+}
+
 func TestGitAuthEnv_UsesTransientExtraHeader(t *testing.T) {
 	baseEnv := []string{"PATH=" + os.Getenv("PATH")}
 

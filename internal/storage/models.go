@@ -70,6 +70,7 @@ type ReviewJob struct {
 	RetryCount        int        `json:"retry_count"`
 	DiffContent       *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
 	Agentic           bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
+	PromptPrebuilt    bool       `json:"prompt_prebuilt"`         // Prompt was set at enqueue time and should be used as-is
 	ReviewType        string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
 	PatchID           string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix      string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output

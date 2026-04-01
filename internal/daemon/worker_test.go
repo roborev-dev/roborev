@@ -448,12 +448,13 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	t.Cleanup(func() { agent.Unregister(agentName) })
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   tc.Repo.ID,
-		CommitID: commit.ID,
-		GitRef:   sha,
-		Agent:    agentName,
-		Prompt:   "review body\n<untrusted-pr-discussion>\n<comment>latest</comment>\n</untrusted-pr-discussion>\n",
-		JobType:  storage.JobTypeRange,
+		RepoID:         tc.Repo.ID,
+		CommitID:       commit.ID,
+		GitRef:         sha,
+		Agent:          agentName,
+		Prompt:         "review body\n<untrusted-pr-discussion>\n<comment>latest</comment>\n</untrusted-pr-discussion>\n",
+		PromptPrebuilt: true,
+		JobType:        storage.JobTypeRange,
 	})
 	require.NoError(t, err)
 
