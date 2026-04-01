@@ -1017,6 +1017,37 @@ func TestReenqueueJob_ClearsPrebuiltPrompt(t *testing.T) {
 	assert.Empty(t, updated.Prompt, "rerun should clear stored prompt")
 }
 
+func TestReenqueueJob_PreservesTaskPrompt(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/rerun-task")
+	taskPrompt := "analyze the codebase for unused exports"
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:  repo.ID,
+		GitRef:  "prompt",
+		Agent:   "test",
+		Prompt:  taskPrompt,
+		JobType: JobTypeTask,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, taskPrompt, job.Prompt)
+
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "test", taskPrompt, "task output"))
+
+	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
+	require.NoError(t, err)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, updated.Status)
+	assert.Equal(t, taskPrompt, updated.Prompt, "rerun should preserve task prompt")
+}
+
 func TestEnqueueJobWithPatchID(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
