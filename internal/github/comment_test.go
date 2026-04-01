@@ -3,351 +3,391 @@ package github
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	googlegithub "github.com/google/go-github/v84/github"
 	"github.com/roborev-dev/roborev/internal/review"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestHelperProcess(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER_PROCESS") != "1" {
+type commentAPIServer struct {
+	t *testing.T
+
+	wantAuth string
+
+	issueCommentsByPR  map[int][]*googlegithub.IssueComment
+	reviewsByPR        map[int][]*googlegithub.PullRequestReview
+	inlineCommentsByPR map[int][]*googlegithub.PullRequestComment
+	collaborators      []*googlegithub.User
+
+	listIssueStatus int
+	createStatus    int
+	patchStatus     int
+
+	createdBodies []string
+	patchedBodies []string
+}
+
+func newCommentAPIServer(t *testing.T) *commentAPIServer {
+	t.Helper()
+	return &commentAPIServer{
+		t:                  t,
+		issueCommentsByPR:  make(map[int][]*googlegithub.IssueComment),
+		reviewsByPR:        make(map[int][]*googlegithub.PullRequestReview),
+		inlineCommentsByPR: make(map[int][]*googlegithub.PullRequestComment),
+	}
+}
+
+func (s *commentAPIServer) handler(w http.ResponseWriter, r *http.Request) {
+	s.t.Helper()
+	if s.wantAuth != "" {
+		assert.Equal(s.t, s.wantAuth, r.Header.Get("Authorization"))
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/1/comments":
+		s.writeIssueComments(w, 1)
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/17/comments":
+		s.writeIssueComments(w, 17)
+	case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/1/comments":
+		s.captureCreate(w, r)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/owner/repo/issues/comments/"):
+		s.capturePatch(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/pulls/17/reviews":
+		assert.NoError(s.t, json.NewEncoder(w).Encode(s.reviewsByPR[17]))
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/pulls/17/comments":
+		assert.NoError(s.t, json.NewEncoder(w).Encode(s.inlineCommentsByPR[17]))
+	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/collaborators":
+		assert.NoError(s.t, json.NewEncoder(w).Encode(s.collaborators))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *commentAPIServer) writeIssueComments(w http.ResponseWriter, prNumber int) {
+	if s.listIssueStatus != 0 {
+		w.WriteHeader(s.listIssueStatus)
+		_, _ = w.Write([]byte(`{"message":"list failed"}`))
 		return
 	}
+	assert.NoError(s.t, json.NewEncoder(w).Encode(s.issueCommentsByPR[prNumber]))
+}
 
-	_ = os.Args
-
-	action := os.Getenv("GH_HELPER_ACTION")
-	switch action {
-	case "find_none":
-
-		os.Exit(0)
-	case "find_existing":
-		fmt.Print("42")
-		os.Exit(0)
-	case "create_ok":
-		os.Exit(0)
-	case "patch_ok":
-		os.Exit(0)
-	case "find_fail":
-		fmt.Fprint(os.Stderr, "API rate limit exceeded")
-		os.Exit(1)
-	case "create_fail":
-		fmt.Fprint(os.Stderr, "gh pr comment failed")
-		os.Exit(1)
-	case "patch_fail":
-		fmt.Fprint(os.Stderr, "gh api PATCH failed")
-		os.Exit(1)
-	case "patch_fail_403":
-		fmt.Fprint(os.Stderr, "HTTP 403: Resource not accessible by integration")
-		os.Exit(1)
-	case "patch_fail_404":
-		fmt.Fprint(os.Stderr, "HTTP 404: Not Found")
-		os.Exit(1)
-	case "find_multi_line":
-
-		fmt.Print("10\n20\n30\n")
-		os.Exit(0)
-	case "capture_stdin":
-
-		data, _ := io.ReadAll(os.Stdin)
-		path := os.Getenv("GH_CAPTURE_FILE")
-		if path != "" {
-			_ = os.WriteFile(path, data, 0o644)
-		}
-		os.Exit(0)
-	case "check_env":
-		token := os.Getenv("GH_TOKEN")
-		if token == "" {
-			fmt.Fprint(os.Stderr, "GH_TOKEN not set")
-			os.Exit(1)
-		}
-		fmt.Print(token)
-		os.Exit(0)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown action: %s", action)
-		os.Exit(2)
+func mustParseTime(raw string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		panic(err)
 	}
+	return parsed
 }
 
-func helperCmd(action string, extraEnv ...string) func(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--"}
-		cs = append(cs, args...)
-		cmd := exec.CommandContext(ctx, os.Args[0], cs...)
-		cmd.Env = append(os.Environ(),
-			"GO_TEST_HELPER_PROCESS=1",
-			"GH_HELPER_ACTION="+action,
-		)
-		cmd.Env = append(cmd.Env, extraEnv...)
-		return cmd
+func (s *commentAPIServer) captureCreate(w http.ResponseWriter, r *http.Request) {
+	if s.createStatus == 0 {
+		s.createStatus = http.StatusCreated
 	}
+	var payload struct {
+		Body string `json:"body"`
+	}
+	assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&payload))
+	s.createdBodies = append(s.createdBodies, payload.Body)
+	w.WriteHeader(s.createStatus)
+	assert.NoError(s.t, json.NewEncoder(w).Encode(&googlegithub.IssueComment{
+		ID:   ptr(int64(999)),
+		Body: ptr(payload.Body),
+	}))
 }
 
-func setExecCommand(t *testing.T, fn func(context.Context, string, ...string) *exec.Cmd) {
-	t.Helper()
-	orig := execCommand
-	execCommand = fn
-	t.Cleanup(func() { execCommand = orig })
+func (s *commentAPIServer) capturePatch(w http.ResponseWriter, r *http.Request) {
+	if s.patchStatus == 0 {
+		s.patchStatus = http.StatusOK
+	}
+	var payload struct {
+		Body string `json:"body"`
+	}
+	assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&payload))
+	s.patchedBodies = append(s.patchedBodies, payload.Body)
+	w.WriteHeader(s.patchStatus)
+	assert.NoError(s.t, json.NewEncoder(w).Encode(&googlegithub.IssueComment{
+		ID:   ptr(int64(42)),
+		Body: ptr(payload.Body),
+	}))
 }
 
-// mockGHSequence sets up execCommand to return a different helperCmd
-// action for each successive call, cycling through the given actions
-// in order. It returns a pointer to the call count for assertions.
-func mockGHSequence(t *testing.T, actions ...string) *int {
+func newTestGitHubClient(t *testing.T, token string, server *httptest.Server) *Client {
 	t.Helper()
-	callCount := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		idx := callCount - 1
-		if idx >= len(actions) {
-			idx = len(actions) - 1
-		}
-		return helperCmd(actions[idx])(ctx, name, args...)
-	})
-	return &callCount
+	client, err := NewClient(token, WithBaseURL(server.URL+"/"))
+	require.NoError(t, err)
+	return client
 }
 
-// setupCaptureMock sets up execCommand so that the first len(prefixActions)
-// calls use the given actions, and subsequent calls use "capture_stdin"
-// writing stdin to a temp file. It returns the capture file path and a
-// pointer to the call count.
-func setupCaptureMock(t *testing.T, prefixActions ...string) (captureFile string, callCount *int) {
-	t.Helper()
-	captureFile = filepath.Join(t.TempDir(), "stdin.txt")
-	count := 0
-	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		count++
-		if count <= len(prefixActions) {
-			return helperCmd(prefixActions[count-1])(ctx, name, args...)
-		}
-		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
-	})
-	return captureFile, &count
+func issueComment(id int64, body, login, userType, createdAt string) *googlegithub.IssueComment {
+	comment := &googlegithub.IssueComment{
+		ID:   ptr(id),
+		Body: ptr(body),
+		User: &googlegithub.User{
+			Login: ptr(login),
+			Type:  ptr(userType),
+		},
+	}
+	if createdAt != "" {
+		comment.CreatedAt = &googlegithub.Timestamp{Time: mustParseTime(createdAt)}
+	}
+	return comment
 }
 
-// readCapturedBody reads the captured stdin from a file written by the
-// "capture_stdin" helper process.
-func readCapturedBody(t *testing.T, captureFile string) string {
-	t.Helper()
-	data, err := os.ReadFile(captureFile)
-	require.NoError(t, err, "read capture file")
-	return string(data)
+func reviewComment(body, login, userType, submittedAt string) *googlegithub.PullRequestReview {
+	review := &googlegithub.PullRequestReview{
+		Body: ptr(body),
+		User: &googlegithub.User{
+			Login: ptr(login),
+			Type:  ptr(userType),
+		},
+	}
+	if submittedAt != "" {
+		review.SubmittedAt = &googlegithub.Timestamp{Time: mustParseTime(submittedAt)}
+	}
+	return review
 }
 
-// assertTruncatedBody verifies that body starts with CommentMarker,
-// contains the truncation notice, does not exceed review.MaxCommentLen,
-// and is valid UTF-8.
-func assertTruncatedBody(t *testing.T, body string) {
-	t.Helper()
-	require.True(t, strings.HasPrefix(body, CommentMarker),
-		"body should start with CommentMarker, got prefix: %q", body[:min(80, len(body))])
-	require.Contains(t, body, "truncated",
-		"truncated body should contain truncation notice")
-	require.LessOrEqual(t, len(body), review.MaxCommentLen,
-		"truncated body len %d exceeds MaxCommentLen %d", len(body), review.MaxCommentLen)
-	require.True(t, utf8.ValidString(body),
-		"truncated body must be valid UTF-8")
+func inlineComment(body, login, userType, createdAt, path string, line, originalLine int) *googlegithub.PullRequestComment {
+	comment := &googlegithub.PullRequestComment{
+		Body: ptr(body),
+		Path: ptr(path),
+		Line: ptr(line),
+		User: &googlegithub.User{
+			Login: ptr(login),
+			Type:  ptr(userType),
+		},
+	}
+	if originalLine > 0 {
+		comment.OriginalLine = ptr(originalLine)
+	}
+	if createdAt != "" {
+		comment.CreatedAt = &googlegithub.Timestamp{Time: mustParseTime(createdAt)}
+	}
+	return comment
+}
+
+func collaborator(login, roleName string) *googlegithub.User {
+	return &googlegithub.User{
+		Login:    ptr(login),
+		RoleName: ptr(roleName),
+	}
 }
 
 func TestFindExistingComment_NoMatch(t *testing.T) {
-	setExecCommand(t, helperCmd("find_none"))
+	api := newCommentAPIServer(t)
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
-	require.NoError(t, err, "unexpected error: %v", err)
-	require.NoError(t, err, "expected 0, got %d", id)
-
+	client := newTestGitHubClient(t, "", srv)
+	id, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	require.NoError(t, err)
+	assert.Zero(t, id)
 }
 
-func TestFindExistingComment_Found(t *testing.T) {
-	setExecCommand(t, helperCmd("find_existing"))
+func TestFindExistingComment_FoundNewestMatch(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+		issueComment(10, "ordinary comment", "alice", "User", ""),
+		issueComment(20, CommentMarker+"\nold", "alice", "User", ""),
+		issueComment(30, CommentMarker+"\nnew", "alice", "User", ""),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
-	require.NoError(t, err, "unexpected error: %v", err)
-	require.NoError(t, err, "expected 42, got %d", id)
-
+	client := newTestGitHubClient(t, "", srv)
+	id, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), id)
 }
 
 func TestFindExistingComment_Error(t *testing.T) {
-	setExecCommand(t, helperCmd("find_fail"))
+	api := newCommentAPIServer(t)
+	api.listIssueStatus = http.StatusInternalServerError
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	_, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
-	require.Error(t, err, "expected comment lookup to fail with find command failure")
-
+	client := newTestGitHubClient(t, "", srv)
+	_, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list issue comments")
 }
 
 func TestUpsertPRComment_Create(t *testing.T) {
-	callCount := mockGHSequence(t, "find_none", "create_ok")
+	api := newCommentAPIServer(t)
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "review body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 2, *callCount, "expected 2 gh calls")
+	client := newTestGitHubClient(t, "", srv)
+	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "review body"))
+	require.Len(t, api.createdBodies, 1)
+	assert.Empty(t, api.patchedBodies)
+	assert.True(t, strings.HasPrefix(api.createdBodies[0], CommentMarker+"\n"))
 }
 
 func TestUpsertPRComment_Update(t *testing.T) {
-	callCount := mockGHSequence(t, "find_existing", "patch_ok")
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "updated body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 2, *callCount, "expected 2 gh calls")
-}
-
-func TestUpsertPRComment_MarkerPrepended(t *testing.T) {
-	captureFile, _ := setupCaptureMock(t, "find_none")
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "test review", nil)
-	require.NoError(t, err)
-	body := readCapturedBody(t, captureFile)
-	require.True(t, strings.HasPrefix(body, CommentMarker+"\n"),
-		"marker not at start of body: %q", body[:min(80, len(body))])
-}
-
-func TestUpsertPRComment_Truncation(t *testing.T) {
-	captureFile, _ := setupCaptureMock(t, "find_none")
-
-	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, bigBody, nil)
-	require.NoError(t, err)
-	body := readCapturedBody(t, captureFile)
-	assertTruncatedBody(t, body)
-}
-
-func TestUpsertPRComment_FindError(t *testing.T) {
-	setExecCommand(t, helperCmd("find_fail"))
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
-	require.Error(t, err, "expected UpsertPRComment to fail on find error")
-
-	require.Contains(t, err.Error(), "find existing comment")
-}
-
-func TestUpsertPRComment_EnvPassthrough(t *testing.T) {
-	setExecCommand(t, helperCmd("check_env"))
-
-	env := append(os.Environ(), "GH_TOKEN=test-token-123")
-	id, err := FindExistingComment(context.Background(), "owner/repo", 1, env)
-
-	_ = id
-	if err != nil && strings.Contains(err.Error(), "GH_TOKEN not set") {
-		require.NoError(t, err)
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
 	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+
+	client := newTestGitHubClient(t, "", srv)
+	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
+	require.Len(t, api.patchedBodies, 1)
+	assert.Empty(t, api.createdBodies)
+	assert.True(t, strings.HasPrefix(api.patchedBodies[0], CommentMarker+"\n"))
 }
 
-func TestFindExistingComment_MultiLineOutput(t *testing.T) {
+func TestUpsertPRComment_Patch403FallsBackToCreate(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+	}
+	api.patchStatus = http.StatusForbidden
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	setExecCommand(t, helperCmd("find_multi_line"))
-
-	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
-	require.NoError(t, err, "unexpected error: %v", err)
-	require.NoError(t, err, "expected last ID 30, got %d", id)
-
+	client := newTestGitHubClient(t, "", srv)
+	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
+	require.Len(t, api.patchedBodies, 1)
+	require.Len(t, api.createdBodies, 1)
 }
 
-func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
-	captureFile, _ := setupCaptureMock(t, "find_existing")
+func TestUpsertPRComment_Patch404FallsBackToCreate(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+	}
+	api.patchStatus = http.StatusNotFound
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	inputBody := "body with\nnewlines\tand\ttabs\vvertical-tab\abell"
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, inputBody, nil)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(captureFile)
-	require.NoError(t, err, "read capture file")
-
-	var payload map[string]string
-	require.NoError(t, json.Unmarshal(data, &payload),
-		"PATCH payload is not valid JSON:\npayload: %s", string(data))
-	body, ok := payload["body"]
-	require.True(t, ok, "PATCH payload missing 'body' key")
-	require.True(t, strings.HasPrefix(body, CommentMarker),
-		"PATCH body missing marker: %q", body[:min(80, len(body))])
-
-	expectedBody := CommentMarker + "\n" + inputBody
-	require.Equal(t, expectedBody, body, "body round-trip mismatch")
+	client := newTestGitHubClient(t, "", srv)
+	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
+	require.Len(t, api.patchedBodies, 1)
+	require.Len(t, api.createdBodies, 1)
 }
 
-func TestUpsertPRComment_CreateFail(t *testing.T) {
-	callCount := mockGHSequence(t, "find_none", "create_fail")
+func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+	}
+	api.patchStatus = http.StatusInternalServerError
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	client := newTestGitHubClient(t, "", srv)
+	err := client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "gh pr comment")
-	require.Equal(t, 2, *callCount, "expected 2 gh calls")
+	assert.Contains(t, err.Error(), "patch comment")
 }
 
-func TestUpsertPRComment_PatchFail403FallsBackToCreate(t *testing.T) {
-	callCount := mockGHSequence(t, "find_existing", "patch_fail_403", "create_ok")
+func TestCreatePRComment_TruncationUTF8Safe(t *testing.T) {
+	api := newCommentAPIServer(t)
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 3, *callCount, "expected 3 gh calls (find+patch+create)")
-}
-
-func TestUpsertPRComment_PatchFail404FallsBackToCreate(t *testing.T) {
-	callCount := mockGHSequence(t, "find_existing", "patch_fail_404", "create_ok")
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 3, *callCount, "expected 3 gh calls (find+patch+create)")
-}
-
-func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
-	callCount := mockGHSequence(t, "find_existing", "patch_fail")
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
-	require.Error(t, err, "expected patch non-403 failure to bubble up")
-	require.Contains(t, err.Error(), "patch comment")
-	require.Equal(t, 2, *callCount, "expected 2 gh calls (find+patch)")
-}
-
-func TestUpsertPRComment_MultipleIDs_PatchNewestFails403(t *testing.T) {
-	callCount := mockGHSequence(t, "find_multi_line", "patch_fail_403", "create_ok")
-
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 3, *callCount, "expected 3 gh calls (find+patch+create)")
-}
-
-func TestCreatePRComment_AlwaysCreates(t *testing.T) {
-	captureFile, callCount := setupCaptureMock(t)
-
-	err := CreatePRComment(context.Background(), "owner/repo", 1, "test body", nil)
-	require.NoError(t, err)
-	require.Equal(t, 1, *callCount, "expected 1 gh call (create only)")
-
-	body := readCapturedBody(t, captureFile)
-	require.True(t, strings.HasPrefix(body, CommentMarker+"\n"),
-		"marker not at start of body: %q", body[:min(80, len(body))])
-	require.Contains(t, body, "test body")
-}
-
-func TestCreatePRComment_Truncation(t *testing.T) {
-	captureFile, _ := setupCaptureMock(t)
-
-	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
-	err := CreatePRComment(context.Background(), "owner/repo", 1, bigBody, nil)
-	require.NoError(t, err)
-	body := readCapturedBody(t, captureFile)
-	assertTruncatedBody(t, body)
-}
-
-func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
 	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 	maxBody := review.MaxCommentLen - len(truncSuffix)
 	markerOverhead := len(CommentMarker) + 1
+	input := strings.Repeat("x", maxBody-markerOverhead-2) + "\U0001f600" + strings.Repeat("y", 100)
 
-	paddingLen := maxBody - markerOverhead - 2
-	input := strings.Repeat("x", paddingLen) + "\U0001f600" + strings.Repeat("y", 100)
+	client := newTestGitHubClient(t, "", srv)
+	require.NoError(t, client.CreatePRComment(context.Background(), "owner/repo", 1, input))
+	require.Len(t, api.createdBodies, 1)
+	body := api.createdBodies[0]
+	assert.True(t, strings.HasPrefix(body, CommentMarker))
+	assert.Contains(t, body, "truncated")
+	assert.LessOrEqual(t, len(body), review.MaxCommentLen)
+	assert.True(t, utf8.ValidString(body))
+}
 
-	captureFile, _ := setupCaptureMock(t, "find_none")
+func TestListPRDiscussionComments_FiltersAndSorts(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[17] = []*googlegithub.IssueComment{
+		issueComment(1, "human issue comment", "alice", "User", "2026-03-24T14:00:00Z"),
+		issueComment(2, "comment from bot", "dependabot[bot]", "Bot", "2026-03-24T15:00:00Z"),
+		issueComment(3, CommentMarker+"\nroborev summary", "roborev-runner", "User", "2026-03-24T16:00:00Z"),
+	}
+	api.reviewsByPR[17] = []*googlegithub.PullRequestReview{
+		reviewComment("review summary comment", "bob", "User", "2026-03-25T10:30:00Z"),
+	}
+	api.inlineCommentsByPR[17] = []*googlegithub.PullRequestComment{
+		inlineComment("inline review comment", "carol", "User", "2026-03-26T09:15:00Z", "internal/daemon/ci_poller.go", 123, 0),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
 
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, input, nil)
+	client := newTestGitHubClient(t, "", srv)
+	comments, err := client.ListPRDiscussionComments(context.Background(), "owner/repo", 17)
 	require.NoError(t, err)
-	body := readCapturedBody(t, captureFile)
-	assertTruncatedBody(t, body)
+	require.Len(t, comments, 3)
+
+	assert.Equal(t, "alice", comments[0].Author)
+	assert.Equal(t, PRDiscussionSourceIssueComment, comments[0].Source)
+	assert.Equal(t, "bob", comments[1].Author)
+	assert.Equal(t, PRDiscussionSourceReview, comments[1].Source)
+	assert.Equal(t, "carol", comments[2].Author)
+	assert.Equal(t, PRDiscussionSourceReviewComment, comments[2].Source)
+	assert.Equal(t, "internal/daemon/ci_poller.go", comments[2].Path)
+	assert.Equal(t, 123, comments[2].Line)
+}
+
+func TestListPRDiscussionComments_AllowsMissingTimestamps(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.issueCommentsByPR[17] = []*googlegithub.IssueComment{
+		issueComment(1, "issue without timestamp", "alice", "User", ""),
+	}
+	api.reviewsByPR[17] = []*googlegithub.PullRequestReview{
+		reviewComment("review without timestamp", "bob", "User", ""),
+	}
+	api.inlineCommentsByPR[17] = []*googlegithub.PullRequestComment{
+		inlineComment("inline without timestamp", "carol", "User", "", "internal/github/pr_discussion.go", 59, 0),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+
+	client := newTestGitHubClient(t, "", srv)
+	comments, err := client.ListPRDiscussionComments(context.Background(), "owner/repo", 17)
+	require.NoError(t, err)
+	require.Len(t, comments, 3)
+
+	for _, comment := range comments {
+		assert.True(t, comment.CreatedAt.IsZero())
+	}
+}
+
+func TestListTrustedRepoCollaborators_FiltersToMaintainAndAdmin(t *testing.T) {
+	api := newCommentAPIServer(t)
+	api.collaborators = []*googlegithub.User{
+		collaborator("alice", "admin"),
+		collaborator("bob", "maintain"),
+		collaborator("eve", "write"),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+
+	client := newTestGitHubClient(t, "", srv)
+	trusted, err := client.ListTrustedRepoCollaborators(context.Background(), "owner/repo")
+	require.NoError(t, err)
+	assert.Contains(t, trusted, "alice")
+	assert.Contains(t, trusted, "bob")
+	assert.NotContains(t, trusted, "eve")
+}
+
+func TestCloneURL(t *testing.T) {
+	plain, err := CloneURL("owner/repo")
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/owner/repo.git", plain)
 }

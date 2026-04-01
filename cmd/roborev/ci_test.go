@@ -13,6 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func installFakeGHAuthToken(t *testing.T, token string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping fake gh helper on Windows")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "gh")
+	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestCIReviewCmd_Help(t *testing.T) {
 	cmd := ciCmd()
 	cmd.SetArgs([]string{"review", "--help"})
@@ -277,6 +290,16 @@ func TestResolveCIReasoning(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "thorough", got)
 	})
+}
+
+func TestCIGitHubClient_UsesGHAuthTokenFallback(t *testing.T) {
+	installFakeGHAuthToken(t, "gh-auth-token")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	client, err := ciGitHubClient()
+	require.NoError(t, err)
+	require.NotNil(t, client)
 }
 
 func TestResolveCIMinSeverity(t *testing.T) {

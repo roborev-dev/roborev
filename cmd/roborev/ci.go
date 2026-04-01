@@ -392,8 +392,31 @@ func postCIComment(
 	body string,
 	upsert bool,
 ) error {
-	if upsert {
-		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
+	client, err := ciGitHubClient()
+	if err != nil {
+		return err
 	}
-	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, nil)
+	if upsert {
+		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
+	}
+	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
+}
+
+func ciGitHubClient() (*ghpkg.Client, error) {
+	// Resolve the API base URL from GITHUB_API_URL (GitHub Actions
+	// Enterprise) or GH_HOST. Without this, Enterprise tokens would
+	// be sent to api.github.com instead of the configured host.
+	rawBase := os.Getenv("GITHUB_API_URL")
+	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(rawBase)
+	if err != nil {
+		return nil, err
+	}
+	// Resolve the hostname for gh auth token --hostname so the
+	// CLI fallback fetches the Enterprise-specific token.
+	host := ghpkg.DefaultGitHubHost()
+	token := ghpkg.ResolveAuthToken(context.Background(), ghpkg.EnvironmentToken(), host)
+	if token == "" {
+		return nil, fmt.Errorf("GitHub authentication required: set GH_TOKEN or GITHUB_TOKEN, or authenticate with gh auth login")
+	}
+	return ghpkg.NewClient(token, ghpkg.WithBaseURL(apiBaseURL))
 }
