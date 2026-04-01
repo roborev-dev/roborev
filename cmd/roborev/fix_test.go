@@ -111,6 +111,23 @@ func TestBuildGenericFixPromptWithComments(t *testing.T) {
 	assert.Contains(t, p, "Found bug in foo.go")
 }
 
+func TestBuildGenericFixPromptSplitsMixedResponses(t *testing.T) {
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Fix applied (commit: abc123)", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+		{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+	}
+	p := buildGenericFixPrompt("Found bug in foo.go", "", responses)
+
+	// Tool attempts should appear under "Previous Addressing Attempts"
+	assert.Contains(t, p, "Previous Addressing Attempts")
+	assert.Contains(t, p, "roborev-fix")
+
+	// User comments should appear under "User Comments"
+	assert.Contains(t, p, "User Comments")
+	assert.Contains(t, p, "false positive")
+	assert.Contains(t, p, "alice")
+}
+
 func TestBuildGenericCommitPrompt(t *testing.T) {
 	prompt := buildGenericCommitPrompt()
 

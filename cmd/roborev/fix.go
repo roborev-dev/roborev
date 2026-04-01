@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -843,8 +844,12 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
-	// Fetch user comments for context
-	comments, commentsErr := fetchComments(ctx, addr, jobID)
+	// Fetch user comments for context (including legacy SHA-based comments)
+	var gitRef string
+	if job != nil {
+		gitRef = job.GitRef
+	}
+	comments, commentsErr := fetchComments(ctx, addr, jobID, gitRef)
 	if commentsErr != nil && !opts.quiet {
 		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
 	}
@@ -1011,7 +1016,11 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			continue
 		}
-		comments, commentsErr := fetchComments(ctx, batchAddr, id)
+		var batchGitRef string
+		if job != nil {
+			batchGitRef = job.GitRef
+		}
+		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchGitRef)
 		if commentsErr != nil && !opts.quiet {
 			cmd.Printf("Warning: could not fetch comments for job %d: %v\n", id, commentsErr)
 		}
@@ -1149,8 +1158,10 @@ const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the fin
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
+	toolAttempts, userComments := prompt.SplitResponses(e.comments)
 	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
-	size += len(prompt.FormatUserComments(e.comments))
+	size += len(prompt.FormatToolAttempts(toolAttempts))
+	size += len(prompt.FormatUserComments(userComments))
 	return size
 }
 
@@ -1201,10 +1212,12 @@ func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 	}
 
 	for i, e := range entries {
+		toolAttempts, userComments := prompt.SplitResponses(e.comments)
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
-		sb.WriteString(prompt.FormatUserComments(e.comments))
+		sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
+		sb.WriteString(prompt.FormatUserComments(userComments))
 	}
 
 	sb.WriteString(batchPromptFooter)
@@ -1286,11 +1299,14 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 	})
 }
 
-// fetchComments retrieves user comments/responses for a job.
-func fetchComments(ctx context.Context, serverAddr string, jobID int64) ([]storage.Response, error) {
+// fetchComments retrieves comments/responses for a job, including legacy
+// SHA-based comments when gitRef refers to a single commit (mirroring
+// the TUI's loadResponses merge logic).
+func fetchComments(ctx context.Context, serverAddr string, jobID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
 		client := getDaemonHTTPClient(30 * time.Second)
 
+		// Fetch by job ID
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID), nil)
 		if err != nil {
 			return nil, err
@@ -1313,16 +1329,50 @@ func fetchComments(ctx context.Context, serverAddr string, jobID int64) ([]stora
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return nil, err
 		}
+		responses := result.Responses
 
-		return result.Responses, nil
+		// Also fetch legacy SHA-based comments for single commits
+		// (not ranges or dirty reviews) and merge with job responses.
+		if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
+			shaReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef), nil)
+			if err == nil {
+				shaResp, err := client.Do(shaReq)
+				if err == nil {
+					defer shaResp.Body.Close()
+					if shaResp.StatusCode == http.StatusOK {
+						var shaResult struct {
+							Responses []storage.Response `json:"responses"`
+						}
+						if json.NewDecoder(shaResp.Body).Decode(&shaResult) == nil {
+							seen := make(map[int64]bool)
+							for _, r := range responses {
+								seen[r.ID] = true
+							}
+							for _, r := range shaResult.Responses {
+								if !seen[r.ID] {
+									seen[r.ID] = true
+									responses = append(responses, r)
+								}
+							}
+							sort.Slice(responses, func(i, j int) bool {
+								return responses[i].CreatedAt.Before(responses[j].CreatedAt)
+							})
+						}
+					}
+				}
+			}
+		}
+
+		return responses, nil
 	})
 }
 
 // buildGenericFixPrompt creates a fix prompt without knowing the analysis type.
 // When minSeverity is non-empty, a severity filtering instruction is prepended.
-// When comments is non-empty, a user-comments section is included so the agent
-// can see developer feedback on the review.
-func buildGenericFixPrompt(analysisOutput, minSeverity string, comments []storage.Response) string {
+// Responses are split into tool attempts and user comments so each type
+// receives appropriate framing in the prompt.
+func buildGenericFixPrompt(analysisOutput, minSeverity string, responses []storage.Response) string {
+	toolAttempts, userComments := prompt.SplitResponses(responses)
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
@@ -1333,7 +1383,8 @@ func buildGenericFixPrompt(analysisOutput, minSeverity string, comments []storag
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
 	sb.WriteString("\n\n")
-	sb.WriteString(prompt.FormatUserComments(comments))
+	sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
+	sb.WriteString(prompt.FormatUserComments(userComments))
 	sb.WriteString("## Instructions\n\n")
 	sb.WriteString("Please apply the suggested changes from the analysis above. ")
 	sb.WriteString("Make the necessary edits to address each finding. ")
