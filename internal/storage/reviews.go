@@ -551,7 +551,7 @@ func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Resp
 	var legacyErr error
 	if commitID > 0 {
 		legacyResponses, legacyErr = db.GetCommentsForCommit(commitID)
-	} else if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
+	} else if looksLikeSHA(gitRef) {
 		legacyResponses, legacyErr = db.GetCommentsForCommitSHA(gitRef)
 	}
 	if legacyErr != nil {
@@ -575,4 +575,19 @@ func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Resp
 	}
 
 	return responses, nil
+}
+
+// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars).
+// Used to avoid SHA-based legacy comment lookups for non-SHA git refs like
+// task labels ("run", "analyze") or range refs.
+func looksLikeSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

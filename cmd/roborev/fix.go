@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -1347,18 +1348,23 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		responses := result.Responses
 
 		// Also fetch legacy commit-based comments and merge.
-		// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
+		// Prefer commit_id (unambiguous), fall back to SHA only when
+		// gitRef looks like a hex SHA (not a task label like "run").
 		var legacyURL string
 		if commitID > 0 {
 			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
-		} else if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
+		} else if looksLikeSHA(gitRef) {
 			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
 		}
 		if legacyURL != "" {
 			legacyReq, err := http.NewRequestWithContext(ctx, "GET", legacyURL, nil)
-			if err == nil {
+			if err != nil {
+				log.Printf("Warning: legacy comment request for job %d: %v", jobID, err)
+			} else {
 				legacyResp, err := client.Do(legacyReq)
-				if err == nil {
+				if err != nil {
+					log.Printf("Warning: legacy comment fetch for job %d: %v", jobID, err)
+				} else {
 					defer legacyResp.Body.Close()
 					if legacyResp.StatusCode == http.StatusOK {
 						var legacyResult struct {

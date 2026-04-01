@@ -203,7 +203,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	var legacyURL string
 	if review.Job != nil && review.Job.CommitID != nil {
 		legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", *review.Job.CommitID)
-	} else if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
+	} else if review.Job != nil && looksLikeSHA(review.Job.GitRef) {
 		legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
 	}
 	if legacyURL != "" {

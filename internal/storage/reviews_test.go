@@ -132,7 +132,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	_, commit, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	_, commit, job := createJobChain(t, db, "/tmp/test-repo", "abc1234")
 	machineID, _ := db.GetMachineID()
 
 	// Insert with explicit timestamps to avoid flaky ordering
@@ -170,7 +170,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	})
 
 	t.Run("falls back to SHA when commitID is zero", func(t *testing.T) {
-		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123")
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc1234")
 		require.NoError(t, err)
 		require.Len(t, all, 2)
 		assert.Equal(t, "alice", all[0].Responder)
@@ -178,7 +178,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	})
 
 	t.Run("skips SHA fallback for ranges", func(t *testing.T) {
-		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123..def456")
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc1234..def4567")
 		require.NoError(t, err)
 		require.Len(t, all, 1)
 	})
@@ -205,9 +205,9 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	})
 
 	t.Run("returns error on legacy lookup failure", func(t *testing.T) {
-		// Use a SHA that doesn't exist in the commits table to trigger
-		// a legacy lookup error via GetCommentsForCommitSHA.
-		all, err := db.GetAllCommentsForJob(job.ID, 0, "nonexistent_sha")
+		// Use a hex string that looks like a SHA but doesn't exist in the
+		// commits table to trigger a legacy lookup error.
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "deadbeefdeadbeef")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "legacy comment lookup")
 		// Job-based comments should still be returned (alice + charlie
