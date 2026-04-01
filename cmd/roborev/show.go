@@ -190,6 +190,7 @@ Examples:
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
 //   - cmd/roborev/fix.go           fetchComments()
 //   - cmd/roborev/tui/fetch.go     loadResponses()
+//
 // Keep all four in sync when changing the merge logic.
 func fetchShowComments(client *http.Client, addr string, review storage.Review) []storage.Response {
 	var responses []storage.Response
@@ -213,7 +214,9 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	// Also fetch legacy SHA-based comments for single commits
 	if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
 		shaURL := addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
-		if resp, err := client.Get(shaURL); err == nil {
+		if resp, err := client.Get(shaURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch legacy comments for %s: %v\n", review.Job.GitRef, err)
+		} else if resp != nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				var result struct {

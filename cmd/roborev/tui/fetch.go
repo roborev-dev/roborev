@@ -486,6 +486,7 @@ func (m model) loadReview(jobID int64) (*storage.Review, error) {
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
 //   - cmd/roborev/fix.go           fetchComments()
 //   - cmd/roborev/show.go          fetchShowComments()
+//
 // Keep all four in sync when changing the merge logic.
 func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Response {
 	var responses []storage.Response

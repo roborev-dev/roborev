@@ -2489,7 +2489,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		if parentJob.CommitID != nil {
 			parentCommitID = *parentJob.CommitID
 		}
-		comments, commentsErr := s.db.GetAllCommentsForJob(req.ParentJobID, parentCommitID)
+		comments, commentsErr := s.db.GetAllCommentsForJob(req.ParentJobID, parentCommitID, parentJob.GitRef)
 		if commentsErr != nil {
 			log.Printf("fix job for parent %d: failed to fetch comments: %v", req.ParentJobID, commentsErr)
 		}

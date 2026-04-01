@@ -144,7 +144,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("merges job and legacy commit comments", func(t *testing.T) {
-		all, err := db.GetAllCommentsForJob(job.ID, commit.ID)
+		all, err := db.GetAllCommentsForJob(job.ID, commit.ID, "")
 		require.NoError(t, err)
 		assert.Len(t, all, 2)
 		// Should be chronologically ordered
@@ -152,11 +152,25 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		assert.Equal(t, "bob", all[1].Responder)
 	})
 
-	t.Run("skips legacy fallback when commitID is zero", func(t *testing.T) {
-		all, err := db.GetAllCommentsForJob(job.ID, 0)
+	t.Run("skips legacy fallback when commitID is zero and no gitRef", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "")
 		require.NoError(t, err)
 		assert.Len(t, all, 1)
 		assert.Equal(t, "alice", all[0].Responder)
+	})
+
+	t.Run("falls back to SHA when commitID is zero", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123")
+		require.NoError(t, err)
+		assert.Len(t, all, 2)
+		assert.Equal(t, "alice", all[0].Responder)
+		assert.Equal(t, "bob", all[1].Responder)
+	})
+
+	t.Run("skips SHA fallback for ranges", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123..def456")
+		require.NoError(t, err)
+		assert.Len(t, all, 1)
 	})
 
 	t.Run("deduplicates overlapping comments", func(t *testing.T) {
@@ -172,15 +186,17 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		all, err := db.GetAllCommentsForJob(job.ID, commit.ID)
+		all, err := db.GetAllCommentsForJob(job.ID, commit.ID, "")
 		require.NoError(t, err)
 		// alice (job), bob (commit), charlie (both) — charlie should
 		// appear only once despite matching both queries.
-		assert.Len(t, all, 3)
+		require.Len(t, all, 3)
 		responders := make([]string, len(all))
 		for i, r := range all {
 			responders[i] = r.Responder
 		}
+		assert.Contains(t, responders, "alice")
+		assert.Contains(t, responders, "bob")
 		assert.Contains(t, responders, "charlie")
 	})
 }

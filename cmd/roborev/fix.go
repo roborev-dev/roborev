@@ -1307,6 +1307,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
 //   - cmd/roborev/show.go          fetchShowComments()
 //   - cmd/roborev/tui/fetch.go     loadResponses()
+//
 // Keep all four in sync when changing the merge logic.
 func fetchComments(ctx context.Context, serverAddr string, jobID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
