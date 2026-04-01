@@ -128,6 +128,35 @@ func TestBuildGenericFixPromptSplitsMixedResponses(t *testing.T) {
 	assert.Contains(t, p, "alice")
 }
 
+func TestBuildBatchFixPromptSplitsMixedResponses(t *testing.T) {
+	entries := []batchEntry{
+		{
+			jobID: 1,
+			job:   &storage.ReviewJob{GitRef: "abc123"},
+			review: &storage.Review{
+				Output: "Found HIGH bug in foo.go",
+			},
+			comments: []storage.Response{
+				{Responder: "roborev-refine", Response: "Created commit def456", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+				{Responder: "alice", Response: "The foo.go finding is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+			},
+		},
+	}
+	p := buildBatchFixPrompt(entries, "")
+
+	// Tool attempts should appear under "Previous Addressing Attempts"
+	assert.Contains(t, p, "Previous Addressing Attempts")
+	assert.Contains(t, p, "roborev-refine")
+
+	// User comments should appear under "User Comments"
+	assert.Contains(t, p, "User Comments")
+	assert.Contains(t, p, "false positive")
+	assert.Contains(t, p, "alice")
+
+	// Review output should be present
+	assert.Contains(t, p, "Found HIGH bug in foo.go")
+}
+
 func TestBuildGenericCommitPrompt(t *testing.T) {
 	prompt := buildGenericCommitPrompt()
 

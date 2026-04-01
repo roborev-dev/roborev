@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,24 +117,14 @@ Examples:
 			}
 
 			if jsonOutput {
-				// Include comments in JSON output so tools/skills can see them
+				// Include comments in JSON output so tools/skills can see them.
+				// Merge job-based and legacy SHA-based comments (mirroring TUI).
 				type reviewWithComments struct {
 					storage.Review
 					Comments []storage.Response `json:"comments,omitempty"`
 				}
 				out := reviewWithComments{Review: review}
-				commentsURL := addr + fmt.Sprintf("/api/comments?job_id=%d", review.JobID)
-				if commentsResp, err := client.Get(commentsURL); err == nil {
-					defer commentsResp.Body.Close()
-					if commentsResp.StatusCode == http.StatusOK {
-						var result struct {
-							Responses []storage.Response `json:"responses"`
-						}
-						if json.NewDecoder(commentsResp.Body).Decode(&result) == nil {
-							out.Comments = result.Responses
-						}
-					}
-				}
+				out.Comments = fetchShowComments(client, addr, review)
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(&out)
@@ -189,4 +180,54 @@ Examples:
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd
+}
+
+// fetchShowComments retrieves comments for a review, merging legacy
+// SHA-based comments for single-commit reviews (mirroring TUI/CLI fix).
+func fetchShowComments(client *http.Client, addr string, review storage.Review) []storage.Response {
+	var responses []storage.Response
+
+	// Fetch by job ID
+	commentsURL := addr + fmt.Sprintf("/api/comments?job_id=%d", review.JobID)
+	if resp, err := client.Get(commentsURL); err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var result struct {
+				Responses []storage.Response `json:"responses"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&result) == nil {
+				responses = result.Responses
+			}
+		}
+	}
+
+	// Also fetch legacy SHA-based comments for single commits
+	if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
+		shaURL := addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
+		if resp, err := client.Get(shaURL); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var result struct {
+					Responses []storage.Response `json:"responses"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&result) == nil {
+					seen := make(map[int64]bool, len(responses))
+					for _, r := range responses {
+						seen[r.ID] = true
+					}
+					for _, r := range result.Responses {
+						if !seen[r.ID] {
+							seen[r.ID] = true
+							responses = append(responses, r)
+						}
+					}
+					sort.Slice(responses, func(i, j int) bool {
+						return responses[i].CreatedAt.Before(responses[j].CreatedAt)
+					})
+				}
+			}
+		}
+	}
+
+	return responses
 }

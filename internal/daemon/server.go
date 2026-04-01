@@ -2483,8 +2483,9 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent job has no review to fix")
 			return
 		}
-		// Fetch comments for context (user feedback, previous tool attempts)
-		comments, _ := s.db.GetCommentsForJob(req.ParentJobID)
+		// Fetch comments for context (user feedback, previous tool attempts),
+		// including legacy SHA-based comments for single-commit reviews.
+		comments, _ := s.db.GetAllCommentsForJob(req.ParentJobID, parentJob.GitRef)
 		if req.Prompt != "" {
 			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt, comments)
 		} else {

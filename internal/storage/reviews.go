@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -523,4 +524,38 @@ func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 		return nil, err
 	}
 	return db.GetCommentsForCommit(commit.ID)
+}
+
+// GetAllCommentsForJob returns all comments for a job, merging legacy
+// SHA-based comments when gitRef is a single commit (not a range or
+// "dirty"). This mirrors the TUI's loadResponses merge logic and
+// provides a single entry point for all callers that need the full
+// comment set.
+func (db *DB) GetAllCommentsForJob(jobID int64, gitRef string) ([]Response, error) {
+	responses, err := db.GetCommentsForJob(jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Also fetch legacy SHA-based comments for single commits
+	if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
+		shaResponses, shaErr := db.GetCommentsForCommitSHA(gitRef)
+		if shaErr == nil && len(shaResponses) > 0 {
+			seen := make(map[int64]bool, len(responses))
+			for _, r := range responses {
+				seen[r.ID] = true
+			}
+			for _, r := range shaResponses {
+				if !seen[r.ID] {
+					seen[r.ID] = true
+					responses = append(responses, r)
+				}
+			}
+			sort.Slice(responses, func(i, j int) bool {
+				return responses[i].CreatedAt.Before(responses[j].CreatedAt)
+			})
+		}
+	}
+
+	return responses, nil
 }

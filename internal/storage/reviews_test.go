@@ -127,6 +127,55 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 	assert.Equal(t, "Comment on job without review", resp.Response)
 }
 
+func TestGetAllCommentsForJob(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, commit, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+
+	// Add a job-based comment
+	_, err := db.AddCommentToJob(job.ID, "alice", "Job-based comment")
+	require.NoError(t, err)
+
+	// Add a legacy commit-based comment
+	_, err = db.AddComment(commit.ID, "bob", "Legacy SHA comment")
+	require.NoError(t, err)
+
+	t.Run("merges job and legacy SHA comments", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, "abc123")
+		require.NoError(t, err)
+		assert.Len(t, all, 2)
+		// Should be chronologically ordered
+		assert.Equal(t, "alice", all[0].Responder)
+		assert.Equal(t, "bob", all[1].Responder)
+	})
+
+	t.Run("skips SHA fallback for ranges", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, "abc123..def456")
+		require.NoError(t, err)
+		assert.Len(t, all, 1)
+		assert.Equal(t, "alice", all[0].Responder)
+	})
+
+	t.Run("skips SHA fallback for dirty", func(t *testing.T) {
+		all, err := db.GetAllCommentsForJob(job.ID, "dirty")
+		require.NoError(t, err)
+		assert.Len(t, all, 1)
+		assert.Equal(t, "alice", all[0].Responder)
+	})
+
+	t.Run("deduplicates overlapping comments", func(t *testing.T) {
+		// Add a comment linked to both job AND commit
+		_, err := db.AddCommentToJob(job.ID, "charlie", "Dual-linked comment")
+		require.NoError(t, err)
+
+		all, err := db.GetAllCommentsForJob(job.ID, "abc123")
+		require.NoError(t, err)
+		// Should have 3 unique comments (alice, bob, charlie), not 4
+		assert.Len(t, all, 3)
+	})
+}
+
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
