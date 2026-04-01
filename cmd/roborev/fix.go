@@ -842,6 +842,12 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
+	// Fetch user comments for context
+	comments, commentsErr := fetchComments(ctx, addr, jobID)
+	if commentsErr != nil && !opts.quiet {
+		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
+	}
+
 	if !opts.quiet {
 		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
 	}
@@ -860,7 +866,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		RepoRoot: repoRoot,
 		Agent:    fixAgent,
 		Output:   out,
-	}, buildGenericFixPrompt(review.Output, minSev))
+	}, buildGenericFixPrompt(review.Output, minSev, comments))
 	if fmtr != nil {
 		fmtr.Flush()
 	}
@@ -918,9 +924,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 // batchEntry holds a fetched job and its review for batch processing.
 type batchEntry struct {
-	jobID  int64
-	job    *storage.ReviewJob
-	review *storage.Review
+	jobID    int64
+	job      *storage.ReviewJob
+	review   *storage.Review
+	comments []storage.Response
 }
 
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
@@ -1003,7 +1010,11 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			continue
 		}
-		entries = append(entries, batchEntry{jobID: id, job: job, review: review})
+		comments, commentsErr := fetchComments(ctx, batchAddr, id)
+		if commentsErr != nil && !opts.quiet {
+			cmd.Printf("Warning: could not fetch comments for job %d: %v\n", id, commentsErr)
+		}
+		entries = append(entries, batchEntry{jobID: id, job: job, review: review, comments: comments})
 	}
 
 	if len(entries) == 0 {
@@ -1137,7 +1148,9 @@ const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the fin
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
-	return len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
+	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
+	size += len(formatComments(e.comments))
+	return size
 }
 
 // splitIntoBatches groups entries into batches respecting maxSize.
@@ -1177,6 +1190,7 @@ func splitIntoBatches(
 
 // buildBatchFixPrompt creates a concatenated prompt from multiple reviews.
 // When minSeverity is non-empty, a severity filtering instruction is injected.
+// User comments attached to each entry are included inline.
 func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 	var sb strings.Builder
 	sb.WriteString(batchPromptHeader)
@@ -1189,6 +1203,7 @@ func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
+		sb.WriteString(formatComments(e.comments))
 	}
 
 	sb.WriteString(batchPromptFooter)
@@ -1270,9 +1285,61 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 	})
 }
 
+// fetchComments retrieves user comments/responses for a job.
+func fetchComments(ctx context.Context, serverAddr string, jobID int64) ([]storage.Response, error) {
+	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
+		client := getDaemonHTTPClient(30 * time.Second)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID), nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		}
+
+		var result struct {
+			Responses []storage.Response `json:"responses"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, err
+		}
+
+		return result.Responses, nil
+	})
+}
+
+// formatComments renders user comments into a prompt section.
+// Returns an empty string when there are no comments.
+func formatComments(comments []storage.Response) string {
+	if len(comments) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("## User Comments\n\n")
+	sb.WriteString("The following comments were left by the developer on this review.\n")
+	sb.WriteString("Take them into account when applying fixes — they may flag false\n")
+	sb.WriteString("positives, provide additional context, or request specific approaches.\n\n")
+	for _, c := range comments {
+		fmt.Fprintf(&sb, "**%s** (%s):\n%s\n\n",
+			c.Responder, c.CreatedAt.Format("2006-01-02 15:04"), c.Response)
+	}
+	return sb.String()
+}
+
 // buildGenericFixPrompt creates a fix prompt without knowing the analysis type.
 // When minSeverity is non-empty, a severity filtering instruction is prepended.
-func buildGenericFixPrompt(analysisOutput, minSeverity string) string {
+// When comments is non-empty, a user-comments section is included so the agent
+// can see developer feedback on the review.
+func buildGenericFixPrompt(analysisOutput, minSeverity string, comments []storage.Response) string {
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
@@ -1282,7 +1349,9 @@ func buildGenericFixPrompt(analysisOutput, minSeverity string) string {
 	sb.WriteString("An analysis was performed and produced the following findings:\n\n")
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
-	sb.WriteString("\n\n## Instructions\n\n")
+	sb.WriteString("\n\n")
+	sb.WriteString(formatComments(comments))
+	sb.WriteString("## Instructions\n\n")
 	sb.WriteString("Please apply the suggested changes from the analysis above. ")
 	sb.WriteString("Make the necessary edits to address each finding. ")
 	sb.WriteString("Focus on the highest priority items first.\n\n")
