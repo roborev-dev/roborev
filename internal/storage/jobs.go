@@ -562,10 +562,12 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	nowStr := time.Now().Format(time.RFC3339)
 
 	// Reset job status and replace effective execution settings with the
-	// newly resolved values for this rerun.
+	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
+	// so review jobs rebuild from current git/config state instead of reusing
+	// a stale prebuilt prompt (e.g. from a prior CI run with old PR comments).
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?, updated_at = ?
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?, prompt_prebuilt = 0, prompt = NULL, updated_at = ?
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
 	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {

@@ -123,11 +123,10 @@ func HostnameFromAPIBaseURL(apiBaseURL string) string {
 	if err != nil || parsed.Host == "" {
 		return defaultGitHubHost()
 	}
-	host := parsed.Hostname()
-	if strings.EqualFold(host, "api.github.com") {
+	if strings.EqualFold(parsed.Hostname(), "api.github.com") {
 		return "github.com"
 	}
-	return host
+	return parsed.Host
 }
 
 func NewClient(token string, opts ...ClientOption) (*Client, error) {

@@ -149,6 +149,7 @@ func TestHostnameFromAPIBaseURL(t *testing.T) {
 		{"public api", "https://api.github.com/", "github.com"},
 		{"enterprise", "https://ghe.example.com/api/v3/", "ghe.example.com"},
 		{"enterprise no trailing slash", "https://ghe.corp.net/api/v3", "ghe.corp.net"},
+		{"enterprise custom port", "https://ghe.example.com:8443/api/v3/", "ghe.example.com:8443"},
 		{"empty falls back to default", "", "github.com"},
 		{"invalid falls back to default", "://bad", "github.com"},
 	}
