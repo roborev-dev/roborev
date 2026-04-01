@@ -203,6 +203,16 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		assert.Equal(t, "bob", all[1].Responder)
 		assert.Equal(t, "charlie", all[2].Responder)
 	})
+
+	t.Run("returns error on legacy lookup failure", func(t *testing.T) {
+		// Use a SHA that doesn't exist in the commits table to trigger
+		// a legacy lookup error via GetCommentsForCommitSHA.
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "nonexistent_sha")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "legacy comment lookup")
+		// Job-based comments should still be returned
+		assert.GreaterOrEqual(t, len(all), 1)
+	})
 }
 
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
