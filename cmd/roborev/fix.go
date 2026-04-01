@@ -1366,7 +1366,9 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 					log.Printf("Warning: legacy comment fetch for job %d: %v", jobID, err)
 				} else {
 					defer legacyResp.Body.Close()
-					if legacyResp.StatusCode == http.StatusOK {
+					if legacyResp.StatusCode != http.StatusOK {
+						log.Printf("Warning: legacy comment fetch for job %d returned %d", jobID, legacyResp.StatusCode)
+					} else {
 						var legacyResult struct {
 							Responses []storage.Response `json:"responses"`
 						}
