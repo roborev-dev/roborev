@@ -1,0 +1,10 @@
+[Unit]
+Description=roborev daemon socket
+
+[Socket]
+ListenStream=%t/roborev/daemon.sock
+DirectoryMode=0700
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
