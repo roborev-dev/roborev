@@ -116,9 +116,27 @@ Examples:
 			}
 
 			if jsonOutput {
+				// Include comments in JSON output so tools/skills can see them
+				type reviewWithComments struct {
+					storage.Review
+					Comments []storage.Response `json:"comments,omitempty"`
+				}
+				out := reviewWithComments{Review: review}
+				commentsURL := addr + fmt.Sprintf("/api/comments?job_id=%d", review.JobID)
+				if commentsResp, err := client.Get(commentsURL); err == nil {
+					defer commentsResp.Body.Close()
+					if commentsResp.StatusCode == http.StatusOK {
+						var result struct {
+							Responses []storage.Response `json:"responses"`
+						}
+						if json.NewDecoder(commentsResp.Body).Decode(&result) == nil {
+							out.Comments = result.Responses
+						}
+					}
+				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(&review)
+				return enc.Encode(&out)
 			}
 
 			// Avoid redundant "job X (job X, ...)" output

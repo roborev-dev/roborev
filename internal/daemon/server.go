@@ -24,6 +24,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/githook"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
@@ -2482,10 +2483,12 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent job has no review to fix")
 			return
 		}
+		// Fetch comments for context (user feedback, previous tool attempts)
+		comments, _ := s.db.GetCommentsForJob(req.ParentJobID)
 		if req.Prompt != "" {
-			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt)
+			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt, comments)
 		} else {
-			fixPrompt = buildFixPrompt(review.Output)
+			fixPrompt = buildFixPromptWithInstructions(review.Output, "", comments)
 		}
 	}
 
@@ -2788,23 +2791,22 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 }
 
-// buildFixPrompt constructs a prompt for fixing review findings.
-func buildFixPrompt(reviewOutput string) string {
-	return buildFixPromptWithInstructions(reviewOutput, "")
-}
-
 // buildFixPromptWithInstructions constructs a fix prompt that includes the review
-// findings and optional user-provided instructions.
-func buildFixPromptWithInstructions(reviewOutput, userInstructions string) string {
-	prompt := "# Fix Request\n\n" +
+// findings, optional user-provided instructions, and any comments/responses
+// (split into tool attempts and user comments for proper framing).
+func buildFixPromptWithInstructions(reviewOutput, userInstructions string, responses []storage.Response) string {
+	toolAttempts, userComments := prompt.SplitResponses(responses)
+	p := "# Fix Request\n\n" +
 		"An analysis was performed and produced the following findings:\n\n" +
 		"## Analysis Findings\n\n" +
 		reviewOutput + "\n\n"
+	p += prompt.FormatToolAttempts(toolAttempts)
+	p += prompt.FormatUserComments(userComments)
 	if userInstructions != "" {
-		prompt += "## Additional Instructions\n\n" +
+		p += "## Additional Instructions\n\n" +
 			userInstructions + "\n\n"
 	}
-	prompt += "## Instructions\n\n" +
+	p += "## Instructions\n\n" +
 		"Please apply the suggested changes from the analysis above. " +
 		"Make the necessary edits to address each finding. " +
 		"Focus on the highest priority items first.\n\n" +
@@ -2812,7 +2814,7 @@ func buildFixPromptWithInstructions(reviewOutput, userInstructions string) strin
 		"1. Verify the code still compiles/passes linting\n" +
 		"2. Run any relevant tests to ensure nothing is broken\n" +
 		"3. Stage the changes with git add but do NOT commit — the changes will be captured as a patch\n"
-	return prompt
+	return p
 }
 
 // buildRebasePrompt constructs a prompt for re-applying a stale patch to current HEAD.

@@ -88,12 +88,22 @@ The JSON output has this structure:
 - `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
 - `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
 - `closed`: whether this review has already been closed
+- `comments`: array of comments left on this review (may be empty or absent)
+  - Each comment has `responder` (who left it) and `response` (the text)
+  - Comments from `roborev-fix` or `roborev-refine` are automated tool records
+  - All other comments are from the developer (user feedback)
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
 Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
 Skip any reviews where `closed` is `true`, unless the user explicitly provided that job ID (in which case, warn them and ask to confirm).
 
 If all reviews are skipped, inform the user there is nothing to fix.
+
+**Check comments before fixing.** If the review has comments from the developer
+(responder is not `roborev-*`), read them carefully — they may flag findings as
+false positives, provide context about intentional design choices, or request
+specific fix approaches. Respect this feedback: skip findings the developer
+marked as false positives and follow any preferred approaches they described.
 
 ### 3. Fix all findings
 
