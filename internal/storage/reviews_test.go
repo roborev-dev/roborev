@@ -210,8 +210,11 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		all, err := db.GetAllCommentsForJob(job.ID, 0, "nonexistent_sha")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "legacy comment lookup")
-		// Job-based comments should still be returned
-		assert.GreaterOrEqual(t, len(all), 1)
+		// Job-based comments should still be returned (alice + charlie
+		// which was dual-linked in the dedup subtest above).
+		require.Len(t, all, 2)
+		assert.Equal(t, "alice", all[0].Responder)
+		assert.Equal(t, "charlie", all[1].Responder)
 	})
 }
 
