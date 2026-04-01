@@ -438,7 +438,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reasoning = "thorough"
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
+	// Disable agentic mode when the prompt contains external data
+	// (PR discussion) to prevent prompt-injection from influencing
+	// tool-capable agents. CI reviews are always non-agentic, but
+	// this guard defends against future callers setting the flag.
+	agentic := job.Agentic
+	if job.PromptPrebuilt {
+		agentic = false
+	}
+	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(agentic).WithModel(job.Model)
 	if job.SessionID != "" {
 		if !agent.IsValidResumeSessionID(job.SessionID) {
 			log.Printf("[%s] Ignoring invalid session_id for job %d", workerID, job.ID)

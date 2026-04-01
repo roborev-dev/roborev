@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,9 @@ type ciPollerHarness struct {
 
 func installFakeGHAuthToken(t *testing.T, token string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping fake gh helper on Windows")
+	}
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "gh")
 	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
