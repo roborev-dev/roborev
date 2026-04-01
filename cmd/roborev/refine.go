@@ -518,8 +518,16 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 			fmt.Printf("Addressing review (job %d)...\n", currentFailedReview.JobID)
 		}
 
-		// Get previous attempts for context
-		previousAttempts, err := client.GetCommentsForJob(currentFailedReview.JobID)
+		// Get previous attempts for context (including legacy commit-based)
+		var reviewCommitID int64
+		var reviewGitRef string
+		if currentFailedReview.Job != nil {
+			if currentFailedReview.Job.CommitID != nil {
+				reviewCommitID = *currentFailedReview.Job.CommitID
+			}
+			reviewGitRef = currentFailedReview.Job.GitRef
+		}
+		previousAttempts, err := client.GetAllCommentsForJob(currentFailedReview.JobID, reviewCommitID, reviewGitRef)
 		if err != nil {
 			return fmt.Errorf("fetch previous comments: %w", err)
 		}

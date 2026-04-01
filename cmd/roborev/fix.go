@@ -1314,10 +1314,11 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 //
 // NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
+//   - internal/daemon/client.go    GetAllCommentsForJob() (HTTP client)
 //   - cmd/roborev/show.go          fetchShowComments()
 //   - cmd/roborev/tui/fetch.go     loadResponses()
 //
-// Keep all four in sync when changing the merge logic.
+// Keep all five in sync when changing the merge logic.
 func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64, gitRef string) ([]storage.Response, error) {
 	return withFixDaemonRetryContext(ctx, serverAddr, func(addr string) ([]storage.Response, error) {
 		client := getDaemonHTTPClient(30 * time.Second)

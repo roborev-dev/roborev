@@ -531,13 +531,14 @@ func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 // but falls back to gitRef SHA lookup for legacy jobs that have no
 // commit_id.
 //
-// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in three HTTP-
+// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in four HTTP-
 // based callers that can't use the DB directly:
-//   - cmd/roborev/fix.go       fetchComments()
-//   - cmd/roborev/show.go      fetchShowComments()
-//   - cmd/roborev/tui/fetch.go loadResponses()
+//   - internal/daemon/client.go    GetAllCommentsForJob() (HTTP client)
+//   - cmd/roborev/fix.go           fetchComments()
+//   - cmd/roborev/show.go          fetchShowComments()
+//   - cmd/roborev/tui/fetch.go     loadResponses()
 //
-// Keep all four in sync when changing the merge logic.
+// Keep all five in sync when changing the merge logic.
 func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Response, error) {
 	responses, err := db.GetCommentsForJob(jobID)
 	if err != nil {

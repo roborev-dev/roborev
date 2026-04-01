@@ -484,10 +484,11 @@ func (m model) loadReview(jobID int64) (*storage.Review, error) {
 //
 // NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
+//   - internal/daemon/client.go    GetAllCommentsForJob() (HTTP client)
 //   - cmd/roborev/fix.go           fetchComments()
 //   - cmd/roborev/show.go          fetchShowComments()
 //
-// Keep all four in sync when changing the merge logic.
+// Keep all five in sync when changing the merge logic.
 func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Response {
 	var responses []storage.Response
 
