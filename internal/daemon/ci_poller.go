@@ -702,11 +702,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	for _, pattern := range patterns {
 		repo, err := p.db.GetRepoByIdentityCaseInsensitive(pattern)
 		if err != nil {
-			// Propagate ambiguity errors (e.g., multiple repos with same identity)
-			if strings.Contains(err.Error(), "multiple repos") {
-				return nil, fmt.Errorf("ambiguous repo match for %q: %w", ghRepo, err)
-			}
-			continue // Other errors (DB issues) — try next pattern
+			continue // DB errors — try next pattern
 		}
 		if repo != nil {
 			// Skip sync placeholders (root_path == identity) — they don't
@@ -1040,14 +1036,13 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		}
 	}
 
-	switch len(matches) {
-	case 0:
+	if len(matches) == 0 {
 		return nil, fmt.Errorf("%w matching %q (run 'roborev init' in a local checkout)", errLocalRepoNotFound, ghRepo)
-	case 1:
-		return &matches[0], nil
-	default:
-		return nil, fmt.Errorf("ambiguous repo match for %q: %d local repos match (partial identity)", ghRepo, len(matches))
 	}
+	if len(matches) == 1 {
+		return &matches[0], nil
+	}
+	return storage.PreferAutoClone(matches), nil
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
