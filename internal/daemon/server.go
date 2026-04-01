@@ -2484,8 +2484,12 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Fetch comments for context (user feedback, previous tool attempts),
-		// including legacy SHA-based comments for single-commit reviews.
-		comments, _ := s.db.GetAllCommentsForJob(req.ParentJobID, parentJob.GitRef)
+		// including legacy commit-based comments.
+		var parentCommitID int64
+		if parentJob.CommitID != nil {
+			parentCommitID = *parentJob.CommitID
+		}
+		comments, _ := s.db.GetAllCommentsForJob(req.ParentJobID, parentCommitID)
 		if req.Prompt != "" {
 			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt, comments)
 		} else {
