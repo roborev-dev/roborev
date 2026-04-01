@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,20 +133,31 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	defer db.Close()
 
 	_, commit, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	machineID, _ := db.GetMachineID()
 
-	// Add a job-based comment
-	_, err := db.AddCommentToJob(job.ID, "alice", "Job-based comment")
+	// Insert with explicit timestamps to avoid flaky ordering
+	t1 := "2026-03-15T10:00:00Z"
+	t2 := "2026-03-15T11:00:00Z"
+	t3 := "2026-03-15T12:00:00Z"
+
+	_, err := db.Exec(
+		`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		job.ID, "alice", "Job-based comment", GenerateUUID(), machineID, t1,
+	)
 	require.NoError(t, err)
 
-	// Add a legacy commit-based comment
-	_, err = db.AddComment(commit.ID, "bob", "Legacy commit comment")
+	_, err = db.Exec(
+		`INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		commit.ID, "bob", "Legacy commit comment", GenerateUUID(), machineID, t2,
+	)
 	require.NoError(t, err)
 
 	t.Run("merges job and legacy commit comments", func(t *testing.T) {
 		all, err := db.GetAllCommentsForJob(job.ID, commit.ID, "")
 		require.NoError(t, err)
-		assert.Len(t, all, 2)
-		// Should be chronologically ordered
+		require.Len(t, all, 2)
 		assert.Equal(t, "alice", all[0].Responder)
 		assert.Equal(t, "bob", all[1].Responder)
 	})
@@ -155,14 +165,14 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	t.Run("skips legacy fallback when commitID is zero and no gitRef", func(t *testing.T) {
 		all, err := db.GetAllCommentsForJob(job.ID, 0, "")
 		require.NoError(t, err)
-		assert.Len(t, all, 1)
+		require.Len(t, all, 1)
 		assert.Equal(t, "alice", all[0].Responder)
 	})
 
 	t.Run("falls back to SHA when commitID is zero", func(t *testing.T) {
 		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123")
 		require.NoError(t, err)
-		assert.Len(t, all, 2)
+		require.Len(t, all, 2)
 		assert.Equal(t, "alice", all[0].Responder)
 		assert.Equal(t, "bob", all[1].Responder)
 	})
@@ -170,19 +180,17 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	t.Run("skips SHA fallback for ranges", func(t *testing.T) {
 		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc123..def456")
 		require.NoError(t, err)
-		assert.Len(t, all, 1)
+		require.Len(t, all, 1)
 	})
 
 	t.Run("deduplicates overlapping comments", func(t *testing.T) {
 		// Insert a response linked to both job_id AND commit_id to
 		// exercise the dedup branch — it appears in both queries.
-		machineID, _ := db.GetMachineID()
-		now := time.Now().Format(time.RFC3339)
 		_, err := db.Exec(
 			`INSERT INTO responses (job_id, commit_id, responder, response, uuid, source_machine_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			job.ID, commit.ID, "charlie", "Dual-linked comment",
-			GenerateUUID(), machineID, now,
+			GenerateUUID(), machineID, t3,
 		)
 		require.NoError(t, err)
 
@@ -191,13 +199,9 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		// alice (job), bob (commit), charlie (both) — charlie should
 		// appear only once despite matching both queries.
 		require.Len(t, all, 3)
-		responders := make([]string, len(all))
-		for i, r := range all {
-			responders[i] = r.Responder
-		}
-		assert.Contains(t, responders, "alice")
-		assert.Contains(t, responders, "bob")
-		assert.Contains(t, responders, "charlie")
+		assert.Equal(t, "alice", all[0].Responder)
+		assert.Equal(t, "bob", all[1].Responder)
+		assert.Equal(t, "charlie", all[2].Responder)
 	})
 }
 

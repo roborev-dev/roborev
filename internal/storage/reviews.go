@@ -546,11 +546,16 @@ func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Resp
 
 	// Fetch legacy commit-based comments: prefer commit_id (unambiguous),
 	// fall back to SHA for legacy jobs without commit linkage.
+	// Errors are returned so callers can log/warn as appropriate.
 	var legacyResponses []Response
+	var legacyErr error
 	if commitID > 0 {
-		legacyResponses, _ = db.GetCommentsForCommit(commitID)
+		legacyResponses, legacyErr = db.GetCommentsForCommit(commitID)
 	} else if gitRef != "" && !strings.Contains(gitRef, "..") && gitRef != "dirty" {
-		legacyResponses, _ = db.GetCommentsForCommitSHA(gitRef)
+		legacyResponses, legacyErr = db.GetCommentsForCommitSHA(gitRef)
+	}
+	if legacyErr != nil {
+		return responses, fmt.Errorf("legacy comment lookup: %w", legacyErr)
 	}
 
 	if len(legacyResponses) > 0 {
