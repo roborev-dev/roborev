@@ -189,7 +189,8 @@ Examples:
 // NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
 //   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
 //   - cmd/roborev/fix.go           fetchComments()
-// Keep all three in sync when changing the merge logic.
+//   - cmd/roborev/tui/fetch.go     loadResponses()
+// Keep all four in sync when changing the merge logic.
 func fetchShowComments(client *http.Client, addr string, review storage.Review) []storage.Response {
 	var responses []storage.Response
 
