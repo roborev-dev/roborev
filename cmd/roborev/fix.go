@@ -17,6 +17,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/spf13/cobra"
@@ -1149,7 +1150,7 @@ const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the fin
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
 	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
-	size += len(formatComments(e.comments))
+	size += len(prompt.FormatUserComments(e.comments))
 	return size
 }
 
@@ -1203,7 +1204,7 @@ func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
-		sb.WriteString(formatComments(e.comments))
+		sb.WriteString(prompt.FormatUserComments(e.comments))
 	}
 
 	sb.WriteString(batchPromptFooter)
@@ -1317,24 +1318,6 @@ func fetchComments(ctx context.Context, serverAddr string, jobID int64) ([]stora
 	})
 }
 
-// formatComments renders user comments into a prompt section.
-// Returns an empty string when there are no comments.
-func formatComments(comments []storage.Response) string {
-	if len(comments) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("## User Comments\n\n")
-	sb.WriteString("The following comments were left by the developer on this review.\n")
-	sb.WriteString("Take them into account when applying fixes — they may flag false\n")
-	sb.WriteString("positives, provide additional context, or request specific approaches.\n\n")
-	for _, c := range comments {
-		fmt.Fprintf(&sb, "**%s** (%s):\n%s\n\n",
-			c.Responder, c.CreatedAt.Format("2006-01-02 15:04"), c.Response)
-	}
-	return sb.String()
-}
-
 // buildGenericFixPrompt creates a fix prompt without knowing the analysis type.
 // When minSeverity is non-empty, a severity filtering instruction is prepended.
 // When comments is non-empty, a user-comments section is included so the agent
@@ -1350,7 +1333,7 @@ func buildGenericFixPrompt(analysisOutput, minSeverity string, comments []storag
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
 	sb.WriteString("\n\n")
-	sb.WriteString(formatComments(comments))
+	sb.WriteString(prompt.FormatUserComments(comments))
 	sb.WriteString("## Instructions\n\n")
 	sb.WriteString("Please apply the suggested changes from the analysis above. ")
 	sb.WriteString("Make the necessary edits to address each finding. ")

@@ -100,38 +100,15 @@ func TestBuildGenericFixPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "git commit")
 }
 
-func TestFormatComments(t *testing.T) {
-	t.Run("nil returns empty", func(t *testing.T) {
-		assert.Equal(t, "", formatComments(nil))
-	})
-
-	t.Run("empty slice returns empty", func(t *testing.T) {
-		assert.Equal(t, "", formatComments([]storage.Response{}))
-	})
-
-	t.Run("includes comment content", func(t *testing.T) {
-		comments := []storage.Response{
-			{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC)},
-			{Responder: "bob", Response: "Please use a different approach", CreatedAt: time.Date(2026, 3, 15, 11, 0, 0, 0, time.UTC)},
-		}
-		result := formatComments(comments)
-		assert.Contains(t, result, "User Comments")
-		assert.Contains(t, result, "false positive")
-		assert.Contains(t, result, "different approach")
-		assert.Contains(t, result, "alice")
-		assert.Contains(t, result, "bob")
-	})
-}
-
 func TestBuildGenericFixPromptWithComments(t *testing.T) {
 	comments := []storage.Response{
 		{Responder: "dev", Response: "Don't touch the helper function", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
 	}
-	prompt := buildGenericFixPrompt("Found bug in foo.go", "", comments)
+	p := buildGenericFixPrompt("Found bug in foo.go", "", comments)
 
-	assert.Contains(t, prompt, "User Comments")
-	assert.Contains(t, prompt, "Don't touch the helper function")
-	assert.Contains(t, prompt, "Found bug in foo.go")
+	assert.Contains(t, p, "User Comments")
+	assert.Contains(t, p, "Don't touch the helper function")
+	assert.Contains(t, p, "Found bug in foo.go")
 }
 
 func TestBuildGenericCommitPrompt(t *testing.T) {

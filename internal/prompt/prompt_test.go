@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -1196,4 +1197,96 @@ func TestBuildAddressPromptShowsFullDiff(t *testing.T) {
 	diffSection := p[diffIdx:]
 	assertContains(t, diffSection, "keep.go", "retained file should be in address prompt diff")
 	assertContains(t, diffSection, "custom.dat", "excluded file should still be in address prompt diff")
+}
+
+func TestSplitResponses(t *testing.T) {
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Fix applied"},
+		{Responder: "alice", Response: "This is a false positive"},
+		{Responder: "roborev-refine", Response: "Created commit abc123"},
+		{Responder: "bob", Response: "Please keep this function"},
+	}
+
+	tool, user := SplitResponses(responses)
+
+	assert.Len(t, tool, 2)
+	assert.Equal(t, "roborev-fix", tool[0].Responder)
+	assert.Equal(t, "roborev-refine", tool[1].Responder)
+
+	assert.Len(t, user, 2)
+	assert.Equal(t, "alice", user[0].Responder)
+	assert.Equal(t, "bob", user[1].Responder)
+}
+
+func TestSplitResponsesEmpty(t *testing.T) {
+	tool, user := SplitResponses(nil)
+	assert.Nil(t, tool)
+	assert.Nil(t, user)
+}
+
+func TestFormatUserComments(t *testing.T) {
+	t.Run("nil returns empty", func(t *testing.T) {
+		assert.Equal(t, "", FormatUserComments(nil))
+	})
+
+	t.Run("empty slice returns empty", func(t *testing.T) {
+		assert.Equal(t, "", FormatUserComments([]storage.Response{}))
+	})
+
+	t.Run("includes comment content", func(t *testing.T) {
+		comments := []storage.Response{
+			{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC)},
+			{Responder: "bob", Response: "Please use a different approach", CreatedAt: time.Date(2026, 3, 15, 11, 0, 0, 0, time.UTC)},
+		}
+		result := FormatUserComments(comments)
+		assert.Contains(t, result, "User Comments")
+		assert.Contains(t, result, "false positive")
+		assert.Contains(t, result, "different approach")
+		assert.Contains(t, result, "alice")
+		assert.Contains(t, result, "bob")
+	})
+}
+
+func TestFormatToolAttempts(t *testing.T) {
+	t.Run("nil returns empty", func(t *testing.T) {
+		assert.Equal(t, "", FormatToolAttempts(nil))
+	})
+
+	t.Run("includes attempt content", func(t *testing.T) {
+		attempts := []storage.Response{
+			{Responder: "roborev-fix", Response: "Fix applied (commit: abc123)", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+		}
+		result := FormatToolAttempts(attempts)
+		assert.Contains(t, result, "Previous Addressing Attempts")
+		assert.Contains(t, result, "roborev-fix")
+		assert.Contains(t, result, "abc123")
+	})
+}
+
+func TestBuildAddressPromptSplitsResponses(t *testing.T) {
+	r := newTestRepo(t)
+
+	b := NewBuilder(nil)
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Fix applied", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+		{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+	}
+
+	review := &storage.Review{
+		JobID:  1,
+		Agent:  "test",
+		Output: "Found bug in foo.go",
+	}
+
+	p, err := b.BuildAddressPrompt(r.dir, review, responses, "")
+	require.NoError(t, err)
+
+	// Tool attempts should appear under "Previous Addressing Attempts"
+	assert.Contains(t, p, "Previous Addressing Attempts")
+	assert.Contains(t, p, "roborev-fix")
+
+	// User comments should appear under "User Comments"
+	assert.Contains(t, p, "User Comments")
+	assert.Contains(t, p, "false positive")
+	assert.Contains(t, p, "alice")
 }

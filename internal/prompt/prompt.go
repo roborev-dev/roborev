@@ -929,6 +929,67 @@ Be pragmatic - if previous attempts were rejected for being too minor, make more
 If they were rejected for being over-engineered, keep it simpler.
 `
 
+// UserCommentsHeader introduces user-authored comments on a review.
+const UserCommentsHeader = `## User Comments
+
+The following comments were left by the developer on this review.
+Take them into account when applying fixes — they may flag false
+positives, provide additional context, or request specific approaches.
+
+`
+
+// IsToolResponse returns true when the response was left by an automated
+// tool (roborev-fix, roborev-refine, etc.) rather than a human user.
+func IsToolResponse(r storage.Response) bool {
+	return strings.HasPrefix(r.Responder, "roborev-")
+}
+
+// SplitResponses partitions responses into tool-generated attempts and
+// user-authored comments based on the Responder field.
+func SplitResponses(responses []storage.Response) (toolAttempts, userComments []storage.Response) {
+	for _, r := range responses {
+		if IsToolResponse(r) {
+			toolAttempts = append(toolAttempts, r)
+		} else {
+			userComments = append(userComments, r)
+		}
+	}
+	return
+}
+
+// FormatToolAttempts renders automated tool responses (roborev-fix,
+// roborev-refine) into a prompt section. Returns empty string when empty.
+func FormatToolAttempts(attempts []storage.Response) string {
+	if len(attempts) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(PreviousAttemptsHeader)
+	sb.WriteString("\n")
+	for _, attempt := range attempts {
+		fmt.Fprintf(&sb, "--- Attempt by %s at %s ---\n",
+			attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04"))
+		sb.WriteString(attempt.Response)
+		sb.WriteString("\n\n")
+	}
+	return sb.String()
+}
+
+// FormatUserComments renders user-authored comments into a prompt section.
+// Returns empty string when there are no comments.
+func FormatUserComments(comments []storage.Response) string {
+	if len(comments) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(UserCommentsHeader)
+	for _, c := range comments {
+		fmt.Fprintf(&sb, "**%s** (%s):\n%s\n\n",
+			c.Responder, c.CreatedAt.Format("2006-01-02 15:04"), c.Response)
+	}
+	return sb.String()
+}
+
 // BuildAddressPrompt constructs a prompt for addressing review findings.
 // When minSeverity is non-empty, a severity filtering instruction is
 // injected before the findings section.
@@ -944,17 +1005,10 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
 	}
 
-	// Include previous attempts to avoid repeating failed approaches
-	if len(previousAttempts) > 0 {
-		sb.WriteString(PreviousAttemptsHeader)
-		sb.WriteString("\n")
-		for _, attempt := range previousAttempts {
-			fmt.Fprintf(&sb, "--- Attempt by %s at %s ---\n",
-				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04"))
-			sb.WriteString(attempt.Response)
-			sb.WriteString("\n\n")
-		}
-	}
+	// Split responses into tool attempts and user comments
+	toolAttempts, userComments := SplitResponses(previousAttempts)
+	sb.WriteString(FormatToolAttempts(toolAttempts))
+	sb.WriteString(FormatUserComments(userComments))
 
 	// Severity filter instruction (before findings)
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
