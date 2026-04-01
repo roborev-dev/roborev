@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -189,7 +190,9 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 
 	// Fetch by job ID
 	commentsURL := addr + fmt.Sprintf("/api/comments?job_id=%d", review.JobID)
-	if resp, err := client.Get(commentsURL); err == nil {
+	if resp, err := client.Get(commentsURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch comments for job %d: %v\n", review.JobID, err)
+	} else if resp != nil {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			var result struct {
