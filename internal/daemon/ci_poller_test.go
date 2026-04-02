@@ -1722,9 +1722,19 @@ func TestNormalizeIdentityKey(t *testing.T) {
 			want:     "ghe.corp.com/acme/widgets",
 		},
 		{
-			name:     "HTTPS with explicit port preserved",
+			name:     "HTTPS non-default port preserved",
 			identity: "https://ghe.example.com:8443/acme/widgets.git",
 			want:     "ghe.example.com:8443/acme/widgets",
+		},
+		{
+			name:     "HTTPS default port stripped",
+			identity: "https://ghe.example.com:443/acme/widgets.git",
+			want:     "ghe.example.com/acme/widgets",
+		},
+		{
+			name:     "SSH default port stripped",
+			identity: "ssh://git@ghe.corp.com:22/acme/widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
 		},
 		{
 			name:     "local identity unchanged",
@@ -1746,11 +1756,16 @@ func TestNormalizeIdentityKey(t *testing.T) {
 	assert.Equal(t, sshKey, httpsKey,
 		"SSH and HTTPS remotes for the same host/repo must normalize identically")
 
-	// Different ports must NOT match.
-	withPort := normalizeIdentityKey("https://ghe.example.com:8443/acme/widgets.git")
+	// Explicit default port must match omitted port.
+	withDefault := normalizeIdentityKey("https://ghe.example.com:443/acme/widgets.git")
 	withoutPort := normalizeIdentityKey("https://ghe.example.com/acme/widgets.git")
-	assert.NotEqual(t, withPort, withoutPort,
-		"different ports must produce different keys")
+	assert.Equal(t, withDefault, withoutPort,
+		"explicit default port must match omitted port")
+
+	// Non-default port must NOT match omitted port.
+	nonDefault := normalizeIdentityKey("https://ghe.example.com:8443/acme/widgets.git")
+	assert.NotEqual(t, nonDefault, withoutPort,
+		"non-default port must produce a different key")
 }
 
 func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {

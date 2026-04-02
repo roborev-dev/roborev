@@ -1087,12 +1087,34 @@ func normalizeIdentityKey(identity string) string {
 	}
 
 	// Standard URL (https://, ssh://, git://, etc.)
-	// Use parsed.Host (not Hostname()) to preserve explicit ports.
+	// Strip default ports so that host:443 == host for HTTPS, etc.
 	if parsed, err := url.Parse(s); err == nil && parsed.Host != "" {
-		return parsed.Host + parsed.Path
+		host := parsed.Host
+		if port := parsed.Port(); port != "" &&
+			defaultPortForScheme(parsed.Scheme) == port {
+			host = parsed.Hostname()
+		}
+		return host + parsed.Path
 	}
 
 	return s
+}
+
+// defaultPortForScheme returns the well-known default port for common
+// git remote URL schemes, or "" if none is known.
+func defaultPortForScheme(scheme string) string {
+	switch scheme {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	case "ssh", "git+ssh", "ssh+git":
+		return "22"
+	case "git":
+		return "9418"
+	default:
+		return ""
+	}
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
