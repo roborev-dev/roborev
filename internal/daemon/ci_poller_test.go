@@ -1732,6 +1732,21 @@ func TestNormalizeIdentityKey(t *testing.T) {
 			want:     "ghe.example.com/acme/widgets",
 		},
 		{
+			name:     "IPv6 without port",
+			identity: "https://[2001:db8::1]/acme/widgets.git",
+			want:     "[2001:db8::1]/acme/widgets",
+		},
+		{
+			name:     "IPv6 with default port stripped",
+			identity: "https://[2001:db8::1]:443/acme/widgets.git",
+			want:     "[2001:db8::1]/acme/widgets",
+		},
+		{
+			name:     "IPv6 with non-default port preserved",
+			identity: "https://[2001:db8::1]:8443/acme/widgets.git",
+			want:     "[2001:db8::1]:8443/acme/widgets",
+		},
+		{
 			name:     "SSH default port stripped",
 			identity: "ssh://git@ghe.corp.com:22/acme/widgets.git",
 			want:     "ghe.corp.com/acme/widgets",

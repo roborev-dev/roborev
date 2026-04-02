@@ -1087,12 +1087,17 @@ func normalizeIdentityKey(identity string) string {
 	}
 
 	// Standard URL (https://, ssh://, git://, etc.)
-	// Strip default ports so that host:443 == host for HTTPS, etc.
+	// Always normalize through Hostname() so IPv6 brackets are
+	// handled consistently, then re-add brackets and non-default
+	// ports as needed.
 	if parsed, err := url.Parse(s); err == nil && parsed.Host != "" {
-		host := parsed.Host
+		host := parsed.Hostname()
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
 		if port := parsed.Port(); port != "" &&
-			defaultPortForScheme(parsed.Scheme) == port {
-			host = parsed.Hostname()
+			defaultPortForScheme(parsed.Scheme) != port {
+			host += ":" + port
 		}
 		return host + parsed.Path
 	}
