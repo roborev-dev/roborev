@@ -1053,13 +1053,40 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	// identity (same host/remote). Different identities mean different
 	// repos that happen to share the same owner/name suffix — that is
 	// genuinely ambiguous and must remain an error.
-	canonical := strings.ToLower(strings.TrimSuffix(matches[0].Identity, ".git"))
+	//
+	// Use scheme-independent normalization so that SSH and HTTPS
+	// remotes for the same host/owner/repo are treated as equivalent.
+	canonical := normalizeIdentityKey(matches[0].Identity)
 	for _, m := range matches[1:] {
-		if strings.ToLower(strings.TrimSuffix(m.Identity, ".git")) != canonical {
+		if normalizeIdentityKey(m.Identity) != canonical {
 			return nil, fmt.Errorf("ambiguous repo match for %q: %d local repos with different remotes match (partial identity)", ghRepo, len(matches))
 		}
 	}
 	return storage.PreferAutoClone(matches), nil
+}
+
+// normalizeIdentityKey extracts a scheme-independent "host/path" key
+// from a repo identity for comparison. Handles HTTPS/SSH URLs and
+// SCP-style remotes (host:owner/repo). Returns the lowercased,
+// .git-trimmed string as-is for formats it doesn't recognize.
+func normalizeIdentityKey(identity string) string {
+	s := strings.ToLower(strings.TrimSuffix(identity, ".git"))
+
+	// SCP-style after credential stripping: "host:owner/repo"
+	if !strings.Contains(s, "://") {
+		if host, path, ok := strings.Cut(s, ":"); ok &&
+			!strings.Contains(host, "/") {
+			return host + "/" + path
+		}
+		return s
+	}
+
+	// Standard URL (https://, ssh://, git://, etc.)
+	if parsed, err := url.Parse(s); err == nil && parsed.Host != "" {
+		return parsed.Hostname() + parsed.Path
+	}
+
+	return s
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {

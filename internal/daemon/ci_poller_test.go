@@ -1650,15 +1650,15 @@ func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	autoClonePath := dataDir + "/clones/acme/widgets"
 
 	// Two repos with the same host (ghe.corp.com) but different URL
-	// schemes. They share the same normalized identity so disambiguation
-	// should succeed — preferring the auto-clone.
+	// schemes (SSH vs HTTPS). They share the same normalized identity
+	// so disambiguation should succeed — preferring the auto-clone.
 	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
-	require.NoError(t, err, "insert user checkout")
+		"/tmp/clone-ghe1", "widgets", "ghe.corp.com:acme/widgets.git")
+	require.NoError(t, err, "insert user checkout (SCP-style)")
 
 	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-		autoClonePath, "widgets", "git@ghe.corp.com:acme/widgets.git")
-	require.NoError(t, err, "insert auto-clone")
+		autoClonePath, "widgets", "https://ghe.corp.com/acme/widgets.git")
+	require.NoError(t, err, "insert auto-clone (HTTPS)")
 
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
@@ -1688,6 +1688,58 @@ func TestCIPollerFindLocalRepo_PartialIdentityCrossHostAmbiguity(t *testing.T) {
 	_, err = p.findLocalRepo("acme/widgets")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
+}
+
+func TestNormalizeIdentityKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+		want     string
+	}{
+		{
+			name:     "SCP-style with .git",
+			identity: "ghe.corp.com:acme/widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "HTTPS with .git",
+			identity: "https://ghe.corp.com/acme/widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "SSH scheme with .git",
+			identity: "ssh://ghe.corp.com/acme/widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "SSH and HTTPS produce same key",
+			identity: "ghe.corp.com:acme/widgets",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "case insensitive",
+			identity: "GHE.CORP.COM:Acme/Widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "local identity unchanged",
+			identity: "local:///home/user/repo",
+			want:     "local:///home/user/repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeIdentityKey(tt.identity)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// Verify SSH and HTTPS produce the same key for same host/repo.
+	sshKey := normalizeIdentityKey("ghe.corp.com:acme/widgets.git")
+	httpsKey := normalizeIdentityKey("https://ghe.corp.com/acme/widgets.git")
+	assert.Equal(t, sshKey, httpsKey,
+		"SSH and HTTPS remotes for the same host/repo must normalize identically")
 }
 
 func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
