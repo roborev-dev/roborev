@@ -1641,7 +1641,7 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoFallsBackToNewest(t *testing.T) {
 	assert.Equal(t, "/tmp/clone2", found.RootPath, "should pick most recently created repo")
 }
 
-func TestCIPollerFindLocalRepo_PartialIdentityAmbiguityResolved(t *testing.T) {
+func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
@@ -1649,16 +1649,15 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguityResolved(t *testing.T) {
 
 	autoClonePath := dataDir + "/clones/acme/widgets"
 
-	// Create two repos with identities that DON'T match the exact patterns
-	// tried by findLocalRepo (which only checks github.com), so they fall
-	// through to partial suffix matching where both match "acme/widgets".
-	// One is an auto-clone, the other is a user checkout.
+	// Two repos with the same host (ghe.corp.com) but different URL
+	// schemes. They share the same normalized identity so disambiguation
+	// should succeed — preferring the auto-clone.
 	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err, "insert user checkout")
 
 	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-		autoClonePath, "widgets", "https://ghe.corp.com/acme/widgets")
+		autoClonePath, "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err, "insert auto-clone")
 
 	cfg := config.DefaultConfig()
@@ -1668,6 +1667,27 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguityResolved(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, autoClonePath, found.RootPath, "should prefer auto-clone in partial identity match")
+}
+
+func TestCIPollerFindLocalRepo_PartialIdentityCrossHostAmbiguity(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	// Two repos from different hosts that share the same owner/repo suffix.
+	// These are genuinely different repos — should remain an error.
+	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone-ghe2", "widgets", "https://gitlab.com/acme/widgets")
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	_, err = p.findLocalRepo("acme/widgets")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ambiguous")
 }
 
 func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {

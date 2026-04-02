@@ -262,7 +262,26 @@ func (db *DB) GetRepoByIdentityCaseInsensitive(identity string) (*Repo, error) {
 // It prefers auto-clones (root_path under {DataDir}/clones/) since CI
 // manages those and they won't have dirty working tree state.
 // If no auto-clone is found, it returns the most recently created repo.
+// Sync placeholders (root_path == identity) are skipped defensively.
 func PreferAutoClone(repos []Repo) *Repo {
+	// Filter out sync placeholders that don't have a real checkout.
+	filtered := repos[:0:0]
+	for _, r := range repos {
+		if r.RootPath != r.Identity {
+			filtered = append(filtered, r)
+		}
+	}
+	if len(filtered) == 0 {
+		// All entries are placeholders — return first original match
+		// so callers can handle it (findLocalRepo skips placeholders).
+		return &repos[0]
+	}
+	repos = filtered
+
+	if len(repos) == 1 {
+		return &repos[0]
+	}
+
 	clonesPrefix := config.DataDir() + "/clones/"
 	for i := range repos {
 		if strings.HasPrefix(repos[i].RootPath, clonesPrefix) {

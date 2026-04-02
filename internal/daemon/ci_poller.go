@@ -1007,7 +1007,7 @@ func (p *CIPoller) callGitClone(
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
 func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
-	rows, err := p.db.Query(`SELECT id, root_path, name, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
+	rows, err := p.db.Query(`SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1020,8 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	for rows.Next() {
 		var repo storage.Repo
 		var identity string
-		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &identity); err != nil {
+		var createdAt string
+		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt, &identity); err != nil {
 			continue
 		}
 		// Skip sync placeholders (root_path == identity)
@@ -1032,6 +1033,11 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		normalized := strings.ToLower(strings.TrimSuffix(identity, ".git"))
 		if strings.HasSuffix(normalized, "/"+needle) || strings.HasSuffix(normalized, ":"+needle) {
 			repo.Identity = identity
+			if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
+				repo.CreatedAt = t
+			} else if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+				repo.CreatedAt = t
+			}
 			matches = append(matches, repo)
 		}
 	}
@@ -1041,6 +1047,17 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	}
 	if len(matches) == 1 {
 		return &matches[0], nil
+	}
+
+	// Only auto-resolve when all matches share the same normalized
+	// identity (same host/remote). Different identities mean different
+	// repos that happen to share the same owner/name suffix — that is
+	// genuinely ambiguous and must remain an error.
+	canonical := strings.ToLower(strings.TrimSuffix(matches[0].Identity, ".git"))
+	for _, m := range matches[1:] {
+		if strings.ToLower(strings.TrimSuffix(m.Identity, ".git")) != canonical {
+			return nil, fmt.Errorf("ambiguous repo match for %q: %d local repos with different remotes match (partial identity)", ghRepo, len(matches))
+		}
 	}
 	return storage.PreferAutoClone(matches), nil
 }
