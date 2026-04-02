@@ -106,7 +106,7 @@ func TestGenerate(t *testing.T) {
 				"OPENAI_API_KEY",
 				"actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
 				"sha256sum --check",
-				"grep -F \"  ${ARCHIVE}\" checksums.txt > verify.txt",
+				"grep -F \"  ${ARCHIVE}\" SHA256SUMS > verify.txt",
 				"set -euo pipefail",
 				"@openai/codex@latest",
 				"Pin agent CLI versions",

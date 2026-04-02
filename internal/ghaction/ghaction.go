@@ -307,13 +307,13 @@ jobs:
           {{- end }}
           ARCHIVE="roborev_${ROBOREV_VERSION}_linux_amd64.tar.gz"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/${ARCHIVE}"
-          curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/checksums.txt"
-          grep -F "  ${ARCHIVE}" checksums.txt > verify.txt
+          curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/SHA256SUMS"
+          grep -F "  ${ARCHIVE}" SHA256SUMS > verify.txt
           sha256sum --check verify.txt
           mkdir -p "$HOME/.local/bin"
           tar xzf "${ARCHIVE}" -C "$HOME/.local/bin" roborev
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          rm -f "${ARCHIVE}" checksums.txt verify.txt
+          rm -f "${ARCHIVE}" SHA256SUMS verify.txt
           "$HOME/.local/bin/roborev" version
 
       # TODO: Pin agent CLI versions for supply-chain safety.
