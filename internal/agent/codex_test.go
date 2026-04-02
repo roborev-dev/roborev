@@ -36,7 +36,7 @@ func TestCodex_buildArgs(t *testing.T) {
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
 			autoApprove:      true,
-			wantFlags:        []string{"--sandbox", "read-only", "--json"},
+			wantFlags:        []string{"--sandbox", "danger-full-access", "--json"},
 			wantMissingFlags: []string{codexDangerousFlag, codexAutoApproveFlag},
 		},
 		{
@@ -96,7 +96,7 @@ func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
 
 	assert.Contains(t, cmdLine, "exec resume --json")
 	assert.Contains(t, cmdLine, "session-123")
-	assert.Contains(t, cmdLine, "--sandbox read-only")
+	assert.Contains(t, cmdLine, "--sandbox danger-full-access")
 	assert.NotContains(t, cmdLine, " -C ")
 	assert.False(t, strings.HasSuffix(cmdLine, " -"), "command line should omit stdin marker: %q", cmdLine)
 }
@@ -118,7 +118,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support")
 }
 
-func TestCodexReviewUsesReadOnlySandbox(t *testing.T) {
+func TestCodexReviewUsesSandboxNone(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage --sandbox",
 		CaptureArgs: true,
@@ -133,10 +133,10 @@ func TestCodexReviewUsesReadOnlySandbox(t *testing.T) {
 	args, err := os.ReadFile(mock.ArgsFile)
 	require.NoError(t, err)
 	argsStr := string(args)
-	assert.Contains(t, argsStr, "--sandbox read-only",
-		"expected --sandbox read-only in args, got %s", strings.TrimSpace(argsStr))
+	assert.Contains(t, argsStr, "--sandbox danger-full-access",
+		"expected --sandbox danger-full-access in args, got: %s", strings.TrimSpace(argsStr))
 	assert.NotContains(t, argsStr, codexAutoApproveFlag,
-		"expected no %s in review mode, got %s", codexAutoApproveFlag, strings.TrimSpace(argsStr))
+		"expected no %s in review mode, got: %s", codexAutoApproveFlag, strings.TrimSpace(argsStr))
 }
 
 func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {

@@ -82,7 +82,7 @@ case "$AGENT" in
     codex)
         CODEX_RUST_LOG="${CHANGELOG_CODEX_RUST_LOG:-${RUST_LOG:-error,codex_core::rollout::list=off}}"
         set +e
-        RUST_LOG="$CODEX_RUST_LOG" codex exec --json --skip-git-repo-check --sandbox read-only -c reasoning_effort=high -o "$TMPFILE" - >/dev/null < "$PROMPTFILE" 2>"$ERRFILE"
+        RUST_LOG="$CODEX_RUST_LOG" codex exec --json --skip-git-repo-check --sandbox danger-full-access -c reasoning_effort=high -o "$TMPFILE" - >/dev/null < "$PROMPTFILE" 2>"$ERRFILE"
         AGENT_EXIT=$?
         set -e
         ;;

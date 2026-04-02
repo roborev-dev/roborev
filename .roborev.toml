@@ -45,14 +45,17 @@ security findings:
 
 ## Agent tool permissions
 
-Review agents run with shell access to inspect diffs and source files. The
-allow-all-tools plus deny-list approach used by agents like Copilot is
-intentional — it matches the trust level of Codex (--sandbox read-only still
-permits arbitrary shell execution) and Gemini (--approval-mode plan). The
+Review agents run with shell access to inspect diffs and source files. Codex
+runs with --sandbox danger-full-access because the bwrap sandbox (used by both
+read-only and workspace-write modes) blocks loopback networking, which prevents
+git commands (git diff, git log, git show) from working in CI review jobs.
+This is intentional — roborev is a local-only tool that runs in trusted
+environments where the code is the operator's own. The allow-all-tools plus
+deny-list approach used by agents like Copilot matches this trust level. The
 deny-list is defense-in-depth, not a security boundary. Users reviewing
 untrusted code are expected to run roborev in a sandboxed environment
-(container, VM). Do not flag agent tool permission patterns as security
-vulnerabilities when they follow this model.
+(container, VM). Do not flag agent sandbox or tool permission patterns as
+security vulnerabilities when they follow this model.
 
 ## Config loading and filesystem fallback
 

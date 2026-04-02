@@ -141,10 +141,12 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		args = append(args, codexDangerousFlag)
 	}
 	if opts.autoApprove {
-		// Use read-only sandbox for review mode instead of --full-auto
-		// (which implies --sandbox workspace-write). Background review
-		// jobs run in the user's repo and must not take index.lock.
-		args = append(args, "--sandbox", "read-only")
+		// Use full-access sandbox for review mode. The read-only
+		// sandbox blocks loopback networking, which prevents git
+		// commands from working in CI review jobs. roborev runs in
+		// trusted environments where the code is the operator's own,
+		// so sandbox enforcement is unnecessary.
+		args = append(args, "--sandbox", "danger-full-access")
 	}
 	if !opts.preview {
 		args = append(args, "-C", opts.repoPath)
@@ -181,7 +183,7 @@ func codexSupportsDangerousFlag(ctx context.Context, command string) (bool, erro
 }
 
 // codexSupportsNonInteractive checks that codex supports --sandbox,
-// needed for non-agentic review mode (--sandbox read-only).
+// needed for non-agentic review mode (--sandbox danger-full-access).
 func codexSupportsNonInteractive(ctx context.Context, command string) (bool, error) {
 	if cached, ok := codexAutoApproveSupport.Load(command); ok {
 		return cached.(bool), nil
@@ -210,8 +212,8 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		}
 	}
 
-	// Non-agentic review mode uses --sandbox read-only for
-	// non-interactive execution without writing to the working tree.
+	// Non-agentic review mode uses --sandbox danger-full-access for
+	// non-interactive execution that can still run git commands.
 	autoApprove := false
 	if !agenticMode {
 		supported, err := codexSupportsNonInteractive(ctx, a.Command)
