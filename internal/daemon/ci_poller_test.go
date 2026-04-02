@@ -1653,8 +1653,8 @@ func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	// schemes (SSH vs HTTPS). They share the same normalized identity
 	// so disambiguation should succeed — preferring the auto-clone.
 	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
-		"/tmp/clone-ghe1", "widgets", "ghe.corp.com:acme/widgets.git")
-	require.NoError(t, err, "insert user checkout (SCP-style)")
+		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
+	require.NoError(t, err, "insert user checkout (SSH)")
 
 	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		autoClonePath, "widgets", "https://ghe.corp.com/acme/widgets.git")
@@ -1697,7 +1697,12 @@ func TestNormalizeIdentityKey(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "SCP-style with .git",
+			name:     "SCP-style with user@ and .git",
+			identity: "git@ghe.corp.com:acme/widgets.git",
+			want:     "ghe.corp.com/acme/widgets",
+		},
+		{
+			name:     "SCP-style without user@",
 			identity: "ghe.corp.com:acme/widgets.git",
 			want:     "ghe.corp.com/acme/widgets",
 		},
@@ -1712,14 +1717,14 @@ func TestNormalizeIdentityKey(t *testing.T) {
 			want:     "ghe.corp.com/acme/widgets",
 		},
 		{
-			name:     "SSH and HTTPS produce same key",
-			identity: "ghe.corp.com:acme/widgets",
+			name:     "case insensitive",
+			identity: "GIT@GHE.CORP.COM:Acme/Widgets.git",
 			want:     "ghe.corp.com/acme/widgets",
 		},
 		{
-			name:     "case insensitive",
-			identity: "GHE.CORP.COM:Acme/Widgets.git",
-			want:     "ghe.corp.com/acme/widgets",
+			name:     "HTTPS with explicit port preserved",
+			identity: "https://ghe.example.com:8443/acme/widgets.git",
+			want:     "ghe.example.com:8443/acme/widgets",
 		},
 		{
 			name:     "local identity unchanged",
@@ -1735,11 +1740,17 @@ func TestNormalizeIdentityKey(t *testing.T) {
 		})
 	}
 
-	// Verify SSH and HTTPS produce the same key for same host/repo.
-	sshKey := normalizeIdentityKey("ghe.corp.com:acme/widgets.git")
+	// SSH (git@) and HTTPS for the same host/repo must match.
+	sshKey := normalizeIdentityKey("git@ghe.corp.com:acme/widgets.git")
 	httpsKey := normalizeIdentityKey("https://ghe.corp.com/acme/widgets.git")
 	assert.Equal(t, sshKey, httpsKey,
 		"SSH and HTTPS remotes for the same host/repo must normalize identically")
+
+	// Different ports must NOT match.
+	withPort := normalizeIdentityKey("https://ghe.example.com:8443/acme/widgets.git")
+	withoutPort := normalizeIdentityKey("https://ghe.example.com/acme/widgets.git")
+	assert.NotEqual(t, withPort, withoutPort,
+		"different ports must produce different keys")
 }
 
 func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {

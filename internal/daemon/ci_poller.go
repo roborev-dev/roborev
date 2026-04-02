@@ -1067,13 +1067,18 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 
 // normalizeIdentityKey extracts a scheme-independent "host/path" key
 // from a repo identity for comparison. Handles HTTPS/SSH URLs and
-// SCP-style remotes (host:owner/repo). Returns the lowercased,
-// .git-trimmed string as-is for formats it doesn't recognize.
+// SCP-style remotes (user@host:owner/repo or host:owner/repo).
+// Returns the lowercased, .git-trimmed string as-is for formats it
+// doesn't recognize.
 func normalizeIdentityKey(identity string) string {
 	s := strings.ToLower(strings.TrimSuffix(identity, ".git"))
 
-	// SCP-style after credential stripping: "host:owner/repo"
+	// SCP-style: "user@host:owner/repo" or "host:owner/repo"
 	if !strings.Contains(s, "://") {
+		// Strip optional user@ prefix (e.g. "git@host:path").
+		if _, after, ok := strings.Cut(s, "@"); ok {
+			s = after
+		}
 		if host, path, ok := strings.Cut(s, ":"); ok &&
 			!strings.Contains(host, "/") {
 			return host + "/" + path
@@ -1082,8 +1087,9 @@ func normalizeIdentityKey(identity string) string {
 	}
 
 	// Standard URL (https://, ssh://, git://, etc.)
+	// Use parsed.Host (not Hostname()) to preserve explicit ports.
 	if parsed, err := url.Parse(s); err == nil && parsed.Host != "" {
-		return parsed.Hostname() + parsed.Path
+		return parsed.Host + parsed.Path
 	}
 
 	return s
