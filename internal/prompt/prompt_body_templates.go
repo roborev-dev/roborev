@@ -2,7 +2,7 @@ package prompt
 
 import (
 	"bytes"
-	"html/template"
+	"text/template"
 )
 
 type singlePromptBodyView struct {
