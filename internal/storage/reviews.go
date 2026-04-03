@@ -578,15 +578,16 @@ func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Resp
 	return responses, nil
 }
 
-// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars).
+// looksLikeSHA returns true if s looks like a git commit SHA (4-40 hex chars,
+// case-insensitive). Git accepts abbreviated SHAs as short as 4 characters.
 // Used to avoid SHA-based legacy comment lookups for non-SHA git refs like
 // task labels ("run", "analyze") or range refs.
 func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
+	if len(s) < 4 || len(s) > 40 {
 		return false
 	}
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 			return false
 		}
 	}

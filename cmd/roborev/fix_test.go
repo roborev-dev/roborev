@@ -3061,11 +3061,14 @@ func TestLooksLikeSHA(t *testing.T) {
 		{"abc1234", true},
 		{"0000000000000000000000000000000000000000", true},
 		{"abcdef1234567890abcdef1234567890abcdef12", true},
-		{"abc123", false},         // too short (6 chars)
+		{"abcd", true},            // 4-char abbreviated SHA (git minimum)
+		{"ABCDEF1", true},         // uppercase hex is valid
+		{"AbCd1234", true},        // mixed case
+		{"abc", false},            // too short (3 chars)
+		{"abc123", true},          // 6-char abbreviated SHA
 		{"", false},               // empty
 		{"dirty", false},          // non-hex
 		{"run", false},            // task label
-		{"ABCDEF1", false},        // uppercase not valid
 		{"abc123..def456", false}, // range
 	}
 	for _, tt := range tests {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -413,13 +412,9 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	}
 	if legacyURL != "" {
 		legacyResp, err := c.httpClient.Get(legacyURL)
-		if err != nil {
-			log.Printf("Warning: legacy comment fetch for job %d: %v", jobID, err)
-		} else {
+		if err == nil {
 			defer legacyResp.Body.Close()
-			if legacyResp.StatusCode != http.StatusOK {
-				log.Printf("Warning: legacy comment fetch for job %d returned %d", jobID, legacyResp.StatusCode)
-			} else {
+			if legacyResp.StatusCode == http.StatusOK {
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
@@ -445,13 +440,14 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	return responses, nil
 }
 
-// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars).
+// looksLikeSHA returns true if s looks like a git commit SHA (4-40 hex chars,
+// case-insensitive). Git accepts abbreviated SHAs as short as 4 characters.
 func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
+	if len(s) < 4 || len(s) > 40 {
 		return false
 	}
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 			return false
 		}
 	}

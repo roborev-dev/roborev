@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -570,15 +569,16 @@ func branchMatch(matchBranch, jobBranch string) bool {
 	return jobBranch == matchBranch
 }
 
-// looksLikeSHA returns true if s looks like a hex commit SHA (7-40
-// hex characters). This avoids calling git merge-base on task labels
-// and other non-commit refs.
+// looksLikeSHA returns true if s looks like a hex commit SHA (4-40
+// hex characters, case-insensitive). Git accepts abbreviated SHAs as
+// short as 4 characters. This avoids calling git merge-base on task
+// labels and other non-commit refs.
 func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
+	if len(s) < 4 || len(s) > 40 {
 		return false
 	}
 	for _, c := range []byte(s) {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}
@@ -1359,17 +1359,11 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		}
 		if legacyURL != "" {
 			legacyReq, err := http.NewRequestWithContext(ctx, "GET", legacyURL, nil)
-			if err != nil {
-				log.Printf("Warning: legacy comment request for job %d: %v", jobID, err)
-			} else {
+			if err == nil {
 				legacyResp, err := client.Do(legacyReq)
-				if err != nil {
-					log.Printf("Warning: legacy comment fetch for job %d: %v", jobID, err)
-				} else {
+				if err == nil {
 					defer legacyResp.Body.Close()
-					if legacyResp.StatusCode != http.StatusOK {
-						log.Printf("Warning: legacy comment fetch for job %d returned %d", jobID, legacyResp.StatusCode)
-					} else {
+					if legacyResp.StatusCode == http.StatusOK {
 						var legacyResult struct {
 							Responses []storage.Response `json:"responses"`
 						}
