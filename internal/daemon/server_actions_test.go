@@ -409,6 +409,49 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 	})
 
+	t.Run("rerun with invalid worktree path fails", func(t *testing.T) {
+		repoDir := filepath.Join(tmpDir, "rerun-invalid-worktree")
+		testutil.InitTestGitRepo(t, repoDir)
+
+		repo, err := db.GetOrCreateRepo(repoDir)
+		require.NoError(t, err)
+		commit, err := db.GetOrCreateCommit(repo.ID, "rerun-stale-worktree", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		job, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "rerun-stale-worktree",
+			Agent:        "test",
+			WorktreePath: filepath.Join(tmpDir, "stale-worktree"),
+		})
+		require.NoError(t, err)
+
+		for {
+			claimed, err := db.ClaimJob("worker-stale-rerun")
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			if claimed.ID == job.ID {
+				break
+			}
+			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "output"))
+		}
+		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "output"))
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
+
+		var resp ErrorResponse
+		testutil.DecodeJSON(t, w, &resp)
+		assert.Contains(t, resp.Error, "rerun job worktree path is stale or invalid")
+
+		updated, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusDone, updated.Status)
+	})
+
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: 99999})
 		w := httptest.NewRecorder()
@@ -487,7 +530,7 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	assert.Empty(t, provider)
 }
 
-func TestResolveRerunModelProviderIgnoresInvalidWorktreeConfig(t *testing.T) {
+func TestResolveRerunModelProviderRejectsInvalidWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
 	stalePath := t.TempDir()
 
@@ -506,8 +549,9 @@ func TestResolveRerunModelProviderIgnoresInvalidWorktreeConfig(t *testing.T) {
 	model, provider, err := resolveRerunModelProvider(
 		job, config.DefaultConfig(),
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "main-model", model)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "rerun job worktree path is stale or invalid")
+	assert.Empty(t, model)
 	assert.Empty(t, provider)
 }
 
