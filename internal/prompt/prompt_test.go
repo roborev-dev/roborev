@@ -1226,11 +1226,11 @@ func TestSplitResponsesEmpty(t *testing.T) {
 
 func TestFormatUserComments(t *testing.T) {
 	t.Run("nil returns empty", func(t *testing.T) {
-		assert.Equal(t, "", FormatUserComments(nil))
+		assert.Empty(t, FormatUserComments(nil))
 	})
 
 	t.Run("empty slice returns empty", func(t *testing.T) {
-		assert.Equal(t, "", FormatUserComments([]storage.Response{}))
+		assert.Empty(t, FormatUserComments([]storage.Response{}))
 	})
 
 	t.Run("includes comment content", func(t *testing.T) {
@@ -1249,7 +1249,7 @@ func TestFormatUserComments(t *testing.T) {
 
 func TestFormatToolAttempts(t *testing.T) {
 	t.Run("nil returns empty", func(t *testing.T) {
-		assert.Equal(t, "", FormatToolAttempts(nil))
+		assert.Empty(t, FormatToolAttempts(nil))
 	})
 
 	t.Run("includes attempt content", func(t *testing.T) {
