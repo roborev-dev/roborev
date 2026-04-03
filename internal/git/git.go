@@ -1369,3 +1369,10 @@ func ShortSHA(sha string) string {
 	}
 	return sha
 }
+
+// LooksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars,
+// case-insensitive). The 7-char minimum matches git's default abbreviation
+// length and safely excludes short hex task labels like "dead" or "cafe".
+func LooksLikeSHA(s string) bool {
+	return len(s) >= 7 && len(s) <= 40 && isHex(s)
+}

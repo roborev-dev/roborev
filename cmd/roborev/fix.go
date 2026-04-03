@@ -544,7 +544,7 @@ func jobReachable(
 	}
 
 	// SHA ref: check commit graph reachability.
-	if looksLikeSHA(ref) {
+	if git.LooksLikeSHA(ref) {
 		reachable, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
 		return err != nil || reachable
 	}
@@ -567,23 +567,6 @@ func branchMatch(matchBranch, jobBranch string) bool {
 		return true
 	}
 	return jobBranch == matchBranch
-}
-
-// looksLikeSHA returns true if s looks like a hex commit SHA (7-40
-// hex characters, case-insensitive). The 7-char minimum matches git's
-// default abbreviation length and safely excludes short hex task labels
-// like "dead" or "cafe". This avoids calling git merge-base on task
-// labels and other non-commit refs.
-func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
-		return false
-	}
-	for _, c := range []byte(s) {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 func queryOpenJobs(
@@ -1355,7 +1338,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		var legacyURL string
 		if commitID > 0 {
 			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
-		} else if looksLikeSHA(gitRef) {
+		} else if git.LooksLikeSHA(gitRef) {
 			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
 		}
 		if legacyURL != "" {

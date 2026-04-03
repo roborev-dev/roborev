@@ -407,7 +407,7 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	var legacyURL string
 	if commitID > 0 {
 		legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", c.baseURL, commitID)
-	} else if looksLikeSHA(gitRef) {
+	} else if git.LooksLikeSHA(gitRef) {
 		legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", c.baseURL, gitRef)
 	}
 	if legacyURL != "" {
@@ -438,21 +438,6 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	}
 
 	return responses, nil
-}
-
-// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars,
-// case-insensitive). The 7-char minimum matches git's default abbreviation
-// length and safely excludes short hex task labels like "dead" or "cafe".
-func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 // RemapResult is the response from POST /api/remap.

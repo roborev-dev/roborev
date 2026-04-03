@@ -1575,3 +1575,29 @@ func TestValidateWorktreeForRepo(t *testing.T) {
 		assert.False(t, ValidateWorktreeForRepo(subDir, repo.Dir))
 	})
 }
+
+func TestLooksLikeSHA(t *testing.T) {
+	tests := []struct {
+		s    string
+		want bool
+	}{
+		{"abc1234", true},
+		{"0000000000000000000000000000000000000000", true},
+		{"abcdef1234567890abcdef1234567890abcdef12", true},
+		{"ABCDEF1", true},         // uppercase hex is valid
+		{"AbCd1234", true},        // mixed case
+		{"abc123", false},         // too short (6 chars, need 7+)
+		{"abcd", false},           // too short (4 chars)
+		{"dead", false},           // short hex task label
+		{"cafe12", false},         // 6-char hex, still too short
+		{"", false},               // empty
+		{"dirty", false},          // non-hex
+		{"run", false},            // task label
+		{"abc123..def456", false}, // range
+	}
+	for _, tt := range tests {
+		t.Run(tt.s, func(t *testing.T) {
+			assert.Equal(t, tt.want, LooksLikeSHA(tt.s))
+		})
+	}
+}

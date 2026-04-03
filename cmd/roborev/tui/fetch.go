@@ -505,7 +505,7 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 	var legacyPath string
 	if review.Job != nil && review.Job.CommitID != nil {
 		legacyPath = fmt.Sprintf("/api/comments?commit_id=%d", *review.Job.CommitID)
-	} else if review.Job != nil && looksLikeSHA(review.Job.GitRef) {
+	} else if review.Job != nil && git.LooksLikeSHA(review.Job.GitRef) {
 		legacyPath = fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
 	}
 	if legacyPath != "" {
@@ -532,21 +532,6 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 	}
 
 	return responses
-}
-
-// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars,
-// case-insensitive). The 7-char minimum matches git's default abbreviation
-// length and safely excludes short hex task labels like "dead" or "cafe".
-func looksLikeSHA(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 func (m model) loadPatch(jobID int64) (string, error) {
