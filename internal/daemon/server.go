@@ -2455,7 +2455,11 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
-	reasoning := "standard"
+	reasoning, err := config.ResolveFixReasoning("", parentJob.RepoPath, cfg)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	resolution := agent.ResolveWorkflowConfig(
 		"", parentJob.RepoPath, cfg, "fix", reasoning,
 	)

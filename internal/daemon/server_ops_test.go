@@ -597,6 +597,30 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		require.Equal(t, commit.Subject, stored.CommitSubject)
 	})
 
+	t.Run("fix job uses configured fix reasoning", func(t *testing.T) {
+		origReasoning := server.configWatcher.Config().FixReasoning
+		server.configWatcher.Config().FixReasoning = "maximum"
+		t.Cleanup(func() {
+			server.configWatcher.Config().FixReasoning = origReasoning
+		})
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		require.Equal(t, "maximum", fixJob.Reasoning)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err, "GetJobByID(%d)", fixJob.ID)
+		require.Equal(t, "maximum", stored.Reasoning)
+	})
+
 	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
 		// Enqueue a review with a worktree path
 		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
