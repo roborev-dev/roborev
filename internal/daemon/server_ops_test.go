@@ -726,7 +726,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		require.Equal(t, worktreePath, stored.WorktreePath)
 	})
 
-	t.Run("fix job with invalid worktree path is rejected", func(t *testing.T) {
+	t.Run("fix job falls back from invalid worktree path", func(t *testing.T) {
 		stalePath := filepath.Join(tmpDir, "worktrees", "stale-config")
 		require.NoError(t, os.MkdirAll(stalePath, 0o755))
 		require.NoError(t, os.WriteFile(
@@ -763,11 +763,19 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
-		assertHandlerStatus(t, w, http.StatusBadRequest)
+		assertHandlerStatus(t, w, http.StatusCreated)
 
-		var resp ErrorResponse
-		testutil.DecodeJSON(t, w, &resp)
-		assert.Contains(t, resp.Error, "parent job worktree path is stale or invalid")
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		require.Equal(t, "standard", fixJob.Reasoning)
+		require.Empty(t, fixJob.Model)
+		require.Empty(t, fixJob.WorktreePath)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		require.Equal(t, "standard", stored.Reasoning)
+		require.Empty(t, stored.Model)
+		require.Empty(t, stored.WorktreePath)
 	})
 
 	t.Run("custom prompt includes review context", func(t *testing.T) {

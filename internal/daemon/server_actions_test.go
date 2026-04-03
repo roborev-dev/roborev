@@ -409,7 +409,7 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 	})
 
-	t.Run("rerun with invalid worktree path fails", func(t *testing.T) {
+	t.Run("rerun with invalid worktree path falls back to repo", func(t *testing.T) {
 		repoDir := filepath.Join(tmpDir, "rerun-invalid-worktree")
 		testutil.InitTestGitRepo(t, repoDir)
 
@@ -441,15 +441,11 @@ func TestHandleRerunJob(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
-
-		var resp ErrorResponse
-		testutil.DecodeJSON(t, w, &resp)
-		assert.Contains(t, resp.Error, "rerun job worktree path is stale or invalid")
+		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusDone, updated.Status)
+		assert.Equal(t, storage.JobStatusQueued, updated.Status)
 	})
 
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
@@ -530,7 +526,7 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	assert.Empty(t, provider)
 }
 
-func TestResolveRerunModelProviderRejectsInvalidWorktreeConfig(t *testing.T) {
+func TestResolveRerunModelProviderFallsBackOnInvalidWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
 	stalePath := t.TempDir()
 
@@ -549,10 +545,35 @@ func TestResolveRerunModelProviderRejectsInvalidWorktreeConfig(t *testing.T) {
 	model, provider, err := resolveRerunModelProvider(
 		job, config.DefaultConfig(),
 	)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "rerun job worktree path is stale or invalid")
-	assert.Empty(t, model)
+	require.NoError(t, err)
+	assert.Equal(t, "main-model", model)
 	assert.Empty(t, provider)
+}
+
+func TestResolveRerunModelProviderPreservesRequestedOverridesOnInvalidWorktree(t *testing.T) {
+	mainRepo := t.TempDir()
+	stalePath := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stalePath, ".roborev.toml"), []byte("review_model = \"stale-model\"\n"), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:             "test",
+		JobType:           storage.JobTypeReview,
+		ReviewType:        config.ReviewTypeDefault,
+		Reasoning:         "thorough",
+		RepoPath:          mainRepo,
+		WorktreePath:      stalePath,
+		RequestedModel:    "requested-model",
+		RequestedProvider: "anthropic",
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "requested-model", model)
+	assert.Equal(t, "anthropic", provider)
 }
 
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs

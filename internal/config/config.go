@@ -1462,6 +1462,11 @@ func SeverityInstruction(minSeverity string) string {
 // Priority: explicit > per-repo config > global config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
+		if err := validateRepoReasoningOverride(repoPath, func(cfg *RepoConfig) string {
+			return cfg.ReviewReasoning
+		}); err != nil {
+			return "", err
+		}
 		return NormalizeReasoning(explicit)
 	}
 
@@ -1484,6 +1489,11 @@ func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config)
 // Priority: explicit > per-repo config > global config > default (standard)
 func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
+		if err := validateRepoReasoningOverride(repoPath, func(cfg *RepoConfig) string {
+			return cfg.RefineReasoning
+		}); err != nil {
+			return "", err
+		}
 		return NormalizeReasoning(explicit)
 	}
 
@@ -1506,6 +1516,11 @@ func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config)
 // Priority: explicit > per-repo config > global config > default (standard)
 func ResolveFixReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
+		if err := validateRepoReasoningOverride(repoPath, func(cfg *RepoConfig) string {
+			return cfg.FixReasoning
+		}); err != nil {
+			return "", err
+		}
 		return NormalizeReasoning(explicit)
 	}
 
@@ -1522,6 +1537,27 @@ func ResolveFixReasoning(explicit string, repoPath string, globalCfg *Config) (s
 	}
 
 	return "standard", nil // Default for fix: balanced analysis
+}
+
+func validateRepoReasoningOverride(
+	repoPath string,
+	repoValue func(*RepoConfig) string,
+) error {
+	if strings.TrimSpace(repoPath) == "" {
+		return nil
+	}
+
+	repoCfg, err := LoadRepoConfig(repoPath)
+	// Entry points that must fail fast on malformed .roborev.toml call
+	// ValidateRepoConfig separately. Here we only want to catch a parseable
+	// but invalid workflow reasoning override before an explicit CLI value
+	// silently masks it.
+	if err != nil || repoCfg == nil {
+		return nil
+	}
+
+	_, err = NormalizeReasoning(repoValue(repoCfg))
+	return err
 }
 
 // ResolveFixMinSeverity determines minimum severity for fix.
