@@ -2586,7 +2586,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	}
 }
 
-func TestCIPollerProcessPR_FailsOnMalformedRepoConfig(t *testing.T) {
+func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
@@ -2605,12 +2605,16 @@ func TestCIPollerProcessPR_FailsOnMalformedRepoConfig(t *testing.T) {
 		HeadRefOid:  "repo-bad-config-sha",
 		BaseRefName: "main",
 	}, h.Cfg)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "load repo config:")
+	require.NoError(t, err)
 
-	hasBatch, dbErr := h.DB.HasCIBatch("acme/api", 100, "repo-bad-config-sha")
-	require.NoError(t, dbErr)
-	assert.False(t, hasBatch)
+	jobs, listErr := h.DB.ListJobs(
+		"", h.RepoPath, 0, 0,
+		storage.WithGitRef("base-sha..repo-bad-config-sha"),
+	)
+	require.NoError(t, listErr)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "codex", jobs[0].Agent)
+	assert.Equal(t, "thorough", jobs[0].Reasoning)
 }
 
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {

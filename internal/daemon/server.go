@@ -2478,7 +2478,8 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
 	resolutionPath := parentJob.RepoPath
-	if strings.TrimSpace(parentJob.WorktreePath) != "" {
+	if parentJob.WorktreePath != "" &&
+		git.ValidateWorktreeForRepo(parentJob.WorktreePath, parentJob.RepoPath) {
 		resolutionPath = parentJob.WorktreePath
 	}
 	reasoning, err := config.ResolveFixReasoning("", resolutionPath, cfg)
