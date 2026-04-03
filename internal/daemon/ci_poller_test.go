@@ -1160,6 +1160,65 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 	assert.Empty(t, jobs[0].Prompt)
 }
 
+func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	testutil.InitTestGitRepo(t, h.RepoPath)
+
+	var content strings.Builder
+	for range 20000 {
+		content.WriteString("line ")
+		content.WriteString(strings.Repeat("x", 20))
+		content.WriteString(" ")
+		content.WriteString(strings.Repeat("y", 20))
+		content.WriteString("\n")
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, "large.txt"), []byte(content.String()), 0o644))
+	cmd := exec.Command("git", "-C", h.RepoPath, "add", "large.txt")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", out)
+	cmd = exec.Command("git", "-C", h.RepoPath, "commit", "-m", "large followup")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", out)
+
+	headSHA := testutil.GetHeadSHA(t, h.RepoPath)
+	baseSHABytes, err := exec.Command("git", "-C", h.RepoPath, "rev-parse", "HEAD^").Output()
+	require.NoError(t, err)
+	baseSHA := strings.TrimSpace(string(baseSHABytes))
+
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		return map[string]struct{}{"alice": {}}, nil
+	}
+	h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		return []ghpkg.PRDiscussionComment{{
+			Author:    "alice",
+			Body:      "Recent maintainer guidance.",
+			Source:    ghpkg.PRDiscussionSourceIssueComment,
+			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
+		}}, nil
+	}
+
+	err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 79, HeadRefOid: headSHA, BaseRefName: "main",
+	}, h.Cfg)
+	require.NoError(t, err)
+
+	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef(baseSHA+".."+headSHA))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+
+	assert.Contains(t, jobs[0].Prompt, "## Pull Request Discussion")
+	assert.Contains(t, jobs[0].Prompt, "The full diff has been written to a file for review.")
+	assert.Contains(t, jobs[0].Prompt, "Read it with: `cat ")
+	assert.NotContains(t, jobs[0].Prompt, "inspect the commit range locally with read-only git commands")
+	assert.NotContains(t, jobs[0].Prompt, "git diff --unified=80")
+}
+
 func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultConfig()

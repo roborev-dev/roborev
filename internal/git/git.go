@@ -268,6 +268,23 @@ func cleanEvalPath(p string) string {
 	return filepath.Clean(p)
 }
 
+// ResolveGitDir returns the absolute path to the .git directory for a
+// repository, correctly handling worktrees and MSYS-style paths on
+// Windows.
+func ResolveGitDir(repoPath string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-dir: %w", err)
+	}
+	gitDir := normalizeMSYSPath(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoPath, gitDir)
+	}
+	return filepath.Clean(gitDir), nil
+}
+
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.
 // For a regular repository or submodule, this returns the same as GetRepoRoot.
 // For a worktree, this returns the main repository's root path.

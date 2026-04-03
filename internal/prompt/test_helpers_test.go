@@ -97,6 +97,27 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	return r.dir, commits
 }
 
+func setupSmallDiffRepo(t *testing.T) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "small.txt"),
+		[]byte("hello world\n"), 0o644,
+	))
+	r.git("add", "small.txt")
+	r.git("commit", "-m", "small change")
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
 func setupLargeDiffRepo(t *testing.T) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)

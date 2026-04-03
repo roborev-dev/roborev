@@ -15,6 +15,11 @@ import (
 // New code should use Builder.maxPromptSize() which respects config.
 const MaxPromptSize = 250 * 1024
 
+// DiffTruncatedHint is a prefix present in all oversized-diff fallback
+// messages. Callers can check for this to detect that the diff was too
+// large to include inline in the prompt.
+const DiffTruncatedHint = "(Diff too large to include"
+
 // noSkillsInstruction tells agents not to delegate the review to external
 // tools or skills, and to return only the final review content. Verdict
 // parsing intentionally does not try to decode narrative process updates or
@@ -132,6 +137,12 @@ type Builder struct {
 	globalCfg *config.Config // optional global config for exclude patterns
 }
 
+// CodexDiffFilePathPlaceholder is a sentinel path embedded in prebuilt
+// Codex prompts for oversized diffs. The worker replaces it with a
+// real diff file path at execution time so the stored prompt remains
+// reusable across retries.
+const CodexDiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
+
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
 	return &Builder{db: db}
@@ -170,10 +181,37 @@ func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int,
 // BuildWithAdditionalContext constructs a review prompt with an optional
 // caller-provided markdown context block inserted ahead of the current diff.
 func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
+	opts := buildOpts{additionalContext: additionalContext}
 	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+}
+
+// BuildWithAdditionalContextAndDiffFile constructs a review prompt with
+// caller-provided markdown context and an optional oversized-diff file
+// reference for sandboxed Codex reviews.
+func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext, diffFilePath string) (string, error) {
+	opts := buildOpts{
+		additionalContext: additionalContext,
+		diffFilePath:      diffFilePath,
+	}
+	if git.IsRange(gitRef) {
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+	}
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+}
+
+// BuildWithDiffFile constructs a review prompt where a pre-written diff
+// file is referenced for large diffs instead of git commands. This is
+// used for Codex agents running in a sandboxed environment that cannot
+// execute git directly.
+func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, diffFilePath string) (string, error) {
+	opts := buildOpts{diffFilePath: diffFilePath}
+	if git.IsRange(gitRef) {
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+	}
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
@@ -253,6 +291,17 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	}
 
 	return hardCapPrompt(sb.String(), promptCap), nil
+}
+
+// buildOpts groups optional parameters for buildSinglePrompt and
+// buildRangePrompt to keep the positional parameter count manageable.
+type buildOpts struct {
+	additionalContext string
+	// diffFilePath, when non-empty, is a file in the repo directory
+	// containing the full diff. Used for Codex large-diff fallback
+	// so the sandboxed agent can read the diff from a file instead
+	// of running git commands.
+	diffFilePath string
 }
 
 func isCodexReviewAgent(agentName string) bool {
@@ -419,6 +468,36 @@ func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []
 	}
 }
 
+func codexDiffFileFallbackVariants(filePath string) []string {
+	quotedPath := shellQuote(filePath)
+	return []string{
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"The full diff has been written to a file for review.\n"+
+			"Read it with: `cat %s`\n\n"+
+			"Review the actual diff before writing findings.\n",
+			quotedPath),
+		fmt.Sprintf("### Diff\n\n"+
+			"(Diff too large to include inline; read from `%s`)\n",
+			quotedPath),
+	}
+}
+
+func codexRangeDiffFileFallbackVariants(filePath string) []string {
+	quotedPath := shellQuote(filePath)
+	return []string{
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"The full diff has been written to a file for review.\n"+
+			"Read it with: `cat %s`\n\n"+
+			"Review the actual diff before writing findings.\n",
+			quotedPath),
+		fmt.Sprintf("### Combined Diff\n\n"+
+			"(Diff too large to include inline; read from `%s`)\n",
+			quotedPath),
+	}
+}
+
 func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []string {
 	logCmd := renderShellCommand("git", "log", "--oneline", rangeRef)
 	statCmd := renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...)
@@ -452,7 +531,7 @@ func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
-func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
+func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
 	// Start with system prompt
 	promptType := "review"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -467,7 +546,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
-	b.writeAdditionalContext(&optionalContext, additionalContext)
+	b.writeAdditionalContext(&optionalContext, opts.additionalContext)
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -518,29 +597,34 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
+			var variants []string
+			if opts.diffFilePath != "" {
+				variants = codexDiffFileFallbackVariants(opts.diffFilePath)
+			} else {
+				pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
+				variants = codexCommitInspectionFallbackVariants(sha, pathspecArgs)
+			}
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
 				currentRequired.String(),
 				currentOverflow.String(),
 				promptCap,
-				codexCommitInspectionFallbackVariants(sha, pathspecArgs)...,
-			), nil
-		} else {
-			fallback := "### Diff\n\n" +
-				"(Diff too large to include - please review the commit directly)\n" +
-				"View with: " + renderShellCommand("git", "show", sha) + "\n"
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				fallback,
+				variants...,
 			), nil
 		}
+		fallback := "### Diff\n\n" +
+			"(Diff too large to include - please review the commit directly)\n" +
+			"View with: " + renderShellCommand("git", "show", sha) + "\n"
+		return buildPromptPreservingCurrentSection(
+			requiredPrefix,
+			optionalContext.String(),
+			currentRequired.String(),
+			currentOverflow.String(),
+			promptCap,
+			fallback,
+		), nil
 	}
 
 	// Build diff section
@@ -570,7 +654,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 }
 
 // buildRangePrompt constructs a prompt for a commit range
-func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
+func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
 	// Start with system prompt for ranges
 	promptType := "range"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -585,7 +669,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Add project-specific guidelines from default branch
 	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
-	b.writeAdditionalContext(&optionalContext, additionalContext)
+	b.writeAdditionalContext(&optionalContext, opts.additionalContext)
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -637,29 +721,34 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
-		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
+			var variants []string
+			if opts.diffFilePath != "" {
+				variants = codexRangeDiffFileFallbackVariants(opts.diffFilePath)
+			} else {
+				pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
+				variants = codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+			}
 			return buildPromptPreservingCurrentSection(
 				requiredPrefix,
 				optionalContext.String(),
 				currentRequired.String(),
 				currentOverflow.String(),
 				promptCap,
-				codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)...,
-			), nil
-		} else {
-			fallback := "### Combined Diff\n\n" +
-				"(Diff too large to include - please review the commits directly)\n" +
-				"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				fallback,
+				variants...,
 			), nil
 		}
+		fallback := "### Combined Diff\n\n" +
+			"(Diff too large to include - please review the commits directly)\n" +
+			"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
+		return buildPromptPreservingCurrentSection(
+			requiredPrefix,
+			optionalContext.String(),
+			currentRequired.String(),
+			currentOverflow.String(),
+			promptCap,
+			fallback,
+		), nil
 	}
 
 	// Build diff section

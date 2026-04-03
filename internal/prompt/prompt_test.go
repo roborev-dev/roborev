@@ -457,6 +457,61 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
 }
 
+func TestBuildWithDiffFileCodexOversizedDiffReferencesFile(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+
+	b := NewBuilder(nil)
+	diffFile := filepath.Join(repoPath, ".roborev-review-42.diff")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", diffFile)
+	require.NoError(t, err, "BuildWithDiffFile failed: %v", err)
+
+	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
+	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
+	assertContains(t, prompt, diffFile, "expected diff file path in prompt")
+	assertNotContains(t, prompt, "git show", "should not reference git commands when diff file provided")
+	assertNotContains(t, prompt, "git diff-tree", "should not reference git commands when diff file provided")
+}
+
+func TestBuildWithDiffFileRangeCodexOversizedDiffReferencesFile(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+	rangeRef := sha + "~1.." + sha
+
+	b := NewBuilder(nil)
+	diffFile := filepath.Join(repoPath, ".roborev-review-42.diff")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", diffFile)
+	require.NoError(t, err, "BuildWithDiffFile failed: %v", err)
+
+	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
+	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
+	assertContains(t, prompt, diffFile, "expected diff file path in prompt")
+	assertNotContains(t, prompt, "git diff --stat", "should not reference git commands when diff file provided")
+	assertNotContains(t, prompt, "git log", "should not reference git commands when diff file provided")
+}
+
+func TestBuildWithDiffFileNonCodexIgnoresDiffFile(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+
+	b := NewBuilder(nil)
+	diffFile := filepath.Join(repoPath, ".roborev-review-42.diff")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "test", "", diffFile)
+	require.NoError(t, err)
+
+	assertNotContains(t, prompt, diffFile, "non-codex agent should not reference diff file")
+	assertContains(t, prompt, "View with:", "non-codex agent should use generic fallback")
+}
+
+func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {
+	repoPath, sha := setupSmallDiffRepo(t)
+
+	b := NewBuilder(nil)
+	diffFile := filepath.Join(repoPath, ".roborev-review-42.diff")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", diffFile)
+	require.NoError(t, err)
+
+	assertContains(t, prompt, "```diff", "small diff should be inlined")
+	assertNotContains(t, prompt, diffFile, "diff file should not be referenced when diff fits inline")
+}
+
 func codexCommitFallback(sha string) string {
 	return codexCommitInspectionFallbackVariants(sha, nil)[0]
 }

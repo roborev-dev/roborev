@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -388,6 +389,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		var cleanup func()
+		excludes := config.ResolveExcludePatterns(
+			effectiveRepoPath, cfg, job.ReviewType,
+		)
+		reviewPrompt, cleanup, err = preparePrebuiltCodexPrompt(
+			effectiveRepoPath, job, reviewPrompt, excludes,
+		)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
+			wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
+			return
+		}
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
@@ -406,8 +422,39 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
-		// Normal job - build prompt from git ref
-		reviewPrompt, err = pb.Build(effectiveRepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		// Normal job - build prompt from git ref.
+		reviewPrompt, err = pb.Build(
+			effectiveRepoPath, job.GitRef, job.RepoID,
+			cfg.ReviewContextCount, job.Agent, job.ReviewType,
+		)
+		// If the diff was truncated for a Codex review, write a
+		// snapshot file so the sandboxed agent can read it directly
+		// instead of needing git commands.
+		if err == nil && strings.EqualFold(job.Agent, "codex") &&
+			strings.Contains(reviewPrompt, prompt.DiffTruncatedHint) {
+			excludes := config.ResolveExcludePatterns(
+				effectiveRepoPath, cfg, job.ReviewType,
+			)
+			diffFile, cleanup, diffFileErr := prepareDiffFileForCodex(
+				effectiveRepoPath, job, excludes,
+			)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if diffFile != "" {
+				reviewPrompt, err = pb.BuildWithDiffFile(
+					effectiveRepoPath, job.GitRef, job.RepoID,
+					cfg.ReviewContextCount, job.Agent,
+					job.ReviewType, diffFile,
+				)
+			} else if diffFileErr != nil &&
+				requiresSandboxedCodexDiffFile(job, cfg) {
+				err = fmt.Errorf("prepare codex diff file: %w", diffFileErr)
+			} else if diffFileErr != nil {
+				log.Printf("[%s] Warning: codex diff file: %v",
+					workerID, diffFileErr)
+			}
+		}
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
@@ -994,6 +1041,90 @@ func (wp *WorkerPool) failoverOrFail(
 	}
 }
 
+func preparePrebuiltCodexPrompt(
+	repoPath string, job *storage.ReviewJob, reviewPrompt string, excludes []string,
+) (string, func(), error) {
+	hasPlaceholder := strings.Contains(
+		reviewPrompt, prompt.CodexDiffFilePathPlaceholder,
+	)
+	// Legacy prebuilt prompts (created before diff-file support) won't
+	// have the placeholder. For those, only write a diff file when the
+	// prompt indicates the diff was truncated.
+	if !hasPlaceholder {
+		if !strings.EqualFold(job.Agent, "codex") ||
+			!strings.Contains(reviewPrompt, prompt.DiffTruncatedHint) {
+			return reviewPrompt, nil, nil
+		}
+		diffFile, cleanup, err := prepareDiffFileForCodex(
+			repoPath, job, excludes,
+		)
+		if err != nil || diffFile == "" {
+			if cleanup != nil {
+				cleanup()
+			}
+			// Best-effort for legacy prompts: return as-is so the
+			// old git-command fallback can still be attempted.
+			return reviewPrompt, nil, nil
+		}
+		reviewPrompt += fmt.Sprintf(
+			"\n\nThe full diff is also available at: `cat %s`\n",
+			shellQuoteForPrompt(diffFile),
+		)
+		return reviewPrompt, cleanup, nil
+	}
+
+	diffFile, cleanup, err := prepareDiffFileForCodex(repoPath, job, excludes)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return "", nil, fmt.Errorf("prepare prebuilt codex prompt diff file: %w", err)
+	}
+	if diffFile == "" {
+		if cleanup != nil {
+			cleanup()
+		}
+		return "", nil, fmt.Errorf(
+			"prebuilt codex prompt needs diff file but none could be prepared",
+		)
+	}
+	quotedPlaceholder := shellQuoteForPrompt(
+		prompt.CodexDiffFilePathPlaceholder,
+	)
+	reviewPrompt = strings.ReplaceAll(
+		reviewPrompt, quotedPlaceholder, shellQuoteForPrompt(diffFile),
+	)
+	reviewPrompt = strings.ReplaceAll(
+		reviewPrompt, prompt.CodexDiffFilePathPlaceholder, diffFile,
+	)
+	return reviewPrompt, cleanup, nil
+}
+
+func shellQuoteForPrompt(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func requiresSandboxedCodexDiffFile(
+	job *storage.ReviewJob, cfg *config.Config,
+) bool {
+	if !strings.EqualFold(job.Agent, "codex") ||
+		job.Agentic || agent.AllowUnsafeAgents() {
+		return false
+	}
+	// Use the same config-aware resolution as the worker to check
+	// whether Codex is the effective agent. If it falls back to
+	// another agent (e.g., Codex is unavailable or overridden via
+	// codex_cmd), the diff file is not required.
+	a, err := agent.GetAvailableWithConfig(job.Agent, cfg)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(a.Name(), "codex")
+}
+
 // logJobFailed logs a job failure to the activity log
 func (wp *WorkerPool) logJobFailed(
 	jobID int64, workerID, agentName, errorMsg string,
@@ -1011,6 +1142,55 @@ func (wp *WorkerPool) logJobFailed(
 			"error":  errorMsg,
 		},
 	)
+}
+
+// prepareDiffFileForCodex writes the full diff for a job into the
+// checkout's git dir so a sandboxed Codex agent can read it without
+// needing git commands or access outside the repository boundary.
+// Returns the file path and a cleanup function, or ("", nil) when no
+// file was written.
+func prepareDiffFileForCodex(
+	repoPath string, job *storage.ReviewJob, excludes []string,
+) (string, func(), error) {
+	if !strings.EqualFold(job.Agent, "codex") {
+		return "", nil, nil
+	}
+	// Job-specific agentic mode keeps the existing direct-tooling path.
+	if job.Agentic {
+		return "", nil, nil
+	}
+	var fullDiff string
+	var err error
+	if gitpkg.IsRange(job.GitRef) {
+		fullDiff, err = gitpkg.GetRangeDiff(
+			repoPath, job.GitRef, excludes...,
+		)
+	} else {
+		fullDiff, err = gitpkg.GetDiff(
+			repoPath, job.GitRef, excludes...,
+		)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("capture full diff: %w", err)
+	}
+	if fullDiff == "" {
+		return "", nil, nil
+	}
+	gitDir, err := gitpkg.ResolveGitDir(repoPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve git dir: %w", err)
+	}
+	if info, err := os.Stat(gitDir); err != nil || !info.IsDir() {
+		if err != nil {
+			return "", nil, fmt.Errorf("stat git dir: %w", err)
+		}
+		return "", nil, fmt.Errorf("git dir %s is not a directory", gitDir)
+	}
+	diffFile := filepath.Join(gitDir, fmt.Sprintf("roborev-review-%d.diff", job.ID))
+	if err := os.WriteFile(diffFile, []byte(fullDiff), 0o644); err != nil {
+		return "", nil, fmt.Errorf("write diff file %s: %w", diffFile, err)
+	}
+	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
 // markCompactSourceJobs marks all source jobs as closed for a completed compact job
