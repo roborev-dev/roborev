@@ -440,10 +440,11 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	return responses, nil
 }
 
-// looksLikeSHA returns true if s looks like a git commit SHA (4-40 hex chars,
-// case-insensitive). Git accepts abbreviated SHAs as short as 4 characters.
+// looksLikeSHA returns true if s looks like a git commit SHA (7-40 hex chars,
+// case-insensitive). The 7-char minimum matches git's default abbreviation
+// length and safely excludes short hex task labels like "dead" or "cafe".
 func looksLikeSHA(s string) bool {
-	if len(s) < 4 || len(s) > 40 {
+	if len(s) < 7 || len(s) > 40 {
 		return false
 	}
 	for _, c := range s {

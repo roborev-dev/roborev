@@ -569,12 +569,13 @@ func branchMatch(matchBranch, jobBranch string) bool {
 	return jobBranch == matchBranch
 }
 
-// looksLikeSHA returns true if s looks like a hex commit SHA (4-40
-// hex characters, case-insensitive). Git accepts abbreviated SHAs as
-// short as 4 characters. This avoids calling git merge-base on task
+// looksLikeSHA returns true if s looks like a hex commit SHA (7-40
+// hex characters, case-insensitive). The 7-char minimum matches git's
+// default abbreviation length and safely excludes short hex task labels
+// like "dead" or "cafe". This avoids calling git merge-base on task
 // labels and other non-commit refs.
 func looksLikeSHA(s string) bool {
-	if len(s) < 4 || len(s) > 40 {
+	if len(s) < 7 || len(s) > 40 {
 		return false
 	}
 	for _, c := range []byte(s) {
