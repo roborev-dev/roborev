@@ -665,6 +665,56 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		)
 	})
 
+	t.Run("fix job uses worktree config when present", func(t *testing.T) {
+		worktreePath := filepath.Join(tmpDir, "worktrees", "feature-config")
+		require.NoError(t, os.MkdirAll(worktreePath, 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(worktreePath, ".roborev.toml"),
+			[]byte("fix_reasoning = \"maximum\"\nfix_model = \"worktree-model\"\n"),
+			0o644,
+		))
+
+		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       "fix-val-abc",
+			Agent:        "test",
+			WorktreePath: worktreePath,
+		})
+		require.NoError(t, err)
+
+		for {
+			claimed, claimErr := db.ClaimJob("w-wt-fix-config")
+			require.NoError(t, claimErr)
+			require.NotNil(t, claimed)
+			if claimed.ID == wtJob.ID {
+				break
+			}
+			require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "PASS"))
+		}
+		require.NoError(t, db.CompleteJob(
+			wtJob.ID, "test", "prompt", "FAIL: issues found",
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: wtJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		require.Equal(t, "maximum", fixJob.Reasoning)
+		require.Equal(t, "worktree-model", fixJob.Model)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		require.Equal(t, "maximum", stored.Reasoning)
+		require.Equal(t, "worktree-model", stored.Model)
+	})
+
 	t.Run("custom prompt includes review context", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(
 			t, http.MethodPost, "/api/job/fix",

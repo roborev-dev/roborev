@@ -2477,17 +2477,21 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
-	reasoning, err := config.ResolveFixReasoning("", parentJob.RepoPath, cfg)
+	resolutionPath := parentJob.RepoPath
+	if strings.TrimSpace(parentJob.WorktreePath) != "" {
+		resolutionPath = parentJob.WorktreePath
+	}
+	reasoning, err := config.ResolveFixReasoning("", resolutionPath, cfg)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := config.ValidateRepoConfig(parentJob.RepoPath); err != nil {
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
 		return
 	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		"", parentJob.RepoPath, cfg, "fix", reasoning,
+		"", resolutionPath, cfg, "fix", reasoning,
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))

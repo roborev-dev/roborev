@@ -408,7 +408,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	repoCfg, repoCfgErr := loadCIRepoConfig(repo.RootPath)
 	if repoCfgErr != nil {
-		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)
+		return fmt.Errorf("load repo config: %w", repoCfgErr)
 	}
 	if repoCfg != nil {
 		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); repoMatrix != nil {
