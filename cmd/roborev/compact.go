@@ -228,6 +228,9 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	if err != nil {
 		return 0, fmt.Errorf("resolve reasoning: %w", err)
 	}
+	if err := config.ValidateRepoConfig(repoRoot); err != nil {
+		return 0, fmt.Errorf("resolve agent/model: %w", err)
+	}
 	agentName := config.ResolveAgentForWorkflow(
 		opts.agentName, repoRoot, cfg, "fix", reasoning,
 	)

@@ -326,6 +326,22 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// Resolve config-driven workflow settings before touching the daemon so
+	// malformed repo config fails during validation, not after startup.
+	resolvedReasoning, err := config.ResolveRefineReasoning(
+		opts.reasoning, repoPath, cfg,
+	)
+	if err != nil {
+		return err
+	}
+	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
+	resolution, err := agent.ResolveWorkflowConfig(
+		opts.agentName, repoPath, cfg, "refine", resolvedReasoning,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve workflow config: %w", err)
+	}
+
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
@@ -352,17 +368,6 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, git.ShortSHA(mergeBase))
 	}
 
-	// Resolve reasoning level from CLI or config (default: standard for refine)
-	resolvedReasoning, err := config.ResolveRefineReasoning(opts.reasoning, repoPath, cfg)
-	if err != nil {
-		return err
-	}
-	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
-
-	// Resolve agent/model preferences for refine at this reasoning level.
-	resolution := agent.ResolveWorkflowConfig(
-		opts.agentName, repoPath, cfg, "refine", resolvedReasoning,
-	)
 	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)
 	agent.SetAllowUnsafeAgents(allowUnsafe)
 	if cfg != nil {

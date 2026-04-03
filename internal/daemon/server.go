@@ -734,16 +734,21 @@ func workflowForJob(jobType, reviewType string) string {
 	return workflow
 }
 
-func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string) {
+func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolutionPath := job.RepoPath
 	if strings.TrimSpace(job.WorktreePath) != "" {
 		resolutionPath = job.WorktreePath
 	}
-	resolution := agent.ResolveWorkflowConfig("", resolutionPath, cfg, workflow, job.Reasoning)
+	resolution, err := agent.ResolveWorkflowConfig(
+		"", resolutionPath, cfg, workflow, job.Reasoning,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
 	model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
 	provider := strings.TrimSpace(job.RequestedProvider)
-	return model, provider
+	return model, provider, nil
 }
 
 func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
@@ -879,9 +884,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	requestedProvider := strings.TrimSpace(req.Provider)
 
 	// Resolve agent for workflow at this reasoning level
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		req.Agent, repoRoot, cfg, workflow, reasoning,
 	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
 	agentName := resolution.PreferredAgent
 
 	// Resolve to an installed agent: if the configured agent isn't available,
@@ -1825,7 +1834,13 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	model, provider := resolveRerunModelProvider(job, s.configWatcher.Config())
+	model, provider, err := resolveRerunModelProvider(
+		job, s.configWatcher.Config(),
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := s.db.ReenqueueJob(req.JobID, storage.ReenqueueOpts{Model: model, Provider: provider}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2460,9 +2475,13 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		"", parentJob.RepoPath, cfg, "fix", reasoning,
 	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
 	agentName := resolution.PreferredAgent
 	if resolved, err := agent.GetAvailableWithConfig(
 		agentName, cfg, resolution.BackupAgent,

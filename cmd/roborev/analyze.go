@@ -753,9 +753,12 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	// Resolve agent and model via fix workflow config.
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		agentName, repoPath, cfg, "fix", reasoning,
 	)
+	if err != nil {
+		return fmt.Errorf("resolve workflow config: %w", err)
+	}
 	agentName = resolution.PreferredAgent
 
 	a, err := agent.GetAvailableWithConfig(

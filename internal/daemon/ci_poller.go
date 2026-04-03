@@ -586,9 +586,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 
 		// Resolve agent through workflow config when not explicitly set.
-		resolution := agent.ResolveWorkflowConfig(
+		resolution, err := agent.ResolveWorkflowConfig(
 			ag, repo.RootPath, cfg, workflow, reasoning,
 		)
+		if err != nil {
+			rollback("Review enqueue failed")
+			return fmt.Errorf("resolve workflow config: %w", err)
+		}
 		resolvedAgent := resolution.PreferredAgent
 		if p.agentResolverFn != nil {
 			name, err := p.agentResolverFn(resolvedAgent)

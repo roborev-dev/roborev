@@ -798,9 +798,12 @@ func failoverWorkflow(job *storage.ReviewJob) string {
 // available or it's the same as the job's current agent.
 func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	cfg := wp.cfgGetter.Config()
-	resolution := agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		"", job.RepoPath, cfg, failoverWorkflow(job), "",
 	)
+	if err != nil {
+		return ""
+	}
 	backup := resolution.BackupAgent
 	if backup == "" {
 		return ""
@@ -820,9 +823,13 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 // Returns the configured backup model, or "" if none is set.
 func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	cfg := wp.cfgGetter.Config()
-	return agent.ResolveWorkflowConfig(
+	resolution, err := agent.ResolveWorkflowConfig(
 		"", job.RepoPath, cfg, failoverWorkflow(job), "",
-	).BackupModel()
+	)
+	if err != nil {
+		return ""
+	}
+	return resolution.BackupModel()
 }
 
 // broadcastFailed sends a review.failed event for a job

@@ -91,16 +91,21 @@ func runSingle(
 	var model string
 	var backupAgent string
 	var resolution agent.WorkflowConfig
+	var err error
 	if cfg.GlobalConfig != nil {
-		resolution = agent.ResolveWorkflowConfig(
+		resolution, err = agent.ResolveWorkflowConfig(
 			agentName, cfg.RepoPath, cfg.GlobalConfig, workflow, cfg.Reasoning,
 		)
+		if err != nil {
+			result.Status = ResultFailed
+			result.Error = fmt.Sprintf("resolve workflow config: %v", err)
+			return result
+		}
 		resolvedName = resolution.PreferredAgent
 		backupAgent = resolution.BackupAgent
 	}
 
 	var resolvedAgent agent.Agent
-	var err error
 	if cfg.AgentRegistry != nil {
 		if a, ok := cfg.AgentRegistry[resolvedName]; ok {
 			resolvedAgent = a

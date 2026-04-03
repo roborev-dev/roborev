@@ -24,7 +24,10 @@ func ResolveWorkflowConfig(
 	cliAgent, repoPath string,
 	globalCfg *config.Config,
 	workflow, reasoning string,
-) WorkflowConfig {
+) (WorkflowConfig, error) {
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return WorkflowConfig{}, err
+	}
 	return WorkflowConfig{
 		RepoPath:       repoPath,
 		GlobalConfig:   globalCfg,
@@ -32,7 +35,7 @@ func ResolveWorkflowConfig(
 		Reasoning:      reasoning,
 		PreferredAgent: config.ResolveAgentForWorkflow(cliAgent, repoPath, globalCfg, workflow, reasoning),
 		BackupAgent:    config.ResolveBackupAgentForWorkflow(repoPath, globalCfg, workflow),
-	}
+	}, nil
 }
 
 // AgentMatches reports whether two agent names refer to the same logical

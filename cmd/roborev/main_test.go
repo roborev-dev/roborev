@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -246,6 +247,45 @@ func TestRunRefineFailsOnInvalidGlobalConfigBeforeDaemonStartup(t *testing.T) {
 	err = runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected config load error")
 	assert.Contains(t, err.Error(), "load config:")
+}
+
+func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
+	repoDir, _ := setupRefineRepo(t)
+
+	err := os.WriteFile(
+		filepath.Join(repoDir, ".roborev.toml"),
+		[]byte("refine_model = ["),
+		0o644,
+	)
+	require.NoError(t, err, "write invalid repo config: %v", err)
+	gitAdd := exec.Command("git", "add", ".roborev.toml")
+	gitAdd.Dir = repoDir
+	out, err := gitAdd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", out)
+	gitCommit := exec.Command("git", "commit", "-m", "add invalid repo config")
+	gitCommit.Dir = repoDir
+	out, err = gitCommit.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", out)
+
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		require.FailNow(t, "ensureDaemon should not run when repo config is invalid")
+		return nil, ErrDaemonNotRunning
+	}
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+	})
+
+	ctx := newFastRunContext(repoDir)
+
+	err = runRefine(ctx, refineOptions{
+		agentName:     "test",
+		reasoning:     "fast",
+		maxIterations: 1,
+		quiet:         true,
+	})
+	require.Error(t, err, "expected repo config error")
+	assert.Contains(t, err.Error(), "resolve workflow config:")
 }
 
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {

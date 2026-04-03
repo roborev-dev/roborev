@@ -472,7 +472,10 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 		WorktreePath: worktreeRepo,
 	}
 
-	model, provider := resolveRerunModelProvider(job, config.DefaultConfig())
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.NoError(t, err)
 	assert.Equal(t, "worktree-model", model)
 	assert.Empty(t, provider)
 }

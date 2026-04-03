@@ -2481,9 +2481,10 @@ default_model = "gpt-5.4"
 			cfg, err := config.LoadGlobal()
 			require.NoError(t, err, "LoadGlobal: %v")
 
-			modelStr := resolveFixModel(
+			modelStr, err := resolveFixModel(
 				tt.agentName, tt.model, tmpDir, cfg, "fast",
 			)
+			require.NoError(t, err)
 
 			if tt.wantModel && modelStr == "" {
 				assert.False(t, tt.wantModel && modelStr == "", "expected model to be set, got empty")
@@ -2550,7 +2551,8 @@ fix_agent = "claude"
 	cfg, err := config.LoadGlobal()
 	require.NoError(t, err, "LoadGlobal: %v")
 
-	modelStr := resolveFixModel("claude-code", "", tmpDir, cfg, "standard")
+	modelStr, err := resolveFixModel("claude-code", "", tmpDir, cfg, "standard")
+	require.NoError(t, err)
 	assert.Empty(t, modelStr)
 }
 
@@ -2676,7 +2678,10 @@ func TestResolveFixAgentSameAsDefault(t *testing.T) {
 			require.NoError(t, err, "LoadGlobal: %v")
 
 			// Call the production resolveFixModel function directly
-			modelStr := resolveFixModel(tt.cliAgent, "", tmpDir, cfg, "fast")
+			modelStr, err := resolveFixModel(
+				tt.cliAgent, "", tmpDir, cfg, "fast",
+			)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantModel, modelStr)
 		})

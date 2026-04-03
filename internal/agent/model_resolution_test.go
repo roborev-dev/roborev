@@ -282,7 +282,10 @@ func TestResolveWorkflowConfigModelForSelectedAgent_UsesBackupModelForAliasMatch
 		ReviewBackupModel: "claude-sonnet",
 	}
 
-	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+	resolution, err := ResolveWorkflowConfig(
+		"", t.TempDir(), cfg, "review", "standard",
+	)
+	require.NoError(t, err)
 
 	require.Equal(t, "gemini", resolution.PreferredAgent)
 	require.Equal(t, "claude", resolution.BackupAgent)
@@ -299,7 +302,26 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 		ReviewBackupAgent: "claude",
 	}
 
-	resolution := ResolveWorkflowConfig("", t.TempDir(), cfg, "review", "standard")
+	resolution, err := ResolveWorkflowConfig(
+		"", t.TempDir(), cfg, "review", "standard",
+	)
+	require.NoError(t, err)
 
 	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
+}
+
+func TestResolveWorkflowConfigFailsOnMalformedRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	repoPath := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_model = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	_, err = ResolveWorkflowConfig("", repoPath, config.DefaultConfig(), "review", "fast")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "unexpected EOF")
 }
