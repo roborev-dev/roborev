@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -538,9 +539,8 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 	sha := strings.TrimSpace(string(shaBytes))
 
 	job := &storage.ReviewJob{ID: 42, Agent: "codex", GitRef: sha}
-	diffFile, cleanup, err := prepareDiffFileForCodex(worktreeDir, job, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed Codex review")
+	diffFile, cleanup := prepareDiffFile(worktreeDir, job, nil)
+	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
 	require.NotNil(t, cleanup)
 
 	gitDirBytes, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "--git-dir").Output()
@@ -635,19 +635,19 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	cleanup()
 }
 
-func TestProcessJob_SandboxedCodexRetriesWhenDiffSnapshotCannotBeWritten(t *testing.T) {
-	prevUnsafe := agent.AllowUnsafeAgents()
-	agent.SetAllowUnsafeAgents(false)
-	t.Cleanup(func() { agent.SetAllowUnsafeAgents(prevUnsafe) })
+func TestProcessJob_DiffSnapshotFailureStillRunsReview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict writes on Windows")
+	}
 
 	originalCodex, err := agent.Get("codex")
 	require.NoError(t, err)
 
-	agentCalled := false
+	var receivedPrompt string
 	agent.Register(&agent.FakeAgent{
 		NameStr: "codex",
-		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
-			agentCalled = true
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			receivedPrompt = prompt
 			return "No issues found.", nil
 		},
 	})
@@ -681,6 +681,7 @@ func TestProcessJob_SandboxedCodexRetriesWhenDiffSnapshotCannotBeWritten(t *test
 	})
 	require.NoError(t, err)
 
+	// Make git dir read-only so diff file write fails
 	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
 	require.NoError(t, err)
 	info, err := os.Stat(gitDir)
@@ -695,11 +696,12 @@ func TestProcessJob_SandboxedCodexRetriesWhenDiffSnapshotCannotBeWritten(t *test
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.False(t, agentCalled, "Codex should not run when snapshot creation fails in sandboxed mode")
-	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, retryCount)
+	// Diff file failure is best-effort; the review still runs
+	// with a truncated-diff prompt
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.NotEmpty(t, receivedPrompt, "agent should have been called")
+	assert.Contains(t, receivedPrompt, "Diff too large",
+		"prompt should indicate diff was truncated")
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {

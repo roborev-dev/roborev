@@ -15,11 +15,6 @@ import (
 // New code should use Builder.maxPromptSize() which respects config.
 const MaxPromptSize = 250 * 1024
 
-// DiffTruncatedHint is a prefix present in all oversized-diff fallback
-// messages. Callers can check for this to detect that the diff was too
-// large to include inline in the prompt.
-const DiffTruncatedHint = "(Diff too large to include"
-
 // noSkillsInstruction tells agents not to delegate the review to external
 // tools or skills, and to return only the final review content. Verdict
 // parsing intentionally does not try to decode narrative process updates or
@@ -304,9 +299,6 @@ type buildOpts struct {
 	diffFilePath string
 }
 
-func isCodexReviewAgent(agentName string) bool {
-	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
-}
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
 	if len(variants) == 0 || limit <= 0 {
 		return
@@ -381,26 +373,6 @@ func hardCapPrompt(prompt string, limit int) string {
 	return truncateUTF8(prompt, limit)
 }
 
-// safeForMarkdown filters pathspec args to only those that can be
-// safely embedded in markdown inline code spans. Args containing
-// backticks or control characters are dropped.
-func safeForMarkdown(args []string) []string {
-	var safe []string
-	for _, a := range args {
-		ok := true
-		for _, r := range a {
-			if r < ' ' || r == '`' || r == 0x7f {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			safe = append(safe, a)
-		}
-	}
-	return safe
-}
-
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -408,125 +380,26 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func renderShellCommand(args ...string) string {
-	var quoted []string
-	for _, arg := range args {
-		if needsShellQuoting(arg) {
-			quoted = append(quoted, shellQuote(arg))
-			continue
-		}
-		quoted = append(quoted, arg)
-	}
-	return strings.Join(quoted, " ")
-}
-
-func needsShellQuoting(s string) bool {
-	if s == "" {
-		return true
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case strings.ContainsRune("@%_+=:,./-~", r):
-		default:
-			return true
+// diffFileFallbackVariants returns progressively shorter prompt
+// variants for oversized diffs. When filePath is non-empty, the
+// variants reference the file; otherwise they just note truncation.
+func diffFileFallbackVariants(heading, filePath string) []string {
+	if filePath != "" {
+		quotedPath := shellQuote(filePath)
+		return []string{
+			fmt.Sprintf("%s\n\n"+
+				"(Diff too large to include inline)\n\n"+
+				"The full diff has been written to a file for review.\n"+
+				"Read it with: `cat %s`\n\n"+
+				"Review the actual diff before writing findings.\n",
+				heading, quotedPath),
+			fmt.Sprintf("%s\n\n"+
+				"(Diff too large to include inline; read from `%s`)\n",
+				heading, quotedPath),
 		}
 	}
-	return false
-}
-
-func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []string {
-	statCmd := renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...)
 	return []string{
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `git show %s -- path/to/file`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			statCmd, diffCmd, filesCmd, shellQuote(sha)),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...)),
-	}
-}
-
-func codexDiffFileFallbackVariants(filePath string) []string {
-	quotedPath := shellQuote(filePath)
-	return []string{
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"The full diff has been written to a file for review.\n"+
-			"Read it with: `cat %s`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			quotedPath),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline; read from `%s`)\n",
-			quotedPath),
-	}
-}
-
-func codexRangeDiffFileFallbackVariants(filePath string) []string {
-	quotedPath := shellQuote(filePath)
-	return []string{
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"The full diff has been written to a file for review.\n"+
-			"Read it with: `cat %s`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			quotedPath),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline; read from `%s`)\n",
-			quotedPath),
-	}
-}
-
-func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []string {
-	logCmd := renderShellCommand("git", "log", "--oneline", rangeRef)
-	statCmd := renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...)
-	return []string{
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			logCmd, statCmd, diffCmd, filesCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...)),
+		heading + "\n\n(Diff too large to include inline)\n",
 	}
 }
 
@@ -597,33 +470,14 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
-		if isCodexReviewAgent(agentName) {
-			var variants []string
-			if opts.diffFilePath != "" {
-				variants = codexDiffFileFallbackVariants(opts.diffFilePath)
-			} else {
-				pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
-				variants = codexCommitInspectionFallbackVariants(sha, pathspecArgs)
-			}
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				variants...,
-			), nil
-		}
-		fallback := "### Diff\n\n" +
-			"(Diff too large to include - please review the commit directly)\n" +
-			"View with: " + renderShellCommand("git", "show", sha) + "\n"
+		fallback := diffFileFallbackVariants("### Diff", opts.diffFilePath)
 		return buildPromptPreservingCurrentSection(
 			requiredPrefix,
 			optionalContext.String(),
 			currentRequired.String(),
 			currentOverflow.String(),
 			promptCap,
-			fallback,
+			fallback...,
 		), nil
 	}
 
@@ -721,33 +575,14 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
-		if isCodexReviewAgent(agentName) {
-			var variants []string
-			if opts.diffFilePath != "" {
-				variants = codexRangeDiffFileFallbackVariants(opts.diffFilePath)
-			} else {
-				pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
-				variants = codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-			}
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				variants...,
-			), nil
-		}
-		fallback := "### Combined Diff\n\n" +
-			"(Diff too large to include - please review the commits directly)\n" +
-			"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
+		fallback := diffFileFallbackVariants("### Combined Diff", opts.diffFilePath)
 		return buildPromptPreservingCurrentSection(
 			requiredPrefix,
 			optionalContext.String(),
 			currentRequired.String(),
 			currentOverflow.String(),
 			promptCap,
-			fallback,
+			fallback...,
 		), nil
 	}
 

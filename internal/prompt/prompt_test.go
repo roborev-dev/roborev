@@ -425,7 +425,7 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
-func TestBuildPromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testing.T) {
+func TestBuildPromptOversizedDiffWithoutFileShowsTruncationNote(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 
 	b := NewBuilder(nil)
@@ -433,14 +433,11 @@ func TestBuildPromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testi
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertContains(t, prompt, "inspect the commit locally with read-only git commands", "expected Codex git inspection guidance")
-	assertContains(t, prompt, "git show --stat --summary "+sha, "expected commit stat command")
-	assertContains(t, prompt, "git show --format=medium --unified=80 "+sha, "expected full commit diff command")
-	assertContains(t, prompt, "git diff-tree --no-commit-id --name-only -r "+sha, "expected touched files command")
-	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
+	assertNotContains(t, prompt, "git show", "should not contain git commands")
+	assertNotContains(t, prompt, "git diff", "should not contain git commands")
 }
 
-func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *testing.T) {
+func TestBuildRangePromptOversizedDiffWithoutFileShowsTruncationNote(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 	rangeRef := sha + "~1.." + sha
 
@@ -449,12 +446,8 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertContains(t, prompt, "inspect the commit range locally with read-only git commands", "expected Codex range inspection guidance")
-	assertContains(t, prompt, "git log --oneline "+rangeRef, "expected range commit list command")
-	assertContains(t, prompt, "git diff --stat "+rangeRef, "expected range stat command")
-	assertContains(t, prompt, "git diff --unified=80 "+rangeRef, "expected full range diff command")
-	assertContains(t, prompt, "git diff --name-only "+rangeRef, "expected touched files command")
-	assertNotContains(t, prompt, "View with:", "Codex fallback should not use the weak generic hint")
+	assertNotContains(t, prompt, "git log", "should not contain git commands")
+	assertNotContains(t, prompt, "git diff", "should not contain git commands")
 }
 
 func TestBuildWithDiffFileCodexOversizedDiffReferencesFile(t *testing.T) {
@@ -488,7 +481,7 @@ func TestBuildWithDiffFileRangeCodexOversizedDiffReferencesFile(t *testing.T) {
 	assertNotContains(t, prompt, "git log", "should not reference git commands when diff file provided")
 }
 
-func TestBuildWithDiffFileNonCodexIgnoresDiffFile(t *testing.T) {
+func TestBuildWithDiffFileNonCodexUsesDiffFile(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 
 	b := NewBuilder(nil)
@@ -496,8 +489,8 @@ func TestBuildWithDiffFileNonCodexIgnoresDiffFile(t *testing.T) {
 	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "test", "", diffFile)
 	require.NoError(t, err)
 
-	assertNotContains(t, prompt, diffFile, "non-codex agent should not reference diff file")
-	assertContains(t, prompt, "View with:", "non-codex agent should use generic fallback")
+	assertContains(t, prompt, diffFile, "all agents should reference diff file for oversized diffs")
+	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
 }
 
 func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {
@@ -512,21 +505,8 @@ func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {
 	assertNotContains(t, prompt, diffFile, "diff file should not be referenced when diff fits inline")
 }
 
-func codexCommitFallback(sha string) string {
-	return codexCommitInspectionFallbackVariants(sha, nil)[0]
-}
-
-func codexRangeFallback(rangeRef string) string {
-	return codexRangeInspectionFallbackVariants(rangeRef, nil)[0]
-}
-
-func shortestCodexCommitFallback(sha string) string {
-	variants := codexCommitInspectionFallbackVariants(sha, nil)
-	return variants[len(variants)-1]
-}
-
-func shortestCodexRangeFallback(rangeRef string) string {
-	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
+func shortestDiffFileFallback(heading string) string {
+	variants := diffFileFallbackVariants(heading, "")
 	return variants[len(variants)-1]
 }
 
@@ -611,23 +591,21 @@ func rangeNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
 }
 
 func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	remainingBudget := len(shortestCodexCommitFallback(probeSHA))
+	setupLargeDiffRepoWithGuidelines(t, 1)
+	remainingBudget := len(shortestDiffFileFallback("### Diff"))
 	repoPath, sha := singleCommitNearCapRepo(t, remainingBudget)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
-	assertContains(t, prompt, "git show", "expected fallback to retain local git inspection guidance")
-	assert.NotContains(t, prompt, codexCommitFallback(sha), "expected the full fallback to be downgraded when it would overflow")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final prompt to stay within the prompt cap")
+	assertContains(t, prompt, "Diff too large", "expected truncation note")
 }
 
 func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	probeRangeRef := probeSHA + "~1.." + probeSHA
-	remainingBudget := len(shortestCodexRangeFallback(probeRangeRef))
+	setupLargeDiffRepoWithGuidelines(t, 1)
+	remainingBudget := len(shortestDiffFileFallback("### Combined Diff"))
 	repoPath, sha := rangeNearCapRepo(t, remainingBudget)
 	rangeRef := sha + "~1.." + sha
 
@@ -635,14 +613,13 @@ func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
-	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
-	assertContains(t, prompt, "git diff", "expected fallback to retain local git inspection guidance")
-	assert.NotContains(t, prompt, codexRangeFallback(rangeRef), "expected the full range fallback to be downgraded when it would overflow")
+	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final range prompt to stay within the prompt cap")
+	assertContains(t, prompt, "Diff too large", "expected truncation note")
 }
 
 func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	shortestFallback := shortestCodexCommitFallback(probeSHA)
+	setupLargeDiffRepoWithGuidelines(t, 1)
+	shortestFallback := shortestDiffFileFallback("### Diff")
 	repoPath, sha := singleCommitNearCapRepo(t, len(shortestFallback)-1)
 
 	b := NewBuilder(nil)
@@ -651,12 +628,12 @@ func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testin
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
-	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to be preserved by trimming earlier context")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Diff"), "expected the shortest fallback to be preserved by trimming earlier context")
 }
 
 func TestBuildPromptCodexOversizedDiffKeepsCurrentCommitMetadataWhenTrimming(t *testing.T) {
 	repoPath, sha := singleCommitNearCapRepo(t, 1)
-	shortestFallback := shortestCodexCommitFallback(sha)
+	shortestFallback := shortestDiffFileFallback("### Diff")
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
@@ -676,7 +653,7 @@ func TestBuildPromptCodexOversizedDiffWithLargeCommitBodyStaysWithinMaxPromptSiz
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
-	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit metadata is oversized")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Diff"), "expected the shortest fallback to remain present when commit metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the current commit subject to remain intact")
 }
@@ -689,7 +666,7 @@ func TestBuildPromptCodexOversizedDiffWithLargeCommitSubjectStaysWithinMaxPrompt
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
-	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit subject metadata is oversized")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Diff"), "expected the shortest fallback to remain present when commit subject metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 }
 
@@ -701,7 +678,7 @@ func TestBuildPromptCodexOversizedDiffPrioritizesSubjectOverAuthor(t *testing.T)
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
-	assert.Contains(t, prompt, shortestCodexCommitFallback(sha), "expected the shortest fallback to remain present when commit author metadata is oversized")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Diff"), "expected the shortest fallback to remain present when commit author metadata is oversized")
 	assertContains(t, prompt, "## Current Commit", "expected the current commit section header to remain intact")
 	assertContains(t, prompt, "**Subject:** large change", "expected the subject line to survive before the author line")
 }
@@ -720,9 +697,8 @@ func TestSetupLargeCommitAuthorRepoIgnoresIdentityEnv(t *testing.T) {
 }
 
 func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
-	_, probeSHA := setupLargeDiffRepoWithGuidelines(t, 1)
-	probeRangeRef := probeSHA + "~1.." + probeSHA
-	shortestFallback := shortestCodexRangeFallback(probeRangeRef)
+	setupLargeDiffRepoWithGuidelines(t, 1)
+	shortestFallback := shortestDiffFileFallback("### Combined Diff")
 	repoPath, sha := rangeNearCapRepo(t, len(shortestFallback)-1)
 	rangeRef := sha + "~1.." + sha
 
@@ -732,13 +708,13 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
-	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to be preserved by trimming earlier context")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Combined Diff"), "expected the shortest range fallback to be preserved by trimming earlier context")
 }
 
 func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming(t *testing.T) {
 	repoPath, sha := rangeNearCapRepo(t, 1)
 	rangeRef := sha + "~1.." + sha
-	shortestFallback := shortestCodexRangeFallback(rangeRef)
+	shortestFallback := shortestDiffFileFallback("### Combined Diff")
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
@@ -758,7 +734,7 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large range metadata to still stay within the prompt cap")
-	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to remain present when range metadata is oversized")
+	assert.Contains(t, prompt, shortestDiffFileFallback("### Combined Diff"), "expected the shortest range fallback to remain present when range metadata is oversized")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
 }
@@ -914,70 +890,6 @@ func TestBuildRangePromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
 
 	assert.LessOrEqual(t, len(prompt), cap)
 	assert.True(t, utf8.ValidString(prompt), "range prompt should remain valid UTF-8 after hard capping")
-}
-
-func TestBuildPromptCodexOversizedDiffFallbackCarriesExcludeScope(t *testing.T) {
-	repoPath, sha := setupLargeExcludePatternRepo(t)
-	cfg := &config.Config{
-		DefaultMaxPromptSize: 4096,
-		ExcludePatterns:      []string{"custom.dat"},
-	}
-	b := NewBuilderWithConfig(nil, cfg)
-
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
-	require.NoError(t, err)
-
-	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
-		"expected Codex fallback commands to preserve custom exclude patterns")
-	assertNotContains(t, prompt, `:(exclude,glob)**/go.sum`,
-		"built-in lockfile excludes should not appear in fallback commands")
-}
-
-func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
-	repoPath, sha := setupLargeExcludePatternRepo(t)
-	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
-	variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
-	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
-	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
-	cfg := &config.Config{
-		DefaultMaxPromptSize: cap,
-		ExcludePatterns:      []string{"custom.dat"},
-	}
-	b := NewBuilderWithConfig(nil, cfg)
-
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
-	require.NoError(t, err)
-
-	assert.LessOrEqual(t, len(prompt), cap)
-	assert.Contains(t, prompt, shortest, "expected tiny-cap prompt to use the shortest fallback variant")
-	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
-		"expected shortest Codex fallback command to preserve custom exclude patterns")
-}
-
-func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
-	repoPath, sha := setupLargeExcludePatternRepo(t)
-	rangeRef := sha + "~1.." + sha
-	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
-	variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
-	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
-	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
-	cfg := &config.Config{
-		DefaultMaxPromptSize: cap,
-		ExcludePatterns:      []string{"custom.dat"},
-	}
-	b := NewBuilderWithConfig(nil, cfg)
-
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
-	require.NoError(t, err)
-
-	assert.LessOrEqual(t, len(prompt), cap)
-	assert.Contains(t, prompt, shortest, "expected tiny-cap range prompt to use the shortest fallback variant")
-	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
-		"expected shortest range fallback command to preserve custom exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {
