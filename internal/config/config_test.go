@@ -405,6 +405,7 @@ func TestResolveReasoning(t *testing.T) {
 				{"repo config overrides global config", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), fmt.Sprintf(`%s = "%s"`, configKey, defaultVal), repoVal, false},
 				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), fmt.Sprintf(`%s = "%s"`, configKey, defaultVal), "fast", false},
 				{"explicit normalization", "FAST", "", "", "fast", false},
+				{"explicit with valid repo config but no reasoning override", "fast", "# valid config", "", "fast", false},
 				{"explicit bypasses malformed repo config", "fast", fmt.Sprintf(`%s = [`, configKey), "", "fast", false},
 				{"explicit does not bypass invalid repo config", "fast", fmt.Sprintf(`%s = "invalid"`, configKey), "", "", true},
 				{"invalid explicit", "unknown", "", "", "", true},

@@ -1556,7 +1556,12 @@ func validateRepoReasoningOverride(
 		return nil
 	}
 
-	_, err = NormalizeReasoning(repoValue(repoCfg))
+	reasoning := strings.TrimSpace(repoValue(repoCfg))
+	if reasoning == "" {
+		return nil
+	}
+
+	_, err = NormalizeReasoning(reasoning)
 	return err
 }
 

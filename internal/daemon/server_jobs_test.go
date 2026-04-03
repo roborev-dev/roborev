@@ -2819,8 +2819,12 @@ func TestHandleEnqueueUsesWorktreeConfigWhenPresent(t *testing.T) {
 
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, w, &job)
+	resolvedWorktreeDir, err := filepath.EvalSymlinks(worktreeDir)
+	if err != nil {
+		resolvedWorktreeDir = worktreeDir
+	}
 	assert.Equal(t, "maximum", job.Reasoning)
-	assert.Equal(t, filepath.Clean(worktreeDir), job.WorktreePath)
+	assert.Equal(t, filepath.Clean(resolvedWorktreeDir), job.WorktreePath)
 }
 
 func TestHandleListJobsSlashNormalization(t *testing.T) {

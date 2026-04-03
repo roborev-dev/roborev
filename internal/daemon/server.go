@@ -745,16 +745,21 @@ func validatedWorktreePath(worktreePath, repoPath string) string {
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
+	resolutionPath := job.RepoPath
+	if job.WorktreePath != "" {
+		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
+		if worktreePath == "" {
+			return "", "", fmt.Errorf("rerun job worktree path is stale or invalid")
+		}
+		resolutionPath = worktreePath
+	}
+
 	provider := strings.TrimSpace(job.RequestedProvider)
 	if model := strings.TrimSpace(job.RequestedModel); model != "" {
 		return model, provider, nil
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
-	resolutionPath := job.RepoPath
-	if worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath); worktreePath != "" {
-		resolutionPath = worktreePath
-	}
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
@@ -2497,6 +2502,10 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	cfg := s.configWatcher.Config()
 	resolutionPath := parentJob.RepoPath
 	worktreePath := validatedWorktreePath(parentJob.WorktreePath, parentJob.RepoPath)
+	if parentJob.WorktreePath != "" && worktreePath == "" {
+		writeError(w, http.StatusBadRequest, "parent job worktree path is stale or invalid")
+		return
+	}
 	if worktreePath != "" {
 		resolutionPath = worktreePath
 	}
