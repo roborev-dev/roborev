@@ -34,7 +34,11 @@ func (e *ConfigParseError) Unwrap() error { return e.Err }
 // is a ConfigParseError.
 func IsConfigParseError(err error) bool {
 	var pe *ConfigParseError
-	return errors.As(err, &pe)
+	if errors.As(err, &pe) {
+		return true
+	}
+	var syntaxErr toml.ParseError
+	return errors.As(err, &syntaxErr)
 }
 
 // HookConfig defines a hook that runs on review events

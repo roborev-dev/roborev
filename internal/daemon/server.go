@@ -734,11 +734,21 @@ func workflowForJob(jobType, reviewType string) string {
 	return workflow
 }
 
+func validatedWorktreePath(worktreePath, repoPath string) string {
+	if worktreePath == "" {
+		return ""
+	}
+	if !git.ValidateWorktreeForRepo(worktreePath, repoPath) {
+		return ""
+	}
+	return worktreePath
+}
+
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolutionPath := job.RepoPath
-	if strings.TrimSpace(job.WorktreePath) != "" {
-		resolutionPath = job.WorktreePath
+	if worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath); worktreePath != "" {
+		resolutionPath = worktreePath
 	}
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
@@ -2478,9 +2488,9 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent for fix workflow
 	cfg := s.configWatcher.Config()
 	resolutionPath := parentJob.RepoPath
-	if parentJob.WorktreePath != "" &&
-		git.ValidateWorktreeForRepo(parentJob.WorktreePath, parentJob.RepoPath) {
-		resolutionPath = parentJob.WorktreePath
+	worktreePath := validatedWorktreePath(parentJob.WorktreePath, parentJob.RepoPath)
+	if worktreePath != "" {
+		resolutionPath = worktreePath
 	}
 	reasoning, err := config.ResolveFixReasoning("", resolutionPath, cfg)
 	if err != nil {
@@ -2560,7 +2570,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		Label:        fmt.Sprintf("fix #%d", req.ParentJobID),
 		JobType:      storage.JobTypeFix,
 		ParentJobID:  req.ParentJobID,
-		WorktreePath: parentJob.WorktreePath,
+		WorktreePath: worktreePath,
 	})
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("enqueue fix job: %v", err))

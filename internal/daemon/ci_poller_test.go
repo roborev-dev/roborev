@@ -2617,6 +2617,33 @@ func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 	assert.Equal(t, "thorough", jobs[0].Reasoning)
 }
 
+func TestCIPollerProcessPR_RepoConfigLoadFailureReturnsError(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+	h.Poller.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		return nil, errors.New("read .roborev.toml at origin/main: git show failed")
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number:      101,
+		HeadRefOid:  "repo-config-read-failed-sha",
+		BaseRefName: "main",
+	}, h.Cfg)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "load repo config:")
+
+	jobs, listErr := h.DB.ListJobs(
+		"", h.RepoPath, 0, 0,
+		storage.WithGitRef("base-sha..repo-config-read-failed-sha"),
+	)
+	require.NoError(t, listErr)
+	require.Empty(t, jobs)
+}
+
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},

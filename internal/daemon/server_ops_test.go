@@ -622,13 +622,21 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
+		worktreePath := filepath.Join(tmpDir, "worktrees", "feature")
+		worktreeAdd := exec.Command(
+			"git", "-C", fixture.repoDir,
+			"worktree", "add", "--detach", worktreePath, "HEAD",
+		)
+		out, err := worktreeAdd.CombinedOutput()
+		require.NoError(t, err, "git worktree add failed: %s", out)
+
 		// Enqueue a review with a worktree path
 		wtJob, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:       repo.ID,
 			CommitID:     commit.ID,
 			GitRef:       "fix-val-abc",
 			Agent:        "test",
-			WorktreePath: filepath.Join(tmpDir, "worktrees", "feature"),
+			WorktreePath: worktreePath,
 		})
 		require.NoError(t, err)
 
@@ -659,10 +667,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 		stored, err := db.GetJobByID(fixJob.ID)
 		require.NoError(t, err)
-		require.Equal(t,
-			filepath.Join(tmpDir, "worktrees", "feature"),
-			stored.WorktreePath,
-		)
+		require.Equal(t, worktreePath, stored.WorktreePath)
 	})
 
 	t.Run("fix job uses worktree config when present", func(t *testing.T) {
@@ -718,6 +723,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "maximum", stored.Reasoning)
 		require.Equal(t, "worktree-model", stored.Model)
+		require.Equal(t, worktreePath, stored.WorktreePath)
 	})
 
 	t.Run("fix job ignores invalid worktree path for config resolution", func(t *testing.T) {
@@ -763,6 +769,11 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		testutil.DecodeJSON(t, w, &fixJob)
 		require.Equal(t, "standard", fixJob.Reasoning)
 		require.Empty(t, fixJob.Model)
+		require.Empty(t, fixJob.WorktreePath)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		require.Empty(t, stored.WorktreePath)
 	})
 
 	t.Run("custom prompt includes review context", func(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -458,7 +459,13 @@ func TestWorkflowForJobFixType(t *testing.T) {
 
 func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
-	worktreeRepo := t.TempDir()
+	testutil.InitTestGitRepo(t, mainRepo)
+	worktreeRepo := filepath.Join(t.TempDir(), "worktree")
+	worktreeAdd := exec.Command(
+		"git", "-C", mainRepo, "worktree", "add", "--detach", worktreeRepo, "HEAD",
+	)
+	out, err := worktreeAdd.CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %s", out)
 
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(worktreeRepo, ".roborev.toml"), []byte("review_model = \"worktree-model\"\n"), 0o644))
@@ -477,6 +484,30 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "worktree-model", model)
+	assert.Empty(t, provider)
+}
+
+func TestResolveRerunModelProviderIgnoresInvalidWorktreeConfig(t *testing.T) {
+	mainRepo := t.TempDir()
+	stalePath := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = \"main-model\"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stalePath, ".roborev.toml"), []byte("review_model = \"stale-model\"\n"), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:        "test",
+		JobType:      storage.JobTypeReview,
+		ReviewType:   config.ReviewTypeDefault,
+		Reasoning:    "thorough",
+		RepoPath:     mainRepo,
+		WorktreePath: stalePath,
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "main-model", model)
 	assert.Empty(t, provider)
 }
 
