@@ -740,6 +740,9 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 	if strings.TrimSpace(job.WorktreePath) != "" {
 		resolutionPath = job.WorktreePath
 	}
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
@@ -884,6 +887,10 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	requestedProvider := strings.TrimSpace(req.Provider)
 
 	// Resolve agent for workflow at this reasoning level
+	if err := config.ValidateRepoConfig(repoRoot); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
+		return
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		req.Agent, repoRoot, cfg, workflow, reasoning,
 	)
@@ -2473,6 +2480,10 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	reasoning, err := config.ResolveFixReasoning("", parentJob.RepoPath, cfg)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := config.ValidateRepoConfig(parentJob.RepoPath); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
 		return
 	}
 	resolution, err := agent.ResolveWorkflowConfig(

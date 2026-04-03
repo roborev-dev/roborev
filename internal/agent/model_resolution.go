@@ -20,14 +20,15 @@ type WorkflowConfig struct {
 // ResolveWorkflowConfig resolves the preferred and backup agents for a
 // workflow while retaining the workflow and reasoning context needed to
 // resolve the final model after an agent has been selected.
+//
+// This helper intentionally does not validate repo config. Callers that
+// must fail fast on malformed .roborev.toml should call
+// config.ValidateRepoConfig before invoking it.
 func ResolveWorkflowConfig(
 	cliAgent, repoPath string,
 	globalCfg *config.Config,
 	workflow, reasoning string,
 ) (WorkflowConfig, error) {
-	if err := config.ValidateRepoConfig(repoPath); err != nil {
-		return WorkflowConfig{}, err
-	}
 	return WorkflowConfig{
 		RepoPath:       repoPath,
 		GlobalConfig:   globalCfg,

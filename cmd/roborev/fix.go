@@ -304,6 +304,9 @@ func resolveFixModel(
 	selectedAgent, cliModel, repoPath string,
 	cfg *config.Config, reasoning string,
 ) (string, error) {
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return "", err
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", repoPath, cfg, "fix", reasoning,
 	)
@@ -325,6 +328,9 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
+	}
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return nil, fmt.Errorf("resolve workflow config: %w", err)
 	}
 
 	resolution, err := agent.ResolveWorkflowConfig(

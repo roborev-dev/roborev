@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -795,6 +797,31 @@ func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 			got)
 
 	}
+}
+
+func TestResolveBackupIgnoresMalformedRepoConfig(t *testing.T) {
+	repoPath := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_backup_agent = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	cfg.DefaultBackupModel = "backup-model"
+
+	pool := NewWorkerPool(
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil,
+	)
+	job := &storage.ReviewJob{
+		Agent:    "codex",
+		RepoPath: repoPath,
+	}
+
+	assert.Equal(t, "test", pool.resolveBackupAgent(job))
+	assert.Equal(t, "backup-model", pool.resolveBackupModel(job))
 }
 
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {

@@ -2738,6 +2738,37 @@ func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
 	assert.Equal(t, "maximum", job.Reasoning)
 }
 
+func TestHandleEnqueueRejectsMalformedRepoConfigWithExplicitReasoning(t *testing.T) {
+	_ = testenv.SetDataDir(t)
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+	err := os.WriteFile(
+		filepath.Join(repoDir, ".roborev.toml"),
+		[]byte("review_model = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath:  repoDir,
+		GitRef:    "HEAD",
+		Agent:     "test",
+		Reasoning: "fast",
+	})
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "resolve workflow config:")
+}
+
 func TestHandleListJobsSlashNormalization(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

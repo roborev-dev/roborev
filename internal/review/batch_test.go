@@ -381,3 +381,35 @@ func TestRunBatch_BackupKeepsOwnModelWhenBackupModelUnset(t *testing.T) {
 	require.Equal(ResultDone, result.Status, "status=%q err=%q", result.Status, result.Error)
 	assert.NotContains(result.Output, "model=", "backup agent should keep its default model, got %q", result.Output)
 }
+
+func TestRunBatchIgnoresMalformedRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.RevParse("HEAD")
+	err := os.WriteFile(
+		filepath.Join(repo.Root, ".roborev.toml"),
+		[]byte("review_agent = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	cfg := BatchConfig{
+		RepoPath:     repo.Root,
+		GitRef:       sha,
+		Agents:       []string{""},
+		ReviewTypes:  []string{"review"},
+		GlobalConfig: &config.Config{DefaultAgent: "batch-agent"},
+		AgentRegistry: map[string]agent.Agent{
+			"batch-agent": &mockAgent{
+				name:   "batch-agent",
+				output: "ok",
+			},
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(t, results, 1)
+	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
+	assert.Equal(t, "batch-agent", results[0].Agent)
+}

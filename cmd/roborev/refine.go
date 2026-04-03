@@ -335,6 +335,9 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		return err
 	}
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
+	if err := config.ValidateRepoConfig(repoPath); err != nil {
+		return fmt.Errorf("resolve workflow config: %w", err)
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		opts.agentName, repoPath, cfg, "refine", resolvedReasoning,
 	)

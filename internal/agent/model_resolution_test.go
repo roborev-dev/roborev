@@ -310,7 +310,7 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
 }
 
-func TestResolveWorkflowConfigFailsOnMalformedRepoConfig(t *testing.T) {
+func TestResolveWorkflowConfigIgnoresMalformedRepoConfig(t *testing.T) {
 	t.Parallel()
 
 	repoPath := t.TempDir()
@@ -321,7 +321,9 @@ func TestResolveWorkflowConfigFailsOnMalformedRepoConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = ResolveWorkflowConfig("", repoPath, config.DefaultConfig(), "review", "fast")
-	require.Error(t, err)
-	require.ErrorContains(t, err, "unexpected EOF")
+	resolution, err := ResolveWorkflowConfig("", repoPath, &config.Config{
+		ReviewAgent: "gemini",
+	}, "review", "fast")
+	require.NoError(t, err)
+	require.Equal(t, "gemini", resolution.PreferredAgent)
 }
