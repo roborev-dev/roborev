@@ -1447,12 +1447,13 @@ func SeverityInstruction(minSeverity string) string {
 // ResolveReviewReasoning determines reasoning level for reviews.
 // Priority: explicit > per-repo config > global config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeReasoning(explicit)
+	}
+
 	repoCfg, err := LoadRepoConfig(repoPath)
 	if err != nil {
 		return "", err
-	}
-	if strings.TrimSpace(explicit) != "" {
-		return NormalizeReasoning(explicit)
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
@@ -1468,12 +1469,13 @@ func ResolveReviewReasoning(explicit string, repoPath string, globalCfg *Config)
 // ResolveRefineReasoning determines reasoning level for refine.
 // Priority: explicit > per-repo config > global config > default (standard)
 func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeReasoning(explicit)
+	}
+
 	repoCfg, err := LoadRepoConfig(repoPath)
 	if err != nil {
 		return "", err
-	}
-	if strings.TrimSpace(explicit) != "" {
-		return NormalizeReasoning(explicit)
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.RefineReasoning) != "" {
 		return NormalizeReasoning(repoCfg.RefineReasoning)
@@ -1489,12 +1491,13 @@ func ResolveRefineReasoning(explicit string, repoPath string, globalCfg *Config)
 // ResolveFixReasoning determines reasoning level for fix.
 // Priority: explicit > per-repo config > global config > default (standard)
 func ResolveFixReasoning(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeReasoning(explicit)
+	}
+
 	repoCfg, err := LoadRepoConfig(repoPath)
 	if err != nil {
 		return "", err
-	}
-	if strings.TrimSpace(explicit) != "" {
-		return NormalizeReasoning(explicit)
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
 		return NormalizeReasoning(repoCfg.FixReasoning)
