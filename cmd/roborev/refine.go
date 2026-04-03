@@ -321,6 +321,11 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		return err
 	}
 
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
@@ -348,8 +353,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	}
 
 	// Resolve reasoning level from CLI or config (default: standard for refine)
-	cfg, _ := config.LoadGlobal()
-	resolvedReasoning, err := config.ResolveRefineReasoning(opts.reasoning, repoPath)
+	resolvedReasoning, err := config.ResolveRefineReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
 		return err
 	}

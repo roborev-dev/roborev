@@ -224,7 +224,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	if err != nil {
 		return 0, fmt.Errorf("load config: %w", err)
 	}
-	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoRoot)
+	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoRoot, cfg)
 	if err != nil {
 		return 0, fmt.Errorf("resolve reasoning: %w", err)
 	}

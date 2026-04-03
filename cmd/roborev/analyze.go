@@ -747,7 +747,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	// Resolve reasoning level (defaults to "standard" for fix)
-	reasoning, reasonErr := config.ResolveFixReasoning(reasoning, repoPath)
+	reasoning, reasonErr := config.ResolveFixReasoning(reasoning, repoPath, cfg)
 	if reasonErr != nil {
 		return fmt.Errorf("resolve fix reasoning: %w", reasonErr)
 	}

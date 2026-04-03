@@ -373,7 +373,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Resolve and validate reasoning (matches daemon behavior)
-	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath)
+	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath, cfg)
 	if err != nil {
 		return fmt.Errorf("invalid reasoning: %w", err)
 	}

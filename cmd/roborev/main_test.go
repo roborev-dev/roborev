@@ -222,6 +222,32 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	require.Error(t, err, "expected error, got nil")
 }
 
+func TestRunRefineFailsOnInvalidGlobalConfigBeforeDaemonStartup(t *testing.T) {
+	repoDir, _ := setupRefineRepo(t)
+
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	configPath := filepath.Join(dataDir, "config.toml")
+	err := os.WriteFile(configPath, []byte("invalid toml [[["),
+		0o644)
+	require.NoError(t, err, "write invalid config: %v", err)
+
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		require.FailNow(t, "ensureDaemon should not run when global config is invalid")
+		return nil, ErrDaemonNotRunning
+	}
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+	})
+
+	ctx := newFastRunContext(repoDir)
+
+	err = runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	require.Error(t, err, "expected config load error")
+	assert.Contains(t, err.Error(), "load config:")
+}
+
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	repoDir, headSHA := setupRefineRepo(t)
 

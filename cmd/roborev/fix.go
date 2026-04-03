@@ -319,7 +319,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath)
+	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoPath, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("resolve fix reasoning: %w", err)
 	}

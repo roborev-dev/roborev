@@ -387,29 +387,50 @@ func TestResolveAutoClosePassingReviews(t *testing.T) {
 }
 
 func TestResolveReasoning(t *testing.T) {
-	type resolverFunc func(explicit string, dir string) (string, error)
+	type resolverFunc func(explicit string, dir string, globalCfg *Config) (string, error)
 
 	runTests := func(t *testing.T, name string, fn resolverFunc, configKey, defaultVal, repoVal string) {
 		t.Run(name, func(t *testing.T) {
 			tests := []struct {
-				testName   string
-				explicit   string
-				repoConfig string
-				want       string
-				wantErr    bool
+				testName     string
+				explicit     string
+				repoConfig   string
+				globalConfig string
+				want         string
+				wantErr      bool
 			}{
-				{"default when no config", "", "", defaultVal, false},
-				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), repoVal, false},
-				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), "fast", false},
-				{"explicit normalization", "FAST", "", "fast", false},
-				{"invalid explicit", "unknown", "", "", true},
-				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", true},
+				{"default when no config", "", "", "", defaultVal, false},
+				{"global config when explicit and repo empty", "", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), repoVal, false},
+				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), "", repoVal, false},
+				{"repo config overrides global config", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), fmt.Sprintf(`%s = "%s"`, configKey, defaultVal), repoVal, false},
+				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), fmt.Sprintf(`%s = "%s"`, configKey, defaultVal), "fast", false},
+				{"explicit normalization", "FAST", "", "", "fast", false},
+				{"invalid explicit", "unknown", "", "", "", true},
+				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", "", true},
+				{"malformed repo config does not fall back to global", "", fmt.Sprintf(`%s = [`, configKey), fmt.Sprintf(`%s = "%s"`, configKey, repoVal), "", true},
+				{"invalid global config", "", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", true},
 			}
 
 			for _, tt := range tests {
 				t.Run(tt.testName, func(t *testing.T) {
+					dataDir := t.TempDir()
+					t.Setenv("ROBOREV_DATA_DIR", dataDir)
+					if tt.globalConfig != "" {
+						err := os.WriteFile(
+							filepath.Join(dataDir, "config.toml"),
+							[]byte(tt.globalConfig),
+							0o644,
+						)
+						require.NoError(t, err)
+					}
+					var globalCfg *Config
+					if tt.globalConfig != "" {
+						cfg, loadErr := LoadGlobalFrom(filepath.Join(dataDir, "config.toml"))
+						require.NoError(t, loadErr)
+						globalCfg = cfg
+					}
 					tmpDir := newTempRepo(t, tt.repoConfig)
-					got, err := fn(tt.explicit, tmpDir)
+					got, err := fn(tt.explicit, tmpDir, globalCfg)
 					if (err != nil) != tt.wantErr {
 						assert.Condition(t, func() bool {
 							return false
@@ -440,7 +461,7 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 		"fix_agent_fast":     "gemini",
 	})
 
-	reasoning, err := ResolveFixReasoning("", tmpDir)
+	reasoning, err := ResolveFixReasoning("", tmpDir, nil)
 	require.Condition(t, func() bool {
 		return err == nil
 	}, "ResolveFixReasoning: %v", err)
