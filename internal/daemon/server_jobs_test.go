@@ -2769,6 +2769,60 @@ func TestHandleEnqueueRejectsMalformedRepoConfigWithExplicitReasoning(t *testing
 	assert.Contains(t, w.Body.String(), "resolve workflow config:")
 }
 
+func TestHandleEnqueueUsesWorktreeConfigWhenPresent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping worktree test on Windows due to path differences")
+	}
+
+	_ = testenv.SetDataDir(t)
+
+	tmpDir := t.TempDir()
+	mainRepo := filepath.Join(tmpDir, "main-repo")
+	testutil.InitTestGitRepo(t, mainRepo)
+
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	wtCmd := exec.Command(
+		"git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch",
+		worktreeDir,
+	)
+	out, err := wtCmd.CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %s", out)
+
+	err = os.WriteFile(
+		filepath.Join(mainRepo, ".roborev.toml"),
+		[]byte("review_model = ["),
+		0o644,
+	)
+	require.NoError(t, err)
+	err = os.WriteFile(
+		filepath.Join(worktreeDir, ".roborev.toml"),
+		[]byte(`review_reasoning = "maximum"`),
+		0o644,
+	)
+	require.NoError(t, err)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: worktreeDir,
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+	assert.Equal(t, "maximum", job.Reasoning)
+	assert.Equal(t, filepath.Clean(worktreeDir), job.WorktreePath)
+}
+
 func TestHandleListJobsSlashNormalization(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

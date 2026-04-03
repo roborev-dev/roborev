@@ -745,6 +745,11 @@ func validatedWorktreePath(worktreePath, repoPath string) string {
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
+	provider := strings.TrimSpace(job.RequestedProvider)
+	if model := strings.TrimSpace(job.RequestedModel); model != "" {
+		return model, provider, nil
+	}
+
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolutionPath := job.RepoPath
 	if worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath); worktreePath != "" {
@@ -759,8 +764,7 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
-	model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
-	provider := strings.TrimSpace(job.RequestedProvider)
+	model := resolution.ModelForSelectedAgent(job.Agent, "")
 	return model, provider, nil
 }
 
@@ -878,15 +882,19 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	workflow := workflowForJob(req.JobType, req.ReviewType)
 	cfg := s.configWatcher.Config()
+	resolutionPath := repoRoot
+	if worktreePath != "" {
+		resolutionPath = worktreePath
+	}
 
 	// Resolve reasoning level for the determined workflow.
 	// Compact jobs use fix reasoning (default "standard"), not review
 	// reasoning (default "thorough").
 	var reasoning string
 	if workflow == "fix" {
-		reasoning, err = config.ResolveFixReasoning(req.Reasoning, repoRoot, cfg)
+		reasoning, err = config.ResolveFixReasoning(req.Reasoning, resolutionPath, cfg)
 	} else {
-		reasoning, err = config.ResolveReviewReasoning(req.Reasoning, repoRoot, cfg)
+		reasoning, err = config.ResolveReviewReasoning(req.Reasoning, resolutionPath, cfg)
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -897,12 +905,12 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	requestedProvider := strings.TrimSpace(req.Provider)
 
 	// Resolve agent for workflow at this reasoning level
-	if err := config.ValidateRepoConfig(repoRoot); err != nil {
+	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))
 		return
 	}
 	resolution, err := agent.ResolveWorkflowConfig(
-		req.Agent, repoRoot, cfg, workflow, reasoning,
+		req.Agent, resolutionPath, cfg, workflow, reasoning,
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve workflow config: %v", err))

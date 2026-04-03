@@ -576,6 +576,29 @@ func TestResolveRerunModelProviderPreservesRequestedOverridesOnInvalidWorktree(t
 	assert.Equal(t, "anthropic", provider)
 }
 
+func TestResolveRerunModelProviderPreservesRequestedOverridesOnInvalidConfig(t *testing.T) {
+	mainRepo := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_model = ["), 0o644))
+
+	job := &storage.ReviewJob{
+		Agent:             "test",
+		JobType:           storage.JobTypeReview,
+		ReviewType:        config.ReviewTypeDefault,
+		Reasoning:         "thorough",
+		RepoPath:          mainRepo,
+		RequestedModel:    "requested-model",
+		RequestedProvider: "anthropic",
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "requested-model", model)
+	assert.Equal(t, "anthropic", provider)
+}
+
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestHandleAddCommentToJobStates(t *testing.T) {
