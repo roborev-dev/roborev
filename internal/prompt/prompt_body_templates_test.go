@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,4 +77,20 @@ func TestRenderPromptBodiesPreserveRawText(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, rawOptional+rawRequired+rawDiff, body)
 	})
+}
+
+func TestFitSinglePromptBodyTrimsOptionalContextBeforeCurrentOverflow(t *testing.T) {
+	view := singlePromptBodyView{
+		OptionalContext: strings.Repeat("g", 128),
+		CurrentRequired: "## Current Commit\n\n**Commit:** abc1234\n\n",
+		CurrentOverflow: "**Subject:** large change\n**Author:** Test User\n\n",
+		DiffSection:     "### Diff\n\n(Diff too large; for Codex run `git show abc1234 --` locally.)\n",
+	}
+	limit := len(view.CurrentRequired) + len(view.CurrentOverflow) + len(view.DiffSection)
+
+	body, err := fitSinglePromptBody(limit, view)
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Current Commit")
+	assert.Contains(t, body, "**Subject:** large change")
+	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
