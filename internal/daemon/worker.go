@@ -422,30 +422,34 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
-		// Normal job - build prompt from git ref. Write the full
-		// diff to a snapshot file so the builder can reference it
-		// when the diff is too large to inline.
-		excludes := config.ResolveExcludePatterns(
-			effectiveRepoPath, cfg, job.ReviewType,
-		)
-		diffFile, cleanup, diffErr := prepareDiffFile(
-			effectiveRepoPath, job, excludes,
-		)
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if diffErr != nil {
-			log.Printf("[%s] Error preparing diff snapshot: %v",
-				workerID, diffErr)
-			wp.failOrRetry(workerID, job, job.Agent,
-				fmt.Sprintf("prepare diff snapshot: %v", diffErr))
-			return
-		}
-		reviewPrompt, err = pb.BuildWithDiffFile(
+		// Normal job - build prompt from git ref. Try without a
+		// diff file first; if the diff is too large to inline the
+		// builder returns ErrDiffTruncatedNoFile, and we write a
+		// snapshot file and retry.
+		reviewPrompt, err = pb.Build(
 			effectiveRepoPath, job.GitRef, job.RepoID,
-			cfg.ReviewContextCount, job.Agent,
-			job.ReviewType, diffFile,
+			cfg.ReviewContextCount, job.Agent, job.ReviewType,
 		)
+		if errors.Is(err, prompt.ErrDiffTruncatedNoFile) {
+			excludes := config.ResolveExcludePatterns(
+				effectiveRepoPath, cfg, job.ReviewType,
+			)
+			diffFile, cleanup, diffErr := prepareDiffFile(
+				effectiveRepoPath, job, excludes,
+			)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if diffErr != nil {
+				err = fmt.Errorf("prepare diff snapshot: %w", diffErr)
+			} else {
+				reviewPrompt, err = pb.BuildWithDiffFile(
+					effectiveRepoPath, job.GitRef, job.RepoID,
+					cfg.ReviewContextCount, job.Agent,
+					job.ReviewType, diffFile,
+				)
+			}
+		}
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
@@ -1039,13 +1043,18 @@ func preparePrebuiltPrompt(
 		return reviewPrompt, nil, nil
 	}
 	diffFile, cleanup, err := prepareDiffFile(repoPath, job, excludes)
-	if err != nil {
-		return "", nil, fmt.Errorf("prepare diff snapshot: %w", err)
-	}
-	if diffFile == "" {
-		return "", nil, fmt.Errorf(
-			"prebuilt prompt needs diff file but diff was empty",
-		)
+	if err != nil || diffFile == "" {
+		// Snapshot unavailable — strip the placeholder so the agent
+		// sees a plain truncation note rather than a broken path.
+		if cleanup != nil {
+			cleanup()
+		}
+		log.Printf("Warning: prebuilt prompt diff snapshot unavailable: %v", err)
+		stripped := strings.NewReplacer(
+			shellQuoteForPrompt(prompt.DiffFilePathPlaceholder), "",
+			prompt.DiffFilePathPlaceholder, "",
+		).Replace(reviewPrompt)
+		return stripped, nil, nil
 	}
 	replacer := strings.NewReplacer(
 		shellQuoteForPrompt(prompt.DiffFilePathPlaceholder),

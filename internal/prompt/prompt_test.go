@@ -425,29 +425,21 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
-func TestBuildPromptOversizedDiffWithoutFileShowsTruncationNote(t *testing.T) {
+func TestBuildPromptOversizedDiffWithoutFileReturnsError(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
-	require.NoError(t, err, "Build failed: %v", err)
-
-	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertNotContains(t, prompt, "git show", "should not contain git commands")
-	assertNotContains(t, prompt, "git diff", "should not contain git commands")
+	_, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.ErrorIs(t, err, ErrDiffTruncatedNoFile)
 }
 
-func TestBuildRangePromptOversizedDiffWithoutFileShowsTruncationNote(t *testing.T) {
+func TestBuildRangePromptOversizedDiffWithoutFileReturnsError(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 	rangeRef := sha + "~1.." + sha
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
-	require.NoError(t, err, "Build failed: %v", err)
-
-	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertNotContains(t, prompt, "git log", "should not contain git commands")
-	assertNotContains(t, prompt, "git diff", "should not contain git commands")
+	_, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.ErrorIs(t, err, ErrDiffTruncatedNoFile)
 }
 
 func TestBuildWithDiffFileCodexOversizedDiffReferencesFile(t *testing.T) {
@@ -506,7 +498,8 @@ func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {
 }
 
 func shortestDiffFileFallback(heading string) string {
-	variants := diffFileFallbackVariants(heading, "")
+	// Use a representative path for size estimation in cap tests.
+	variants := diffFileFallbackVariants(heading, "/tmp/roborev-review-0.diff")
 	return variants[len(variants)-1]
 }
 
@@ -596,7 +589,7 @@ func TestBuildPromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T) {
 	repoPath, sha := singleCommitNearCapRepo(t, remainingBudget)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final prompt to stay within the prompt cap")
@@ -610,7 +603,7 @@ func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T
 	rangeRef := sha + "~1.." + sha
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final range prompt to stay within the prompt cap")
@@ -623,7 +616,7 @@ func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testin
 	repoPath, sha := singleCommitNearCapRepo(t, len(shortestFallback)-1)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
@@ -636,7 +629,7 @@ func TestBuildPromptCodexOversizedDiffKeepsCurrentCommitMetadataWhenTrimming(t *
 	shortestFallback := shortestDiffFileFallback("### Diff")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex prompt to stay within the prompt cap")
@@ -649,7 +642,7 @@ func TestBuildPromptCodexOversizedDiffWithLargeCommitBodyStaysWithinMaxPromptSiz
 	repoPath, sha := setupLargeCommitBodyRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
@@ -662,7 +655,7 @@ func TestBuildPromptCodexOversizedDiffWithLargeCommitSubjectStaysWithinMaxPrompt
 	repoPath, sha := setupLargeCommitSubjectRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
@@ -674,7 +667,7 @@ func TestBuildPromptCodexOversizedDiffPrioritizesSubjectOverAuthor(t *testing.T)
 	repoPath, sha := setupLargeCommitAuthorRepo(t, defaultPromptCap)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large commit metadata to still stay within the prompt cap")
@@ -703,7 +696,7 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 	rangeRef := sha + "~1.." + sha
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
@@ -717,7 +710,7 @@ func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming
 	shortestFallback := shortestDiffFileFallback("### Combined Diff")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
@@ -730,7 +723,7 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 4096)
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large range metadata to still stay within the prompt cap")
@@ -745,7 +738,7 @@ func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
 
-	prompt, err := b.Build(repoPath, sha, 0, 0, "claude-code", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "claude-code", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap,
@@ -761,7 +754,7 @@ func TestBuildRangePromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
 
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "claude-code", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "claude-code", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap,
@@ -798,13 +791,14 @@ func TestBuildPromptHonorsDefaultPromptCap(t *testing.T) {
 
 	legacyCfg := &config.Config{DefaultMaxPromptSize: MaxPromptSize}
 	legacyB := NewBuilderWithConfig(nil, legacyCfg)
-	legacyPrompt, err := legacyB.Build(repoPath, sha, 0, 0, "claude-code", "")
+	dummyDiff := "/tmp/roborev-review-0.diff"
+	legacyPrompt, err := legacyB.BuildWithDiffFile(repoPath, sha, 0, 0, "claude-code", "", dummyDiff)
 	require.NoError(t, err)
 	require.Greater(t, len(legacyPrompt), config.DefaultMaxPromptSize,
 		"precondition: prompt with legacy cap should exceed the 200KB default")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(repoPath, sha, 0, 0, "claude-code", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "claude-code", "", dummyDiff)
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), config.DefaultMaxPromptSize,
@@ -872,7 +866,7 @@ func TestBuildPromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
 
-	prompt, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap)
@@ -885,7 +879,7 @@ func TestBuildRangePromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
 
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	prompt, err := b.BuildWithDiffFile(repoPath, rangeRef, 0, 0, "codex", "", "/tmp/roborev-review-0.diff")
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap)

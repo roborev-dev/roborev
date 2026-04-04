@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,11 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// ErrDiffTruncatedNoFile is returned when the diff is too large to
+// inline and no snapshot file path was provided. Callers should write
+// the diff to a file and retry with BuildWithDiffFile.
+var ErrDiffTruncatedNoFile = errors.New("diff too large to inline and no snapshot file available")
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
 // New code should use Builder.maxPromptSize() which respects config.
@@ -377,21 +383,16 @@ func hardCapPrompt(prompt string, limit int) string {
 // variants for oversized diffs. When filePath is non-empty, the
 // variants reference the file; otherwise they just note truncation.
 func diffFileFallbackVariants(heading, filePath string) []string {
-	if filePath != "" {
-		return []string{
-			fmt.Sprintf("%s\n\n"+
-				"(Diff too large to include inline)\n\n"+
-				"The full diff has been written to a file for review.\n"+
-				"Read the diff from: `%s`\n\n"+
-				"Review the actual diff before writing findings.\n",
-				heading, filePath),
-			fmt.Sprintf("%s\n\n"+
-				"(Diff too large to include inline; read from `%s`)\n",
-				heading, filePath),
-		}
-	}
 	return []string{
-		heading + "\n\n(Diff too large to include inline)\n",
+		fmt.Sprintf("%s\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"The full diff has been written to a file for review.\n"+
+			"Read the diff from: `%s`\n\n"+
+			"Review the actual diff before writing findings.\n",
+			heading, filePath),
+		fmt.Sprintf("%s\n\n"+
+			"(Diff too large to include inline; read from `%s`)\n",
+			heading, filePath),
 	}
 }
 
@@ -462,6 +463,9 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
+		if opts.diffFilePath == "" {
+			return "", ErrDiffTruncatedNoFile
+		}
 		fallback := diffFileFallbackVariants("### Diff", opts.diffFilePath)
 		return buildPromptPreservingCurrentSection(
 			requiredPrefix,
@@ -567,6 +571,9 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
+		if opts.diffFilePath == "" {
+			return "", ErrDiffTruncatedNoFile
+		}
 		fallback := diffFileFallbackVariants("### Combined Diff", opts.diffFilePath)
 		return buildPromptPreservingCurrentSection(
 			requiredPrefix,
