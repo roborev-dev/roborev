@@ -106,3 +106,16 @@ func TestFitRangePromptBodyTrimsOptionalContextBeforeRangeOverflow(t *testing.T)
 	assert.Contains(t, body, "- abc1234 first change")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
+
+func TestFitDirtyPromptBodyTrimsOptionalContextBeforeTruncatedDiff(t *testing.T) {
+	view := dirtyPromptBodyView{
+		OptionalContext: strings.Repeat("g", 128),
+		CurrentRequired: "## Uncommitted Changes\n\nThe following changes have not yet been committed.\n\n",
+		DiffSection:     "### Diff\n\n(Diff too large to include in full)\n```diff\n+line\n... (truncated)\n```\n",
+	}
+	body, err := fitDirtyPromptBody(len(view.CurrentRequired)+len(view.DiffSection), view)
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Uncommitted Changes")
+	assert.Contains(t, body, "... (truncated)")
+	assert.NotContains(t, body, strings.Repeat("g", 128))
+}

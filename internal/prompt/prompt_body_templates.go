@@ -96,6 +96,27 @@ func fitRangePromptBody(limit int, view rangePromptBodyView) (string, error) {
 	return hardCapPrompt(body, limit), nil
 }
 
+func fitDirtyPromptBody(limit int, view dirtyPromptBodyView) (string, error) {
+	body, err := renderDirtyPromptBody(view)
+	if err != nil {
+		return "", err
+	}
+	if len(body) <= limit {
+		return body, nil
+	}
+
+	overflow := len(body) - limit
+	if overflow > 0 && len(view.OptionalContext) > 0 {
+		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
+	}
+
+	body, err = renderDirtyPromptBody(view)
+	if err != nil {
+		return "", err
+	}
+	return hardCapPrompt(body, limit), nil
+}
+
 func executePromptBodyTemplate(name string, view any) (string, error) {
 	var buf bytes.Buffer
 	if err := promptBodyTemplates.ExecuteTemplate(&buf, name, view); err != nil {

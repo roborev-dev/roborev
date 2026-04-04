@@ -211,7 +211,9 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	currentRequired := "## Uncommitted Changes\n\n" +
 		"The following changes have not yet been committed.\n\n"
 
-	// Build diff section
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	bodyLimit := max(0, promptCap-len(requiredPrefix))
+
 	var diffSection strings.Builder
 	diffSection.WriteString("### Diff\n\n")
 	diffSection.WriteString("```diff\n")
@@ -221,38 +223,33 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	}
 	diffSection.WriteString("```\n")
 
-	// Trim optional context if it alone would exceed the prompt cap
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	optCtx := optionalContext.String()
-	requiredLen := len(requiredPrefix) + len(currentRequired)
-	if requiredLen+len(optCtx) > promptCap {
-		optCtx = truncateUTF8(optCtx, max(0, promptCap-requiredLen))
+	view := dirtyPromptBodyView{
+		OptionalContext: optionalContext.String(),
+		CurrentRequired: currentRequired,
+		DiffSection:     diffSection.String(),
 	}
 
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optCtx)
-	sb.WriteString(currentRequired)
+	if len(view.DiffSection) > bodyLimit-len(view.OptionalContext)-len(view.CurrentRequired) {
+		var truncatedDiffSection strings.Builder
+		truncatedDiffSection.WriteString("### Diff\n\n")
+		truncatedDiffSection.WriteString("(Diff too large to include in full)\n")
 
-	// Check if adding the diff would exceed max prompt size
-	if sb.Len()+diffSection.Len() > promptCap {
-		// For dirty changes, we can't tell them to "use git diff" because
-		// the working tree may have changed. Just truncate with a note.
-		sb.WriteString("### Diff\n\n")
-		sb.WriteString("(Diff too large to include in full)\n")
-		// Include truncated diff
-		maxDiffLen := promptCap - sb.Len() - 100 // Leave room for closing markers
+		prefixLen := len(view.OptionalContext) + len(view.CurrentRequired) + len("### Diff\n\n") + len("(Diff too large to include in full)\n")
+		maxDiffLen := bodyLimit - prefixLen - len("```diff\n") - len("\n... (truncated)\n") - len("```\n")
 		if maxDiffLen > 1000 {
-			sb.WriteString("```diff\n")
-			sb.WriteString(truncateUTF8(diff, maxDiffLen))
-			sb.WriteString("\n... (truncated)\n")
-			sb.WriteString("```\n")
+			truncatedDiffSection.WriteString("```diff\n")
+			truncatedDiffSection.WriteString(truncateUTF8(diff, maxDiffLen))
+			truncatedDiffSection.WriteString("\n... (truncated)\n")
+			truncatedDiffSection.WriteString("```\n")
 		}
-	} else {
-		sb.WriteString(diffSection.String())
+		view.DiffSection = truncatedDiffSection.String()
 	}
 
-	return hardCapPrompt(sb.String(), promptCap), nil
+	body, err := fitDirtyPromptBody(bodyLimit, view)
+	if err != nil {
+		return "", err
+	}
+	return hardCapPrompt(requiredPrefix+body, promptCap), nil
 }
 
 func isCodexReviewAgent(agentName string) bool {
