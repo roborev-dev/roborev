@@ -188,7 +188,8 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
 	var optionalContext strings.Builder
 
@@ -211,7 +212,6 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	currentRequired := "## Uncommitted Changes\n\n" +
 		"The following changes have not yet been committed.\n\n"
 
-	promptCap := b.resolveMaxPromptSize(repoPath)
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
 
 	var diffSection strings.Builder
@@ -223,17 +223,17 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	}
 	diffSection.WriteString("```\n")
 
-	view := dirtyPromptBodyView{
-		OptionalContext: optionalContext.String(),
-		CurrentRequired: currentRequired,
-		DiffSection:     diffSection.String(),
+	optCtx := optionalContext.String()
+	fullDiffSection := diffSection.String()
+	if overflow := len(optCtx) + len(currentRequired) + len(fullDiffSection) - bodyLimit; overflow > 0 {
+		optCtx = truncateUTF8(optCtx, max(0, len(optCtx)-overflow))
 	}
 
-	trimmedView, _, err := trimDirtyPromptBodyOptionalContext(bodyLimit, view)
-	if err != nil {
-		return "", err
+	view := dirtyPromptBodyView{
+		OptionalContext: optCtx,
+		CurrentRequired: currentRequired,
+		DiffSection:     fullDiffSection,
 	}
-	view.OptionalContext = trimmedView.OptionalContext
 
 	if len(view.DiffSection) > bodyLimit-len(view.OptionalContext)-len(view.CurrentRequired) {
 		var truncatedDiffSection strings.Builder
@@ -255,7 +255,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if err != nil {
 		return "", err
 	}
-	return hardCapPrompt(requiredPrefix+body, promptCap), nil
+	return requiredPrefix + body, nil
 }
 
 func isCodexReviewAgent(agentName string) bool {
