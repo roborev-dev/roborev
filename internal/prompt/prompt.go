@@ -912,59 +912,47 @@ If they were rejected for being over-engineered, keep it simpler.
 // When minSeverity is non-empty, a severity filtering instruction is
 // injected before the findings section.
 func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, previousAttempts []storage.Response, minSeverity string) (string, error) {
-	var sb strings.Builder
-
-	// System prompt
-	sb.WriteString(GetSystemPrompt(review.Agent, "address"))
-	sb.WriteString("\n")
-
-	// Add project-specific guidelines if configured
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	view := addressPromptView{
+		SeverityFilter: config.SeverityInstruction(minSeverity),
+		ReviewFindings: review.Output,
+		JobID:          review.JobID,
 	}
 
-	// Include previous attempts to avoid repeating failed approaches
-	if len(previousAttempts) > 0 {
-		sb.WriteString(PreviousAttemptsHeader)
-		sb.WriteString("\n")
-		for _, attempt := range previousAttempts {
-			fmt.Fprintf(&sb, "--- Attempt by %s at %s ---\n",
-				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04"))
-			sb.WriteString(attempt.Response)
-			sb.WriteString("\n\n")
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewGuidelines) != "" {
+		view.ProjectGuidelines = &markdownSectionView{
+			Heading: "## Project Guidelines",
+			Body:    strings.TrimSpace(repoCfg.ReviewGuidelines),
 		}
 	}
 
-	// Severity filter instruction (before findings)
-	if inst := config.SeverityInstruction(minSeverity); inst != "" {
-		sb.WriteString(inst)
-		sb.WriteString("\n")
+	if len(previousAttempts) > 0 {
+		view.PreviousAttempts = make([]addressAttemptView, 0, len(previousAttempts))
+		for _, attempt := range previousAttempts {
+			when := ""
+			if !attempt.CreatedAt.IsZero() {
+				when = attempt.CreatedAt.Format("2006-01-02 15:04")
+			}
+			view.PreviousAttempts = append(view.PreviousAttempts, addressAttemptView{
+				Responder: attempt.Responder,
+				Response:  attempt.Response,
+				When:      when,
+			})
+		}
 	}
 
-	// Review findings section
-	fmt.Fprintf(&sb, "## Review Findings to Address (Job %d)\n\n", review.JobID)
-	sb.WriteString(review.Output)
-	sb.WriteString("\n\n")
-
-	// Include the original diff for context if we have job info.
-	// Don't apply user exclude patterns — the diff should match
-	// what the original review saw so findings stay relevant.
-	// Built-in lockfile excludes still apply (hardcoded in GetDiff).
-	// Tradeoff: without user excludes the diff may be larger and
-	// trip the MaxPromptSize/2 guard, but that's a soft degradation
-	// vs hiding the exact file the findings reference.
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
 		diff, err := git.GetDiff(repoPath, review.Job.GitRef)
 		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {
-			sb.WriteString("## Original Commit Diff (for context)\n\n")
-			sb.WriteString("```diff\n")
-			sb.WriteString(diff)
-			if !strings.HasSuffix(diff, "\n") {
-				sb.WriteString("\n")
+			view.OriginalDiff = diff
+			if !strings.HasSuffix(view.OriginalDiff, "\n") {
+				view.OriginalDiff += "\n"
 			}
-			sb.WriteString("```\n")
 		}
 	}
 
-	return sb.String(), nil
+	body, err := renderAddressPromptFromSections(view)
+	if err != nil {
+		return "", err
+	}
+	return GetSystemPrompt(review.Agent, "address") + "\n" + body, nil
 }

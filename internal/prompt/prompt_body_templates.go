@@ -275,6 +275,10 @@ func renderSystemPrompt(name string, view systemPromptView) (string, error) {
 	return executePromptTemplate(name, view)
 }
 
+func renderAddressPromptFromSections(view addressPromptView) (string, error) {
+	return renderAddressPrompt(view)
+}
+
 func renderDiffBlock(view diffSectionView) (string, error) {
 	return executePromptTemplate("diff_block", view)
 }

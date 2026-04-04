@@ -1261,3 +1261,23 @@ func TestBuildAddressPromptShowsFullDiff(t *testing.T) {
 	assertContains(t, diffSection, "keep.go", "retained file should be in address prompt diff")
 	assertContains(t, diffSection, "custom.dat", "excluded file should still be in address prompt diff")
 }
+
+func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) {
+	repoPath, sha := setupExcludePatternRepo(t)
+	b := NewBuilder(nil)
+
+	review := &storage.Review{
+		Agent:  "test",
+		Output: "Found issue: check custom.dat",
+		Job: &storage.ReviewJob{GitRef: sha},
+	}
+	attempts := []storage.Response{{Responder: "developer", Response: "Tried a narrow fix"}}
+
+	prompt, err := b.BuildAddressPrompt(repoPath, review, attempts, "medium")
+	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "## Previous Addressing Attempts")
+	assert.Contains(t, prompt, "Tried a narrow fix")
+	assert.Contains(t, prompt, "## Review Findings to Address")
+	assert.Contains(t, prompt, "## Original Commit Diff")
+}
