@@ -698,22 +698,19 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 
 // writeProjectGuidelines writes the project-specific guidelines section
 func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string) {
-	if guidelines == "" {
+	body, err := renderProjectGuidelinesBlock(guidelines)
+	if err != nil || body == "" {
 		return
 	}
-
-	sb.WriteString(ProjectGuidelinesHeader)
-	sb.WriteString("\n")
-	sb.WriteString(strings.TrimSpace(guidelines))
-	sb.WriteString("\n\n")
+	sb.WriteString(body)
 }
 
 func (b *Builder) writeAdditionalContext(sb *strings.Builder, additionalContext string) {
-	if strings.TrimSpace(additionalContext) == "" {
+	body, err := renderAdditionalContextBlock(additionalContext)
+	if err != nil || body == "" {
 		return
 	}
-	sb.WriteString(strings.TrimSpace(additionalContext))
-	sb.WriteString("\n\n")
+	sb.WriteString(body)
 }
 
 // LoadGuidelines loads review guidelines from the repo's default

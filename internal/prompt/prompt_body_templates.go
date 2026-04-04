@@ -5,6 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 type markdownSectionView struct {
@@ -131,6 +134,8 @@ var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	"templates/assembled_dirty.tmpl",
 	"templates/assembled_address.tmpl",
 	"templates/default_review.tmpl",
+	"templates/default_dirty.tmpl",
+	"templates/default_range.tmpl",
 	"templates/default_security.tmpl",
 	"templates/default_address.tmpl",
 	"templates/default_design_review.tmpl",
@@ -277,6 +282,66 @@ func renderSystemPrompt(name string, view systemPromptView) (string, error) {
 
 func renderAddressPromptFromSections(view addressPromptView) (string, error) {
 	return renderAddressPrompt(view)
+}
+
+func renderOptionalSectionsFromView(view optionalSectionsView) (string, error) {
+	body, err := executePromptTemplate("optional_sections", view)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(body), nil
+}
+
+func previousReviewViews(contexts []ReviewContext) []previousReviewView {
+	views := make([]previousReviewView, 0, len(contexts))
+	for _, ctx := range contexts {
+		view := previousReviewView{Commit: git.ShortSHA(ctx.SHA)}
+		if ctx.Review != nil {
+			view.Available = true
+			view.Output = ctx.Review.Output
+		}
+		if len(ctx.Responses) > 0 {
+			view.Comments = make([]reviewCommentView, 0, len(ctx.Responses))
+			for _, resp := range ctx.Responses {
+				view.Comments = append(view.Comments, reviewCommentView{Responder: resp.Responder, Response: resp.Response})
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
+	views := make([]reviewAttemptView, 0, len(reviews))
+	for i, review := range reviews {
+		when := ""
+		if !review.CreatedAt.IsZero() {
+			when = review.CreatedAt.Format("2006-01-02 15:04")
+		}
+		views = append(views, reviewAttemptView{
+			Label:  "Review Attempt " + strconv.Itoa(i+1),
+			Agent:  review.Agent,
+			When:   when,
+			Output: review.Output,
+		})
+	}
+	return views
+}
+
+func renderAdditionalContextBlock(additionalContext string) (string, error) {
+	trimmed := strings.TrimSpace(additionalContext)
+	if trimmed == "" {
+		return "", nil
+	}
+	return trimmed + "\n\n", nil
+}
+
+func renderProjectGuidelinesBlock(guidelines string) (string, error) {
+	trimmed := strings.TrimSpace(guidelines)
+	if trimmed == "" {
+		return "", nil
+	}
+	return "## Project Guidelines\n\n" + trimmed + "\n\n", nil
 }
 
 func renderDiffBlock(view diffSectionView) (string, error) {

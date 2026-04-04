@@ -1269,7 +1269,7 @@ func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) 
 	review := &storage.Review{
 		Agent:  "test",
 		Output: "Found issue: check custom.dat",
-		Job: &storage.ReviewJob{GitRef: sha},
+		Job:    &storage.ReviewJob{GitRef: sha},
 	}
 	attempts := []storage.Response{{Responder: "developer", Response: "Tried a narrow fix"}}
 

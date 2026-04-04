@@ -3,7 +3,9 @@ package prompt
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -244,6 +246,85 @@ func TestRenderSinglePromptUsesFallbackOverBody(t *testing.T) {
 	assert.NotContains(t, body, "body")
 }
 
+func TestRenderOptionalSectionsFromTypedData(t *testing.T) {
+	body, err := renderOptionalSectionsFromView(optionalSectionsView{
+		ProjectGuidelines: &markdownSectionView{
+			Heading: "## Project Guidelines",
+			Body:    "Prefer composition over inheritance.",
+		},
+		AdditionalContext: "## Pull Request Discussion\n\nNewest comment first.\n\n",
+		PreviousReviews: []previousReviewView{{
+			Commit:    "abc1234",
+			Available: true,
+			Output:    "Found a bug",
+			Comments:  []reviewCommentView{{Responder: "alice", Response: "Known issue"}},
+		}},
+		PreviousAttempts: []reviewAttemptView{{
+			Label:    "Review Attempt 1",
+			Agent:    "test",
+			When:     "2026-04-05 10:00",
+			Output:   "Still failing",
+			Comments: []reviewCommentView{{Responder: "bob", Response: "Will fix"}},
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Project Guidelines")
+	assert.Contains(t, body, "## Pull Request Discussion")
+	assert.Contains(t, body, "## Previous Reviews")
+	assert.Contains(t, body, "Found a bug")
+	assert.Contains(t, body, "Known issue")
+	assert.Contains(t, body, "## Previous Review Attempts")
+	assert.Contains(t, body, "Review Attempt 1")
+	assert.Contains(t, body, "Will fix")
+}
+
+func TestRenderOptionalSectionsOmitsEmptySections(t *testing.T) {
+	body, err := renderOptionalSectionsFromView(optionalSectionsView{})
+	require.NoError(t, err)
+	assert.Empty(t, body)
+}
+
+func TestRenderAdditionalContextBlockTrimsAndFormats(t *testing.T) {
+	body, err := renderAdditionalContextBlock("\n## Pull Request Discussion\n\nNewest comment first.\n")
+	require.NoError(t, err)
+	assert.Equal(t, "## Pull Request Discussion\n\nNewest comment first.\n\n", body)
+}
+
+func TestRenderProjectGuidelinesBlockTrimsAndFormats(t *testing.T) {
+	body, err := renderProjectGuidelinesBlock("\nPrefer composition over inheritance.\n")
+	require.NoError(t, err)
+	assert.Equal(t, "## Project Guidelines\n\nPrefer composition over inheritance.\n\n", body)
+}
+
+func TestPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
+	views := previousReviewViews([]ReviewContext{
+		{SHA: "bbbbbbb", Review: &storage.Review{Output: "second"}},
+		{SHA: "aaaaaaa", Review: &storage.Review{Output: "first"}},
+	})
+	require.Len(t, views, 2)
+	assert.Equal(t, "bbbbbbb", views[0].Commit)
+	assert.Equal(t, "aaaaaaa", views[1].Commit)
+}
+
+func TestReviewAttemptViewsPreserveOrderAndMetadata(t *testing.T) {
+	views := reviewAttemptViews([]storage.Review{{
+		Agent:     "test",
+		Output:    "first",
+		CreatedAt: mustParsePromptTestTime(t, "2026-04-05 10:00"),
+	}})
+	require.Len(t, views, 1)
+	assert.Equal(t, "Review Attempt 1", views[0].Label)
+	assert.Equal(t, "test", views[0].Agent)
+	assert.Equal(t, "2026-04-05 10:00", views[0].When)
+	assert.Equal(t, "first", views[0].Output)
+}
+
+func mustParsePromptTestTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02 15:04", value)
+	require.NoError(t, err)
+	return parsed
+}
 func TestRenderAddressPromptOmitsOptionalSectionsWhenEmpty(t *testing.T) {
 	body, err := renderAddressPrompt(addressPromptView{ReviewFindings: "finding", JobID: 1})
 	require.NoError(t, err)

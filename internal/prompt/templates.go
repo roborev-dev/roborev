@@ -47,8 +47,12 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	// Fallback to default templates
 	var fallbackName string
 	switch promptType {
-	case "review", "dirty", "range":
+	case "review":
 		fallbackName = "default_review.tmpl"
+	case "dirty":
+		fallbackName = "default_dirty.tmpl"
+	case "range":
+		fallbackName = "default_range.tmpl"
 	case "address":
 		fallbackName = "default_address.tmpl"
 	case "security":
