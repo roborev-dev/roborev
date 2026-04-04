@@ -2,190 +2,253 @@
 
 ## Summary
 
-Refactor `internal/prompt/prompt.go` so the assembled review prompts are rendered from Go templates instead of being manually concatenated with `strings.Builder` and `fmt.Fprintf`. The refactor should fully cover single-commit, range, and dirty prompt construction while preserving the current rendered wording and section ordering as closely as possible.
+Refactor `internal/prompt/` so prompt construction is template-driven end to end. That includes system-prompt fallbacks in `internal/prompt/templates.go`, assembled prompt bodies in `internal/prompt/prompt.go`, shared optional sections such as project guidelines and previous reviews, and oversized-diff fallback text. By the end of this workstream, prompt rendering should use typed Go view models plus nested `text/template` partials instead of manual `strings.Builder` / `fmt.Fprintf` assembly.
 
-The design uses a single assembled template per prompt kind. Prompt size control remains explicit in Go: the builder renders the template with progressively smaller budgets, measures the rendered output length, and adjusts optional content or diff mode until the result fits.
+This design builds on the branch’s current partial migration (`prompt_body_templates.go` and `assembled_{single,range,dirty}.tmpl`) but pushes it to the intended finish line: no stringbuilder-style prompt assembly remains in the prompt package for review, range, dirty, address, security, or design-review flows.
 
 ## Goals
 
-- Replace brittle string-by-string prompt assembly with template-based rendering.
-- Preserve current prompt wording, section ordering, and review semantics as closely as possible.
-- Preserve the current trimming priorities and large-diff fallback behavior.
-- Keep the public prompt-builder API unchanged.
-- Keep system-prompt selection in `internal/prompt/templates.go` unchanged.
+- Make prompt structure explicit through nested Go templates.
+- Cover all prompt families involved in review flows: single, range, dirty, address, security, and design-review.
+- Remove stringbuilder-style prompt assembly from prompt construction code.
+- Use typed view structs per prompt family rather than map-driven rendering.
+- Preserve current wording, section ordering, trimming priorities, and fallback behavior unless an intentional wording change is called out.
+- Keep exported entry points unchanged, including `Build`, `BuildWithAdditionalContext`, `BuildDirty`, `BuildAddressPrompt`, and `GetSystemPrompt`.
 
 ## Non-goals
 
-- Rewording review instructions or changing review policy.
-- Changing caller APIs or config behavior.
-- Introducing a new generic section engine or metadata framework.
-- Refactoring prompt budgeting into a separate subsystem beyond what is needed for this issue.
+- Reworking caller APIs or config resolution.
+- Changing review policy or output expectations.
+- Introducing a generic metadata engine or schema language for prompts.
+- Reorganizing unrelated packages outside `internal/prompt/`.
+- Doing speculative abstraction beyond what is needed to remove ad hoc prompt assembly.
 
 ## Current problems
 
-Today, `buildSinglePrompt`, `buildRangePrompt`, and `BuildDirty` mix together:
+Today the prompt package still spreads prompt construction across:
 
-- data collection
-- formatting concerns
-- markdown layout
-- truncation and budgeting logic
-- diff fallback selection
+- hard-coded fallback constants in `prompt.go`
+- agent-specific template files in `templates/`
+- body renderers that currently concatenate preformatted strings
+- helper methods like `writeProjectGuidelines`, `writePreviousReviews`, `writePreviousAttemptsForGitRef`, and `BuildAddressPrompt` that manually append markdown
+- oversized-diff fallback variants built from string formatting helpers
 
-That makes the prompt shape harder to reason about and more fragile as conditions grow. It also splits prompt structure across many ad hoc writes instead of making the final document shape explicit.
+That leaves the package in a mixed state where some prompt shape lives in templates and some lives in procedural string assembly. The result is harder to reason about, harder to test structurally, and easy to regress as more conditions are added.
 
-## Proposed design
+## Approved design
 
-### 1. Use one assembled template per prompt kind
+### 1. Template the whole prompt system, not just final bodies
 
-Add embedded templates under `internal/prompt/templates/` for the full assembled prompt body for:
+The end state uses templates for:
 
-- single commit prompts
-- commit range prompts
-- dirty prompts
+- system prompt fallbacks
+- top-level prompt bodies
+- shared optional sections
+- current commit / range / dirty sections
+- oversized-diff fallback variants
 
-These templates should render the entire prompt body after the system prompt prefix, including optional sections and the current diff or fallback section.
+`GetSystemPrompt` remains the public entry point, but its default fallback content moves out of Go string constants and into templates. Agent-specific template selection still works the same way; the difference is that the fallback path is also template-rendered.
 
-Each template should preserve the current headings and text closely, including sections such as:
+### 2. Use typed nested view models per prompt family
 
-- `## Project Guidelines`
-- `## Previous Reviews`
-- `## Previous Review Attempts`
-- `## Current Commit`
-- `## Commit Range`
-- `## Uncommitted Changes`
-- `### Diff`
-- `### Combined Diff`
+Each prompt family gets a typed view struct with nested section structs. The important split is between orchestration and rendering:
 
-### 2. Introduce explicit prompt view models
+- Go code gathers data, resolves review type aliases, chooses fallback mode, and applies size fitting.
+- Templates render the document shape from typed data.
 
-Add internal data structs in `internal/prompt` that represent the full render state for a prompt. The structs should contain already-prepared strings and flags needed by the template, rather than pushing formatting logic into the template.
+Representative view types:
 
-The render model should distinguish between:
+- `singlePromptView`
+- `rangePromptView`
+- `dirtyPromptView`
+- `addressPromptView`
+- `systemPromptView`
 
-- required content that must be preserved
-- optional context that can be trimmed
-- full diff mode
-- fallback diff mode
-- dirty diff truncation mode
+Representative nested section types:
 
-This keeps templates declarative while leaving behavior decisions in Go.
+- `guidelinesSectionView`
+- `previousReviewSectionView`
+- `reviewAttemptSectionView`
+- `currentCommitSectionView`
+- `commitRangeSectionView`
+- `dirtyChangesSectionView`
+- `diffSectionView`
+- `diffFallbackView`
 
-### 3. Keep budgeting in Go by rendering against different budgets
+The exact type names can vary, but the structure should remain typed and explicit. The goal is to model prompt sections directly, not to shuttle around large pre-rendered markdown strings.
 
-The builder should render templates, measure the resulting output length, and adjust inputs until the result fits within the prompt budget.
+### 3. Use nested templates for shared sections
 
-For single and range prompts:
+Instead of one flat template per prompt body with opaque string slots, templates should call shared named partials. Examples:
 
-1. Collect full data.
-2. Render with full optional context and full diff.
-3. If over budget, shrink optional context according to current priority rules and re-render.
-4. If still over budget because the diff cannot fit, switch to the existing large-diff fallback content and re-render.
-5. Apply the hard cap only as a final guardrail.
+- `project_guidelines`
+- `previous_reviews`
+- `previous_review_attempts`
+- `current_commit`
+- `commit_range`
+- `dirty_changes`
+- `diff_block`
+- `codex_commit_fallback`
+- `codex_range_fallback`
+- `address_findings`
 
-For dirty prompts:
+This keeps shared prompt structure in one place and avoids reintroducing procedural formatting in Go helpers.
 
-1. Collect full data.
-2. Render with full optional context and full inline diff.
-3. If over budget, shrink optional context and re-render.
-4. If still over budget, render the existing truncated inline diff form and re-render.
-5. Apply the hard cap only as a final guardrail.
+### 4. Keep fitting and prioritization in Go
 
-The important change is that sizing decisions are made by measuring rendered template output instead of precomputing the full prompt from many manual writes.
+Prompt budgeting remains explicit Go logic. Templates render the ideal shape; Go decides how much data is available to render.
 
-### 4. Preserve current trimming priorities
-
-The refactor should keep the current semantic priority order:
+The fitting rules stay aligned with current behavior:
 
 - Preserve the system prompt prefix.
-- Preserve the current commit or current range section.
-- Trim optional context before sacrificing current commit or range metadata.
-- For single and range prompts, switch to the existing fallback diff content when the full diff does not fit.
+- Preserve the current commit / range / dirty header section.
+- Trim optional context before sacrificing current metadata.
+- For single/range prompts, downgrade to the existing large-diff fallback variants when the inline diff cannot fit.
 - For dirty prompts, keep the current truncated-inline-diff behavior.
+- Use the hard cap only as a final guardrail.
 
-This preserves the user-visible behavior while changing only how the prompt is assembled.
+The key change is that fitting operates on typed view fields and re-rendered templates instead of handwritten prompt concatenation.
 
-## Implementation outline
+### 5. Finish the migration already underway on this branch
 
-### Template files
+The branch already has:
 
-Add full-body templates for the assembled prompt kinds to `internal/prompt/templates/` and load them through the existing embedded template mechanism.
+- `internal/prompt/prompt_body_templates.go`
+- `internal/prompt/prompt_body_templates_test.go`
+- `internal/prompt/templates/assembled_single.tmpl`
+- `internal/prompt/templates/assembled_range.tmpl`
+- `internal/prompt/templates/assembled_dirty.tmpl`
 
-These templates should be limited to layout and conditional rendering. They should not perform complex formatting logic or budgeting decisions.
+Those pieces should be kept only if they serve the final nested-template design. It is acceptable to restructure them if needed. Preserving the temporary shape is not a requirement; reaching the cleaner typed nested-template architecture is.
 
-### Prompt rendering helpers
+## Components
 
-Add internal helpers that:
+### Template definitions
 
-- build the render model for each prompt kind
-- render a specific assembled template with that model
-- iteratively shrink optional content or switch diff mode when the rendered prompt is too large
+Use embedded templates under `internal/prompt/templates/` for both system prompts and assembled bodies. Split templates by responsibility:
 
-The existing helpers for large-diff fallback text can be retained and used as content sources for the template model.
+- family templates for single/range/dirty/address/system prompts
+- shared partials for repeated sections
+- fallback templates for large-diff messaging
 
-### Existing APIs
+Templates should contain layout and branching that is natural to read in a template. They should not take on budgeting or repository lookup logic.
 
-Keep these entry points unchanged:
+### Renderer
 
-- `Build`
-- `BuildWithAdditionalContext`
-- `BuildDirty`
-- `GetSystemPrompt`
+Introduce a small renderer layer that owns template parsing and execution. It should expose explicit entry points such as:
 
-The refactor should remain internal to the prompt package.
+- `renderSinglePrompt(...)`
+- `renderRangePrompt(...)`
+- `renderDirtyPrompt(...)`
+- `renderAddressPrompt(...)`
+- `renderSystemPrompt(...)`
+
+It is fine for the implementation to share an internal `executeTemplate` helper, but call sites should still use prompt-family-specific entry points.
+
+### Builder/orchestration
+
+The existing builder methods stay responsible for:
+
+- loading guidelines
+- loading previous reviews and responses
+- loading previous attempts
+- reading commit/range metadata
+- computing diffs and fallback modes
+- enforcing size limits
+
+Their job is to fill typed views and call renderers, not to write markdown themselves.
+
+### Fit helpers
+
+Keep family-specific fit helpers where needed, but operate on typed fields. For example, a single-prompt fit helper can trim nested optional sections or degrade a diff section while preserving the current commit section.
+
+## Data flow
+
+### Single, range, and dirty prompts
+
+1. Resolve prompt kind and review type alias.
+2. Gather git/config/db data.
+3. Build a typed view with nested sections.
+4. Render the prompt body through named templates and shared partials.
+5. If over budget, trim optional sections or degrade diff mode in Go.
+6. Re-render until the prompt fits, then prepend the rendered system prompt.
+
+### Address prompts
+
+1. Gather project guidelines, previous attempts, severity filter instruction, review findings, and original diff context.
+2. Build an `addressPromptView`.
+3. Render the full prompt through templates instead of `strings.Builder`.
+4. Return the rendered string without changing public behavior.
+
+### System prompts
+
+1. Normalize the agent name.
+2. Resolve the prompt family (`review`, `range`, `dirty`, `address`, `security`, `design-review`, `run`).
+3. Prefer an agent-specific template file when present.
+4. Otherwise render the default fallback template for that family.
+5. Apply the current date and no-skills instruction through structured template data rather than string concatenation.
+
+## Error handling
+
+- Template parse failures should fail fast during tests or package initialization.
+- Template execution failures should be returned with prompt-family context.
+- Missing optional data should produce omitted sections, not placeholder text.
+- Internal helpers may still use `bytes.Buffer` to execute templates; the ban is on ad hoc prompt assembly, not on standard library rendering internals.
 
 ## Testing strategy
 
-Update and extend tests in `internal/prompt/prompt_test.go` and related prompt-package tests.
+Update and extend:
+
+- `internal/prompt/prompt_body_templates_test.go`
+- `internal/prompt/prompt_test.go`
+- `internal/prompt/templates_test.go`
 
 ### Coverage to preserve
 
-- Expected sections still appear.
-- Section ordering remains the same.
-- Previous reviews and responses still render correctly.
-- Project guidelines still render only when present.
-- Additional context still renders in the correct position.
+- Expected headings and section ordering for single/range/dirty prompts.
+- Previous reviews and responses rendering.
+- Previous review attempts rendering.
+- Additional context ordering.
+- Guidelines loading behavior.
+- Codex and non-Codex fallback wording.
+- Prompt cap behavior and UTF-8 safety.
 
-### New focused coverage
+### New coverage to add
 
-- Single-prompt over-budget cases trim optional context before current commit metadata.
-- Range-prompt over-budget cases trim optional context before current range metadata.
-- Codex large-diff fallback text still renders correctly.
-- Non-Codex large-diff fallback text still renders correctly.
-- Dirty prompts still use truncated inline diff behavior when needed.
-- Rendered prompts stay under the configured budget after iterative rendering.
-
-### Assertion style
-
-Use direct output assertions and exact-shape checks where helpful, especially around template-driven output and fallback wording.
+- Nested section templates render the same shape as the prior inline output.
+- Address prompts render through templates and preserve ordering.
+- Default system prompt fallbacks render from templates for review/security/address/design-review families.
+- No-skills/date injection behavior remains correct after the system-prompt migration.
+- No prompt path depends on `strings.Builder`-assembled markdown sections.
 
 ## Risks and mitigations
 
 ### Risk: output drift
 
-Because prompt wording is relied on implicitly by tests and agent behavior, template migration could accidentally change whitespace, headings, or section order.
+Moving all prompt construction into templates can change spacing or section order.
 
-**Mitigation:** preserve current wording closely and add targeted assertions around exact rendered structure.
+**Mitigation:** keep wording stable, add ordering assertions, and compare rendered output directly in focused tests.
 
-### Risk: budgeting regressions
+### Risk: overfitting the temporary branch shape
 
-Template rendering can make size accounting less obvious than the current manual writes.
+The branch already has a partial template migration that still uses flat string slots.
 
-**Mitigation:** keep budgeting orchestration explicit in Go and test over-budget scenarios directly.
+**Mitigation:** prefer the approved typed nested-template structure even if it means reshaping the current in-progress files.
 
-### Risk: templates taking on business logic
+### Risk: templates becoming opaque
 
-If too much logic moves into templates, the result becomes hard to test and maintain.
+Too much logic in templates would hide behavior that belongs in Go.
 
-**Mitigation:** keep templates declarative and provide already-decided data through the render model.
+**Mitigation:** keep budgeting, repo lookups, and fallback selection in Go; keep templates focused on structure.
 
 ## Rollout
 
-Make the refactor in place within `internal/prompt`. Do not change callers. The work can land as a single focused change set with accompanying tests.
+Land the work in place in `internal/prompt/`. The migration can proceed incrementally, but the finished state should leave no prompt-construction path relying on stringbuilder-style markdown assembly.
 
 ## Success criteria
 
-- Prompt assembly for single, range, and dirty prompts is template-driven.
-- Existing prompt wording and section ordering remain materially unchanged.
-- Current trimming and fallback behavior are preserved.
-- Tests cover both normal and over-budget rendering behavior.
-- No caller-facing API changes are required.
+- `Build`, `BuildWithAdditionalContext`, `BuildDirty`, `BuildAddressPrompt`, and `GetSystemPrompt` all render through templates.
+- Shared prompt sections use nested partials rather than handwritten markdown assembly.
+- Existing review behavior, section ordering, and fallback semantics remain materially unchanged.
+- The prompt package no longer assembles prompt markdown through `strings.Builder` / `fmt.Fprintf` style code paths.
+- Regression tests cover system prompts, address prompts, and body prompts under both normal and over-budget conditions.

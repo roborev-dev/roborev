@@ -255,7 +255,27 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if err != nil {
 		return "", err
 	}
-	return requiredPrefix + body, nil
+
+	renderedView := dirtyPromptView{
+		Optional: optionalSectionsView{AdditionalContext: view.OptionalContext},
+		Current: dirtyChangesSectionView{
+			Description: "The following changes have not yet been committed.",
+		},
+		Diff: diffSectionView{Heading: "### Diff"},
+	}
+	if strings.HasPrefix(view.DiffSection, "### Diff\n\n(Diff too large to include in full)\n") {
+		renderedView.Diff.Fallback = strings.TrimPrefix(view.DiffSection, "### Diff\n\n")
+	} else {
+		renderedView.Diff.Body = strings.TrimPrefix(view.DiffSection, "### Diff\n\n")
+	}
+	renderedBody, err := renderDirtyPrompt(renderedView)
+	if err != nil {
+		return "", err
+	}
+	if len(renderedBody) > bodyLimit {
+		renderedBody = body
+	}
+	return requiredPrefix + hardCapPrompt(renderedBody, bodyLimit), nil
 }
 
 func isCodexReviewAgent(agentName string) bool {

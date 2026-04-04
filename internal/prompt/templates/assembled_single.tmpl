@@ -1,1 +1,1 @@
-{{- .OptionalContext -}}{{- .CurrentRequired -}}{{- .CurrentOverflow -}}{{- .DiffSection -}}
+{{template "optional_sections" .Optional}}{{template "current_commit" .Current}}{{template "diff_block" .Diff}}

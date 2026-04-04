@@ -68,6 +68,35 @@ func TestBuildPromptWithAdditionalContext(t *testing.T) {
 	assertContains(t, prompt, "Most recent human comment first.", "Prompt should contain additional context body")
 }
 
+func TestBuildPromptWithAdditionalContextAndPreviousAttemptsPreservesSectionOrder(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	db, repoID := setupDBWithCommits(t, repoPath, commits)
+
+	testutil.CreateCompletedReview(t, db, repoID, commits[5], "test", "First review")
+
+	builder := NewBuilder(db)
+	prompt, err := builder.BuildWithAdditionalContext(
+		repoPath,
+		commits[5],
+		repoID,
+		0,
+		"claude-code",
+		"",
+		"## Pull Request Discussion\n\nNewest comment first.\n",
+	)
+	require.NoError(t, err)
+
+	additionalContextPos := strings.Index(prompt, "## Pull Request Discussion")
+	previousAttemptsPos := strings.Index(prompt, "## Previous Review Attempts")
+	currentCommitPos := strings.Index(prompt, "## Current Commit")
+
+	require.NotEqual(t, -1, additionalContextPos)
+	require.NotEqual(t, -1, previousAttemptsPos)
+	require.NotEqual(t, -1, currentCommitPos)
+	assert.Less(t, additionalContextPos, previousAttemptsPos)
+	assert.Less(t, previousAttemptsPos, currentCommitPos)
+}
+
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 
