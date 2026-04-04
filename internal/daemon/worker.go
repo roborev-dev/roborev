@@ -1072,13 +1072,19 @@ func shellQuoteForPrompt(s string) string {
 // prebuilt prompt with a plain truncation note, removing misleading
 // "written to a file" / "Read the diff from" instructions.
 func stripDiffFileBlock(s string) string {
-	const marker = "(Diff too large to include inline)"
+	// Match both the full and compact fallback variants.
+	const marker = "(Diff too large to include inline"
 	idx := strings.Index(s, marker)
 	if idx < 0 {
-		// No truncation block found — just remove the placeholder
 		return strings.ReplaceAll(s, prompt.DiffFilePathPlaceholder, "")
 	}
-	return s[:idx+len(marker)] + "\n"
+	// Keep everything up to and including the closing paren of
+	// the marker, then drop the rest (file instructions).
+	end := strings.Index(s[idx:], ")")
+	if end < 0 {
+		return s[:idx] + marker + ")\n"
+	}
+	return s[:idx+end+1] + "\n"
 }
 
 // logJobFailed logs a job failure to the activity log
