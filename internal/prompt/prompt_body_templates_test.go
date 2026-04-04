@@ -92,3 +92,17 @@ func TestFitSinglePromptBodyTrimsOptionalContextBeforeCurrentOverflow(t *testing
 	assert.Contains(t, body, "**Subject:** large change")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
+
+func TestFitRangePromptBodyTrimsOptionalContextBeforeRangeOverflow(t *testing.T) {
+	view := rangePromptBodyView{
+		OptionalContext: strings.Repeat("g", 128),
+		CurrentRequired: "## Commit Range\n\nReviewing 2 commits:\n\n",
+		CurrentOverflow: "- abc1234 first change\n- def5678 second change\n\n",
+		DiffSection:     "### Combined Diff\n\n(Diff too large; for Codex run `git diff abc1234..def5678 --` locally.)\n",
+	}
+	body, err := fitRangePromptBody(len(view.CurrentRequired)+len(view.CurrentOverflow)+len(view.DiffSection), view)
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Commit Range")
+	assert.Contains(t, body, "- abc1234 first change")
+	assert.NotContains(t, body, strings.Repeat("g", 128))
+}

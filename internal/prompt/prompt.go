@@ -258,56 +258,6 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
 }
-func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
-	if len(variants) == 0 || limit <= 0 {
-		return
-	}
-	shortest := variants[len(variants)-1]
-	remaining := limit - sb.Len()
-	if remaining <= 0 {
-		return
-	}
-	for _, variant := range variants {
-		if len(variant) <= remaining {
-			sb.WriteString(variant)
-			return
-		}
-	}
-	sb.WriteString(truncateUTF8(shortest, remaining))
-}
-
-func buildPromptPreservingCurrentSection(
-	requiredPrefix, optionalContext, currentRequired, currentOverflow string,
-	limit int,
-	variants ...string,
-) string {
-	shortestLen := 0
-	if len(variants) > 0 {
-		shortestLen = len(variants[len(variants)-1])
-	}
-	softBudget := max(0, limit-len(requiredPrefix)-len(currentRequired)-shortestLen)
-	softLen := len(optionalContext) + len(currentOverflow)
-	if softLen > softBudget {
-		overflow := softLen - softBudget
-		if overflow > 0 && len(optionalContext) > 0 {
-			originalLen := len(optionalContext)
-			trimmedLen := max(0, len(optionalContext)-overflow)
-			optionalContext = truncateUTF8(optionalContext, trimmedLen)
-			overflow -= originalLen - len(optionalContext)
-		}
-		if overflow > 0 && len(currentOverflow) > 0 {
-			currentOverflow = truncateUTF8(currentOverflow, max(0, len(currentOverflow)-overflow))
-		}
-	}
-
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optionalContext)
-	sb.WriteString(currentRequired)
-	sb.WriteString(currentOverflow)
-	writeLongestFitting(&sb, limit, variants...)
-	return hardCapPrompt(sb.String(), limit)
-}
 
 func truncateUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 {
@@ -573,7 +523,8 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
 	var optionalContext strings.Builder
 
@@ -618,68 +569,61 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 	currentOverflow.WriteString("\n")
 
-	// Get and include the combined diff for the range.
-	// Budget the diff from non-trimmable sections only; optional context
-	// is trimmed afterward to fit the remaining space.
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	promptCap := b.resolveMaxPromptSize(repoPath)
+	bodyLimit := max(0, promptCap-len(requiredPrefix))
 	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
-	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-requiredLen-diffWrap)
+	diffLimit := max(0, bodyLimit-len(currentRequired.String())-len(currentOverflow.String())-diffWrap)
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
+
+	var diffSection string
 	if truncated {
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)...,
-			), nil
+			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+			shortest := variants[len(variants)-1]
+			softBudget := max(0, bodyLimit-len(currentRequired.String())-len(shortest))
+			softLen := len(optionalContext.String()) + len(currentOverflow.String())
+			effectiveSoftLen := min(softLen, softBudget)
+			remaining := max(0, bodyLimit-len(currentRequired.String())-effectiveSoftLen)
+			diffSection = truncateUTF8(shortest, remaining)
+			for _, variant := range variants {
+				if len(variant) <= remaining {
+					diffSection = variant
+					break
+				}
+			}
 		} else {
-			fallback := "### Combined Diff\n\n" +
+			diffSection = "### Combined Diff\n\n" +
 				"(Diff too large to include - please review the commits directly)\n" +
 				"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				fallback,
-			), nil
 		}
+	} else {
+		var diffSectionBuilder strings.Builder
+		diffSectionBuilder.WriteString("### Combined Diff\n\n")
+		diffSectionBuilder.WriteString("```diff\n")
+		diffSectionBuilder.WriteString(diff)
+		if !strings.HasSuffix(diff, "\n") {
+			diffSectionBuilder.WriteString("\n")
+		}
+		diffSectionBuilder.WriteString("```\n")
+		diffSection = diffSectionBuilder.String()
 	}
 
-	// Build diff section
-	var diffSection strings.Builder
-	diffSection.WriteString("### Combined Diff\n\n")
-	diffSection.WriteString("```diff\n")
-	diffSection.WriteString(diff)
-	if !strings.HasSuffix(diff, "\n") {
-		diffSection.WriteString("\n")
-	}
-	diffSection.WriteString("```\n")
-
-	// Trim optional context to fit remaining budget after the diff
-	optCtx := optionalContext.String()
-	ctxBudget := promptCap - requiredLen - diffSection.Len()
-	if len(optCtx) > ctxBudget {
-		optCtx = truncateUTF8(optCtx, max(0, ctxBudget))
+	view := rangePromptBodyView{
+		OptionalContext: optionalContext.String(),
+		CurrentRequired: currentRequired.String(),
+		CurrentOverflow: currentOverflow.String(),
+		DiffSection:     diffSection,
 	}
 
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optCtx)
-	sb.WriteString(currentRequired.String())
-	sb.WriteString(currentOverflow.String())
-	sb.WriteString(diffSection.String())
-	return sb.String(), nil
+	body, err := fitRangePromptBody(bodyLimit, view)
+	if err != nil {
+		return "", err
+	}
+	return requiredPrefix + body, nil
 }
 
 // writePreviousReviews writes the previous reviews section to the builder

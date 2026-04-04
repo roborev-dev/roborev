@@ -70,6 +70,32 @@ func fitSinglePromptBody(limit int, view singlePromptBodyView) (string, error) {
 	return hardCapPrompt(body, limit), nil
 }
 
+func fitRangePromptBody(limit int, view rangePromptBodyView) (string, error) {
+	body, err := renderRangePromptBody(view)
+	if err != nil {
+		return "", err
+	}
+	if len(body) <= limit {
+		return body, nil
+	}
+
+	overflow := len(body) - limit
+	if overflow > 0 && len(view.OptionalContext) > 0 {
+		originalLen := len(view.OptionalContext)
+		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
+		overflow -= originalLen - len(view.OptionalContext)
+	}
+	if overflow > 0 && len(view.CurrentOverflow) > 0 {
+		view.CurrentOverflow = truncateUTF8(view.CurrentOverflow, max(0, len(view.CurrentOverflow)-overflow))
+	}
+
+	body, err = renderRangePromptBody(view)
+	if err != nil {
+		return "", err
+	}
+	return hardCapPrompt(body, limit), nil
+}
+
 func executePromptBodyTemplate(name string, view any) (string, error) {
 	var buf bytes.Buffer
 	if err := promptBodyTemplates.ExecuteTemplate(&buf, name, view); err != nil {
