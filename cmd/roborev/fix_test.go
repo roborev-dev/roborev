@@ -1835,7 +1835,7 @@ func TestRunFixList(t *testing.T) {
 			// serverAddr is patched by daemonFromHandler called inside Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixList(cmd, "", false)
+			return runFixList(cmd, "", true, false, false)
 		})
 		require.NoError(t, err, "runFixList")
 
@@ -1863,7 +1863,7 @@ func TestRunFixList(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixList(cmd, "", false)
+			return runFixList(cmd, "", true, false, false)
 		})
 		require.NoError(t, err, "runFixList")
 
@@ -1904,7 +1904,7 @@ func TestRunFixList(t *testing.T) {
 
 		gotIDs = nil
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixList(cmd, "", true)
+			return runFixList(cmd, "", true, false, true)
 		})
 		require.NoError(t, err, "runFixList: %v")
 
@@ -1981,7 +1981,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		cmd := &cobra.Command{}
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
-		if err := runFixList(cmd, "", false); err != nil {
+		if err := runFixList(cmd, "", true, false, false); err != nil {
 			require.NoError(t, err, "runFixList: %v")
 		}
 
@@ -3140,4 +3140,106 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 		"worktree-reachable job should be processed")
 	assert.NotContains(t, ids, int64(100),
 		"main-only job should be filtered out")
+}
+
+// TestRunFixOpenFindsMergedBranchJobs verifies that roborev fix on the
+// main branch discovers jobs whose commits were originally reviewed on
+// a feature branch and later merged to main. The API query must NOT
+// filter by branch when the branch was auto-resolved (not --branch),
+// so that filterReachableJobs can accept the job via commit-graph
+// reachability.
+func TestRunFixOpenFindsMergedBranchJobs(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("base.txt", "base", "initial commit")
+
+	defaultBranch := strings.TrimSpace(
+		repo.Run("rev-parse", "--abbrev-ref", "HEAD"),
+	)
+
+	// Create a feature branch and commit
+	repo.Run("checkout", "-b", "feature/widget")
+	featureSHA := repo.CommitFile(
+		"widget.txt", "code", "add widget",
+	)
+
+	// Switch back to main and merge the feature branch
+	repo.Run("checkout", defaultBranch)
+	repo.Run("merge", "--no-ff", "feature/widget", "-m", "merge feature")
+
+	var processedJobIDs []int64
+	var mu sync.Mutex
+	var apiQueries []string
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			apiQueries = append(apiQueries, r.URL.RawQuery)
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
+				// Return job created on the feature branch
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{
+						{
+							ID:     300,
+							Status: storage.JobStatusDone,
+							Agent:  "test",
+							GitRef: featureSHA,
+							Branch: "feature/widget",
+						},
+					},
+					"has_more": false,
+				})
+			} else if q.Get("id") != "" {
+				var id int64
+				fmt.Sscanf(q.Get("id"), "%d", &id)
+				mu.Lock()
+				processedJobIDs = append(processedJobIDs, id)
+				mu.Unlock()
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{
+						{
+							ID:     id,
+							Status: storage.JobStatusDone,
+							Agent:  "test",
+						},
+					},
+					"has_more": false,
+				})
+			}
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	// Run from main with auto-resolved branch (explicitBranch=false).
+	// The feature SHA is reachable from HEAD via the merge commit.
+	_, runErr := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixOpen(
+			cmd, defaultBranch, false, false, false,
+			fixOptions{agentName: "test", reasoning: "fast"},
+		)
+	})
+	require.NoError(t, runErr, "runFixOpen")
+
+	// The API query should NOT include a branch filter
+	require.NotEmpty(t, apiQueries,
+		"expected at least one API query")
+	assert.NotContains(t, apiQueries[0], "branch=",
+		"auto-resolved branch should not filter API query")
+
+	// The merged feature job should be processed
+	mu.Lock()
+	ids := processedJobIDs
+	mu.Unlock()
+	assert.Contains(t, ids, int64(300),
+		"merged feature branch job should be found via commit-graph")
 }

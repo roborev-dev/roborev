@@ -407,11 +407,10 @@ func TestWriteCompactMetadata(t *testing.T) {
 }
 
 func TestCompactWorktreeBranchResolution(t *testing.T) {
-	var receivedRepo, receivedBranch string
+	var receivedRepo string
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			receivedRepo = r.URL.Query().Get("repo")
-			receivedBranch = r.URL.Query().Get("branch")
 			writeJSON(w, map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
@@ -429,21 +428,9 @@ func TestCompactWorktreeBranchResolution(t *testing.T) {
 	opts := compactOptions{quiet: true}
 	_ = runCompact(cmd, opts)
 
-	if receivedRepo == "" {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected repo param to be sent")
-	}
-	if receivedRepo != repo.Dir {
-		assert.Condition(t, func() bool {
-			return false
-		}, "repo: want main repo %q, got %q",
-			repo.Dir, receivedRepo)
-	}
-	if receivedBranch != "wt-branch" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "branch: want worktree branch %q, got %q",
-			"wt-branch", receivedBranch)
-	}
+	// API query should use the main repo path, not the worktree path.
+	// Branch filtering is handled client-side by filterReachableJobs.
+	require.NotEmpty(t, receivedRepo, "expected repo param to be sent")
+	assert.Equal(t, repo.Dir, receivedRepo,
+		"repo: want main repo path")
 }
