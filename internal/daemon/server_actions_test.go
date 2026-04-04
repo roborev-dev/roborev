@@ -1,11 +1,8 @@
 package daemon
 
 import (
-	"github.com/roborev-dev/roborev/internal/config"
-	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/testutil"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +11,37 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+type commandTestAgent struct {
+	name    string
+	command string
+}
+
+func (a *commandTestAgent) Name() string { return a.name }
+
+func (a *commandTestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	return "No issues found.", nil
+}
+
+func (a *commandTestAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
+	return a
+}
+
+func (a *commandTestAgent) WithAgentic(agentic bool) agent.Agent { return a }
+
+func (a *commandTestAgent) WithModel(model string) agent.Agent { return a }
+
+func (a *commandTestAgent) CommandLine() string { return a.command }
+
+func (a *commandTestAgent) CommandName() string { return a.command }
 
 func TestHandleStatus(t *testing.T) {
 	server, _, _ := newTestServer(t)
@@ -361,6 +388,11 @@ func TestHandleRerunJob(t *testing.T) {
 	t.Run("rerun reevaluates implicit effective model", func(t *testing.T) {
 		isolatedDB, isolatedDir := testutil.OpenTestDBWithDir(t)
 		server := NewServer(isolatedDB, config.DefaultConfig(), "")
+		agentName := "rerun-implicit-model"
+		agent.Register(&commandTestAgent{name: agentName, command: "go"})
+		t.Cleanup(func() {
+			agent.Unregister(agentName)
+		})
 
 		repo, err := isolatedDB.GetOrCreateRepo(isolatedDir)
 		require.NoError(t, err)
@@ -370,7 +402,7 @@ func TestHandleRerunJob(t *testing.T) {
 			RepoID:   repo.ID,
 			CommitID: commit.ID,
 			GitRef:   "rerun-implicit-model",
-			Agent:    "opencode",
+			Agent:    agentName,
 			Model:    "minimax-m2.5-free",
 		})
 		require.NoError(t, err)
@@ -379,7 +411,7 @@ func TestHandleRerunJob(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
 		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(job.ID, "opencode", "prompt", "output"))
+		require.NoError(t, isolatedDB.CompleteJob(job.ID, agentName, "prompt", "output"))
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
