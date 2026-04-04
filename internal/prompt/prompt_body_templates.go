@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -155,6 +156,14 @@ func renderSinglePromptFromSections(optionalContext string, current currentCommi
 	})
 }
 
+func renderRangePromptFromSections(optionalContext string, current commitRangeSectionView, diff diffSectionView) (string, error) {
+	return renderRangePrompt(rangePromptView{
+		Optional: optionalSectionsView{AdditionalContext: optionalContext},
+		Current:  current,
+		Diff:     diff,
+	})
+}
+
 func renderAddressPrompt(view addressPromptView) (string, error) {
 	return executePromptTemplate("assembled_address.tmpl", view)
 }
@@ -203,6 +212,56 @@ func fitSinglePromptSections(limit int, optionalContext string, current currentC
 		renderedDiff.Fallback = ""
 	}
 	rendered, err := renderSinglePromptFromSections(optionalContext, current, renderedDiff)
+	if err != nil {
+		return "", err
+	}
+	if len(rendered) > limit {
+		return body, nil
+	}
+	return rendered, nil
+}
+
+func fitRangePromptSections(limit int, optionalContext string, current commitRangeSectionView, diff diffSectionView) (string, error) {
+	currentRequired := "## Commit Range\n\nReviewing " + strconv.Itoa(len(current.Entries)) + " commits:\n\n"
+	var currentOverflow strings.Builder
+	for _, entry := range current.Entries {
+		currentOverflow.WriteString("- ")
+		currentOverflow.WriteString(entry.Commit)
+		if entry.Subject != "" {
+			currentOverflow.WriteString(" ")
+			currentOverflow.WriteString(entry.Subject)
+		}
+		currentOverflow.WriteString("\n")
+	}
+	currentOverflow.WriteString("\n")
+
+	diffSection, err := renderDiffBlock(diff)
+	if err != nil {
+		return "", err
+	}
+	body, err := fitRangePromptBody(limit, rangePromptBodyView{
+		OptionalContext: optionalContext,
+		CurrentRequired: currentRequired,
+		CurrentOverflow: currentOverflow.String(),
+		DiffSection:     diffSection,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	renderedDiff := diff
+	trimmedDiff := diffSection
+	if after, ok := strings.CutPrefix(trimmedDiff, "### Combined Diff\n\n"); ok {
+		trimmedDiff = after
+	}
+	if strings.HasPrefix(trimmedDiff, "(Diff too large") {
+		renderedDiff.Body = ""
+		renderedDiff.Fallback = trimmedDiff
+	} else {
+		renderedDiff.Body = trimmedDiff
+		renderedDiff.Fallback = ""
+	}
+	rendered, err := renderRangePromptFromSections(optionalContext, current, renderedDiff)
 	if err != nil {
 		return "", err
 	}

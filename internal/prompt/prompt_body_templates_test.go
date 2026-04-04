@@ -132,6 +132,24 @@ func TestRenderRangePromptUsesNestedSections(t *testing.T) {
 	assert.Contains(t, body, "### Combined Diff")
 }
 
+func TestRenderRangePromptFromSections(t *testing.T) {
+	body, err := renderRangePromptFromSections(
+		"## Pull Request Discussion\n\nNewest comment first.\n\n",
+		commitRangeSectionView{
+			Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}},
+		},
+		diffSectionView{
+			Heading: "### Combined Diff",
+			Body:    "```diff\n+line\n```\n",
+		},
+	)
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Pull Request Discussion")
+	assert.Contains(t, body, "## Commit Range")
+	assert.Contains(t, body, "- abc1234 first")
+	assert.Contains(t, body, "- def5678 second")
+	assert.Contains(t, body, "### Combined Diff")
+}
 func TestRenderDirtyPromptUsesNestedSections(t *testing.T) {
 	view := dirtyPromptView{
 		Optional: optionalSectionsView{

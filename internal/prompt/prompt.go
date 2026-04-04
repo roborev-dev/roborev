@@ -641,14 +641,26 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		diffSection = diffSectionBuilder.String()
 	}
 
-	view := rangePromptBodyView{
-		OptionalContext: optionalContext.String(),
-		CurrentRequired: currentRequired.String(),
-		CurrentOverflow: currentOverflow.String(),
-		DiffSection:     diffSection,
+	entries := make([]commitRangeEntryView, 0, len(commits))
+	for _, commitSHA := range commits {
+		short := git.ShortSHA(commitSHA)
+		info, err := git.GetCommitInfo(repoPath, commitSHA)
+		if err == nil {
+			entries = append(entries, commitRangeEntryView{Commit: short, Subject: info.Subject})
+			continue
+		}
+		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
 
-	body, err := fitRangePromptBody(bodyLimit, view)
+	body, err := fitRangePromptSections(
+		bodyLimit,
+		optionalContext.String(),
+		commitRangeSectionView{Entries: entries},
+		diffSectionView{
+			Heading: "### Combined Diff",
+			Body:    strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
+		},
+	)
 	if err != nil {
 		return "", err
 	}
