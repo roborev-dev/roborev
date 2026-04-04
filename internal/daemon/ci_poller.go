@@ -112,7 +112,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 			agentName,
 			reviewType,
 			additionalContext,
-			prompt.CodexDiffFilePathPlaceholder,
+			prompt.DiffFilePathPlaceholder,
 		)
 	}
 	p.postPRCommentFn = p.postPRComment
@@ -1841,7 +1841,7 @@ func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, 
 		agentName,
 		reviewType,
 		additionalContext,
-		prompt.CodexDiffFilePathPlaceholder,
+		prompt.DiffFilePathPlaceholder,
 	)
 }
 

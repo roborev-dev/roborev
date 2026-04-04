@@ -567,16 +567,16 @@ func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := &storage.ReviewJob{ID: 73, Agent: "codex", GitRef: sha}
 
-	reviewPrompt, cleanup, err := preparePrebuiltCodexPrompt(
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
 		job,
-		"## Pull Request Discussion\n\n### Diff\n\nRead it with: `cat '"+prompt.CodexDiffFilePathPlaceholder+"'`\n",
+		"## Pull Request Discussion\n\n### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
 		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
 
-	assert.NotContains(t, reviewPrompt, prompt.CodexDiffFilePathPlaceholder)
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
 	assert.Contains(t, reviewPrompt, "roborev-review-73.diff")
 
 	cleanup()
@@ -591,10 +591,10 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 	sha := testutil.GetHeadSHA(t, repoPath)
 	job := &storage.ReviewJob{ID: 74, Agent: "codex", GitRef: sha}
 
-	reviewPrompt, cleanup, err := preparePrebuiltCodexPrompt(
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		repoPath,
 		job,
-		"### Diff\n\nRead it with: `cat '"+prompt.CodexDiffFilePathPlaceholder+"'`\n",
+		"### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
 		nil,
 	)
 	require.NoError(t, err)
@@ -607,7 +607,7 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 
 	assert.Contains(t, reviewPrompt, "cat "+expectedQuotedPath)
 	assert.NotContains(t, reviewPrompt, "cat '"+expectedPath+"'")
-	assert.NotContains(t, reviewPrompt, prompt.CodexDiffFilePathPlaceholder)
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
 
 	cleanup()
 }
@@ -621,15 +621,15 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := &storage.ReviewJob{ID: 75, Agent: "codex", GitRef: sha}
 
-	reviewPrompt, cleanup, err := preparePrebuiltCodexPrompt(
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
 		job,
-		"### Diff\n\nRead it with: `cat '"+prompt.CodexDiffFilePathPlaceholder+"'`\n",
+		"### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
 		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
-	assert.NotContains(t, reviewPrompt, prompt.CodexDiffFilePathPlaceholder)
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
 	assert.Contains(t, reviewPrompt, "roborev-review-75.diff")
 
 	cleanup()

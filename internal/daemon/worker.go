@@ -393,7 +393,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		excludes := config.ResolveExcludePatterns(
 			effectiveRepoPath, cfg, job.ReviewType,
 		)
-		reviewPrompt, cleanup, err = preparePrebuiltCodexPrompt(
+		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
 			effectiveRepoPath, job, reviewPrompt, excludes,
 		)
 		if cleanup != nil {
@@ -1025,10 +1025,10 @@ func (wp *WorkerPool) failoverOrFail(
 	}
 }
 
-func preparePrebuiltCodexPrompt(
+func preparePrebuiltPrompt(
 	repoPath string, job *storage.ReviewJob, reviewPrompt string, excludes []string,
 ) (string, func(), error) {
-	if !strings.Contains(reviewPrompt, prompt.CodexDiffFilePathPlaceholder) {
+	if !strings.Contains(reviewPrompt, prompt.DiffFilePathPlaceholder) {
 		return reviewPrompt, nil, nil
 	}
 	diffFile, cleanup := prepareDiffFile(repoPath, job, excludes)
@@ -1038,9 +1038,9 @@ func preparePrebuiltCodexPrompt(
 		)
 	}
 	replacer := strings.NewReplacer(
-		shellQuoteForPrompt(prompt.CodexDiffFilePathPlaceholder),
+		shellQuoteForPrompt(prompt.DiffFilePathPlaceholder),
 		shellQuoteForPrompt(diffFile),
-		prompt.CodexDiffFilePathPlaceholder, diffFile,
+		prompt.DiffFilePathPlaceholder, diffFile,
 	)
 	return replacer.Replace(reviewPrompt), cleanup, nil
 }

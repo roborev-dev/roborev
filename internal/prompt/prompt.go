@@ -132,11 +132,11 @@ type Builder struct {
 	globalCfg *config.Config // optional global config for exclude patterns
 }
 
-// CodexDiffFilePathPlaceholder is a sentinel path embedded in prebuilt
-// Codex prompts for oversized diffs. The worker replaces it with a
-// real diff file path at execution time so the stored prompt remains
+// DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
+// prompts for oversized diffs. The worker replaces it with a real
+// diff file path at execution time so the stored prompt remains
 // reusable across retries.
-const CodexDiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
+const DiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
 
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
