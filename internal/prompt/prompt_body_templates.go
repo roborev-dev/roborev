@@ -97,7 +97,7 @@ func fitRangePromptBody(limit int, view rangePromptBodyView) (string, error) {
 }
 
 func fitDirtyPromptBody(limit int, view dirtyPromptBodyView) (string, error) {
-	body, err := renderDirtyPromptBody(view)
+	view, body, err := trimDirtyPromptBodyOptionalContext(limit, view)
 	if err != nil {
 		return "", err
 	}
@@ -105,16 +105,32 @@ func fitDirtyPromptBody(limit int, view dirtyPromptBodyView) (string, error) {
 		return body, nil
 	}
 
-	overflow := len(body) - limit
-	if overflow > 0 && len(view.OptionalContext) > 0 {
-		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
-	}
-
 	body, err = renderDirtyPromptBody(view)
 	if err != nil {
 		return "", err
 	}
 	return hardCapPrompt(body, limit), nil
+}
+
+func trimDirtyPromptBodyOptionalContext(limit int, view dirtyPromptBodyView) (dirtyPromptBodyView, string, error) {
+	body, err := renderDirtyPromptBody(view)
+	if err != nil {
+		return dirtyPromptBodyView{}, "", err
+	}
+	if len(body) <= limit {
+		return view, body, nil
+	}
+
+	overflow := len(body) - limit
+	if overflow > 0 && len(view.OptionalContext) > 0 {
+		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
+		body, err = renderDirtyPromptBody(view)
+		if err != nil {
+			return dirtyPromptBodyView{}, "", err
+		}
+	}
+
+	return view, body, nil
 }
 
 func executePromptBodyTemplate(name string, view any) (string, error) {

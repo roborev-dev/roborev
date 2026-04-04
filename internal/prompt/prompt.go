@@ -229,6 +229,12 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		DiffSection:     diffSection.String(),
 	}
 
+	trimmedView, _, err := trimDirtyPromptBodyOptionalContext(bodyLimit, view)
+	if err != nil {
+		return "", err
+	}
+	view.OptionalContext = trimmedView.OptionalContext
+
 	if len(view.DiffSection) > bodyLimit-len(view.OptionalContext)-len(view.CurrentRequired) {
 		var truncatedDiffSection strings.Builder
 		truncatedDiffSection.WriteString("### Diff\n\n")

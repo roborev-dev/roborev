@@ -750,6 +750,41 @@ func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
 
 	assert.LessOrEqual(t, len(prompt), cap,
 		"dirty prompt should stay within configured cap")
+
+	repoPath = t.TempDir()
+	guidelines := strings.Repeat("guideline ", 512)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_guidelines = \""+guidelines+"\"\n"),
+		0o644,
+	))
+
+	diff = strings.Repeat("+ keep full diff\n", 8)
+	var diffSection strings.Builder
+	diffSection.WriteString("### Diff\n\n")
+	diffSection.WriteString("```diff\n")
+	diffSection.WriteString(diff)
+	if !strings.HasSuffix(diff, "\n") {
+		diffSection.WriteString("\n")
+	}
+	diffSection.WriteString("```\n")
+
+	cap = len(GetSystemPrompt("claude-code", "dirty")+"\n") +
+		len("## Uncommitted Changes\n\nThe following changes have not yet been committed.\n\n") +
+		diffSection.Len() + 32
+	b = NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err = b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap,
+		"dirty prompt should stay within configured cap")
+	assertContains(t, prompt, diff,
+		"expected the full dirty diff to remain inline after trimming optional context")
+	assertNotContains(t, prompt, "(Diff too large to include in full)",
+		"dirty prompt should trim optional context before falling back to a truncated diff")
+	assertNotContains(t, prompt, guidelines,
+		"expected oversized optional context to be trimmed")
 }
 
 func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
