@@ -461,7 +461,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
 	var optionalContext strings.Builder
 
@@ -506,7 +507,6 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	}
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	promptCap := b.resolveMaxPromptSize(repoPath)
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
 	diffWrap := len("### Diff\n\n```diff\n") + len("\n```\n") + 1
 	diffLimit := max(0, bodyLimit-len(currentRequired.String())-len(currentOverflow.String())-diffWrap)
@@ -515,38 +515,52 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 
+	var diffSection string
+	if truncated {
+		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
+		if isCodexReviewAgent(agentName) {
+			variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
+			shortest := variants[len(variants)-1]
+			softBudget := max(0, bodyLimit-len(currentRequired.String())-len(shortest))
+			softLen := len(optionalContext.String()) + len(currentOverflow.String())
+			effectiveSoftLen := min(softLen, softBudget)
+			remaining := max(0, bodyLimit-len(currentRequired.String())-effectiveSoftLen)
+			diffSection = truncateUTF8(shortest, remaining)
+			for _, variant := range variants {
+				if len(variant) <= remaining {
+					diffSection = variant
+					break
+				}
+			}
+		} else {
+			diffSection = "### Diff\n\n" +
+				"(Diff too large to include - please review the commit directly)\n" +
+				"View with: " + renderShellCommand("git", "show", sha) + "\n"
+		}
+	} else {
+		var diffSectionBuilder strings.Builder
+		diffSectionBuilder.WriteString("### Diff\n\n")
+		diffSectionBuilder.WriteString("```diff\n")
+		diffSectionBuilder.WriteString(diff)
+		if !strings.HasSuffix(diff, "\n") {
+			diffSectionBuilder.WriteString("\n")
+		}
+		diffSectionBuilder.WriteString("```\n")
+		diffSection = diffSectionBuilder.String()
+	}
+
 	view := singlePromptBodyView{
 		OptionalContext: optionalContext.String(),
 		CurrentRequired: currentRequired.String(),
 		CurrentOverflow: currentOverflow.String(),
-	}
-	if truncated {
-		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
-		if isCodexReviewAgent(agentName) {
-			view = fitSinglePromptBodyViewToVariants(bodyLimit, view, codexCommitInspectionFallbackVariants(sha, pathspecArgs)...)
-		} else {
-			fallback := "### Diff\n\n" +
-				"(Diff too large to include - please review the commit directly)\n" +
-				"View with: " + renderShellCommand("git", "show", sha) + "\n"
-			view = fitSinglePromptBodyViewToVariants(bodyLimit, view, fallback)
-		}
-	} else {
-		var diffSection strings.Builder
-		diffSection.WriteString("### Diff\n\n")
-		diffSection.WriteString("```diff\n")
-		diffSection.WriteString(diff)
-		if !strings.HasSuffix(diff, "\n") {
-			diffSection.WriteString("\n")
-		}
-		diffSection.WriteString("```\n")
-		view.DiffSection = diffSection.String()
+		DiffSection:     diffSection,
 	}
 
 	body, err := fitSinglePromptBody(bodyLimit, view)
 	if err != nil {
 		return "", err
 	}
-	return hardCapPrompt(requiredPrefix+body, promptCap), nil
+	return requiredPrefix + body, nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
