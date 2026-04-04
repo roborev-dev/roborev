@@ -373,29 +373,21 @@ func hardCapPrompt(prompt string, limit int) string {
 	return truncateUTF8(prompt, limit)
 }
 
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // diffFileFallbackVariants returns progressively shorter prompt
 // variants for oversized diffs. When filePath is non-empty, the
 // variants reference the file; otherwise they just note truncation.
 func diffFileFallbackVariants(heading, filePath string) []string {
 	if filePath != "" {
-		quotedPath := shellQuote(filePath)
 		return []string{
 			fmt.Sprintf("%s\n\n"+
 				"(Diff too large to include inline)\n\n"+
 				"The full diff has been written to a file for review.\n"+
-				"Read it with: `cat %s`\n\n"+
+				"Read the diff from: `%s`\n\n"+
 				"Review the actual diff before writing findings.\n",
-				heading, quotedPath),
+				heading, filePath),
 			fmt.Sprintf("%s\n\n"+
 				"(Diff too large to include inline; read from `%s`)\n",
-				heading, quotedPath),
+				heading, filePath),
 		}
 	}
 	return []string{

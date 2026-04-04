@@ -459,7 +459,7 @@ func TestBuildWithDiffFileCodexOversizedDiffReferencesFile(t *testing.T) {
 	require.NoError(t, err, "BuildWithDiffFile failed: %v", err)
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
+	assertContains(t, prompt, "Read the diff from:", "expected file reference for reading diff file")
 	assertContains(t, prompt, diffFile, "expected diff file path in prompt")
 	assertNotContains(t, prompt, "git show", "should not reference git commands when diff file provided")
 	assertNotContains(t, prompt, "git diff-tree", "should not reference git commands when diff file provided")
@@ -475,7 +475,7 @@ func TestBuildWithDiffFileRangeCodexOversizedDiffReferencesFile(t *testing.T) {
 	require.NoError(t, err, "BuildWithDiffFile failed: %v", err)
 
 	assertContains(t, prompt, "(Diff too large to include inline)", "expected oversized diff marker")
-	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
+	assertContains(t, prompt, "Read the diff from:", "expected file reference for reading diff file")
 	assertContains(t, prompt, diffFile, "expected diff file path in prompt")
 	assertNotContains(t, prompt, "git diff --stat", "should not reference git commands when diff file provided")
 	assertNotContains(t, prompt, "git log", "should not reference git commands when diff file provided")
@@ -490,7 +490,7 @@ func TestBuildWithDiffFileNonCodexUsesDiffFile(t *testing.T) {
 	require.NoError(t, err)
 
 	assertContains(t, prompt, diffFile, "all agents should reference diff file for oversized diffs")
-	assertContains(t, prompt, "cat", "expected cat command for reading diff file")
+	assertContains(t, prompt, "Read the diff from:", "expected file reference for reading diff file")
 }
 
 func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {

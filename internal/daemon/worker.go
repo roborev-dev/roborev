@@ -428,11 +428,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		excludes := config.ResolveExcludePatterns(
 			effectiveRepoPath, cfg, job.ReviewType,
 		)
-		diffFile, cleanup := prepareDiffFile(
+		diffFile, cleanup, diffErr := prepareDiffFile(
 			effectiveRepoPath, job, excludes,
 		)
 		if cleanup != nil {
 			defer cleanup()
+		}
+		if diffErr != nil {
+			log.Printf("[%s] Error preparing diff snapshot: %v",
+				workerID, diffErr)
+			wp.failOrRetry(workerID, job, job.Agent,
+				fmt.Sprintf("prepare diff snapshot: %v", diffErr))
+			return
 		}
 		reviewPrompt, err = pb.BuildWithDiffFile(
 			effectiveRepoPath, job.GitRef, job.RepoID,
@@ -1031,10 +1038,13 @@ func preparePrebuiltPrompt(
 	if !strings.Contains(reviewPrompt, prompt.DiffFilePathPlaceholder) {
 		return reviewPrompt, nil, nil
 	}
-	diffFile, cleanup := prepareDiffFile(repoPath, job, excludes)
+	diffFile, cleanup, err := prepareDiffFile(repoPath, job, excludes)
+	if err != nil {
+		return "", nil, fmt.Errorf("prepare diff snapshot: %w", err)
+	}
 	if diffFile == "" {
 		return "", nil, fmt.Errorf(
-			"prebuilt prompt needs diff file but none could be prepared",
+			"prebuilt prompt needs diff file but diff was empty",
 		)
 	}
 	replacer := strings.NewReplacer(
@@ -1073,11 +1083,11 @@ func (wp *WorkerPool) logJobFailed(
 
 // prepareDiffFile writes the full diff for a job into the checkout's
 // git dir so the prompt builder can reference it when the diff is too
-// large to inline. Returns the file path and a cleanup function, or
-// ("", nil) on failure.
+// large to inline. Returns the file path, a cleanup function, and an
+// error. An empty path with nil error means the diff was empty.
 func prepareDiffFile(
 	repoPath string, job *storage.ReviewJob, excludes []string,
-) (string, func()) {
+) (string, func(), error) {
 	var fullDiff string
 	var err error
 	if gitpkg.IsRange(job.GitRef) {
@@ -1089,26 +1099,24 @@ func prepareDiffFile(
 			repoPath, job.GitRef, excludes...,
 		)
 	}
-	if err != nil || fullDiff == "" {
-		if err != nil {
-			log.Printf("Warning: capture diff for snapshot: %v", err)
-		}
-		return "", nil
+	if err != nil {
+		return "", nil, fmt.Errorf("capture diff: %w", err)
+	}
+	if fullDiff == "" {
+		return "", nil, nil
 	}
 	gitDir, err := gitpkg.ResolveGitDir(repoPath)
 	if err != nil {
-		log.Printf("Warning: resolve git dir for diff snapshot: %v", err)
-		return "", nil
+		return "", nil, fmt.Errorf("resolve git dir: %w", err)
 	}
 	diffFile := filepath.Join(
 		gitDir,
 		fmt.Sprintf("roborev-review-%d.diff", job.ID),
 	)
 	if err := os.WriteFile(diffFile, []byte(fullDiff), 0o644); err != nil {
-		log.Printf("Warning: write diff snapshot %s: %v", diffFile, err)
-		return "", nil
+		return "", nil, fmt.Errorf("write diff snapshot: %w", err)
 	}
-	return diffFile, func() { os.Remove(diffFile) }
+	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
 // markCompactSourceJobs marks all source jobs as closed for a completed compact job

@@ -1214,7 +1214,7 @@ func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *
 
 	assert.Contains(t, jobs[0].Prompt, "## Pull Request Discussion")
 	assert.Contains(t, jobs[0].Prompt, "The full diff has been written to a file for review.")
-	assert.Contains(t, jobs[0].Prompt, "Read it with: `cat ")
+	assert.Contains(t, jobs[0].Prompt, "Read the diff from: `")
 	assert.NotContains(t, jobs[0].Prompt, "inspect the commit range locally with read-only git commands")
 	assert.NotContains(t, jobs[0].Prompt, "git diff --unified=80")
 }

@@ -539,7 +539,8 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 	sha := strings.TrimSpace(string(shaBytes))
 
 	job := &storage.ReviewJob{ID: 42, Agent: "codex", GitRef: sha}
-	diffFile, cleanup := prepareDiffFile(worktreeDir, job, nil)
+	diffFile, cleanup, err := prepareDiffFile(worktreeDir, job, nil)
+	require.NoError(t, err)
 	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
 	require.NotNil(t, cleanup)
 
@@ -570,7 +571,7 @@ func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
 		job,
-		"## Pull Request Discussion\n\n### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
+		"## Pull Request Discussion\n\n### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,
 	)
 	require.NoError(t, err)
@@ -594,7 +595,7 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		repoPath,
 		job,
-		"### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
+		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,
 	)
 	require.NoError(t, err)
@@ -603,10 +604,8 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 	gitDir, err := gitpkg.ResolveGitDir(repoPath)
 	require.NoError(t, err)
 	expectedPath := filepath.Join(gitDir, "roborev-review-74.diff")
-	expectedQuotedPath := "'" + strings.ReplaceAll(expectedPath, "'", `'\''`) + "'"
 
-	assert.Contains(t, reviewPrompt, "cat "+expectedQuotedPath)
-	assert.NotContains(t, reviewPrompt, "cat '"+expectedPath+"'")
+	assert.Contains(t, reviewPrompt, expectedPath)
 	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
 
 	cleanup()
@@ -624,7 +623,7 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
 		job,
-		"### Diff\n\nRead it with: `cat '"+prompt.DiffFilePathPlaceholder+"'`\n",
+		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,
 	)
 	require.NoError(t, err)
@@ -635,7 +634,7 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	cleanup()
 }
 
-func TestProcessJob_DiffSnapshotFailureStillRunsReview(t *testing.T) {
+func TestProcessJob_DiffSnapshotFailureRetriesJob(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod does not restrict writes on Windows")
 	}
@@ -643,35 +642,19 @@ func TestProcessJob_DiffSnapshotFailureStillRunsReview(t *testing.T) {
 	originalCodex, err := agent.Get("codex")
 	require.NoError(t, err)
 
-	var receivedPrompt string
+	agentCalled := false
 	agent.Register(&agent.FakeAgent{
 		NameStr: "codex",
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-			receivedPrompt = prompt
+			agentCalled = true
 			return "No issues found.", nil
 		},
 	})
 	t.Cleanup(func() { agent.Register(originalCodex) })
 
 	tc := newWorkerTestContext(t, 1)
-	var content strings.Builder
-	for range 20000 {
-		content.WriteString("line ")
-		content.WriteString(strings.Repeat("x", 20))
-		content.WriteString(" ")
-		content.WriteString(strings.Repeat("y", 20))
-		content.WriteString("\n")
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "large.txt"), []byte(content.String()), 0o644))
-	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "large.txt")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add failed: %s", out)
-	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "large diff")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit failed: %s", out)
-
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Large diff", time.Now())
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "test", time.Now())
 	require.NoError(t, err)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:   tc.Repo.ID,
@@ -696,12 +679,9 @@ func TestProcessJob_DiffSnapshotFailureStillRunsReview(t *testing.T) {
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	// Diff file failure is best-effort; the review still runs
-	// with a truncated-diff prompt
-	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.NotEmpty(t, receivedPrompt, "agent should have been called")
-	assert.Contains(t, receivedPrompt, "Diff too large",
-		"prompt should indicate diff was truncated")
+	// Diff snapshot failure retries the job
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.False(t, agentCalled, "agent should not run when diff snapshot fails")
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
