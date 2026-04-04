@@ -124,6 +124,10 @@ var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	"templates/default_security.tmpl",
 	"templates/default_address.tmpl",
 	"templates/default_design_review.tmpl",
+	"templates/claude-code_review.tmpl",
+	"templates/codex_review.tmpl",
+	"templates/gemini_review.tmpl",
+	"templates/gemini_run.tmpl",
 ))
 
 func renderSinglePrompt(view singlePromptView) (string, error) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type systemPromptTestCase struct {
@@ -233,4 +234,13 @@ func TestGetSystemPrompt_DefaultFallbacksRenderFromTemplates(t *testing.T) {
 	assert.Contains(t, got, "You are a security code reviewer")
 	assert.Contains(t, got, "Do NOT use any external skills")
 	assert.Contains(t, got, "Current date: 2030-06-15 (UTC)")
+}
+
+func TestRenderSystemPrompt_AgentSpecificTemplates(t *testing.T) {
+	body, err := renderSystemPrompt("claude-code_review.tmpl", systemPromptView{
+		NoSkillsInstruction: noSkillsInstruction,
+		CurrentDate:         "2030-06-15",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, body, "You are a code reviewer")
 }

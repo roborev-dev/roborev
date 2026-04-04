@@ -12,7 +12,7 @@ var templateFS embed.FS
 
 // GetSystemPrompt returns the system prompt for the specified agent and type.
 // If a specific template exists for the agent, it uses that.
-// Otherwise, it falls back to the default constant.
+// Otherwise, it falls back to the default templates.
 // Supported prompt types: review, range, dirty, address, design-review, run, security
 func GetSystemPrompt(agentName string, promptType string) string {
 	return getSystemPrompt(agentName, promptType, time.Now)
@@ -34,14 +34,15 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		templateType = "review"
 	}
 
-	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
-	content, err := templateFS.ReadFile(tmplName)
-	if err == nil {
-		base := string(content)
-		if promptType != "run" {
-			base += noSkillsInstruction
+	tmplName := fmt.Sprintf("%s_%s.tmpl", agentName, templateType)
+	if _, err := templateFS.ReadFile("templates/" + tmplName); err == nil {
+		body, err := renderSystemPrompt(tmplName, systemPromptView{
+			NoSkillsInstruction: noSkillsInstruction,
+			CurrentDate:         now().UTC().Format("2006-01-02"),
+		})
+		if err == nil {
+			return body
 		}
-		return appendDateLine(base, now)
 	}
 
 	// Fallback to default templates
@@ -74,9 +75,4 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		return ""
 	}
 	return body
-}
-
-// appendDateLine adds the current UTC date to a system prompt.
-func appendDateLine(prompt string, now func() time.Time) string {
-	return prompt + "\n\nCurrent date: " + now().UTC().Format("2006-01-02") + " (UTC)"
 }
