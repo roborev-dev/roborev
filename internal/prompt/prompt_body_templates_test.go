@@ -116,6 +116,6 @@ func TestFitDirtyPromptBodyTrimsOptionalContextBeforeTruncatedDiff(t *testing.T)
 	body, err := fitDirtyPromptBody(len(view.CurrentRequired)+len(view.DiffSection), view)
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Uncommitted Changes")
-	assert.Contains(t, body, "... (truncated)")
+	assert.Contains(t, body, "(Diff too large to include in full)")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
