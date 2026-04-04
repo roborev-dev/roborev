@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"strings"
 	"text/template"
 )
 
@@ -146,12 +147,77 @@ func renderDirtyPrompt(view dirtyPromptView) (string, error) {
 	return executePromptTemplate("assembled_dirty.tmpl", view)
 }
 
+func renderSinglePromptFromSections(optionalContext string, current currentCommitSectionView, diff diffSectionView) (string, error) {
+	return renderSinglePrompt(singlePromptView{
+		Optional: optionalSectionsView{AdditionalContext: optionalContext},
+		Current:  current,
+		Diff:     diff,
+	})
+}
+
 func renderAddressPrompt(view addressPromptView) (string, error) {
 	return executePromptTemplate("assembled_address.tmpl", view)
 }
 
+func fitSinglePromptSections(limit int, optionalContext string, current currentCommitSectionView, diff diffSectionView) (string, error) {
+	currentRequired, err := renderSinglePromptBody(singlePromptBodyView{
+		CurrentRequired: "## Current Commit\n\n**Commit:** " + current.Commit + "\n\n",
+	})
+	if err != nil {
+		return "", err
+	}
+	currentOverflow := ""
+	if current.Subject != "" {
+		currentOverflow += "**Subject:** " + current.Subject + "\n"
+	}
+	if current.Author != "" {
+		currentOverflow += "**Author:** " + current.Author + "\n"
+	}
+	if current.Message != "" {
+		currentOverflow += "\n**Message:**\n" + current.Message + "\n\n"
+	}
+	diffSection, err := renderDiffBlock(diff)
+	if err != nil {
+		return "", err
+	}
+	body, err := fitSinglePromptBody(limit, singlePromptBodyView{
+		OptionalContext: optionalContext,
+		CurrentRequired: currentRequired,
+		CurrentOverflow: currentOverflow,
+		DiffSection:     diffSection,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	renderedDiff := diff
+	trimmedDiff := diffSection
+	if after, ok := strings.CutPrefix(trimmedDiff, "### Diff\n\n"); ok {
+		trimmedDiff = after
+	}
+	if strings.HasPrefix(trimmedDiff, "(Diff too large") {
+		renderedDiff.Body = ""
+		renderedDiff.Fallback = trimmedDiff
+	} else {
+		renderedDiff.Body = trimmedDiff
+		renderedDiff.Fallback = ""
+	}
+	rendered, err := renderSinglePromptFromSections(optionalContext, current, renderedDiff)
+	if err != nil {
+		return "", err
+	}
+	if len(rendered) > limit {
+		return body, nil
+	}
+	return rendered, nil
+}
+
 func renderSystemPrompt(name string, view systemPromptView) (string, error) {
 	return executePromptTemplate(name, view)
+}
+
+func renderDiffBlock(view diffSectionView) (string, error) {
+	return executePromptTemplate("diff_block", view)
 }
 
 func renderSinglePromptBody(view singlePromptBodyView) (string, error) {

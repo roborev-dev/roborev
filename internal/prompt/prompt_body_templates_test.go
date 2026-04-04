@@ -86,6 +86,28 @@ func TestRenderSinglePromptBodyUsesNestedSections(t *testing.T) {
 	assert.Contains(t, body, "### Diff")
 }
 
+func TestRenderSinglePromptFromSections(t *testing.T) {
+	body, err := renderSinglePromptFromSections(
+		"## Pull Request Discussion\n\nNewest comment first.\n\n",
+		currentCommitSectionView{
+			Commit:  "abc1234",
+			Subject: "template prompt rendering",
+			Author:  "Test User",
+			Message: "body text",
+		},
+		diffSectionView{
+			Heading: "### Diff",
+			Body:    "```diff\n+line\n```\n",
+		},
+	)
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Pull Request Discussion")
+	assert.Contains(t, body, "## Current Commit")
+	assert.Contains(t, body, "**Subject:** template prompt rendering")
+	assert.Contains(t, body, "**Message:**")
+	assert.Contains(t, body, "### Diff")
+}
+
 func TestRenderRangePromptUsesNestedSections(t *testing.T) {
 	view := rangePromptView{
 		Optional: optionalSectionsView{

@@ -522,14 +522,20 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		diffSection = diffSectionBuilder.String()
 	}
 
-	view := singlePromptBodyView{
-		OptionalContext: optionalContext.String(),
-		CurrentRequired: currentRequired.String(),
-		CurrentOverflow: currentOverflow.String(),
-		DiffSection:     diffSection,
-	}
-
-	body, err := fitSinglePromptBody(bodyLimit, view)
+	body, err := fitSinglePromptSections(
+		bodyLimit,
+		optionalContext.String(),
+		currentCommitSectionView{
+			Commit:  shortSHA,
+			Subject: info.Subject,
+			Author:  info.Author,
+			Message: info.Body,
+		},
+		diffSectionView{
+			Heading: "### Diff",
+			Body:    strings.TrimPrefix(diffSection, "### Diff\n\n"),
+		},
+	)
 	if err != nil {
 		return "", err
 	}
