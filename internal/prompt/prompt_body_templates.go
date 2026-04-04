@@ -101,6 +101,11 @@ type addressPromptView struct {
 	JobID             int64
 }
 
+type reviewAttemptContext struct {
+	Review    storage.Review
+	Responses []storage.Response
+}
+
 type systemPromptView struct {
 	NoSkillsInstruction string
 	CurrentDate         string
@@ -173,22 +178,18 @@ func renderAddressPrompt(view addressPromptView) (string, error) {
 	return executePromptTemplate("assembled_address.tmpl", view)
 }
 
-func fitSinglePromptSections(limit int, optionalContext string, current currentCommitSectionView, diff diffSectionView) (string, error) {
-	currentRequired, err := renderSinglePromptBody(singlePromptBodyView{
-		CurrentRequired: "## Current Commit\n\n**Commit:** " + current.Commit + "\n\n",
-	})
+func fitSinglePromptSections(limit int, optional optionalSectionsView, current currentCommitSectionView, diff diffSectionView) (string, error) {
+	optionalContext, err := renderOptionalSectionsPrefix(optional)
 	if err != nil {
 		return "", err
 	}
-	currentOverflow := ""
-	if current.Subject != "" {
-		currentOverflow += "**Subject:** " + current.Subject + "\n"
+	currentRequired, err := renderCurrentCommitRequired(current)
+	if err != nil {
+		return "", err
 	}
-	if current.Author != "" {
-		currentOverflow += "**Author:** " + current.Author + "\n"
-	}
-	if current.Message != "" {
-		currentOverflow += "\n**Message:**\n" + current.Message + "\n\n"
+	currentOverflow, err := renderCurrentCommitOverflow(current)
+	if err != nil {
+		return "", err
 	}
 	diffSection, err := renderDiffBlock(diff)
 	if err != nil {
@@ -204,19 +205,7 @@ func fitSinglePromptSections(limit int, optionalContext string, current currentC
 		return "", err
 	}
 
-	renderedDiff := diff
-	trimmedDiff := diffSection
-	if after, ok := strings.CutPrefix(trimmedDiff, "### Diff\n\n"); ok {
-		trimmedDiff = after
-	}
-	if strings.HasPrefix(trimmedDiff, "(Diff too large") {
-		renderedDiff.Body = ""
-		renderedDiff.Fallback = trimmedDiff
-	} else {
-		renderedDiff.Body = trimmedDiff
-		renderedDiff.Fallback = ""
-	}
-	rendered, err := renderSinglePromptFromSections(optionalContext, current, renderedDiff)
+	rendered, err := renderSinglePrompt(singlePromptView{Optional: optional, Current: current, Diff: diff})
 	if err != nil {
 		return "", err
 	}
@@ -226,20 +215,19 @@ func fitSinglePromptSections(limit int, optionalContext string, current currentC
 	return rendered, nil
 }
 
-func fitRangePromptSections(limit int, optionalContext string, current commitRangeSectionView, diff diffSectionView) (string, error) {
-	currentRequired := "## Commit Range\n\nReviewing " + strconv.Itoa(len(current.Entries)) + " commits:\n\n"
-	var currentOverflow strings.Builder
-	for _, entry := range current.Entries {
-		currentOverflow.WriteString("- ")
-		currentOverflow.WriteString(entry.Commit)
-		if entry.Subject != "" {
-			currentOverflow.WriteString(" ")
-			currentOverflow.WriteString(entry.Subject)
-		}
-		currentOverflow.WriteString("\n")
+func fitRangePromptSections(limit int, optional optionalSectionsView, current commitRangeSectionView, diff diffSectionView) (string, error) {
+	optionalContext, err := renderOptionalSectionsPrefix(optional)
+	if err != nil {
+		return "", err
 	}
-	currentOverflow.WriteString("\n")
-
+	currentRequired, err := renderCommitRangeRequired(current)
+	if err != nil {
+		return "", err
+	}
+	currentOverflow, err := renderCommitRangeOverflow(current)
+	if err != nil {
+		return "", err
+	}
 	diffSection, err := renderDiffBlock(diff)
 	if err != nil {
 		return "", err
@@ -247,26 +235,46 @@ func fitRangePromptSections(limit int, optionalContext string, current commitRan
 	body, err := fitRangePromptBody(limit, rangePromptBodyView{
 		OptionalContext: optionalContext,
 		CurrentRequired: currentRequired,
-		CurrentOverflow: currentOverflow.String(),
+		CurrentOverflow: currentOverflow,
 		DiffSection:     diffSection,
 	})
 	if err != nil {
 		return "", err
 	}
 
-	renderedDiff := diff
-	trimmedDiff := diffSection
-	if after, ok := strings.CutPrefix(trimmedDiff, "### Combined Diff\n\n"); ok {
-		trimmedDiff = after
+	rendered, err := renderRangePrompt(rangePromptView{Optional: optional, Current: current, Diff: diff})
+	if err != nil {
+		return "", err
 	}
-	if strings.HasPrefix(trimmedDiff, "(Diff too large") {
-		renderedDiff.Body = ""
-		renderedDiff.Fallback = trimmedDiff
-	} else {
-		renderedDiff.Body = trimmedDiff
-		renderedDiff.Fallback = ""
+	if len(rendered) > limit {
+		return body, nil
 	}
-	rendered, err := renderRangePromptFromSections(optionalContext, current, renderedDiff)
+	return rendered, nil
+}
+
+func fitDirtyPromptView(limit int, view dirtyPromptView) (string, error) {
+	optionalContext, err := renderOptionalSectionsPrefix(view.Optional)
+	if err != nil {
+		return "", err
+	}
+	currentRequired, err := renderDirtyChangesSection(view.Current)
+	if err != nil {
+		return "", err
+	}
+	diffSection, err := renderDiffBlock(view.Diff)
+	if err != nil {
+		return "", err
+	}
+	body, err := fitDirtyPromptBody(limit, dirtyPromptBodyView{
+		OptionalContext: optionalContext,
+		CurrentRequired: currentRequired,
+		DiffSection:     diffSection,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	rendered, err := renderDirtyPrompt(view)
 	if err != nil {
 		return "", err
 	}
@@ -292,6 +300,34 @@ func renderOptionalSectionsFromView(view optionalSectionsView) (string, error) {
 	return strings.TrimSpace(body), nil
 }
 
+func renderOptionalSectionsPrefix(view optionalSectionsView) (string, error) {
+	body, err := renderOptionalSectionsFromView(view)
+	if err != nil || body == "" {
+		return body, err
+	}
+	return body + "\n\n", nil
+}
+
+func renderCurrentCommitRequired(view currentCommitSectionView) (string, error) {
+	return executePromptTemplate("current_commit_required", view)
+}
+
+func renderCurrentCommitOverflow(view currentCommitSectionView) (string, error) {
+	return executePromptTemplate("current_commit_overflow", view)
+}
+
+func renderCommitRangeRequired(view commitRangeSectionView) (string, error) {
+	return executePromptTemplate("commit_range_required", view)
+}
+
+func renderCommitRangeOverflow(view commitRangeSectionView) (string, error) {
+	return executePromptTemplate("commit_range_overflow", view)
+}
+
+func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
+	return executePromptTemplate("dirty_changes", view)
+}
+
 func previousReviewViews(contexts []ReviewContext) []previousReviewView {
 	views := make([]previousReviewView, 0, len(contexts))
 	for _, ctx := range contexts {
@@ -311,6 +347,10 @@ func previousReviewViews(contexts []ReviewContext) []previousReviewView {
 	return views
 }
 
+func renderPreviousReviewsFromContexts(contexts []ReviewContext) (string, error) {
+	return renderOptionalSectionsFromView(optionalSectionsView{PreviousReviews: previousReviewViews(contexts)})
+}
+
 func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
 	views := make([]reviewAttemptView, 0, len(reviews))
 	for i, review := range reviews {
@@ -324,6 +364,32 @@ func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
 			When:   when,
 			Output: review.Output,
 		})
+	}
+	return views
+}
+
+func renderPreviousAttemptsFromReviews(reviews []storage.Review) (string, error) {
+	return renderOptionalSectionsFromView(optionalSectionsView{PreviousAttempts: reviewAttemptViews(reviews)})
+}
+
+func previousAttemptViewsFromContexts(attempts []reviewAttemptContext) []reviewAttemptView {
+	views := make([]reviewAttemptView, 0, len(attempts))
+	for i, attempt := range attempts {
+		view := reviewAttemptView{
+			Label:  "Review Attempt " + strconv.Itoa(i+1),
+			Agent:  attempt.Review.Agent,
+			Output: attempt.Review.Output,
+		}
+		if !attempt.Review.CreatedAt.IsZero() {
+			view.When = attempt.Review.CreatedAt.Format("2006-01-02 15:04")
+		}
+		if len(attempt.Responses) > 0 {
+			view.Comments = make([]reviewCommentView, 0, len(attempt.Responses))
+			for _, resp := range attempt.Responses {
+				view.Comments = append(view.Comments, reviewCommentView{Responder: resp.Responder, Response: resp.Response})
+			}
+		}
+		views = append(views, view)
 	}
 	return views
 }

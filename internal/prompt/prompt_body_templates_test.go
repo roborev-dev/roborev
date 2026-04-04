@@ -306,6 +306,23 @@ func TestPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
 	assert.Equal(t, "aaaaaaa", views[1].Commit)
 }
 
+func TestRenderPreviousReviewsFromContexts(t *testing.T) {
+	body, err := renderPreviousReviewsFromContexts([]ReviewContext{
+		{
+			SHA:    "abc1234",
+			Review: &storage.Review{Output: "Found a bug"},
+			Responses: []storage.Response{{
+				Responder: "alice",
+				Response:  "Known issue",
+			}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Previous Reviews")
+	assert.Contains(t, body, "Found a bug")
+	assert.Contains(t, body, "Known issue")
+}
+
 func TestReviewAttemptViewsPreserveOrderAndMetadata(t *testing.T) {
 	views := reviewAttemptViews([]storage.Review{{
 		Agent:     "test",
@@ -317,6 +334,18 @@ func TestReviewAttemptViewsPreserveOrderAndMetadata(t *testing.T) {
 	assert.Equal(t, "test", views[0].Agent)
 	assert.Equal(t, "2026-04-05 10:00", views[0].When)
 	assert.Equal(t, "first", views[0].Output)
+}
+
+func TestRenderPreviousAttemptsFromReviews(t *testing.T) {
+	body, err := renderPreviousAttemptsFromReviews([]storage.Review{{
+		Agent:     "test",
+		Output:    "first",
+		CreatedAt: mustParsePromptTestTime(t, "2026-04-05 10:00"),
+	}})
+	require.NoError(t, err)
+	assert.Contains(t, body, "## Previous Review Attempts")
+	assert.Contains(t, body, "Review Attempt 1")
+	assert.Contains(t, body, "first")
 }
 
 func mustParsePromptTestTime(t *testing.T, value string) time.Time {
