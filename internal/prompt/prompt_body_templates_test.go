@@ -86,9 +86,7 @@ func TestFitSinglePromptBodyTrimsOptionalContextBeforeCurrentOverflow(t *testing
 		CurrentOverflow: "**Subject:** large change\n**Author:** Test User\n\n",
 		DiffSection:     "### Diff\n\n(Diff too large; for Codex run `git show abc1234 --` locally.)\n",
 	}
-	limit := len(view.CurrentRequired) + len(view.CurrentOverflow) + len(view.DiffSection)
-
-	body, err := fitSinglePromptBody(limit, view)
+	body, err := fitSinglePromptBody(len(view.CurrentRequired)+len(view.CurrentOverflow)+len(view.DiffSection), view)
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Current Commit")
 	assert.Contains(t, body, "**Subject:** large change")
