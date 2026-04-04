@@ -1044,14 +1044,15 @@ func preparePrebuiltPrompt(
 	}
 	diffFile, cleanup, err := prepareDiffFile(repoPath, job, excludes)
 	if err != nil || diffFile == "" {
-		// Snapshot unavailable — replace the entire file-reference
-		// block with a plain truncation note.
+		// The prebuilt prompt was built expecting a diff file. Without
+		// it the agent has no diff access — fail so the job retries.
 		if cleanup != nil {
 			cleanup()
 		}
-		log.Printf("Warning: prebuilt prompt diff snapshot unavailable: %v", err)
-		stripped := stripDiffFileBlock(reviewPrompt)
-		return stripped, nil, nil
+		if err != nil {
+			return "", nil, fmt.Errorf("prepare diff snapshot for prebuilt prompt: %w", err)
+		}
+		return "", nil, fmt.Errorf("prebuilt prompt needs diff file but diff was empty")
 	}
 	replacer := strings.NewReplacer(
 		shellQuoteForPrompt(prompt.DiffFilePathPlaceholder),
@@ -1066,25 +1067,6 @@ func shellQuoteForPrompt(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// stripDiffFileBlock replaces the diff-file fallback section in a
-// prebuilt prompt with a plain truncation note, removing misleading
-// "written to a file" / "Read the diff from" instructions.
-func stripDiffFileBlock(s string) string {
-	// Match both the full and compact fallback variants.
-	const marker = "(Diff too large to include inline"
-	idx := strings.Index(s, marker)
-	if idx < 0 {
-		return strings.ReplaceAll(s, prompt.DiffFilePathPlaceholder, "")
-	}
-	// Keep everything up to and including the closing paren of
-	// the marker, then drop the rest (file instructions).
-	end := strings.Index(s[idx:], ")")
-	if end < 0 {
-		return s[:idx] + marker + ")\n"
-	}
-	return s[:idx+end+1] + "\n"
 }
 
 // logJobFailed logs a job failure to the activity log
