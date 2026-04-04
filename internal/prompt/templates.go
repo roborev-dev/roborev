@@ -44,28 +44,32 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		return appendDateLine(base, now)
 	}
 
-	// Fallback to default constants
-	var base string
+	// Fallback to default templates
+	var fallbackName string
 	switch promptType {
-	case "review":
-		base = SystemPromptSingle
-	case "dirty":
-		base = SystemPromptDirty
-	case "range":
-		base = SystemPromptRange
+	case "review", "dirty", "range":
+		fallbackName = "default_review.tmpl"
 	case "address":
-		base = SystemPromptAddress
+		fallbackName = "default_address.tmpl"
 	case "security":
-		base = SystemPromptSecurity
+		fallbackName = "default_security.tmpl"
 	case "design-review":
-		base = SystemPromptDesignReview
+		fallbackName = "default_design_review.tmpl"
 	case "run":
 		// No default run preamble - return empty so raw prompts are used
 		return ""
 	default:
-		base = SystemPromptSingle
+		fallbackName = "default_review.tmpl"
 	}
-	return appendDateLine(base+noSkillsInstruction, now)
+
+	body, err := renderSystemPrompt(fallbackName, systemPromptView{
+		NoSkillsInstruction: noSkillsInstruction,
+		CurrentDate:         now().UTC().Format("2006-01-02"),
+	})
+	if err != nil {
+		return ""
+	}
+	return body
 }
 
 // appendDateLine adds the current UTC date to a system prompt.

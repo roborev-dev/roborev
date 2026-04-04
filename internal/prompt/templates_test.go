@@ -238,3 +238,14 @@ func TestGetSystemPrompt_Exported(t *testing.T) {
 		return strings.Contains(got, beforeStr) || strings.Contains(got, afterStr)
 	}, "prompt missing expected date string. Looked for %q or %q", beforeStr, afterStr)
 }
+
+func TestGetSystemPrompt_DefaultFallbacksRenderFromTemplates(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	got := getSystemPrompt("unknown-agent", "security", mockNow)
+
+	assert.Contains(t, got, "You are a security code reviewer")
+	assert.Contains(t, got, "Do NOT use any external skills")
+	assert.Contains(t, got, "Current date: 2030-06-15 (UTC)")
+}
