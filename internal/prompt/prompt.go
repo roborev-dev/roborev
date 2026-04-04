@@ -27,98 +27,6 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
-// SystemPromptSingle is the base instruction for single commit reviews
-const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-Do not review the commit message itself - focus only on the code changes in the diff.
-
-After reviewing, provide:
-
-1. A brief summary of what the commit does
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// SystemPromptDirty is the base instruction for reviewing uncommitted (dirty) changes
-const SystemPromptDirty = `You are a code reviewer. Review the following uncommitted changes for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-After reviewing, provide:
-
-1. A brief summary of what the changes do
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// SystemPromptRange is the base instruction for commit range reviews
-const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-Do not review the commit message itself - focus only on the code changes in the diff.
-
-After reviewing, provide:
-
-1. A brief summary of what the commits do
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// PreviousReviewsHeader introduces the previous reviews section
-const PreviousReviewsHeader = `
-## Previous Reviews
-
-The following are reviews of recent commits in this repository. Use them as context
-to understand ongoing work and to check if the current commit addresses previous feedback.
-
-**Important:** Reviews may include responses from developers. Pay attention to these responses -
-they may indicate known issues that should be ignored, explain why certain patterns exist,
-or provide context that affects how you should evaluate similar code in the current commit.
-`
-
-// ProjectGuidelinesHeader introduces the project-specific guidelines section
-const ProjectGuidelinesHeader = `
-## Project Guidelines
-
-The following are project-specific guidelines for this repository. Take these into account
-when reviewing the code - they may override or supplement the default review criteria.
-`
-
-// PreviousAttemptsForCommitHeader introduces previous review attempts for the same commit
-const PreviousAttemptsForCommitHeader = `
-## Previous Review Attempts
-
-This commit has been reviewed before. The following are previous review results and any
-responses from developers. Use this context to:
-- Avoid repeating issues that have been marked as known/acceptable
-- Check if previously identified issues are still present
-- Consider developer responses about why certain patterns exist
-`
-
 // ReviewContext holds a commit SHA and its associated review (if any) plus responses
 type ReviewContext struct {
 	SHA       string
@@ -236,7 +144,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		}
 	}
 
-	body, err := fitDirtyPromptView(bodyLimit, view)
+	body, err := fitDirtyPrompt(bodyLimit, view)
 	if err != nil {
 		return "", err
 	}
@@ -487,18 +395,20 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		diffSection = diffSectionBuilder.String()
 	}
 
-	body, err := fitSinglePromptSections(
+	body, err := fitSinglePrompt(
 		bodyLimit,
-		optional,
-		currentCommitSectionView{
-			Commit:  shortSHA,
-			Subject: info.Subject,
-			Author:  info.Author,
-			Message: info.Body,
-		},
-		diffSectionView{
-			Heading: "### Diff",
-			Body:    strings.TrimPrefix(diffSection, "### Diff\n\n"),
+		singlePromptView{
+			Optional: optional,
+			Current: currentCommitSectionView{
+				Commit:  shortSHA,
+				Subject: info.Subject,
+				Author:  info.Author,
+				Message: info.Body,
+			},
+			Diff: diffSectionView{
+				Heading: "### Diff",
+				Body:    strings.TrimPrefix(diffSection, "### Diff\n\n"),
+			},
 		},
 	)
 	if err != nil {
@@ -620,13 +530,15 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
 
-	body, err := fitRangePromptSections(
+	body, err := fitRangePrompt(
 		bodyLimit,
-		optional,
-		commitRangeSectionView{Entries: entries},
-		diffSectionView{
-			Heading: "### Combined Diff",
-			Body:    strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
+		rangePromptView{
+			Optional: optional,
+			Current:  commitRangeSectionView{Entries: entries},
+			Diff: diffSectionView{
+				Heading: "### Combined Diff",
+				Body:    strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
+			},
 		},
 	)
 	if err != nil {
@@ -660,18 +572,6 @@ func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
 		ordered = append(ordered, contexts[i])
 	}
 	return previousReviewViews(ordered)
-}
-
-func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string) {
-	section := buildProjectGuidelinesSectionView(guidelines)
-	if section == nil {
-		return
-	}
-	body, err := renderOptionalSectionsPrefix(optionalSectionsView{ProjectGuidelines: section})
-	if err != nil {
-		return
-	}
-	sb.WriteString(body)
 }
 
 func renderInlineDiff(diff string) string {
@@ -772,100 +672,11 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 	return contexts, nil
 }
 
-// SystemPromptDesignReview is the base instruction for reviewing design documents.
-// The input is a code diff (commit, range, or uncommitted changes) that is expected
-// to contain design artifacts such as PRDs, task lists, or architectural proposals.
-const SystemPromptDesignReview = `You are a design reviewer. The changes shown below are expected to contain design artifacts — PRDs, task lists, architectural proposals, or similar planning documents. Review them for:
-
-1. **Completeness**: Are goals, non-goals, success criteria, and edge cases defined?
-2. **Feasibility**: Are technical decisions grounded in the actual codebase?
-3. **Task scoping**: Are implementation stages small enough to review incrementally? Are dependencies ordered correctly?
-4. **Missing considerations**: Security, performance, backwards compatibility, error handling
-5. **Clarity**: Are decisions justified and understandable?
-
-If the changes do not appear to contain design documents, note this and review whatever design intent is evident from the code changes.
-
-After reviewing, provide:
-
-1. A brief summary of what the design proposes
-2. PRD findings, listed with:
-   - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
-3. Task list findings, listed with:
-   - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
-4. Any missing considerations not covered by the design
-5. A verdict: Pass or Fail with brief justification
-
-If you find no issues, state "No issues found." after the summary.`
-
 // BuildSimple constructs a simpler prompt without database context
 func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}
 	return b.Build(repoPath, sha, 0, 0, agentName, "")
 }
-
-// SystemPromptSecurity is the instruction for security-focused reviews
-const SystemPromptSecurity = `You are a security code reviewer. Analyze the code changes shown below with a security-first mindset. Focus on:
-
-1. **Injection vulnerabilities**: SQL injection, command injection, XSS, template injection, LDAP injection, header injection
-2. **Authentication & authorization**: Missing auth checks, privilege escalation, insecure session handling, broken access control
-3. **Credential exposure**: Hardcoded secrets, API keys, passwords, tokens in source code or logs
-4. **Path traversal**: Unsanitized file paths, directory traversal via user input, symlink attacks
-5. **Unsafe patterns**: Unsafe deserialization, insecure random number generation, missing input validation, buffer overflows
-6. **Dependency concerns**: Known vulnerable dependencies, typosquatting risks, pinning issues
-7. **CI/CD security**: Workflow injection via pull_request_target, script injection via untrusted inputs, excessive permissions
-8. **Data handling**: Sensitive data in logs, missing encryption, insecure data storage, PII exposure
-9. **Concurrency issues**: Race conditions leading to security bypasses, TOCTOU vulnerabilities
-10. **Error handling**: Information leakage via error messages, missing error checks on security-critical operations
-
-For each finding, provide:
-- Severity (critical/high/medium/low)
-- File and line reference
-- Description of the vulnerability
-- Suggested remediation
-
-If you find no security issues, state "No issues found." after the summary.
-Do not report code quality or style issues unless they have security implications.`
-
-// SystemPromptAddress is the instruction for addressing review findings
-const SystemPromptAddress = `You are a code assistant. Your task is to address the findings from a code review.
-
-Make the minimal changes necessary to address these findings:
-- Be pragmatic and simple - don't over-engineer
-- Focus on the specific issues mentioned
-- Don't refactor unrelated code
-- Don't add unnecessary abstractions or comments
-- Don't make cosmetic changes
-
-After making changes:
-1. Run the build command to verify the code compiles
-2. Run tests to verify nothing is broken
-3. Fix any build errors or test failures before finishing
-
-For Go projects, use: GOCACHE=/tmp/go-build go build ./... and GOCACHE=/tmp/go-build go test ./...
-(The GOCACHE override is needed for sandbox compatibility)
-
-IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
-
-When finished, provide a brief summary in this format (this will be used in the commit message):
-
-Changes:
-- <first change>
-- <second change>
-...
-
-Keep the summary concise (under 10 bullet points). Put the most important changes first.`
-
-// PreviousAttemptsHeader introduces previous addressing attempts section
-const PreviousAttemptsHeader = `
-## Previous Addressing Attempts
-
-The following are previous attempts to address this or related reviews.
-Learn from these to avoid repeating approaches that didn't fully resolve the issues.
-Be pragmatic - if previous attempts were rejected for being too minor, make more substantive fixes.
-If they were rejected for being over-engineered, keep it simpler.
-`
 
 // BuildAddressPrompt constructs a prompt for addressing review findings.
 // When minSeverity is non-empty, a severity filtering instruction is

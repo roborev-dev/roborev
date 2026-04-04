@@ -16,7 +16,6 @@ type systemPromptTestCase struct {
 	wantContains    []string
 	wantNotContains []string
 	wantExact       string // if set, checks for exact match
-	wantNotDefault  bool   // if true, ensures it's not SystemPromptSingle (default)
 	wantEmpty       bool
 }
 
@@ -31,13 +30,6 @@ func (tc *systemPromptTestCase) assert(t *testing.T, got string) {
 
 	if tc.wantExact != "" && got != tc.wantExact {
 		assert.Equal(tc.wantExact, got, "got %q, want %q", got, tc.wantExact)
-	}
-
-	if tc.wantNotDefault {
-		// The default prompt (SystemPromptSingle) does NOT contain "Do NOT explain your process"
-		// but let's be safer.
-		// SystemPromptSingle is the fallback base.
-		assert.NotContains(got, SystemPromptSingle, "got default SystemPromptSingle, wanted specific template")
 	}
 
 	for _, substr := range tc.wantContains {
@@ -64,53 +56,46 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 
 	tests := []systemPromptTestCase{
 		{
-			name:           "Codex Review",
-			agent:          "codex",
-			command:        "review",
-			wantContains:   []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
-			wantNotDefault: true,
+			name:         "Codex Review",
+			agent:        "codex",
+			command:      "review",
+			wantContains: []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
 		},
 		{
-			name:           "Claude Review",
-			agent:          "claude-code",
-			command:        "review",
-			wantContains:   []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
-			wantNotDefault: true,
+			name:         "Claude Review",
+			agent:        "claude-code",
+			command:      "review",
+			wantContains: []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
 		},
 		{
-			name:           "Gemini Review",
-			agent:          "gemini",
-			command:        "review",
-			wantContains:   []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
-			wantNotDefault: true,
+			name:         "Gemini Review",
+			agent:        "gemini",
+			command:      "review",
+			wantContains: []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
 		},
 		{
-			name:           "Codex Range (Review Fallback)",
-			agent:          "codex",
-			command:        "range",
-			wantExact:      codexReviewPrompt,
-			wantNotDefault: true,
+			name:      "Codex Range (Review Fallback)",
+			agent:     "codex",
+			command:   "range",
+			wantExact: codexReviewPrompt,
 		},
 		{
-			name:           "Claude Dirty (Review Fallback)",
-			agent:          "claude-code",
-			command:        "dirty",
-			wantExact:      claudeReviewPrompt,
-			wantNotDefault: true,
+			name:      "Claude Dirty (Review Fallback)",
+			agent:     "claude-code",
+			command:   "dirty",
+			wantExact: claudeReviewPrompt,
 		},
 		{
-			name:           "Gemini Range (Review Fallback)",
-			agent:          "gemini",
-			command:        "range",
-			wantExact:      geminiReviewPrompt,
-			wantNotDefault: true,
+			name:      "Gemini Range (Review Fallback)",
+			agent:     "gemini",
+			command:   "range",
+			wantExact: geminiReviewPrompt,
 		},
 		{
-			name:           "Gemini Dirty (Review Fallback)",
-			agent:          "gemini",
-			command:        "dirty",
-			wantExact:      geminiReviewPrompt,
-			wantNotDefault: true,
+			name:      "Gemini Dirty (Review Fallback)",
+			agent:     "gemini",
+			command:   "dirty",
+			wantExact: geminiReviewPrompt,
 		},
 	}
 

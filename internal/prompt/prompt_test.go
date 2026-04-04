@@ -506,10 +506,13 @@ func shortestCodexRangeFallback(rangeRef string) string {
 func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 	t.Helper()
 	var sb strings.Builder
-	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "review"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
+	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+	})
+	require.NoError(t, err)
+	sb.WriteString(guidelines)
 
 	info, err := gitpkg.GetCommitInfo(repoPath, sha)
 	require.NoError(t, err, "GetCommitInfo failed: %v", err)
@@ -529,10 +532,13 @@ func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
 	t.Helper()
 	var sb strings.Builder
-	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "range"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
+	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+	})
+	require.NoError(t, err)
+	sb.WriteString(guidelines)
 
 	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
 	require.NoError(t, err, "GetRangeCommits failed: %v", err)

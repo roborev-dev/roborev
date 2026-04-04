@@ -10,54 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRenderSinglePromptBody(t *testing.T) {
-	body, err := renderSinglePromptBody(singlePromptBodyView{
-		OptionalContext: "optional\n",
-		CurrentRequired: "required\n",
-		CurrentOverflow: "overflow\n",
-		DiffSection:     "diff\n",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "optional\nrequired\noverflow\ndiff\n", body)
-}
-
-func TestRenderRangePromptBody(t *testing.T) {
-	body, err := renderRangePromptBody(rangePromptBodyView{
-		OptionalContext: "optional\n",
-		CurrentRequired: "required\n",
-		CurrentOverflow: "overflow\n",
-		DiffSection:     "diff\n",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "optional\nrequired\noverflow\ndiff\n", body)
-}
-
-func TestRenderDirtyPromptBody(t *testing.T) {
-	body, err := renderDirtyPromptBody(dirtyPromptBodyView{
-		OptionalContext: "optional\n",
-		CurrentRequired: "required\n",
-		DiffSection:     "diff\n",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "optional\nrequired\ndiff\n", body)
-}
-
-func TestRenderPromptBodiesPreserveRawText(t *testing.T) {
-	const rawOptional = "context with <tag> & symbols > keep\n"
-	const rawRequired = "required <input> && output > all\n"
-	const rawOverflow = "overflow uses <, >, and &\n"
-	const rawDiff = "diff --git a/file b/file\n+ use <raw> & keep > unchanged\n"
-
-	body, err := renderSinglePromptBody(singlePromptBodyView{
-		OptionalContext: rawOptional,
-		CurrentRequired: rawRequired,
-		CurrentOverflow: rawOverflow,
-		DiffSection:     rawDiff,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, rawOptional+rawRequired+rawOverflow+rawDiff, body)
-}
-
 func TestRenderSinglePromptBodyUsesNestedSections(t *testing.T) {
 	view := singlePromptView{
 		Optional: optionalSectionsView{
@@ -88,28 +40,6 @@ func TestRenderSinglePromptBodyUsesNestedSections(t *testing.T) {
 	assert.Contains(t, body, "### Diff")
 }
 
-func TestRenderSinglePromptFromSections(t *testing.T) {
-	body, err := renderSinglePromptFromSections(
-		"## Pull Request Discussion\n\nNewest comment first.\n\n",
-		currentCommitSectionView{
-			Commit:  "abc1234",
-			Subject: "template prompt rendering",
-			Author:  "Test User",
-			Message: "body text",
-		},
-		diffSectionView{
-			Heading: "### Diff",
-			Body:    "```diff\n+line\n```\n",
-		},
-	)
-	require.NoError(t, err)
-	assert.Contains(t, body, "## Pull Request Discussion")
-	assert.Contains(t, body, "## Current Commit")
-	assert.Contains(t, body, "**Subject:** template prompt rendering")
-	assert.Contains(t, body, "**Message:**")
-	assert.Contains(t, body, "### Diff")
-}
-
 func TestRenderRangePromptUsesNestedSections(t *testing.T) {
 	view := rangePromptView{
 		Optional: optionalSectionsView{
@@ -134,24 +64,6 @@ func TestRenderRangePromptUsesNestedSections(t *testing.T) {
 	assert.Contains(t, body, "### Combined Diff")
 }
 
-func TestRenderRangePromptFromSections(t *testing.T) {
-	body, err := renderRangePromptFromSections(
-		"## Pull Request Discussion\n\nNewest comment first.\n\n",
-		commitRangeSectionView{
-			Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}},
-		},
-		diffSectionView{
-			Heading: "### Combined Diff",
-			Body:    "```diff\n+line\n```\n",
-		},
-	)
-	require.NoError(t, err)
-	assert.Contains(t, body, "## Pull Request Discussion")
-	assert.Contains(t, body, "## Commit Range")
-	assert.Contains(t, body, "- abc1234 first")
-	assert.Contains(t, body, "- def5678 second")
-	assert.Contains(t, body, "### Combined Diff")
-}
 func TestRenderDirtyPromptUsesNestedSections(t *testing.T) {
 	view := dirtyPromptView{
 		Optional: optionalSectionsView{
@@ -284,16 +196,16 @@ func TestRenderOptionalSectionsOmitsEmptySections(t *testing.T) {
 	assert.Empty(t, body)
 }
 
-func TestRenderAdditionalContextBlockTrimsAndFormats(t *testing.T) {
-	body, err := renderAdditionalContextBlock("\n## Pull Request Discussion\n\nNewest comment first.\n")
-	require.NoError(t, err)
+func TestBuildAdditionalContextSectionTrimsAndFormats(t *testing.T) {
+	body := buildAdditionalContextSection("\n## Pull Request Discussion\n\nNewest comment first.\n")
 	assert.Equal(t, "## Pull Request Discussion\n\nNewest comment first.\n\n", body)
 }
 
-func TestRenderProjectGuidelinesBlockTrimsAndFormats(t *testing.T) {
-	body, err := renderProjectGuidelinesBlock("\nPrefer composition over inheritance.\n")
-	require.NoError(t, err)
-	assert.Equal(t, "## Project Guidelines\n\nPrefer composition over inheritance.\n\n", body)
+func TestBuildProjectGuidelinesSectionViewTrimsAndFormats(t *testing.T) {
+	section := buildProjectGuidelinesSectionView("\nPrefer composition over inheritance.\n")
+	require.NotNil(t, section)
+	assert.Equal(t, "## Project Guidelines", section.Heading)
+	assert.Equal(t, "Prefer composition over inheritance.", section.Body)
 }
 
 func TestPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
@@ -361,41 +273,77 @@ func TestRenderAddressPromptOmitsOptionalSectionsWhenEmpty(t *testing.T) {
 	assert.NotContains(t, body, "## Original Commit Diff")
 }
 
-func TestFitSinglePromptBodyTrimsOptionalContextBeforeCurrentOverflow(t *testing.T) {
-	view := singlePromptBodyView{
-		OptionalContext: strings.Repeat("g", 128),
-		CurrentRequired: "## Current Commit\n\n**Commit:** abc1234\n\n",
-		CurrentOverflow: "**Subject:** large change\n**Author:** Test User\n\n",
-		DiffSection:     "### Diff\n\n(Diff too large; for Codex run `git show abc1234 --` locally.)\n",
+func TestFitSinglePromptTrimsOptionalSectionsBeforeCurrentMetadata(t *testing.T) {
+	view := singlePromptView{
+		Optional: optionalSectionsView{
+			AdditionalContext: strings.Repeat("g", 128),
+		},
+		Current: currentCommitSectionView{
+			Commit:  "abc1234",
+			Subject: "large change",
+			Author:  "Test User",
+		},
+		Diff: diffSectionView{
+			Heading:  "### Diff",
+			Fallback: "(Diff too large; for Codex run `git show abc1234 --` locally.)\n",
+		},
 	}
-	body, err := fitSinglePromptBody(len(view.CurrentRequired)+len(view.CurrentOverflow)+len(view.DiffSection), view)
+	trimmed := view
+	trimmed.Optional = optionalSectionsView{}
+	trimmedBody, err := renderSinglePrompt(trimmed)
+	require.NoError(t, err)
+
+	body, err := fitSinglePrompt(len(trimmedBody), view)
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Current Commit")
 	assert.Contains(t, body, "**Subject:** large change")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
 
-func TestFitRangePromptBodyTrimsOptionalContextBeforeRangeOverflow(t *testing.T) {
-	view := rangePromptBodyView{
-		OptionalContext: strings.Repeat("g", 128),
-		CurrentRequired: "## Commit Range\n\nReviewing 2 commits:\n\n",
-		CurrentOverflow: "- abc1234 first change\n- def5678 second change\n\n",
-		DiffSection:     "### Combined Diff\n\n(Diff too large; for Codex run `git diff abc1234..def5678 --` locally.)\n",
+func TestFitRangePromptTrimsOptionalSectionsBeforeRangeMetadata(t *testing.T) {
+	view := rangePromptView{
+		Optional: optionalSectionsView{
+			AdditionalContext: strings.Repeat("g", 128),
+		},
+		Current: commitRangeSectionView{
+			Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "first change"}, {Commit: "def5678", Subject: "second change"}},
+		},
+		Diff: diffSectionView{
+			Heading:  "### Combined Diff",
+			Fallback: "(Diff too large; for Codex run `git diff abc1234..def5678 --` locally.)\n",
+		},
 	}
-	body, err := fitRangePromptBody(len(view.CurrentRequired)+len(view.CurrentOverflow)+len(view.DiffSection), view)
+	trimmed := view
+	trimmed.Optional = optionalSectionsView{}
+	trimmedBody, err := renderRangePrompt(trimmed)
+	require.NoError(t, err)
+
+	body, err := fitRangePrompt(len(trimmedBody), view)
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Commit Range")
 	assert.Contains(t, body, "- abc1234 first change")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
 
-func TestFitDirtyPromptBodyTrimsOptionalContextBeforeTruncatedDiff(t *testing.T) {
-	view := dirtyPromptBodyView{
-		OptionalContext: strings.Repeat("g", 128),
-		CurrentRequired: "## Uncommitted Changes\n\nThe following changes have not yet been committed.\n\n",
-		DiffSection:     "### Diff\n\n(Diff too large to include in full)\n```diff\n+line\n... (truncated)\n```\n",
+func TestFitDirtyPromptTrimsOptionalSectionsBeforeFallbackDiff(t *testing.T) {
+	view := dirtyPromptView{
+		Optional: optionalSectionsView{
+			AdditionalContext: strings.Repeat("g", 128),
+		},
+		Current: dirtyChangesSectionView{
+			Description: "The following changes have not yet been committed.",
+		},
+		Diff: diffSectionView{
+			Heading:  "### Diff",
+			Fallback: "(Diff too large to include in full)\n```diff\n+line\n... (truncated)\n```\n",
+		},
 	}
-	body, err := fitDirtyPromptBody(len(view.CurrentRequired)+len(view.DiffSection), view)
+	trimmed := view
+	trimmed.Optional = optionalSectionsView{}
+	trimmedBody, err := renderDirtyPrompt(trimmed)
+	require.NoError(t, err)
+
+	body, err := fitDirtyPrompt(len(trimmedBody), view)
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Uncommitted Changes")
 	assert.Contains(t, body, "(Diff too large to include in full)")

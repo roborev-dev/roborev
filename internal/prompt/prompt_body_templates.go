@@ -111,26 +111,6 @@ type systemPromptView struct {
 	CurrentDate         string
 }
 
-type singlePromptBodyView struct {
-	OptionalContext string
-	CurrentRequired string
-	CurrentOverflow string
-	DiffSection     string
-}
-
-type rangePromptBodyView struct {
-	OptionalContext string
-	CurrentRequired string
-	CurrentOverflow string
-	DiffSection     string
-}
-
-type dirtyPromptBodyView struct {
-	OptionalContext string
-	CurrentRequired string
-	DiffSection     string
-}
-
 var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	templateFS,
 	"templates/prompt_sections.tmpl",
@@ -158,130 +138,132 @@ func renderDirtyPrompt(view dirtyPromptView) (string, error) {
 	return executePromptTemplate("assembled_dirty.tmpl", view)
 }
 
-func renderSinglePromptFromSections(optionalContext string, current currentCommitSectionView, diff diffSectionView) (string, error) {
-	return renderSinglePrompt(singlePromptView{
-		Optional: optionalSectionsView{AdditionalContext: optionalContext},
-		Current:  current,
-		Diff:     diff,
-	})
-}
-
-func renderRangePromptFromSections(optionalContext string, current commitRangeSectionView, diff diffSectionView) (string, error) {
-	return renderRangePrompt(rangePromptView{
-		Optional: optionalSectionsView{AdditionalContext: optionalContext},
-		Current:  current,
-		Diff:     diff,
-	})
-}
-
 func renderAddressPrompt(view addressPromptView) (string, error) {
 	return executePromptTemplate("assembled_address.tmpl", view)
 }
 
-func fitSinglePromptSections(limit int, optional optionalSectionsView, current currentCommitSectionView, diff diffSectionView) (string, error) {
-	optionalContext, err := renderOptionalSectionsPrefix(optional)
+func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
+	body, err := renderSinglePrompt(view)
 	if err != nil {
 		return "", err
 	}
-	currentRequired, err := renderCurrentCommitRequired(current)
-	if err != nil {
-		return "", err
-	}
-	currentOverflow, err := renderCurrentCommitOverflow(current)
-	if err != nil {
-		return "", err
-	}
-	diffSection, err := renderDiffBlock(diff)
-	if err != nil {
-		return "", err
-	}
-	body, err := fitSinglePromptBody(limit, singlePromptBodyView{
-		OptionalContext: optionalContext,
-		CurrentRequired: currentRequired,
-		CurrentOverflow: currentOverflow,
-		DiffSection:     diffSection,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	rendered, err := renderSinglePrompt(singlePromptView{Optional: optional, Current: current, Diff: diff})
-	if err != nil {
-		return "", err
-	}
-	if len(rendered) > limit {
+	if len(body) <= limit {
 		return body, nil
 	}
-	return rendered, nil
+
+	for trimOptionalSections(&view.Optional) {
+		body, err = renderSinglePrompt(view)
+		if err != nil {
+			return "", err
+		}
+		if len(body) <= limit {
+			return body, nil
+		}
+	}
+
+	if view.Current.Message != "" {
+		view.Current.Message = ""
+		body, err = renderSinglePrompt(view)
+		if err != nil {
+			return "", err
+		}
+		if len(body) <= limit {
+			return body, nil
+		}
+	}
+
+	if view.Current.Author != "" {
+		view.Current.Author = ""
+		body, err = renderSinglePrompt(view)
+		if err != nil {
+			return "", err
+		}
+		if len(body) <= limit {
+			return body, nil
+		}
+	}
+
+	for len(body) > limit && view.Current.Subject != "" {
+		overflow := len(body) - limit
+		view.Current.Subject = truncateUTF8(view.Current.Subject, max(0, len(view.Current.Subject)-overflow))
+		body, err = renderSinglePrompt(view)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return hardCapPrompt(body, limit), nil
 }
 
-func fitRangePromptSections(limit int, optional optionalSectionsView, current commitRangeSectionView, diff diffSectionView) (string, error) {
-	optionalContext, err := renderOptionalSectionsPrefix(optional)
+func fitRangePrompt(limit int, view rangePromptView) (string, error) {
+	body, err := renderRangePrompt(view)
 	if err != nil {
 		return "", err
 	}
-	currentRequired, err := renderCommitRangeRequired(current)
-	if err != nil {
-		return "", err
-	}
-	currentOverflow, err := renderCommitRangeOverflow(current)
-	if err != nil {
-		return "", err
-	}
-	diffSection, err := renderDiffBlock(diff)
-	if err != nil {
-		return "", err
-	}
-	body, err := fitRangePromptBody(limit, rangePromptBodyView{
-		OptionalContext: optionalContext,
-		CurrentRequired: currentRequired,
-		CurrentOverflow: currentOverflow,
-		DiffSection:     diffSection,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	rendered, err := renderRangePrompt(rangePromptView{Optional: optional, Current: current, Diff: diff})
-	if err != nil {
-		return "", err
-	}
-	if len(rendered) > limit {
+	if len(body) <= limit {
 		return body, nil
 	}
-	return rendered, nil
+
+	for trimOptionalSections(&view.Optional) {
+		body, err = renderRangePrompt(view)
+		if err != nil {
+			return "", err
+		}
+		if len(body) <= limit {
+			return body, nil
+		}
+	}
+
+	for i := len(view.Current.Entries) - 1; i >= 0 && len(body) > limit; i-- {
+		if view.Current.Entries[i].Subject == "" {
+			continue
+		}
+		view.Current.Entries[i].Subject = ""
+		body, err = renderRangePrompt(view)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return hardCapPrompt(body, limit), nil
 }
 
-func fitDirtyPromptView(limit int, view dirtyPromptView) (string, error) {
-	optionalContext, err := renderOptionalSectionsPrefix(view.Optional)
+func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
+	body, err := renderDirtyPrompt(view)
 	if err != nil {
 		return "", err
 	}
-	currentRequired, err := renderDirtyChangesSection(view.Current)
-	if err != nil {
-		return "", err
-	}
-	diffSection, err := renderDiffBlock(view.Diff)
-	if err != nil {
-		return "", err
-	}
-	body, err := fitDirtyPromptBody(limit, dirtyPromptBodyView{
-		OptionalContext: optionalContext,
-		CurrentRequired: currentRequired,
-		DiffSection:     diffSection,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	rendered, err := renderDirtyPrompt(view)
-	if err != nil {
-		return "", err
-	}
-	if len(rendered) > limit {
+	if len(body) <= limit {
 		return body, nil
 	}
-	return rendered, nil
+
+	for trimOptionalSections(&view.Optional) {
+		body, err = renderDirtyPrompt(view)
+		if err != nil {
+			return "", err
+		}
+		if len(body) <= limit {
+			return body, nil
+		}
+	}
+
+	return hardCapPrompt(body, limit), nil
+}
+
+func trimOptionalSections(view *optionalSectionsView) bool {
+	switch {
+	case len(view.PreviousAttempts) > 0:
+		view.PreviousAttempts = nil
+	case len(view.PreviousReviews) > 0:
+		view.PreviousReviews = nil
+	case view.AdditionalContext != "":
+		view.AdditionalContext = ""
+	case view.ProjectGuidelines != nil:
+		view.ProjectGuidelines = nil
+	default:
+		return false
+	}
+	return true
 }
 
 func renderSystemPrompt(name string, view systemPromptView) (string, error) {
@@ -306,22 +288,6 @@ func renderOptionalSectionsPrefix(view optionalSectionsView) (string, error) {
 		return body, err
 	}
 	return body + "\n\n", nil
-}
-
-func renderCurrentCommitRequired(view currentCommitSectionView) (string, error) {
-	return executePromptTemplate("current_commit_required", view)
-}
-
-func renderCurrentCommitOverflow(view currentCommitSectionView) (string, error) {
-	return executePromptTemplate("current_commit_overflow", view)
-}
-
-func renderCommitRangeRequired(view commitRangeSectionView) (string, error) {
-	return executePromptTemplate("commit_range_required", view)
-}
-
-func renderCommitRangeOverflow(view commitRangeSectionView) (string, error) {
-	return executePromptTemplate("commit_range_overflow", view)
 }
 
 func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
@@ -392,111 +358,6 @@ func previousAttemptViewsFromContexts(attempts []reviewAttemptContext) []reviewA
 		views = append(views, view)
 	}
 	return views
-}
-
-func renderAdditionalContextBlock(additionalContext string) (string, error) {
-	trimmed := strings.TrimSpace(additionalContext)
-	if trimmed == "" {
-		return "", nil
-	}
-	return trimmed + "\n\n", nil
-}
-
-func renderProjectGuidelinesBlock(guidelines string) (string, error) {
-	trimmed := strings.TrimSpace(guidelines)
-	if trimmed == "" {
-		return "", nil
-	}
-	return "## Project Guidelines\n\n" + trimmed + "\n\n", nil
-}
-
-func renderDiffBlock(view diffSectionView) (string, error) {
-	return executePromptTemplate("diff_block", view)
-}
-
-func renderSinglePromptBody(view singlePromptBodyView) (string, error) {
-	return view.OptionalContext + view.CurrentRequired + view.CurrentOverflow + view.DiffSection, nil
-}
-
-func renderRangePromptBody(view rangePromptBodyView) (string, error) {
-	return view.OptionalContext + view.CurrentRequired + view.CurrentOverflow + view.DiffSection, nil
-}
-
-func renderDirtyPromptBody(view dirtyPromptBodyView) (string, error) {
-	return view.OptionalContext + view.CurrentRequired + view.DiffSection, nil
-}
-
-func fitSinglePromptBody(limit int, view singlePromptBodyView) (string, error) {
-	body, err := renderSinglePromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	if len(body) <= limit {
-		return body, nil
-	}
-
-	overflow := len(body) - limit
-	if overflow > 0 && len(view.OptionalContext) > 0 {
-		originalLen := len(view.OptionalContext)
-		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
-		overflow -= originalLen - len(view.OptionalContext)
-	}
-	if overflow > 0 && len(view.CurrentOverflow) > 0 {
-		view.CurrentOverflow = truncateUTF8(view.CurrentOverflow, max(0, len(view.CurrentOverflow)-overflow))
-	}
-
-	body, err = renderSinglePromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	return hardCapPrompt(body, limit), nil
-}
-
-func fitRangePromptBody(limit int, view rangePromptBodyView) (string, error) {
-	body, err := renderRangePromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	if len(body) <= limit {
-		return body, nil
-	}
-
-	overflow := len(body) - limit
-	if overflow > 0 && len(view.OptionalContext) > 0 {
-		originalLen := len(view.OptionalContext)
-		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
-		overflow -= originalLen - len(view.OptionalContext)
-	}
-	if overflow > 0 && len(view.CurrentOverflow) > 0 {
-		view.CurrentOverflow = truncateUTF8(view.CurrentOverflow, max(0, len(view.CurrentOverflow)-overflow))
-	}
-
-	body, err = renderRangePromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	return hardCapPrompt(body, limit), nil
-}
-
-func fitDirtyPromptBody(limit int, view dirtyPromptBodyView) (string, error) {
-	body, err := renderDirtyPromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	if len(body) <= limit {
-		return body, nil
-	}
-
-	overflow := len(body) - limit
-	if overflow > 0 && len(view.OptionalContext) > 0 {
-		view.OptionalContext = truncateUTF8(view.OptionalContext, max(0, len(view.OptionalContext)-overflow))
-	}
-
-	body, err = renderDirtyPromptBody(view)
-	if err != nil {
-		return "", err
-	}
-	return hardCapPrompt(body, limit), nil
 }
 
 func executePromptTemplate(name string, view any) (string, error) {
