@@ -111,39 +111,64 @@ type systemPromptView struct {
 	CurrentDate         string
 }
 
+type inlineDiffView struct {
+	Body string
+}
+
+type commitInspectionFallbackView struct {
+	SHA         string
+	StatCmd     string
+	DiffCmd     string
+	FilesCmd    string
+	ShowPathCmd string
+}
+
+type rangeInspectionFallbackView struct {
+	RangeRef string
+	LogCmd   string
+	StatCmd  string
+	DiffCmd  string
+	FilesCmd string
+	ViewCmd  string
+}
+
+type genericDiffFallbackView struct {
+	ViewCmd string
+}
+
 var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	templateFS,
-	"templates/prompt_sections.tmpl",
-	"templates/assembled_single.tmpl",
-	"templates/assembled_range.tmpl",
-	"templates/assembled_dirty.tmpl",
-	"templates/assembled_address.tmpl",
-	"templates/default_review.tmpl",
-	"templates/default_dirty.tmpl",
-	"templates/default_range.tmpl",
-	"templates/default_security.tmpl",
-	"templates/default_address.tmpl",
-	"templates/default_design_review.tmpl",
-	"templates/claude-code_review.tmpl",
-	"templates/codex_review.tmpl",
-	"templates/gemini_review.tmpl",
-	"templates/gemini_run.tmpl",
+	"templates/prompt_sections.txt.gotmpl",
+	"templates/assembled_single.txt.gotmpl",
+	"templates/assembled_range.txt.gotmpl",
+	"templates/assembled_dirty.txt.gotmpl",
+	"templates/assembled_address.txt.gotmpl",
+	"templates/default_review.txt.gotmpl",
+	"templates/default_dirty.txt.gotmpl",
+	"templates/default_range.txt.gotmpl",
+	"templates/default_security.txt.gotmpl",
+	"templates/default_address.txt.gotmpl",
+	"templates/default_design_review.txt.gotmpl",
+	"templates/claude-code_review.txt.gotmpl",
+	"templates/codex_review.txt.gotmpl",
+	"templates/gemini_review.txt.gotmpl",
+	"templates/gemini_run.txt.gotmpl",
 ))
 
 func renderSinglePrompt(view singlePromptView) (string, error) {
-	return executePromptTemplate("assembled_single.tmpl", view)
+	return executePromptTemplate("assembled_single.txt.gotmpl", view)
 }
 
 func renderRangePrompt(view rangePromptView) (string, error) {
-	return executePromptTemplate("assembled_range.tmpl", view)
+	return executePromptTemplate("assembled_range.txt.gotmpl", view)
 }
 
 func renderDirtyPrompt(view dirtyPromptView) (string, error) {
-	return executePromptTemplate("assembled_dirty.tmpl", view)
+	return executePromptTemplate("assembled_dirty.txt.gotmpl", view)
 }
 
 func renderAddressPrompt(view addressPromptView) (string, error) {
-	return executePromptTemplate("assembled_address.tmpl", view)
+	return executePromptTemplate("assembled_address.txt.gotmpl", view)
 }
 
 func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
@@ -294,8 +319,43 @@ func renderOptionalSectionsPrefix(view optionalSectionsView) (string, error) {
 	return body + "\n\n", nil
 }
 
+func renderCurrentCommitRequired(view currentCommitSectionView) (string, error) {
+	return executePromptTemplate("current_commit_required", view)
+}
+
+func renderCurrentCommitOverflow(view currentCommitSectionView) (string, error) {
+	return executePromptTemplate("current_commit_overflow", view)
+}
+
 func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
 	return executePromptTemplate("dirty_changes", view)
+}
+
+func renderDiffBlock(view diffSectionView) (string, error) {
+	return executePromptTemplate("diff_block", view)
+}
+
+func renderInlineDiff(body string) (string, error) {
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return executePromptTemplate("inline_diff", inlineDiffView{Body: body})
+}
+
+func renderCommitInspectionFallback(name string, view commitInspectionFallbackView) (string, error) {
+	return executePromptTemplate(name, view)
+}
+
+func renderRangeInspectionFallback(name string, view rangeInspectionFallbackView) (string, error) {
+	return executePromptTemplate(name, view)
+}
+
+func renderGenericCommitFallback(viewCmd string) (string, error) {
+	return executePromptTemplate("generic_commit_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
+}
+
+func renderGenericRangeFallback(viewCmd string) (string, error) {
+	return executePromptTemplate("generic_range_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
 }
 
 func previousReviewViews(contexts []ReviewContext) []previousReviewView {

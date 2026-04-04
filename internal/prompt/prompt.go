@@ -118,6 +118,10 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	}
 
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	inlineDiff, err := renderInlineDiff(diff)
+	if err != nil {
+		return "", err
+	}
 	view := dirtyPromptView{
 		Optional: optional,
 		Current: dirtyChangesSectionView{
@@ -125,7 +129,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		},
 		Diff: diffSectionView{
 			Heading: "### Diff",
-			Body:    renderInlineDiff(diff),
+			Body:    inlineDiff,
 		},
 	}
 
@@ -235,66 +239,52 @@ func needsShellQuoting(s string) bool {
 }
 
 func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []string {
-	statCmd := renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...)
-	return []string{
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `git show %s -- path/to/file`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			statCmd, diffCmd, filesCmd, shellQuote(sha)),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...)),
+	view := commitInspectionFallbackView{
+		SHA:         sha,
+		StatCmd:     renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...),
+		DiffCmd:     renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...),
+		FilesCmd:    renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...),
+		ShowPathCmd: renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...),
 	}
+	names := []string{"codex_commit_fallback_full", "codex_commit_fallback_medium", "codex_commit_fallback_short", "codex_commit_fallback_shortest"}
+	variants := make([]string, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderCommitInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		block, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallback})
+		if err != nil {
+			continue
+		}
+		variants = append(variants, block)
+	}
+	return variants
 }
 
 func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []string {
-	logCmd := renderShellCommand("git", "log", "--oneline", rangeRef)
-	statCmd := renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...)
-	return []string{
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			logCmd, statCmd, diffCmd, filesCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...)),
+	view := rangeInspectionFallbackView{
+		RangeRef: rangeRef,
+		LogCmd:   renderShellCommand("git", "log", "--oneline", rangeRef),
+		StatCmd:  renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...),
+		DiffCmd:  renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...),
+		FilesCmd: renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...),
+		ViewCmd:  renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...),
 	}
+	names := []string{"codex_range_fallback_full", "codex_range_fallback_medium", "codex_range_fallback_short", "codex_range_fallback_shortest"}
+	variants := make([]string, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderRangeInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		block, err := renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Fallback: fallback})
+		if err != nil {
+			continue
+		}
+		variants = append(variants, block)
+	}
+	return variants
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
@@ -335,23 +325,32 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	var currentRequired strings.Builder
-	currentRequired.WriteString("## Current Commit\n\n")
-	fmt.Fprintf(&currentRequired, "**Commit:** %s\n", shortSHA)
-	currentRequired.WriteString("\n")
-
-	var currentOverflow strings.Builder
-	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", info.Subject)
-	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
-	currentOverflow.WriteString("\n")
-	if info.Body != "" {
-		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
+	currentView := currentCommitSectionView{
+		Commit:  shortSHA,
+		Subject: info.Subject,
+		Author:  info.Author,
+		Message: info.Body,
+	}
+	currentRequired, err := renderCurrentCommitRequired(currentView)
+	if err != nil {
+		return "", err
+	}
+	currentOverflow, err := renderCurrentCommitOverflow(currentView)
+	if err != nil {
+		return "", err
+	}
+	emptyInlineDiff, err := renderInlineDiff("")
+	if err != nil {
+		return "", err
+	}
+	emptyDiffBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Body: emptyInlineDiff})
+	if err != nil {
+		return "", err
 	}
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
-	diffWrap := len("### Diff\n\n```diff\n") + len("\n```\n") + 1
-	diffLimit := max(0, bodyLimit-len(currentRequired.String())-len(currentOverflow.String())-diffWrap)
+	diffLimit := max(0, bodyLimit-len(currentRequired)-len(currentOverflow)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetDiffLimited(repoPath, sha, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -367,10 +366,10 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 			if err != nil {
 				return "", err
 			}
-			softBudget := max(0, bodyLimit-len(currentRequired.String())-len(shortest))
-			softLen := len(optionalPrefix) + len(currentOverflow.String())
+			softBudget := max(0, bodyLimit-len(currentRequired)-len(shortest))
+			softLen := len(optionalPrefix) + len(currentOverflow)
 			effectiveSoftLen := min(softLen, softBudget)
-			remaining := max(0, bodyLimit-len(currentRequired.String())-effectiveSoftLen)
+			remaining := max(0, bodyLimit-len(currentRequired)-effectiveSoftLen)
 			diffSection = truncateUTF8(shortest, remaining)
 			for _, variant := range variants {
 				if len(variant) <= remaining {
@@ -379,35 +378,31 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 				}
 			}
 		} else {
-			diffSection = "### Diff\n\n" +
-				"(Diff too large to include - please review the commit directly)\n" +
-				"View with: " + renderShellCommand("git", "show", sha) + "\n"
+			diffSection, err = renderGenericCommitFallback(renderShellCommand("git", "show", sha))
+			if err != nil {
+				return "", err
+			}
 		}
 	} else {
-		var diffSectionBuilder strings.Builder
-		diffSectionBuilder.WriteString("### Diff\n\n")
-		diffSectionBuilder.WriteString("```diff\n")
-		diffSectionBuilder.WriteString(diff)
-		if !strings.HasSuffix(diff, "\n") {
-			diffSectionBuilder.WriteString("\n")
+		inlineDiff, err := renderInlineDiff(diff)
+		if err != nil {
+			return "", err
 		}
-		diffSectionBuilder.WriteString("```\n")
-		diffSection = diffSectionBuilder.String()
+		diffSection, err = renderDiffBlock(diffSectionView{Heading: "### Diff", Body: inlineDiff})
+		if err != nil {
+			return "", err
+		}
 	}
 
 	body, err := fitSinglePrompt(
 		bodyLimit,
 		singlePromptView{
 			Optional: optional,
-			Current: currentCommitSectionView{
-				Commit:  shortSHA,
-				Subject: info.Subject,
-				Author:  info.Author,
-				Message: info.Body,
-			},
+			Current:  currentView,
 			Diff: diffSectionView{
-				Heading: "### Diff",
-				Body:    strings.TrimPrefix(diffSection, "### Diff\n\n"),
+				Heading:  "### Diff",
+				Body:     strings.TrimPrefix(diffSection, "### Diff\n\n"),
+				Fallback: fallbackBody(diffSection, "### Diff\n\n"),
 			},
 		},
 	)
@@ -471,11 +466,13 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		}
 	}
 	currentOverflow.WriteString("\n")
+	currentRequiredText := currentRequired.String()
+	currentOverflowText := currentOverflow.String()
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
 	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
-	diffLimit := max(0, bodyLimit-len(currentRequired.String())-len(currentOverflow.String())-diffWrap)
+	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-diffWrap)
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
@@ -491,10 +488,10 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 			if err != nil {
 				return "", err
 			}
-			softBudget := max(0, bodyLimit-len(currentRequired.String())-len(shortest))
-			softLen := len(optionalPrefix) + len(currentOverflow.String())
+			softBudget := max(0, bodyLimit-len(currentRequiredText)-len(shortest))
+			softLen := len(optionalPrefix) + len(currentOverflowText)
 			effectiveSoftLen := min(softLen, softBudget)
-			remaining := max(0, bodyLimit-len(currentRequired.String())-effectiveSoftLen)
+			remaining := max(0, bodyLimit-len(currentRequiredText)-effectiveSoftLen)
 			diffSection = truncateUTF8(shortest, remaining)
 			for _, variant := range variants {
 				if len(variant) <= remaining {
@@ -503,20 +500,20 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 				}
 			}
 		} else {
-			diffSection = "### Combined Diff\n\n" +
-				"(Diff too large to include - please review the commits directly)\n" +
-				"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
+			diffSection, err = renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
+			if err != nil {
+				return "", err
+			}
 		}
 	} else {
-		var diffSectionBuilder strings.Builder
-		diffSectionBuilder.WriteString("### Combined Diff\n\n")
-		diffSectionBuilder.WriteString("```diff\n")
-		diffSectionBuilder.WriteString(diff)
-		if !strings.HasSuffix(diff, "\n") {
-			diffSectionBuilder.WriteString("\n")
+		inlineDiff, err := renderInlineDiff(diff)
+		if err != nil {
+			return "", err
 		}
-		diffSectionBuilder.WriteString("```\n")
-		diffSection = diffSectionBuilder.String()
+		diffSection, err = renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Body: inlineDiff})
+		if err != nil {
+			return "", err
+		}
 	}
 
 	entries := make([]commitRangeEntryView, 0, len(commits))
@@ -536,8 +533,9 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 			Optional: optional,
 			Current:  commitRangeSectionView{Entries: entries},
 			Diff: diffSectionView{
-				Heading: "### Combined Diff",
-				Body:    strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
+				Heading:  "### Combined Diff",
+				Body:     strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
+				Fallback: fallbackBody(diffSection, "### Combined Diff\n\n"),
 			},
 		},
 	)
@@ -574,15 +572,13 @@ func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
 	return previousReviewViews(ordered)
 }
 
-func renderInlineDiff(diff string) string {
-	var diffSection strings.Builder
-	diffSection.WriteString("```diff\n")
-	diffSection.WriteString(diff)
-	if !strings.HasSuffix(diff, "\n") {
-		diffSection.WriteString("\n")
+func fallbackBody(diffSection, heading string) string {
+	trimmed := strings.TrimPrefix(diffSection, heading)
+	trimmed = strings.TrimPrefix(trimmed, "\n\n")
+	if strings.HasPrefix(trimmed, "(Diff too large") {
+		return trimmed
 	}
-	diffSection.WriteString("```\n")
-	return diffSection.String()
+	return ""
 }
 
 // LoadGuidelines loads review guidelines from the repo's default

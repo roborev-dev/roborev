@@ -110,7 +110,7 @@ func TestRenderAddressPromptUsesNestedSections(t *testing.T) {
 }
 
 func TestRenderSystemPromptUsesTemplateData(t *testing.T) {
-	body, err := renderSystemPrompt("default_review.tmpl", systemPromptView{
+	body, err := renderSystemPrompt("default_review.txt.gotmpl", systemPromptView{
 		NoSkillsInstruction: noSkillsInstruction,
 		CurrentDate:         "2030-06-15",
 	})

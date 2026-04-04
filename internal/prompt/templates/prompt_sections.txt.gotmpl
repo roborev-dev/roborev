@@ -69,6 +69,63 @@ Reviewing {{len .Entries}} commits:
 {{define "diff_block"}}{{if .Heading}}{{.Heading}}{{else}}### Diff{{end}}
 
 {{if .Fallback}}{{.Fallback}}{{else}}{{.Body}}{{end}}{{end}}
+{{define "inline_diff"}}```diff
+{{.Body}}```
+{{end}}
+{{define "codex_commit_fallback_full"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.
+
+Use commands like:
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+- `{{.FilesCmd}}`
+- `{{.ShowPathCmd}}`
+
+Review the actual diff before writing findings.
+{{end}}
+{{define "codex_commit_fallback_medium"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit locally before writing findings.
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+{{end}}
+{{define "codex_commit_fallback_short"}}(Diff too large to include inline)
+
+For Codex, inspect locally with `{{.DiffCmd}}`.
+{{end}}
+{{define "codex_commit_fallback_shortest"}}(Diff too large; for Codex run `{{.ShowPathCmd}}` locally.)
+{{end}}
+{{define "codex_range_fallback_full"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.
+
+Use commands like:
+- `{{.LogCmd}}`
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+- `{{.FilesCmd}}`
+
+Review the actual diff before writing findings.
+{{end}}
+{{define "codex_range_fallback_medium"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit range locally before writing findings.
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+{{end}}
+{{define "codex_range_fallback_short"}}(Diff too large to include inline)
+
+For Codex, inspect locally with `{{.DiffCmd}}`.
+{{end}}
+{{define "codex_range_fallback_shortest"}}(Diff too large; for Codex run `{{.ViewCmd}}` locally.)
+{{end}}
+{{define "generic_commit_fallback"}}(Diff too large to include - please review the commit directly)
+View with: {{.ViewCmd}}
+{{end}}
+{{define "generic_range_fallback"}}(Diff too large to include - please review the commits directly)
+View with: {{.ViewCmd}}
+{{end}}
 {{define "address_attempts"}}{{if .PreviousAttempts}}## Previous Addressing Attempts
 
 {{range .PreviousAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---

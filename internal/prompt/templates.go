@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-//go:embed templates/*.tmpl
+//go:embed templates/*.txt.gotmpl
 var templateFS embed.FS
 
 // GetSystemPrompt returns the system prompt for the specified agent and type.
@@ -26,15 +26,15 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		agentName = "claude-code"
 	}
 
-	// For review operations (review, range, dirty), use {agent}_review.tmpl
+	// For review operations (review, range, dirty), use {agent}_review.txt.gotmpl
 	// These are all code reviews, just with different input formats
-	// Security reviews use {agent}_security.tmpl
+	// Security reviews use {agent}_security.txt.gotmpl
 	templateType := promptType
 	if promptType == "range" || promptType == "dirty" {
 		templateType = "review"
 	}
 
-	tmplName := fmt.Sprintf("%s_%s.tmpl", agentName, templateType)
+	tmplName := fmt.Sprintf("%s_%s.txt.gotmpl", agentName, templateType)
 	if _, err := templateFS.ReadFile("templates/" + tmplName); err == nil {
 		body, err := renderSystemPrompt(tmplName, systemPromptView{
 			NoSkillsInstruction: noSkillsInstruction,
@@ -49,22 +49,22 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	var fallbackName string
 	switch promptType {
 	case "review":
-		fallbackName = "default_review.tmpl"
+		fallbackName = "default_review.txt.gotmpl"
 	case "dirty":
-		fallbackName = "default_dirty.tmpl"
+		fallbackName = "default_dirty.txt.gotmpl"
 	case "range":
-		fallbackName = "default_range.tmpl"
+		fallbackName = "default_range.txt.gotmpl"
 	case "address":
-		fallbackName = "default_address.tmpl"
+		fallbackName = "default_address.txt.gotmpl"
 	case "security":
-		fallbackName = "default_security.tmpl"
+		fallbackName = "default_security.txt.gotmpl"
 	case "design-review":
-		fallbackName = "default_design_review.tmpl"
+		fallbackName = "default_design_review.txt.gotmpl"
 	case "run":
 		// No default run preamble - return empty so raw prompts are used
 		return ""
 	default:
-		fallbackName = "default_review.tmpl"
+		fallbackName = "default_review.txt.gotmpl"
 	}
 
 	body, err := renderSystemPrompt(fallbackName, systemPromptView{

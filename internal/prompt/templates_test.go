@@ -237,7 +237,7 @@ func TestGetSystemPrompt_DefaultFallbacksRenderFromTemplates(t *testing.T) {
 }
 
 func TestRenderSystemPrompt_AgentSpecificTemplates(t *testing.T) {
-	body, err := renderSystemPrompt("claude-code_review.tmpl", systemPromptView{
+	body, err := renderSystemPrompt("claude-code_review.txt.gotmpl", systemPromptView{
 		NoSkillsInstruction: noSkillsInstruction,
 		CurrentDate:         "2030-06-15",
 	})
