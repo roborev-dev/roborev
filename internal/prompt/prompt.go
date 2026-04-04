@@ -196,6 +196,7 @@ func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string,
 	opts := buildOpts{
 		additionalContext: additionalContext,
 		diffFilePath:      diffFilePath,
+		requireDiffFile:   true,
 	}
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
@@ -208,7 +209,7 @@ func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string,
 // used for Codex agents running in a sandboxed environment that cannot
 // execute git directly.
 func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, diffFilePath string) (string, error) {
-	opts := buildOpts{diffFilePath: diffFilePath}
+	opts := buildOpts{diffFilePath: diffFilePath, requireDiffFile: true}
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
@@ -298,11 +299,13 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 // buildRangePrompt to keep the positional parameter count manageable.
 type buildOpts struct {
 	additionalContext string
-	// diffFilePath, when non-empty, is a file in the repo directory
-	// containing the full diff. Used for Codex large-diff fallback
-	// so the sandboxed agent can read the diff from a file instead
-	// of running git commands.
+	// diffFilePath, when non-empty, is a file containing the full
+	// diff that the prompt can reference for oversized diffs.
 	diffFilePath string
+	// requireDiffFile makes truncation an error when no file path
+	// is available. Set by BuildWithDiffFile so the worker can
+	// detect when a snapshot is needed.
+	requireDiffFile bool
 }
 
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
@@ -383,6 +386,11 @@ func hardCapPrompt(prompt string, limit int) string {
 // variants for oversized diffs. When filePath is non-empty, the
 // variants reference the file; otherwise they just note truncation.
 func diffFileFallbackVariants(heading, filePath string) []string {
+	if filePath == "" {
+		return []string{
+			heading + "\n\n(Diff too large to include inline)\n",
+		}
+	}
 	return []string{
 		fmt.Sprintf("%s\n\n"+
 			"(Diff too large to include inline)\n\n"+
@@ -463,7 +471,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 	if truncated {
-		if opts.diffFilePath == "" {
+		if opts.diffFilePath == "" && opts.requireDiffFile {
 			return "", ErrDiffTruncatedNoFile
 		}
 		fallback := diffFileFallbackVariants("### Diff", opts.diffFilePath)
@@ -571,7 +579,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 	if truncated {
-		if opts.diffFilePath == "" {
+		if opts.diffFilePath == "" && opts.requireDiffFile {
 			return "", ErrDiffTruncatedNoFile
 		}
 		fallback := diffFileFallbackVariants("### Combined Diff", opts.diffFilePath)

@@ -425,21 +425,32 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
-func TestBuildPromptOversizedDiffWithoutFileReturnsError(t *testing.T) {
+func TestBuildPromptOversizedDiffWithoutFileFallsBackToTruncationNote(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 
 	b := NewBuilder(nil)
-	_, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	p, err := b.Build(repoPath, sha, 0, 0, "codex", "")
+	require.NoError(t, err)
+	assertContains(t, p, "Diff too large to include inline", "expected truncation note")
+	assertNotContains(t, p, "written to a file", "should not reference a file")
+}
+
+func TestBuildWithDiffFileOversizedDiffWithoutFileReturnsError(t *testing.T) {
+	repoPath, sha := setupLargeDiffRepo(t)
+
+	b := NewBuilder(nil)
+	_, err := b.BuildWithDiffFile(repoPath, sha, 0, 0, "codex", "", "")
 	require.ErrorIs(t, err, ErrDiffTruncatedNoFile)
 }
 
-func TestBuildRangePromptOversizedDiffWithoutFileReturnsError(t *testing.T) {
+func TestBuildRangePromptOversizedDiffWithoutFileFallsBackToTruncationNote(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepo(t)
 	rangeRef := sha + "~1.." + sha
 
 	b := NewBuilder(nil)
-	_, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
-	require.ErrorIs(t, err, ErrDiffTruncatedNoFile)
+	p, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err)
+	assertContains(t, p, "Diff too large to include inline", "expected truncation note")
 }
 
 func TestBuildWithDiffFileCodexOversizedDiffReferencesFile(t *testing.T) {

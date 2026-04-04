@@ -422,13 +422,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
-		// Normal job - build prompt from git ref. Try without a
-		// diff file first; if the diff is too large to inline the
-		// builder returns ErrDiffTruncatedNoFile, and we write a
-		// snapshot file and retry.
-		reviewPrompt, err = pb.Build(
+		// Normal job - build prompt from git ref. BuildWithDiffFile
+		// with empty path returns ErrDiffTruncatedNoFile when the
+		// diff is too large, signaling that a snapshot is needed.
+		// Small diffs inline normally.
+		reviewPrompt, err = pb.BuildWithDiffFile(
 			effectiveRepoPath, job.GitRef, job.RepoID,
-			cfg.ReviewContextCount, job.Agent, job.ReviewType,
+			cfg.ReviewContextCount, job.Agent, job.ReviewType, "",
 		)
 		if errors.Is(err, prompt.ErrDiffTruncatedNoFile) {
 			excludes := config.ResolveExcludePatterns(
@@ -1044,16 +1044,13 @@ func preparePrebuiltPrompt(
 	}
 	diffFile, cleanup, err := prepareDiffFile(repoPath, job, excludes)
 	if err != nil || diffFile == "" {
-		// Snapshot unavailable — strip the placeholder so the agent
-		// sees a plain truncation note rather than a broken path.
+		// Snapshot unavailable — replace the entire file-reference
+		// block with a plain truncation note.
 		if cleanup != nil {
 			cleanup()
 		}
 		log.Printf("Warning: prebuilt prompt diff snapshot unavailable: %v", err)
-		stripped := strings.NewReplacer(
-			shellQuoteForPrompt(prompt.DiffFilePathPlaceholder), "",
-			prompt.DiffFilePathPlaceholder, "",
-		).Replace(reviewPrompt)
+		stripped := stripDiffFileBlock(reviewPrompt)
 		return stripped, nil, nil
 	}
 	replacer := strings.NewReplacer(
@@ -1069,6 +1066,19 @@ func shellQuoteForPrompt(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// stripDiffFileBlock replaces the diff-file fallback section in a
+// prebuilt prompt with a plain truncation note, removing misleading
+// "written to a file" / "Read the diff from" instructions.
+func stripDiffFileBlock(s string) string {
+	const marker = "(Diff too large to include inline)"
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		// No truncation block found — just remove the placeholder
+		return strings.ReplaceAll(s, prompt.DiffFilePathPlaceholder, "")
+	}
+	return s[:idx+len(marker)] + "\n"
 }
 
 // logJobFailed logs a job failure to the activity log
