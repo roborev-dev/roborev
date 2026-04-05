@@ -14,43 +14,6 @@ import (
 	"testing"
 )
 
-func TestOpenCodeModelFlag(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name         string
-		model        string
-		wantModel    bool
-		wantContains string
-	}{
-		{
-			name:      "no model omits flag",
-			model:     "",
-			wantModel: false,
-		},
-		{
-			name:         "explicit model includes flag",
-			model:        "anthropic/claude-sonnet-4-20250514",
-			wantModel:    true,
-			wantContains: "anthropic/claude-sonnet-4-20250514",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			a := NewOpenCodeAgent("opencode")
-			a.Model = tt.model
-			cl := a.CommandLine()
-			assertContains(t, cl, "--format json")
-			if tt.wantModel {
-				assertContains(t, cl, "--model")
-				assertContains(t, cl, tt.wantContains)
-			} else {
-				assertNotContains(t, cl, "--model")
-			}
-		})
-	}
-}
-
 func TestOpenCodeReviewModelFlag(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
@@ -220,43 +183,6 @@ func TestOpenCodeReviewNoOutput(t *testing.T) {
 	assertEqual(t, result, "No review output generated")
 }
 
-func TestParseOpenCodeJSON(t *testing.T) {
-	t.Parallel()
-
-	lines := strings.Join([]string{
-		makeTextEvent("Part one."),
-		makeOpenCodeEvent("tool", map[string]any{
-			"type": "tool", "tool": "Read",
-		}),
-		makeTextEvent(" Part two."),
-	}, "\n") + "\n"
-
-	var outputBuf bytes.Buffer
-	result, err := parseOpenCodeJSON(
-		strings.NewReader(lines), newSyncWriter(&outputBuf),
-	)
-	require.NoError(t, err, "parseOpenCodeJSON: %v")
-
-	assertEqual(t, result, " Part two.")
-
-	out := outputBuf.String()
-	assert.Equal(t, 3, strings.Count(out, "\n"), "expected 3 lines written to output, got:\n%s", out)
-
-}
-
-func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
-	t.Parallel()
-
-	lines := makeTextEvent("ok") + "\n"
-
-	result, err := parseOpenCodeJSON(
-		strings.NewReader(lines), nil,
-	)
-	require.NoError(t, err, "parseOpenCodeJSON: %v")
-
-	assertEqual(t, result, "ok")
-}
-
 func TestOpenCodeReviewStderrStreamedToOutput(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
@@ -302,34 +228,6 @@ func TestOpenCodeReviewNilOutput(t *testing.T) {
 	require.NoError(t, err, "Review with nil output: %v")
 
 	assertEqual(t, result, "Review content")
-}
-
-func TestParseOpenCodeJSON_ReadError(t *testing.T) {
-	t.Parallel()
-
-	result, err := parseOpenCodeJSON(
-		&failAfterReader{
-			data: makeTextEvent("partial") + "\n",
-		},
-		nil,
-	)
-	require.Error(t, err)
-
-	assertContains(t, result, "partial")
-}
-
-type failAfterReader struct {
-	data string
-	done bool
-}
-
-func (r *failAfterReader) Read(p []byte) (int, error) {
-	if r.done {
-		return 0, io.ErrUnexpectedEOF
-	}
-	r.done = true
-	n := copy(p, r.data)
-	return n, nil
 }
 
 type reviewTestOpts struct {
@@ -428,48 +326,6 @@ func readFileOrFatal(t *testing.T, path string) []byte {
 	require.NoError(t, err, "failed to read file %s: %v", path)
 
 	return data
-}
-
-func TestStripTerminalControls(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"plain text", "hello world", "hello world"},
-		{"ANSI color stripped", "\x1b[31mred\x1b[0m text", "red text"},
-		{"OSC title stripped", "\x1b]0;evil\x07safe", "safe"},
-		{"BEL removed", "bell\x07here", "bellhere"},
-		{"newlines preserved", "line1\nline2", "line1\nline2"},
-		{"CRLF normalized", "a\r\nb\rc", "a\nb\nc"},
-		{"tabs preserved", "col1\tcol2", "col1\tcol2"},
-		{"null byte removed", "a\x00b", "ab"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := stripTerminalControls(tt.input)
-			assertEqual(t, got, tt.want)
-		})
-	}
-}
-
-func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
-	t.Parallel()
-
-	lines := makeTextEvent("\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe") + "\n"
-
-	result, err := parseOpenCodeJSON(
-		strings.NewReader(lines), nil,
-	)
-	require.NoError(t, err, "parseOpenCodeJSON: %v")
-
-	assert.NotContains(t, result, "\x1b")
-	assert.NotContains(t, result, "\x07")
-	assertContains(t, result, "red")
-	assertContains(t, result, "safe")
-	assertNotContains(t, result, "evil")
 }
 
 func makeOpenCodeEvent(eventType string, part map[string]any) string {

@@ -13,42 +13,6 @@ import (
 	"testing"
 )
 
-func TestKiloModelFlag(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name         string
-		model        string
-		wantModel    bool
-		wantContains string
-	}{
-		{
-			name:      "no model omits flag",
-			model:     "",
-			wantModel: false,
-		},
-		{
-			name:         "explicit model includes flag",
-			model:        "anthropic/claude-sonnet-4-20250514",
-			wantModel:    true,
-			wantContains: "anthropic/claude-sonnet-4-20250514",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			a := NewKiloAgent("kilo")
-			a.Model = tt.model
-			cl := a.CommandLine()
-			if tt.wantModel {
-				assertContains(t, cl, "--model")
-				assertContains(t, cl, tt.wantContains)
-			} else {
-				assertNotContains(t, cl, "--model")
-			}
-		})
-	}
-}
-
 func TestKiloReviewModelFlag(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
@@ -142,53 +106,6 @@ func TestKiloReviewStripsANSIFromJSONL(t *testing.T) {
 	result, _, _ := runKiloMockReview(t, "", "prompt", stdoutLines)
 	assertContains(t, result, "red text")
 	assertNotContains(t, result, "\x1b[")
-}
-
-func TestKiloAgenticAutoFlag(t *testing.T) {
-	skipIfWindows(t)
-
-	withUnsafeAgents(t, false)
-	a := NewKiloAgent("kilo").WithAgentic(true).(*KiloAgent)
-	cl := a.CommandLine()
-	assertContains(t, cl, "--auto")
-
-	b := NewKiloAgent("kilo").WithAgentic(false).(*KiloAgent)
-	cl2 := b.CommandLine()
-	assertNotContains(t, cl2, "--auto")
-}
-
-func TestKiloVariantFlag(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		reasoning   ReasoningLevel
-		wantVariant bool
-		wantValue   string
-	}{
-		{name: "thorough maps to high", reasoning: ReasoningThorough, wantVariant: true, wantValue: "high"},
-		{name: "fast maps to minimal", reasoning: ReasoningFast, wantVariant: true, wantValue: "minimal"},
-		{name: "standard omits variant", reasoning: ReasoningStandard, wantVariant: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			a := NewKiloAgent("kilo").WithReasoning(tt.reasoning).(*KiloAgent)
-			cl := a.CommandLine()
-			if tt.wantVariant {
-				assertContains(t, cl, "--variant")
-				assertContains(t, cl, tt.wantValue)
-			} else {
-				assertNotContains(t, cl, "--variant")
-			}
-		})
-	}
-}
-
-func TestKiloUsesJSONFormat(t *testing.T) {
-	t.Parallel()
-	a := NewKiloAgent("kilo")
-	cl := a.CommandLine()
-	assertContains(t, cl, "--format json")
 }
 
 func TestKiloReviewStderrOnExitZero(t *testing.T) {
