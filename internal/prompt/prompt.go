@@ -27,98 +27,6 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
-// SystemPromptSingle is the base instruction for single commit reviews
-const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-Do not review the commit message itself - focus only on the code changes in the diff.
-
-After reviewing, provide:
-
-1. A brief summary of what the commit does
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// SystemPromptDirty is the base instruction for reviewing uncommitted (dirty) changes
-const SystemPromptDirty = `You are a code reviewer. Review the following uncommitted changes for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-After reviewing, provide:
-
-1. A brief summary of what the changes do
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// SystemPromptRange is the base instruction for commit range reviews
-const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below for:
-
-1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
-2. **Security**: Injection vulnerabilities, auth issues, data exposure
-3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
-4. **Regressions**: Changes that might break existing functionality
-5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
-
-Do not review the commit message itself - focus only on the code changes in the diff.
-
-After reviewing, provide:
-
-1. A brief summary of what the commits do
-2. Any issues found, listed with:
-   - Severity (high/medium/low)
-   - File and line reference where possible
-   - A brief explanation of the problem and suggested fix
-
-If you find no issues, state "No issues found." after the summary.`
-
-// PreviousReviewsHeader introduces the previous reviews section
-const PreviousReviewsHeader = `
-## Previous Reviews
-
-The following are reviews of recent commits in this repository. Use them as context
-to understand ongoing work and to check if the current commit addresses previous feedback.
-
-**Important:** Reviews may include responses from developers. Pay attention to these responses -
-they may indicate known issues that should be ignored, explain why certain patterns exist,
-or provide context that affects how you should evaluate similar code in the current commit.
-`
-
-// ProjectGuidelinesHeader introduces the project-specific guidelines section
-const ProjectGuidelinesHeader = `
-## Project Guidelines
-
-The following are project-specific guidelines for this repository. Take these into account
-when reviewing the code - they may override or supplement the default review criteria.
-`
-
-// PreviousAttemptsForCommitHeader introduces previous review attempts for the same commit
-const PreviousAttemptsForCommitHeader = `
-## Previous Review Attempts
-
-This commit has been reviewed before. The following are previous review results and any
-responses from developers. Use this context to:
-- Avoid repeating issues that have been marked as known/acceptable
-- Check if previously identified issues are still present
-- Consider developer responses about why certain patterns exist
-`
-
 // ReviewContext holds a commit SHA and its associated review (if any) plus responses
 type ReviewContext struct {
 	SHA       string
@@ -188,13 +96,14 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
-	var optionalContext strings.Builder
+	optional := optionalSectionsView{}
 
 	// Add project-specific guidelines if configured
 	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&optionalContext, repoCfg.ReviewGuidelines)
+		optional.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
 	}
 
 	// Get previous reviews for context (use HEAD as reference point)
@@ -203,110 +112,119 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, headSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				b.writePreviousReviews(&optionalContext, contexts)
+				optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
 		}
 	}
 
-	currentRequired := "## Uncommitted Changes\n\n" +
-		"The following changes have not yet been committed.\n\n"
-
-	// Build diff section
-	var diffSection strings.Builder
-	diffSection.WriteString("### Diff\n\n")
-	diffSection.WriteString("```diff\n")
-	diffSection.WriteString(diff)
-	if !strings.HasSuffix(diff, "\n") {
-		diffSection.WriteString("\n")
+	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	inlineDiff, err := renderInlineDiff(diff)
+	if err != nil {
+		return "", err
 	}
-	diffSection.WriteString("```\n")
-
-	// Trim optional context if it alone would exceed the prompt cap
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	optCtx := optionalContext.String()
-	requiredLen := len(requiredPrefix) + len(currentRequired)
-	if requiredLen+len(optCtx) > promptCap {
-		optCtx = truncateUTF8(optCtx, max(0, promptCap-requiredLen))
+	view := dirtyPromptView{
+		Optional: optional,
+		Current: dirtyChangesSectionView{
+			Description: "The following changes have not yet been committed.",
+		},
+		Diff: diffSectionView{
+			Heading: "### Diff",
+			Body:    inlineDiff,
+		},
 	}
 
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optCtx)
-	sb.WriteString(currentRequired)
-
-	// Check if adding the diff would exceed max prompt size
-	if sb.Len()+diffSection.Len() > promptCap {
-		// For dirty changes, we can't tell them to "use git diff" because
-		// the working tree may have changed. Just truncate with a note.
-		sb.WriteString("### Diff\n\n")
-		sb.WriteString("(Diff too large to include in full)\n")
-		// Include truncated diff
-		maxDiffLen := promptCap - sb.Len() - 100 // Leave room for closing markers
-		if maxDiffLen > 1000 {
-			sb.WriteString("```diff\n")
-			sb.WriteString(truncateUTF8(diff, maxDiffLen))
-			sb.WriteString("\n... (truncated)\n")
-			sb.WriteString("```\n")
+	currentSection, err := renderDirtyChangesSection(view.Current)
+	if err != nil {
+		return "", err
+	}
+	fullDiffBlock, err := renderDiffBlock(view.Diff)
+	if err != nil {
+		return "", err
+	}
+	if len(currentSection)+len(fullDiffBlock) > bodyLimit {
+		fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+		if err != nil {
+			return "", err
 		}
-	} else {
-		sb.WriteString(diffSection.String())
+		fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+		if err != nil {
+			return "", err
+		}
+		maxDiffLen := bodyLimit - len(currentSection) - len(fallbackBlock)
+		view.Diff.Body = ""
+		sizingView := view
+		sizingBody, err := renderDirtyPrompt(sizingView)
+		if err != nil {
+			return "", err
+		}
+		for len(sizingBody) > bodyLimit && trimOptionalSections(&sizingView.Optional) {
+			sizingBody, err = renderDirtyPrompt(sizingView)
+			if err != nil {
+				return "", err
+			}
+		}
+		if maxDiffLen > 1000 {
+			emptyFallbackOptional := sizingView.Optional
+			sampleBody := "X\n"
+			sampleFallback, err := renderDirtyTruncatedDiffFallback(sampleBody)
+			if err != nil {
+				return "", err
+			}
+			wrapperOverhead := len(sampleFallback) - len(fallbackOnly) - len(sampleBody)
+			truncationSuffix := "\n... (truncated)\n"
+			availableContentLen := maxDiffLen - wrapperOverhead - len(truncationSuffix)
+			if availableContentLen > 0 {
+				truncatedContent := truncateUTF8(diff, availableContentLen)
+				for truncatedContent != "" {
+					truncatedBody := truncatedContent
+					if !strings.HasSuffix(truncatedBody, "\n") {
+						truncatedBody += "\n"
+					}
+					truncatedBody += "... (truncated)\n"
+					view.Diff.Fallback, err = renderDirtyTruncatedDiffFallback(truncatedBody)
+					if err != nil {
+						return "", err
+					}
+					sizingView.Diff = view.Diff
+					rendered, err := renderDirtyPrompt(sizingView)
+					if err != nil {
+						return "", err
+					}
+					if len(rendered) <= bodyLimit {
+						view.Optional = sizingView.Optional
+						break
+					}
+					if trimOptionalSections(&sizingView.Optional) {
+						continue
+					}
+					overflow := len(rendered) - bodyLimit
+					next := truncateUTF8(truncatedContent, max(0, len(truncatedContent)-overflow))
+					if next == truncatedContent {
+						next = truncateUTF8(truncatedContent, max(0, len(truncatedContent)-1))
+					}
+					truncatedContent = next
+				}
+				if truncatedContent == "" {
+					view.Diff.Fallback = fallbackOnly
+					view.Optional = emptyFallbackOptional
+				}
+			} else {
+				view.Diff.Fallback = fallbackOnly
+			}
+		} else {
+			view.Diff.Fallback = fallbackOnly
+		}
 	}
 
-	return hardCapPrompt(sb.String(), promptCap), nil
+	body, err := fitDirtyPrompt(bodyLimit, view)
+	if err != nil {
+		return "", err
+	}
+	return requiredPrefix + hardCapPrompt(body, bodyLimit), nil
 }
 
 func isCodexReviewAgent(agentName string) bool {
 	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
-}
-func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
-	if len(variants) == 0 || limit <= 0 {
-		return
-	}
-	shortest := variants[len(variants)-1]
-	remaining := limit - sb.Len()
-	if remaining <= 0 {
-		return
-	}
-	for _, variant := range variants {
-		if len(variant) <= remaining {
-			sb.WriteString(variant)
-			return
-		}
-	}
-	sb.WriteString(truncateUTF8(shortest, remaining))
-}
-
-func buildPromptPreservingCurrentSection(
-	requiredPrefix, optionalContext, currentRequired, currentOverflow string,
-	limit int,
-	variants ...string,
-) string {
-	shortestLen := 0
-	if len(variants) > 0 {
-		shortestLen = len(variants[len(variants)-1])
-	}
-	softBudget := max(0, limit-len(requiredPrefix)-len(currentRequired)-shortestLen)
-	softLen := len(optionalContext) + len(currentOverflow)
-	if softLen > softBudget {
-		overflow := softLen - softBudget
-		if overflow > 0 && len(optionalContext) > 0 {
-			originalLen := len(optionalContext)
-			trimmedLen := max(0, len(optionalContext)-overflow)
-			optionalContext = truncateUTF8(optionalContext, trimmedLen)
-			overflow -= originalLen - len(optionalContext)
-		}
-		if overflow > 0 && len(currentOverflow) > 0 {
-			currentOverflow = truncateUTF8(currentOverflow, max(0, len(currentOverflow)-overflow))
-		}
-	}
-
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optionalContext)
-	sb.WriteString(currentRequired)
-	sb.WriteString(currentOverflow)
-	writeLongestFitting(&sb, limit, variants...)
-	return hardCapPrompt(sb.String(), limit)
 }
 
 func truncateUTF8(s string, maxBytes int) string {
@@ -388,67 +306,158 @@ func needsShellQuoting(s string) bool {
 	return false
 }
 
-func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []string {
-	statCmd := renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...)
-	return []string{
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `git show %s -- path/to/file`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			statCmd, diffCmd, filesCmd, shellQuote(sha)),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...)),
+func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []diffSectionView {
+	view := commitInspectionFallbackView{
+		SHA:         sha,
+		StatCmd:     renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...),
+		DiffCmd:     renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...),
+		FilesCmd:    renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...),
+		ShowPathCmd: renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...),
+	}
+	names := []string{"codex_commit_fallback_full", "codex_commit_fallback_medium", "codex_commit_fallback_short", "codex_commit_fallback_shortest"}
+	variants := make([]diffSectionView, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderCommitInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		variants = append(variants, diffSectionView{Heading: "### Diff", Fallback: fallback})
+	}
+	return variants
+}
+
+func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []diffSectionView {
+	view := rangeInspectionFallbackView{
+		RangeRef: rangeRef,
+		LogCmd:   renderShellCommand("git", "log", "--oneline", rangeRef),
+		StatCmd:  renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...),
+		DiffCmd:  renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...),
+		FilesCmd: renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...),
+		ViewCmd:  renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...),
+	}
+	names := []string{"codex_range_fallback_full", "codex_range_fallback_medium", "codex_range_fallback_short", "codex_range_fallback_shortest"}
+	variants := make([]diffSectionView, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderRangeInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		variants = append(variants, diffSectionView{Heading: "### Combined Diff", Fallback: fallback})
+	}
+	return variants
+}
+
+func selectDiffSectionVariant(variants []diffSectionView, remaining int) (diffSectionView, error) {
+	if len(variants) == 0 {
+		return diffSectionView{}, nil
+	}
+	selected := variants[len(variants)-1]
+	for _, variant := range variants {
+		block, err := renderDiffBlock(variant)
+		if err != nil {
+			return diffSectionView{}, err
+		}
+		if len(block) <= remaining {
+			return variant, nil
+		}
+	}
+	return truncateDiffSectionFallbackToFit(selected, remaining)
+}
+
+func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSectionView, error) {
+	block, err := renderDiffBlock(view)
+	if err != nil || len(block) <= limit {
+		return view, err
+	}
+	baseBlock, err := renderDiffBlock(diffSectionView{Heading: view.Heading, Body: ""})
+	if err != nil {
+		return diffSectionView{}, err
+	}
+	view.Fallback = truncateUTF8(view.Fallback, max(0, limit-len(baseBlock)))
+	return view, nil
+}
+
+type rangeMetadataLoss struct {
+	RemovedEntries  int
+	BlankedSubject  int
+	TrimmedOptional int
+}
+
+func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
+	switch {
+	case a.RemovedEntries != b.RemovedEntries:
+		return a.RemovedEntries - b.RemovedEntries
+	case a.BlankedSubject != b.BlankedSubject:
+		return a.BlankedSubject - b.BlankedSubject
+	default:
+		return a.TrimmedOptional - b.TrimmedOptional
 	}
 }
 
-func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []string {
-	logCmd := renderShellCommand("git", "log", "--oneline", rangeRef)
-	statCmd := renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...)
-	diffCmd := renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...)
-	filesCmd := renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...)
-	return []string{
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.\n\n"+
-			"Use commands like:\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n"+
-			"- `%s`\n\n"+
-			"Review the actual diff before writing findings.\n",
-			logCmd, statCmd, diffCmd, filesCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex in read-only review mode, inspect the commit range locally before writing findings.\n"+
-			"- `%s`\n"+
-			"- `%s`\n",
-			statCmd, diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"For Codex, inspect locally with `%s`.\n",
-			diffCmd),
-		fmt.Sprintf("### Combined Diff\n\n"+
-			"(Diff too large; for Codex run `%s` locally.)\n",
-			renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...)),
+func measureOptionalSectionsLoss(original, trimmed optionalSectionsView) int {
+	loss := 0
+	if len(original.PreviousAttempts) > 0 && len(trimmed.PreviousAttempts) == 0 {
+		loss++
 	}
+	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
+		loss++
+	}
+	if original.AdditionalContext != "" && trimmed.AdditionalContext == "" {
+		loss++
+	}
+	if original.ProjectGuidelines != nil && trimmed.ProjectGuidelines == nil {
+		loss++
+	}
+	return loss
+}
+
+func measureRangeMetadataLoss(original, trimmed rangePromptView) rangeMetadataLoss {
+	loss := rangeMetadataLoss{
+		RemovedEntries:  len(original.Current.Entries) - len(trimmed.Current.Entries),
+		TrimmedOptional: measureOptionalSectionsLoss(original.Optional, trimmed.Optional),
+	}
+	for i := range trimmed.Current.Entries {
+		if i >= len(original.Current.Entries) {
+			break
+		}
+		if original.Current.Entries[i].Subject != "" && trimmed.Current.Entries[i].Subject == "" {
+			loss.BlankedSubject++
+		}
+	}
+	return loss
+}
+
+func selectRichestRangePromptView(limit int, view rangePromptView, variants []diffSectionView) (rangePromptView, error) {
+	fallback := rangePromptView{Optional: view.Optional, Current: view.Current}
+	if len(variants) > 0 {
+		fallback.Diff = variants[len(variants)-1]
+	}
+	var (
+		best     rangePromptView
+		bestLoss rangeMetadataLoss
+		haveBest bool
+	)
+	for _, variant := range variants {
+		candidate := rangePromptView{Optional: view.Optional, Current: view.Current, Diff: variant}
+		trimmed, body, err := trimRangePromptView(limit, candidate)
+		if err != nil {
+			return rangePromptView{}, err
+		}
+		fallback = trimmed
+		if len(body) > limit {
+			continue
+		}
+		loss := measureRangeMetadataLoss(view, trimmed)
+		if !haveBest || compareRangeMetadataLoss(loss, bestLoss) < 0 {
+			best = trimmed
+			bestLoss = loss
+			haveBest = true
+		}
+	}
+	if haveBest {
+		return best, nil
+	}
+	return fallback, nil
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
@@ -461,27 +470,24 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
-	var optionalContext strings.Builder
-
-	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
-	b.writeAdditionalContext(&optionalContext, additionalContext)
+	optional := optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		AdditionalContext: buildAdditionalContextSection(additionalContext),
+	}
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
 		contexts, err := b.getPreviousReviewContexts(repoPath, sha, contextCount)
-		if err != nil {
-			// Log but don't fail - previous reviews are nice-to-have context
-			// Just continue without them
-		} else if len(contexts) > 0 {
-			b.writePreviousReviews(&optionalContext, contexts)
+		if err == nil && len(contexts) > 0 {
+			optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 		}
 	}
 
 	// Include previous review attempts for this same commit (for re-reviews)
-	b.writePreviousAttemptsForGitRef(&optionalContext, sha)
+	optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 
 	// Current commit section
 	shortSHA := git.ShortSHA(sha)
@@ -492,81 +498,85 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	var currentRequired strings.Builder
-	currentRequired.WriteString("## Current Commit\n\n")
-	fmt.Fprintf(&currentRequired, "**Commit:** %s\n", shortSHA)
-	currentRequired.WriteString("\n")
-
-	var currentOverflow strings.Builder
-	fmt.Fprintf(&currentOverflow, "**Subject:** %s\n", info.Subject)
-	fmt.Fprintf(&currentOverflow, "**Author:** %s\n", info.Author)
-	currentOverflow.WriteString("\n")
-	if info.Body != "" {
-		fmt.Fprintf(&currentOverflow, "**Message:**\n%s\n\n", info.Body)
+	currentView := currentCommitSectionView{
+		Commit:  shortSHA,
+		Subject: info.Subject,
+		Author:  info.Author,
+		Message: info.Body,
+	}
+	currentRequired, err := renderCurrentCommitRequired(currentView)
+	if err != nil {
+		return "", err
+	}
+	currentOverflow, err := renderCurrentCommitOverflow(currentView)
+	if err != nil {
+		return "", err
+	}
+	emptyInlineDiff, err := renderInlineDiff("")
+	if err != nil {
+		return "", err
+	}
+	emptyDiffBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Body: emptyInlineDiff})
+	if err != nil {
+		return "", err
 	}
 
-	// Get and include the diff.
-	// Budget the diff from non-trimmable sections only; optional context
-	// is trimmed afterward to fit the remaining space.
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	diffWrap := len("### Diff\n\n```diff\n") + len("\n```\n") + 1
-	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-requiredLen-diffWrap)
+	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	diffLimit := max(0, bodyLimit-len(currentRequired)-len(currentOverflow)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetDiffLimited(repoPath, sha, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
 	}
+
+	diffView := diffSectionView{Heading: "### Diff"}
 	if truncated {
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				codexCommitInspectionFallbackVariants(sha, pathspecArgs)...,
-			), nil
+			variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
+			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
+			if err != nil {
+				return "", err
+			}
+			optionalPrefix, err := renderOptionalSectionsPrefix(optional)
+			if err != nil {
+				return "", err
+			}
+			softBudget := max(0, bodyLimit-len(currentRequired)-len(shortestBlock))
+			softLen := len(optionalPrefix) + len(currentOverflow)
+			effectiveSoftLen := min(softLen, softBudget)
+			remaining := max(0, bodyLimit-len(currentRequired)-effectiveSoftLen)
+			diffView, err = selectDiffSectionVariant(variants, remaining)
+			if err != nil {
+				return "", err
+			}
 		} else {
-			fallback := "### Diff\n\n" +
-				"(Diff too large to include - please review the commit directly)\n" +
-				"View with: " + renderShellCommand("git", "show", sha) + "\n"
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				fallback,
-			), nil
+			fallback, err := renderGenericCommitFallback(renderShellCommand("git", "show", sha))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
+	} else {
+		inlineDiff, err := renderInlineDiff(diff)
+		if err != nil {
+			return "", err
+		}
+		diffView.Body = inlineDiff
 	}
 
-	// Build diff section
-	var diffSection strings.Builder
-	diffSection.WriteString("### Diff\n\n")
-	diffSection.WriteString("```diff\n")
-	diffSection.WriteString(diff)
-	if !strings.HasSuffix(diff, "\n") {
-		diffSection.WriteString("\n")
+	body, err := fitSinglePrompt(
+		bodyLimit,
+		singlePromptView{
+			Optional: optional,
+			Current:  currentView,
+			Diff:     diffView,
+		},
+	)
+	if err != nil {
+		return "", err
 	}
-	diffSection.WriteString("```\n")
-
-	// Trim optional context to fit remaining budget after the diff
-	optCtx := optionalContext.String()
-	ctxBudget := promptCap - requiredLen - diffSection.Len()
-	if len(optCtx) > ctxBudget {
-		optCtx = truncateUTF8(optCtx, max(0, ctxBudget))
-	}
-
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optCtx)
-	sb.WriteString(currentRequired.String())
-	sb.WriteString(currentOverflow.String())
-	sb.WriteString(diffSection.String())
-	return sb.String(), nil
+	return requiredPrefix + body, nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
@@ -579,13 +589,13 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := hardCapPrompt(GetSystemPrompt(agentName, promptType)+"\n", promptCap)
 
-	var optionalContext strings.Builder
-
-	// Add project-specific guidelines from default branch
-	b.writeProjectGuidelines(&optionalContext, LoadGuidelines(repoPath))
-	b.writeAdditionalContext(&optionalContext, additionalContext)
+	optional := optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		AdditionalContext: buildAdditionalContextSection(additionalContext),
+	}
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -593,13 +603,13 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, startSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				b.writePreviousReviews(&optionalContext, contexts)
+				optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
 		}
 	}
 
 	// Include previous review attempts for this same range (for re-reviews)
-	b.writePreviousAttemptsForGitRef(&optionalContext, rangeRef)
+	optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(rangeRef))
 
 	// Get commits in range
 	commits, err := git.GetRangeCommits(repoPath, rangeRef)
@@ -607,134 +617,111 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 
-	// Commit range section
-	var currentRequired strings.Builder
-	currentRequired.WriteString("## Commit Range\n\n")
-	fmt.Fprintf(&currentRequired, "Reviewing %d commits:\n\n", len(commits))
-
-	var currentOverflow strings.Builder
-	for _, sha := range commits {
-		info, err := git.GetCommitInfo(repoPath, sha)
-		shortSHA := git.ShortSHA(sha)
+	entries := make([]commitRangeEntryView, 0, len(commits))
+	for _, commitSHA := range commits {
+		short := git.ShortSHA(commitSHA)
+		info, err := git.GetCommitInfo(repoPath, commitSHA)
 		if err == nil {
-			fmt.Fprintf(&currentOverflow, "- %s %s\n", shortSHA, info.Subject)
-		} else {
-			fmt.Fprintf(&currentOverflow, "- %s\n", shortSHA)
+			entries = append(entries, commitRangeEntryView{Commit: short, Subject: info.Subject})
+			continue
 		}
+		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	currentOverflow.WriteString("\n")
+	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
+	currentRequiredText, err := renderCommitRangeRequired(currentView)
+	if err != nil {
+		return "", err
+	}
+	currentOverflowText, err := renderCommitRangeOverflow(currentView)
+	if err != nil {
+		return "", err
+	}
+	emptyInlineDiff, err := renderInlineDiff("")
+	if err != nil {
+		return "", err
+	}
+	emptyDiffBlock, err := renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Body: emptyInlineDiff})
+	if err != nil {
+		return "", err
+	}
 
-	// Get and include the combined diff for the range.
-	// Budget the diff from non-trimmable sections only; optional context
-	// is trimmed afterward to fit the remaining space.
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
-	requiredLen := len(requiredPrefix) + currentRequired.Len() + currentOverflow.Len()
-	diffLimit := max(0, promptCap-requiredLen-diffWrap)
+	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
+
+	diffView := diffSectionView{Heading: "### Combined Diff"}
 	if truncated {
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)...,
-			), nil
-		} else {
-			fallback := "### Combined Diff\n\n" +
-				"(Diff too large to include - please review the commits directly)\n" +
-				"View with: " + renderShellCommand("git", "diff", rangeRef) + "\n"
-			return buildPromptPreservingCurrentSection(
-				requiredPrefix,
-				optionalContext.String(),
-				currentRequired.String(),
-				currentOverflow.String(),
-				promptCap,
-				fallback,
-			), nil
-		}
-	}
-
-	// Build diff section
-	var diffSection strings.Builder
-	diffSection.WriteString("### Combined Diff\n\n")
-	diffSection.WriteString("```diff\n")
-	diffSection.WriteString(diff)
-	if !strings.HasSuffix(diff, "\n") {
-		diffSection.WriteString("\n")
-	}
-	diffSection.WriteString("```\n")
-
-	// Trim optional context to fit remaining budget after the diff
-	optCtx := optionalContext.String()
-	ctxBudget := promptCap - requiredLen - diffSection.Len()
-	if len(optCtx) > ctxBudget {
-		optCtx = truncateUTF8(optCtx, max(0, ctxBudget))
-	}
-
-	var sb strings.Builder
-	sb.WriteString(requiredPrefix)
-	sb.WriteString(optCtx)
-	sb.WriteString(currentRequired.String())
-	sb.WriteString(currentOverflow.String())
-	sb.WriteString(diffSection.String())
-	return sb.String(), nil
-}
-
-// writePreviousReviews writes the previous reviews section to the builder
-func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewContext) {
-	sb.WriteString(PreviousReviewsHeader)
-	sb.WriteString("\n")
-
-	// Show in chronological order (oldest first) for narrative flow
-	for i := len(contexts) - 1; i >= 0; i-- {
-		ctx := contexts[i]
-		shortSHA := git.ShortSHA(ctx.SHA)
-
-		fmt.Fprintf(sb, "--- Review for commit %s ---\n", shortSHA)
-		if ctx.Review != nil {
-			sb.WriteString(ctx.Review.Output)
-		} else {
-			sb.WriteString("No review available.")
-		}
-		sb.WriteString("\n")
-
-		// Include responses to this review
-		if len(ctx.Responses) > 0 {
-			sb.WriteString("\nComments on this review:\n")
-			for _, resp := range ctx.Responses {
-				fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
+			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+			selectedView, err := selectRichestRangePromptView(bodyLimit, rangePromptView{
+				Optional: optional,
+				Current:  currentView,
+			}, variants)
+			if err != nil {
+				return "", err
 			}
+			optional = selectedView.Optional
+			currentView = selectedView.Current
+			diffView = selectedView.Diff
+		} else {
+			fallback, err := renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
-		sb.WriteString("\n")
+	} else {
+		inlineDiff, err := renderInlineDiff(diff)
+		if err != nil {
+			return "", err
+		}
+		diffView.Body = inlineDiff
+	}
+
+	body, err := fitRangePrompt(
+		bodyLimit,
+		rangePromptView{
+			Optional: optional,
+			Current:  currentView,
+			Diff:     diffView,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return requiredPrefix + body, nil
+}
+
+func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {
+	trimmed := strings.TrimSpace(guidelines)
+	if trimmed == "" {
+		return nil
+	}
+	return &markdownSectionView{
+		Heading: "## Project Guidelines",
+		Body:    trimmed,
 	}
 }
 
-// writeProjectGuidelines writes the project-specific guidelines section
-func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string) {
-	if guidelines == "" {
-		return
+func buildAdditionalContextSection(additionalContext string) string {
+	trimmed := strings.TrimSpace(additionalContext)
+	if trimmed == "" {
+		return ""
 	}
-
-	sb.WriteString(ProjectGuidelinesHeader)
-	sb.WriteString("\n")
-	sb.WriteString(strings.TrimSpace(guidelines))
-	sb.WriteString("\n\n")
+	return trimmed + "\n\n"
 }
 
-func (b *Builder) writeAdditionalContext(sb *strings.Builder, additionalContext string) {
-	if strings.TrimSpace(additionalContext) == "" {
-		return
+func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
+	ordered := make([]ReviewContext, 0, len(contexts))
+	for i := len(contexts) - 1; i >= 0; i-- {
+		ordered = append(ordered, contexts[i])
 	}
-	sb.WriteString(strings.TrimSpace(additionalContext))
-	sb.WriteString("\n\n")
+	return previousReviewViews(ordered)
 }
 
 // LoadGuidelines loads review guidelines from the repo's default
@@ -767,38 +754,28 @@ func LoadGuidelines(repoPath string) string {
 	return ""
 }
 
-// writePreviousAttemptsForGitRef writes previous review attempts for the same git ref (commit or range)
-func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef string) {
+func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext {
 	if b.db == nil {
-		return
+		return nil
 	}
 
 	reviews, err := b.db.GetAllReviewsForGitRef(gitRef)
 	if err != nil || len(reviews) == 0 {
-		return
+		return nil
 	}
 
-	sb.WriteString(PreviousAttemptsForCommitHeader)
-	sb.WriteString("\n")
-
-	for i, review := range reviews {
-		fmt.Fprintf(sb, "--- Review Attempt %d (%s, %s) ---\n",
-			i+1, review.Agent, review.CreatedAt.Format("2006-01-02 15:04"))
-		sb.WriteString(review.Output)
-		sb.WriteString("\n")
-
-		// Fetch and include comments for this review
+	attempts := make([]reviewAttemptContext, 0, len(reviews))
+	for _, review := range reviews {
+		attempt := reviewAttemptContext{Review: review}
 		if review.JobID > 0 {
 			responses, err := b.db.GetCommentsForJob(review.JobID)
-			if err == nil && len(responses) > 0 {
-				sb.WriteString("\nComments on this review:\n")
-				for _, resp := range responses {
-					fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
-				}
+			if err == nil {
+				attempt.Responses = responses
 			}
 		}
-		sb.WriteString("\n")
+		attempts = append(attempts, attempt)
 	}
+	return attempts
 }
 
 // getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
@@ -834,158 +811,54 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 	return contexts, nil
 }
 
-// SystemPromptDesignReview is the base instruction for reviewing design documents.
-// The input is a code diff (commit, range, or uncommitted changes) that is expected
-// to contain design artifacts such as PRDs, task lists, or architectural proposals.
-const SystemPromptDesignReview = `You are a design reviewer. The changes shown below are expected to contain design artifacts — PRDs, task lists, architectural proposals, or similar planning documents. Review them for:
-
-1. **Completeness**: Are goals, non-goals, success criteria, and edge cases defined?
-2. **Feasibility**: Are technical decisions grounded in the actual codebase?
-3. **Task scoping**: Are implementation stages small enough to review incrementally? Are dependencies ordered correctly?
-4. **Missing considerations**: Security, performance, backwards compatibility, error handling
-5. **Clarity**: Are decisions justified and understandable?
-
-If the changes do not appear to contain design documents, note this and review whatever design intent is evident from the code changes.
-
-After reviewing, provide:
-
-1. A brief summary of what the design proposes
-2. PRD findings, listed with:
-   - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
-3. Task list findings, listed with:
-   - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
-4. Any missing considerations not covered by the design
-5. A verdict: Pass or Fail with brief justification
-
-If you find no issues, state "No issues found." after the summary.`
-
 // BuildSimple constructs a simpler prompt without database context
 func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}
 	return b.Build(repoPath, sha, 0, 0, agentName, "")
 }
 
-// SystemPromptSecurity is the instruction for security-focused reviews
-const SystemPromptSecurity = `You are a security code reviewer. Analyze the code changes shown below with a security-first mindset. Focus on:
-
-1. **Injection vulnerabilities**: SQL injection, command injection, XSS, template injection, LDAP injection, header injection
-2. **Authentication & authorization**: Missing auth checks, privilege escalation, insecure session handling, broken access control
-3. **Credential exposure**: Hardcoded secrets, API keys, passwords, tokens in source code or logs
-4. **Path traversal**: Unsanitized file paths, directory traversal via user input, symlink attacks
-5. **Unsafe patterns**: Unsafe deserialization, insecure random number generation, missing input validation, buffer overflows
-6. **Dependency concerns**: Known vulnerable dependencies, typosquatting risks, pinning issues
-7. **CI/CD security**: Workflow injection via pull_request_target, script injection via untrusted inputs, excessive permissions
-8. **Data handling**: Sensitive data in logs, missing encryption, insecure data storage, PII exposure
-9. **Concurrency issues**: Race conditions leading to security bypasses, TOCTOU vulnerabilities
-10. **Error handling**: Information leakage via error messages, missing error checks on security-critical operations
-
-For each finding, provide:
-- Severity (critical/high/medium/low)
-- File and line reference
-- Description of the vulnerability
-- Suggested remediation
-
-If you find no security issues, state "No issues found." after the summary.
-Do not report code quality or style issues unless they have security implications.`
-
-// SystemPromptAddress is the instruction for addressing review findings
-const SystemPromptAddress = `You are a code assistant. Your task is to address the findings from a code review.
-
-Make the minimal changes necessary to address these findings:
-- Be pragmatic and simple - don't over-engineer
-- Focus on the specific issues mentioned
-- Don't refactor unrelated code
-- Don't add unnecessary abstractions or comments
-- Don't make cosmetic changes
-
-After making changes:
-1. Run the build command to verify the code compiles
-2. Run tests to verify nothing is broken
-3. Fix any build errors or test failures before finishing
-
-For Go projects, use: GOCACHE=/tmp/go-build go build ./... and GOCACHE=/tmp/go-build go test ./...
-(The GOCACHE override is needed for sandbox compatibility)
-
-IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
-
-When finished, provide a brief summary in this format (this will be used in the commit message):
-
-Changes:
-- <first change>
-- <second change>
-...
-
-Keep the summary concise (under 10 bullet points). Put the most important changes first.`
-
-// PreviousAttemptsHeader introduces previous addressing attempts section
-const PreviousAttemptsHeader = `
-## Previous Addressing Attempts
-
-The following are previous attempts to address this or related reviews.
-Learn from these to avoid repeating approaches that didn't fully resolve the issues.
-Be pragmatic - if previous attempts were rejected for being too minor, make more substantive fixes.
-If they were rejected for being over-engineered, keep it simpler.
-`
-
 // BuildAddressPrompt constructs a prompt for addressing review findings.
 // When minSeverity is non-empty, a severity filtering instruction is
 // injected before the findings section.
 func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, previousAttempts []storage.Response, minSeverity string) (string, error) {
-	var sb strings.Builder
-
-	// System prompt
-	sb.WriteString(GetSystemPrompt(review.Agent, "address"))
-	sb.WriteString("\n")
-
-	// Add project-specific guidelines if configured
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	view := addressPromptView{
+		SeverityFilter: config.SeverityInstruction(minSeverity),
+		ReviewFindings: review.Output,
+		JobID:          review.JobID,
 	}
 
-	// Include previous attempts to avoid repeating failed approaches
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		view.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
+	}
+
 	if len(previousAttempts) > 0 {
-		sb.WriteString(PreviousAttemptsHeader)
-		sb.WriteString("\n")
+		view.PreviousAttempts = make([]addressAttemptView, 0, len(previousAttempts))
 		for _, attempt := range previousAttempts {
-			fmt.Fprintf(&sb, "--- Attempt by %s at %s ---\n",
-				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04"))
-			sb.WriteString(attempt.Response)
-			sb.WriteString("\n\n")
+			when := ""
+			if !attempt.CreatedAt.IsZero() {
+				when = attempt.CreatedAt.Format("2006-01-02 15:04")
+			}
+			view.PreviousAttempts = append(view.PreviousAttempts, addressAttemptView{
+				Responder: attempt.Responder,
+				Response:  attempt.Response,
+				When:      when,
+			})
 		}
 	}
 
-	// Severity filter instruction (before findings)
-	if inst := config.SeverityInstruction(minSeverity); inst != "" {
-		sb.WriteString(inst)
-		sb.WriteString("\n")
-	}
-
-	// Review findings section
-	fmt.Fprintf(&sb, "## Review Findings to Address (Job %d)\n\n", review.JobID)
-	sb.WriteString(review.Output)
-	sb.WriteString("\n\n")
-
-	// Include the original diff for context if we have job info.
-	// Don't apply user exclude patterns — the diff should match
-	// what the original review saw so findings stay relevant.
-	// Built-in lockfile excludes still apply (hardcoded in GetDiff).
-	// Tradeoff: without user excludes the diff may be larger and
-	// trip the MaxPromptSize/2 guard, but that's a soft degradation
-	// vs hiding the exact file the findings reference.
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
 		diff, err := git.GetDiff(repoPath, review.Job.GitRef)
 		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {
-			sb.WriteString("## Original Commit Diff (for context)\n\n")
-			sb.WriteString("```diff\n")
-			sb.WriteString(diff)
-			if !strings.HasSuffix(diff, "\n") {
-				sb.WriteString("\n")
+			view.OriginalDiff = diff
+			if !strings.HasSuffix(view.OriginalDiff, "\n") {
+				view.OriginalDiff += "\n"
 			}
-			sb.WriteString("```\n")
 		}
 	}
 
-	return sb.String(), nil
+	body, err := renderAddressPromptFromSections(view)
+	if err != nil {
+		return "", err
+	}
+	return GetSystemPrompt(review.Agent, "address") + "\n" + body, nil
 }

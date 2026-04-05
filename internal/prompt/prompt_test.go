@@ -68,6 +68,35 @@ func TestBuildPromptWithAdditionalContext(t *testing.T) {
 	assertContains(t, prompt, "Most recent human comment first.", "Prompt should contain additional context body")
 }
 
+func TestBuildPromptWithAdditionalContextAndPreviousAttemptsPreservesSectionOrder(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	db, repoID := setupDBWithCommits(t, repoPath, commits)
+
+	testutil.CreateCompletedReview(t, db, repoID, commits[5], "test", "First review")
+
+	builder := NewBuilder(db)
+	prompt, err := builder.BuildWithAdditionalContext(
+		repoPath,
+		commits[5],
+		repoID,
+		0,
+		"claude-code",
+		"",
+		"## Pull Request Discussion\n\nNewest comment first.\n",
+	)
+	require.NoError(t, err)
+
+	additionalContextPos := strings.Index(prompt, "## Pull Request Discussion")
+	previousAttemptsPos := strings.Index(prompt, "## Previous Review Attempts")
+	currentCommitPos := strings.Index(prompt, "## Current Commit")
+
+	require.NotEqual(t, -1, additionalContextPos)
+	require.NotEqual(t, -1, previousAttemptsPos)
+	require.NotEqual(t, -1, currentCommitPos)
+	assert.Less(t, additionalContextPos, previousAttemptsPos)
+	assert.Less(t, previousAttemptsPos, currentCommitPos)
+}
+
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 
@@ -457,30 +486,37 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 }
 
 func codexCommitFallback(sha string) string {
-	return codexCommitInspectionFallbackVariants(sha, nil)[0]
-}
-
-func codexRangeFallback(rangeRef string) string {
-	return codexRangeInspectionFallbackVariants(rangeRef, nil)[0]
+	return mustRenderPromptTestDiffBlock(codexCommitInspectionFallbackVariants(sha, nil)[0])
 }
 
 func shortestCodexCommitFallback(sha string) string {
 	variants := codexCommitInspectionFallbackVariants(sha, nil)
-	return variants[len(variants)-1]
+	return mustRenderPromptTestDiffBlock(variants[len(variants)-1])
 }
 
 func shortestCodexRangeFallback(rangeRef string) string {
 	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
-	return variants[len(variants)-1]
+	return mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+}
+
+func mustRenderPromptTestDiffBlock(view diffSectionView) string {
+	block, err := renderDiffBlock(view)
+	if err != nil {
+		panic(err)
+	}
+	return block
 }
 
 func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 	t.Helper()
 	var sb strings.Builder
-	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "review"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
+	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+	})
+	require.NoError(t, err)
+	sb.WriteString(guidelines)
 
 	info, err := gitpkg.GetCommitInfo(repoPath, sha)
 	require.NoError(t, err, "GetCommitInfo failed: %v", err)
@@ -500,10 +536,13 @@ func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
 	t.Helper()
 	var sb strings.Builder
-	b := NewBuilder(nil)
 	sb.WriteString(GetSystemPrompt("codex", "range"))
 	sb.WriteString("\n")
-	b.writeProjectGuidelines(&sb, LoadGuidelines(repoPath))
+	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+	})
+	require.NoError(t, err)
+	sb.WriteString(guidelines)
 
 	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
 	require.NoError(t, err, "GetRangeCommits failed: %v", err)
@@ -581,7 +620,6 @@ func TestBuildRangePromptCodexOversizedDiffStaysWithinMaxPromptSize(t *testing.T
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "git diff", "expected fallback to retain local git inspection guidance")
-	assert.NotContains(t, prompt, codexRangeFallback(rangeRef), "expected the full range fallback to be downgraded when it would overflow")
 }
 
 func TestBuildPromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *testing.T) {
@@ -676,20 +714,18 @@ func TestBuildRangePromptCodexOversizedDiffTrimsPrefixToFitShortestFallback(t *t
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
 	assertContains(t, prompt, "Diff too large", "expected a diff-omitted marker even when the prefix consumed the budget")
-	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to be preserved by trimming earlier context")
+	assertContains(t, prompt, "git diff", "expected Codex range fallback guidance to remain after trimming earlier context")
 }
 
 func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming(t *testing.T) {
 	repoPath, sha := rangeNearCapRepo(t, 1)
 	rangeRef := sha + "~1.." + sha
-	shortestFallback := shortestCodexRangeFallback(rangeRef)
-
 	b := NewBuilder(nil)
 	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected final Codex range prompt to stay within the prompt cap")
-	assert.Contains(t, prompt, shortestFallback, "expected the shortest range fallback to be preserved after trimming earlier context")
+	assertContains(t, prompt, "git diff", "expected Codex range fallback guidance to remain after trimming earlier context")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "- "+gitpkg.ShortSHA(sha)+" large change", "expected the current range entry to remain intact")
 }
@@ -702,9 +738,94 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	require.NoError(t, err, "Build failed: %v", err)
 
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large range metadata to still stay within the prompt cap")
-	assert.Contains(t, prompt, shortestCodexRangeFallback(rangeRef), "expected the shortest range fallback to remain present when range metadata is oversized")
+	assertContains(t, prompt, "git diff", "expected Codex range fallback guidance to remain present when range metadata is oversized")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
 	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
+}
+
+func TestSelectRichestRangePromptViewPrefersRicherVariantOnEqualMetadataLoss(t *testing.T) {
+	view := rangePromptView{
+		Current: commitRangeSectionView{Count: 3, Entries: []commitRangeEntryView{
+			{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+			{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+			{Commit: "ghi9012", Subject: strings.Repeat("s", 200)},
+		}},
+	}
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
+	}
+	trimmedCurrent := commitRangeSectionView{Count: 3, Entries: []commitRangeEntryView{
+		{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+		{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+		{Commit: "ghi9012"},
+	}}
+	richerBody, err := renderRangePrompt(rangePromptView{Current: trimmedCurrent, Diff: variants[0]})
+	require.NoError(t, err)
+	fullShorterBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[1]})
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(richerBody), len(fullShorterBody),
+		"test setup must allow the richer variant once both candidates lose the same amount of metadata")
+	require.Greater(t, len(fullShorterBody), len(richerBody),
+		"test setup must still require metadata trimming before the richer variant fits")
+
+	selected, err := selectRichestRangePromptView(len(richerBody), view, variants)
+	require.NoError(t, err)
+
+	assert.Equal(t, variants[0].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, trimmedCurrent.Entries, selected.Current.Entries)
+}
+
+func TestSelectRichestRangePromptViewPrefersSummaryWhenRicherNeedsMoreTrimming(t *testing.T) {
+	view := rangePromptView{
+		Current: commitRangeSectionView{Count: 2, Entries: []commitRangeEntryView{
+			{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+			{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+		}},
+	}
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
+	}
+	shorterBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[1]})
+	require.NoError(t, err)
+	trimmedRicherCurrent := commitRangeSectionView{Count: 2, Entries: []commitRangeEntryView{
+		{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+		{Commit: "def5678"},
+	}}
+	trimmedRicherBody, err := renderRangePrompt(rangePromptView{Current: trimmedRicherCurrent, Diff: variants[0]})
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(trimmedRicherBody), len(shorterBody),
+		"test setup must allow the richer variant only after trimming more metadata than the shorter variant needs")
+
+	selected, err := selectRichestRangePromptView(len(shorterBody), view, variants)
+	require.NoError(t, err)
+
+	assert.Equal(t, variants[1].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, view.Current.Entries, selected.Current.Entries)
+}
+
+func TestSelectRichestRangePromptViewPrefersOptionalContextWhenRicherNeedsMoreTrimming(t *testing.T) {
+	view := rangePromptView{
+		Optional: optionalSectionsView{AdditionalContext: strings.Repeat("context\n", 24)},
+		Current:  commitRangeSectionView{Count: 1, Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "summary"}}},
+	}
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
+	}
+	shorterBody, err := renderRangePrompt(rangePromptView{Optional: view.Optional, Current: view.Current, Diff: variants[1]})
+	require.NoError(t, err)
+	trimmedRicherBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[0]})
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(trimmedRicherBody), len(shorterBody),
+		"test setup must allow the richer variant only after trimming more optional context than the shorter variant needs")
+
+	selected, err := selectRichestRangePromptView(len(shorterBody), view, variants)
+	require.NoError(t, err)
+
+	assert.Equal(t, variants[1].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, view.Optional.AdditionalContext, selected.Optional.AdditionalContext)
 }
 
 func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
@@ -750,6 +871,41 @@ func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
 
 	assert.LessOrEqual(t, len(prompt), cap,
 		"dirty prompt should stay within configured cap")
+
+	repoPath = t.TempDir()
+	guidelines := strings.Repeat("guideline ", 512)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_guidelines = \""+guidelines+"\"\n"),
+		0o644,
+	))
+
+	diff = strings.Repeat("+ keep full diff\n", 8)
+	var diffSection strings.Builder
+	diffSection.WriteString("### Diff\n\n")
+	diffSection.WriteString("```diff\n")
+	diffSection.WriteString(diff)
+	if !strings.HasSuffix(diff, "\n") {
+		diffSection.WriteString("\n")
+	}
+	diffSection.WriteString("```\n")
+
+	cap = len(GetSystemPrompt("claude-code", "dirty")+"\n") +
+		len("## Uncommitted Changes\n\nThe following changes have not yet been committed.\n\n") +
+		diffSection.Len() + 32
+	b = NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err = b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap,
+		"dirty prompt should stay within configured cap")
+	assertContains(t, prompt, diff,
+		"expected the full dirty diff to remain inline after trimming optional context")
+	assertNotContains(t, prompt, "(Diff too large to include in full)",
+		"dirty prompt should trim optional context before falling back to a truncated diff")
+	assertNotContains(t, prompt, guidelines,
+		"expected oversized optional context to be trimmed")
 }
 
 func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
@@ -820,6 +976,165 @@ func TestBuildPromptLargeGuidelinesPrefersDiffOverContext(t *testing.T) {
 		"small diff should be inlined after trimming guidelines")
 }
 
+func TestBuildDirtyTruncatedFallbackPreservesClosingFenceAtTightCap(t *testing.T) {
+	repoPath := t.TempDir()
+	diff := strings.Repeat("+ keep this line in the truncated fallback\n", 128)
+
+	currentSection, err := renderDirtyChangesSection(dirtyChangesSectionView{
+		Description: "The following changes have not yet been committed.",
+	})
+	require.NoError(t, err)
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+	require.NoError(t, err)
+
+	bodyLimit := len(currentSection) + len(fallbackBlock) + 1005
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + bodyLimit
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, "(Diff too large to include in full)")
+	assert.Contains(t, prompt, "... (truncated)\n```\n",
+		"dirty truncated fallback should keep the truncation marker and closing fence")
+}
+
+func TestBuildDirtyTruncatedFallbackTrimsOptionalContextBeforeShrinkingSnippet(t *testing.T) {
+	repoPath := t.TempDir()
+	guidelines := strings.Repeat("g", 4000)
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(toml), 0o644))
+
+	diff := strings.Repeat("+ retained after optional trim\n", 128)
+	currentSection, err := renderDirtyChangesSection(dirtyChangesSectionView{
+		Description: "The following changes have not yet been committed.",
+	})
+	require.NoError(t, err)
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+	require.NoError(t, err)
+
+	bodyLimit := len(currentSection) + len(fallbackBlock) + 1200
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + bodyLimit
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.NotContains(t, prompt, guidelines,
+		"oversized optional guidelines should be trimmed before collapsing the truncated diff snippet")
+	assert.Contains(t, prompt, "```diff\n+ retained after optional trim",
+		"dirty prompt should retain a truncated diff snippet after optional context is trimmed")
+	assert.Contains(t, prompt, "... (truncated)\n```\n")
+}
+
+func TestBuildDirtyTruncatedFallbackContinuesTrimmingOptionalContextForSnippet(t *testing.T) {
+	repoPath := t.TempDir()
+	guidelines := strings.Repeat("g", 1800)
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(toml), 0o644))
+	additionalContext := "## Pull Request Discussion\n\n" + strings.Repeat("discussion\n", 40)
+	diff := strings.Repeat("+ retain after second trim\n", 128)
+
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	snippetBody := strings.Repeat("+ retain after second trim\n", 16) + "... (truncated)\n"
+	snippetFallback, err := renderDirtyTruncatedDiffFallback(snippetBody)
+	require.NoError(t, err)
+	requiredView := dirtyPromptView{
+		Current: dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:    diffSectionView{Heading: "### Diff", Fallback: snippetFallback},
+	}
+	guidelinesView := requiredView
+	guidelinesView.Optional.ProjectGuidelines = buildProjectGuidelinesSectionView(guidelines)
+	fullOptionalEmptyView := dirtyPromptView{
+		Optional: optionalSectionsView{
+			ProjectGuidelines: buildProjectGuidelinesSectionView(guidelines),
+			AdditionalContext: buildAdditionalContextSection(additionalContext),
+		},
+		Current: dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:    diffSectionView{Heading: "### Diff", Fallback: fallbackOnly},
+	}
+	guidelinesEmptyView := fullOptionalEmptyView
+	guidelinesEmptyView.Optional.AdditionalContext = ""
+	fullOptionalSnippetView := fullOptionalEmptyView
+	fullOptionalSnippetView.Diff.Fallback = snippetFallback
+	guidelinesSnippetView := guidelinesView
+
+	requiredSnippetBody, err := renderDirtyPrompt(requiredView)
+	require.NoError(t, err)
+	guidelinesSnippetBody, err := renderDirtyPrompt(guidelinesSnippetView)
+	require.NoError(t, err)
+	fullOptionalEmptyBody, err := renderDirtyPrompt(fullOptionalEmptyView)
+	require.NoError(t, err)
+	guidelinesEmptyBody, err := renderDirtyPrompt(guidelinesEmptyView)
+	require.NoError(t, err)
+	fullOptionalSnippetBody, err := renderDirtyPrompt(fullOptionalSnippetView)
+	require.NoError(t, err)
+
+	lowerBound := max(len(requiredSnippetBody), len(guidelinesEmptyBody))
+	upperBound := min(len(guidelinesSnippetBody), len(fullOptionalEmptyBody), len(fullOptionalSnippetBody))
+	require.Greater(t, upperBound, lowerBound,
+		"test setup must require trimming additional context for empty fallback and further optional trimming for the snippet")
+
+	bodyLimit := lowerBound + (upperBound-lowerBound)/2
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + bodyLimit
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", additionalContext)
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.NotContains(t, prompt, guidelines)
+	assert.NotContains(t, prompt, "discussion\n")
+	assert.GreaterOrEqual(t, strings.Count(prompt, "+ retain after second trim\n"), 16,
+		"dirty truncated fallback should keep sizing the snippet after trimming all removable optional context")
+}
+
+func TestBuildDirtyFallbackOnlyRestoresOptionalContextWhenSnippetCannotFit(t *testing.T) {
+	repoPath := t.TempDir()
+	guidelines := "Keep it simple."
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(toml), 0o644))
+	diff := strings.Repeat("+ snippet cannot fit here\n", 128)
+
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	singleLineFallback, err := renderDirtyTruncatedDiffFallback("+ snippet cannot fit here\n... (truncated)\n")
+	require.NoError(t, err)
+	guidelinesFallbackView := dirtyPromptView{
+		Optional: optionalSectionsView{ProjectGuidelines: buildProjectGuidelinesSectionView(guidelines)},
+		Current:  dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:     diffSectionView{Heading: "### Diff", Fallback: fallbackOnly},
+	}
+	requiredSingleLineView := dirtyPromptView{
+		Current: dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:    diffSectionView{Heading: "### Diff", Fallback: singleLineFallback},
+	}
+	guidelinesFallbackBody, err := renderDirtyPrompt(guidelinesFallbackView)
+	require.NoError(t, err)
+	requiredSingleLineBody, err := renderDirtyPrompt(requiredSingleLineView)
+	require.NoError(t, err)
+	require.NotEmpty(t, requiredSingleLineBody)
+
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + len(guidelinesFallbackBody)
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, guidelines,
+		"fallback-only dirty prompt should restore optional context that still fits once snippet sizing fails")
+	assert.NotContains(t, prompt, "```diff",
+		"final prompt should fall back to the marker-only dirty diff when no snippet can fit")
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)
@@ -881,8 +1196,8 @@ func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
 	repoPath, sha := setupLargeExcludePatternRepo(t)
 	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
+	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+	secondShortest := mustRenderPromptTestDiffBlock(variants[len(variants)-2])
 	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
 	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
 	cfg := &config.Config{
@@ -905,8 +1220,8 @@ func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) 
 	rangeRef := sha + "~1.." + sha
 	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
+	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+	secondShortest := mustRenderPromptTestDiffBlock(variants[len(variants)-2])
 	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
 	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
 	cfg := &config.Config{
@@ -919,9 +1234,9 @@ func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap)
-	assert.Contains(t, prompt, shortest, "expected tiny-cap range prompt to use the shortest fallback variant")
+	assertContains(t, prompt, "git diff", "expected tiny-cap range prompt to retain Codex diff guidance")
 	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
-		"expected shortest range fallback command to preserve custom exclude patterns")
+		"expected tiny-cap range fallback command to preserve custom exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {
@@ -1196,4 +1511,24 @@ func TestBuildAddressPromptShowsFullDiff(t *testing.T) {
 	diffSection := p[diffIdx:]
 	assertContains(t, diffSection, "keep.go", "retained file should be in address prompt diff")
 	assertContains(t, diffSection, "custom.dat", "excluded file should still be in address prompt diff")
+}
+
+func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) {
+	repoPath, sha := setupExcludePatternRepo(t)
+	b := NewBuilder(nil)
+
+	review := &storage.Review{
+		Agent:  "test",
+		Output: "Found issue: check custom.dat",
+		Job:    &storage.ReviewJob{GitRef: sha},
+	}
+	attempts := []storage.Response{{Responder: "developer", Response: "Tried a narrow fix"}}
+
+	prompt, err := b.BuildAddressPrompt(repoPath, review, attempts, "medium")
+	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "## Previous Addressing Attempts")
+	assert.Contains(t, prompt, "Tried a narrow fix")
+	assert.Contains(t, prompt, "## Review Findings to Address")
+	assert.Contains(t, prompt, "## Original Commit Diff")
 }
