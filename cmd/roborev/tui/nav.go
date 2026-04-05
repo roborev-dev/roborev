@@ -60,7 +60,7 @@ func (m *model) findPrevPromptableJob() int {
 	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
 		job := m.jobs[i]
 		if m.isJobVisible(job) &&
-			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
+			(job.Status == storage.JobStatusDone || (job.Prompt != "" && (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued))) {
 			return i
 		}
 	}
@@ -73,7 +73,7 @@ func (m *model) findNextPromptableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if m.isJobVisible(job) &&
-			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
+			(job.Status == storage.JobStatusDone || (job.Prompt != "" && (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued))) {
 			return i
 		}
 	}

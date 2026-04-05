@@ -15,7 +15,7 @@ func (m model) handlePromptKey() (tea.Model, tea.Cmd) {
 		if job.Status == storage.JobStatusDone {
 			m.promptFromQueue = true
 			return m, m.fetchReviewForPrompt(job.ID)
-		} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+		} else if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
 			jobCopy := *job
 			m.currentReview = &storage.Review{
 				Agent:  job.Agent,
