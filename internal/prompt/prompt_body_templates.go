@@ -55,6 +55,7 @@ type commitRangeEntryView struct {
 }
 
 type commitRangeSectionView struct {
+	Count   int
 	Entries []commitRangeEntryView
 }
 
@@ -252,6 +253,14 @@ func fitRangePrompt(limit int, view rangePromptView) (string, error) {
 			continue
 		}
 		view.Current.Entries[i].Subject = ""
+		body, err = renderRangePrompt(view)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	for len(view.Current.Entries) > 0 && len(body) > limit {
+		view.Current.Entries = view.Current.Entries[:len(view.Current.Entries)-1]
 		body, err = renderRangePrompt(view)
 		if err != nil {
 			return "", err

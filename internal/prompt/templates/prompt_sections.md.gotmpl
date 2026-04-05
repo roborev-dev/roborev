@@ -1,5 +1,7 @@
 {{define "project_guidelines"}}{{with .ProjectGuidelines}}{{.Heading}}
 
+These guidelines supplement the default review criteria and may add repo-specific expectations or constraints.
+
 {{.Body}}
 
 {{end}}{{end}}
@@ -54,7 +56,7 @@ responses from developers. Use this context to:
 {{define "current_commit"}}{{template "current_commit_required" .}}{{template "current_commit_overflow" .}}{{end}}
 {{define "commit_range_required"}}## Commit Range
 
-Reviewing {{len .Entries}} commits:
+Reviewing {{if gt .Count 0}}{{.Count}}{{else}}{{len .Entries}}{{end}} commits:
 
 {{end}}
 {{define "commit_range_overflow"}}{{range .Entries}}- {{.Commit}}{{if .Subject}} {{.Subject}}{{end}}

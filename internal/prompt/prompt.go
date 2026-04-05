@@ -300,7 +300,7 @@ func needsShellQuoting(s string) bool {
 	return false
 }
 
-func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []string {
+func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []diffSectionView {
 	view := commitInspectionFallbackView{
 		SHA:         sha,
 		StatCmd:     renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...),
@@ -309,22 +309,18 @@ func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []
 		ShowPathCmd: renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...),
 	}
 	names := []string{"codex_commit_fallback_full", "codex_commit_fallback_medium", "codex_commit_fallback_short", "codex_commit_fallback_shortest"}
-	variants := make([]string, 0, len(names))
+	variants := make([]diffSectionView, 0, len(names))
 	for _, name := range names {
 		fallback, err := renderCommitInspectionFallback(name, view)
 		if err != nil {
 			continue
 		}
-		block, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallback})
-		if err != nil {
-			continue
-		}
-		variants = append(variants, block)
+		variants = append(variants, diffSectionView{Heading: "### Diff", Fallback: fallback})
 	}
 	return variants
 }
 
-func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []string {
+func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []diffSectionView {
 	view := rangeInspectionFallbackView{
 		RangeRef: rangeRef,
 		LogCmd:   renderShellCommand("git", "log", "--oneline", rangeRef),
@@ -334,19 +330,45 @@ func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string
 		ViewCmd:  renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...),
 	}
 	names := []string{"codex_range_fallback_full", "codex_range_fallback_medium", "codex_range_fallback_short", "codex_range_fallback_shortest"}
-	variants := make([]string, 0, len(names))
+	variants := make([]diffSectionView, 0, len(names))
 	for _, name := range names {
 		fallback, err := renderRangeInspectionFallback(name, view)
 		if err != nil {
 			continue
 		}
-		block, err := renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Fallback: fallback})
-		if err != nil {
-			continue
-		}
-		variants = append(variants, block)
+		variants = append(variants, diffSectionView{Heading: "### Combined Diff", Fallback: fallback})
 	}
 	return variants
+}
+
+func selectDiffSectionVariant(variants []diffSectionView, remaining int) (diffSectionView, error) {
+	if len(variants) == 0 {
+		return diffSectionView{}, nil
+	}
+	selected := variants[len(variants)-1]
+	for _, variant := range variants {
+		block, err := renderDiffBlock(variant)
+		if err != nil {
+			return diffSectionView{}, err
+		}
+		if len(block) <= remaining {
+			return variant, nil
+		}
+	}
+	return truncateDiffSectionFallbackToFit(selected, remaining)
+}
+
+func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSectionView, error) {
+	block, err := renderDiffBlock(view)
+	if err != nil || len(block) <= limit {
+		return view, err
+	}
+	baseBlock, err := renderDiffBlock(diffSectionView{Heading: view.Heading, Body: ""})
+	if err != nil {
+		return diffSectionView{}, err
+	}
+	view.Fallback = truncateUTF8(view.Fallback, max(0, limit-len(baseBlock)))
+	return view, nil
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
@@ -418,42 +440,40 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		return "", fmt.Errorf("get diff: %w", err)
 	}
 
-	var diffSection string
+	diffView := diffSectionView{Heading: "### Diff"}
 	if truncated {
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
-			shortest := variants[len(variants)-1]
+			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
+			if err != nil {
+				return "", err
+			}
 			optionalPrefix, err := renderOptionalSectionsPrefix(optional)
 			if err != nil {
 				return "", err
 			}
-			softBudget := max(0, bodyLimit-len(currentRequired)-len(shortest))
+			softBudget := max(0, bodyLimit-len(currentRequired)-len(shortestBlock))
 			softLen := len(optionalPrefix) + len(currentOverflow)
 			effectiveSoftLen := min(softLen, softBudget)
 			remaining := max(0, bodyLimit-len(currentRequired)-effectiveSoftLen)
-			diffSection = truncateUTF8(shortest, remaining)
-			for _, variant := range variants {
-				if len(variant) <= remaining {
-					diffSection = variant
-					break
-				}
-			}
-		} else {
-			diffSection, err = renderGenericCommitFallback(renderShellCommand("git", "show", sha))
+			diffView, err = selectDiffSectionVariant(variants, remaining)
 			if err != nil {
 				return "", err
 			}
+		} else {
+			fallback, err := renderGenericCommitFallback(renderShellCommand("git", "show", sha))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
 	} else {
 		inlineDiff, err := renderInlineDiff(diff)
 		if err != nil {
 			return "", err
 		}
-		diffSection, err = renderDiffBlock(diffSectionView{Heading: "### Diff", Body: inlineDiff})
-		if err != nil {
-			return "", err
-		}
+		diffView.Body = inlineDiff
 	}
 
 	body, err := fitSinglePrompt(
@@ -461,11 +481,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		singlePromptView{
 			Optional: optional,
 			Current:  currentView,
-			Diff: diffSectionView{
-				Heading:  "### Diff",
-				Body:     strings.TrimPrefix(diffSection, "### Diff\n\n"),
-				Fallback: fallbackBody(diffSection, "### Diff\n\n"),
-			},
+			Diff:     diffView,
 		},
 	)
 	if err != nil {
@@ -522,7 +538,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	currentView := commitRangeSectionView{Entries: entries}
+	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
 	currentRequiredText, err := renderCommitRangeRequired(currentView)
 	if err != nil {
 		return "", err
@@ -548,42 +564,40 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
 
-	var diffSection string
+	diffView := diffSectionView{Heading: "### Combined Diff"}
 	if truncated {
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-			shortest := variants[len(variants)-1]
+			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
+			if err != nil {
+				return "", err
+			}
 			optionalPrefix, err := renderOptionalSectionsPrefix(optional)
 			if err != nil {
 				return "", err
 			}
-			softBudget := max(0, bodyLimit-len(currentRequiredText)-len(shortest))
+			softBudget := max(0, bodyLimit-len(currentRequiredText)-len(shortestBlock))
 			softLen := len(optionalPrefix) + len(currentOverflowText)
 			effectiveSoftLen := min(softLen, softBudget)
 			remaining := max(0, bodyLimit-len(currentRequiredText)-effectiveSoftLen)
-			diffSection = truncateUTF8(shortest, remaining)
-			for _, variant := range variants {
-				if len(variant) <= remaining {
-					diffSection = variant
-					break
-				}
-			}
-		} else {
-			diffSection, err = renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
+			diffView, err = selectDiffSectionVariant(variants, remaining)
 			if err != nil {
 				return "", err
 			}
+		} else {
+			fallback, err := renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
 	} else {
 		inlineDiff, err := renderInlineDiff(diff)
 		if err != nil {
 			return "", err
 		}
-		diffSection, err = renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Body: inlineDiff})
-		if err != nil {
-			return "", err
-		}
+		diffView.Body = inlineDiff
 	}
 
 	body, err := fitRangePrompt(
@@ -591,11 +605,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		rangePromptView{
 			Optional: optional,
 			Current:  currentView,
-			Diff: diffSectionView{
-				Heading:  "### Combined Diff",
-				Body:     strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),
-				Fallback: fallbackBody(diffSection, "### Combined Diff\n\n"),
-			},
+			Diff:     diffView,
 		},
 	)
 	if err != nil {
@@ -629,15 +639,6 @@ func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
 		ordered = append(ordered, contexts[i])
 	}
 	return previousReviewViews(ordered)
-}
-
-func fallbackBody(diffSection, heading string) string {
-	trimmed := strings.TrimPrefix(diffSection, heading)
-	trimmed = strings.TrimPrefix(trimmed, "\n\n")
-	if strings.HasPrefix(trimmed, "(Diff too large") {
-		return trimmed
-	}
-	return ""
 }
 
 // LoadGuidelines loads review guidelines from the repo's default
@@ -743,11 +744,8 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 		JobID:          review.JobID,
 	}
 
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewGuidelines) != "" {
-		view.ProjectGuidelines = &markdownSectionView{
-			Heading: "## Project Guidelines",
-			Body:    strings.TrimSpace(repoCfg.ReviewGuidelines),
-		}
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		view.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
 	}
 
 	if len(previousAttempts) > 0 {

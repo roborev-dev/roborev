@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -206,6 +207,7 @@ func TestRenderOptionalSectionsFromTypedData(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, body, "## Project Guidelines")
+	assert.Contains(t, body, "These guidelines supplement the default review criteria")
 	assert.Contains(t, body, "## Pull Request Discussion")
 	assert.Contains(t, body, "## Previous Reviews")
 	assert.Contains(t, body, "Found a bug")
@@ -348,6 +350,37 @@ func TestFitRangePromptTrimsOptionalSectionsBeforeRangeMetadata(t *testing.T) {
 	assert.Contains(t, body, "## Commit Range")
 	assert.Contains(t, body, "- abc1234 first change")
 	assert.NotContains(t, body, strings.Repeat("g", 128))
+}
+
+func TestFitRangePromptDropsTrailingEntriesBeforeCombinedDiff(t *testing.T) {
+	entries := make([]commitRangeEntryView, 0, 80)
+	for i := range 80 {
+		entries = append(entries, commitRangeEntryView{
+			Commit:  fmt.Sprintf("%07x", i),
+			Subject: "very large subject that should be removed before the combined diff is dropped",
+		})
+	}
+	view := rangePromptView{
+		Current: commitRangeSectionView{Count: 80, Entries: entries},
+		Diff: diffSectionView{
+			Heading:  "### Combined Diff",
+			Fallback: "(Diff too large; for Codex run `git diff base..head --` locally.)\n",
+		},
+	}
+	required, err := renderCommitRangeRequired(commitRangeSectionView{Count: 80, Entries: entries})
+	require.NoError(t, err)
+	diffBlock, err := renderDiffBlock(view.Diff)
+	require.NoError(t, err)
+	limit := len(required) + len(diffBlock) + (12 * len("- 0000000\n"))
+
+	body, err := fitRangePrompt(limit, view)
+	require.NoError(t, err)
+
+	assert.Contains(t, body, "Reviewing 80 commits:")
+	assert.Contains(t, body, "### Combined Diff")
+	assert.Contains(t, body, "git diff base..head")
+	assert.NotContains(t, body, "- 000004f",
+		"range fitting should trim trailing entries before hard-capping away the combined diff")
 }
 
 func TestFitDirtyPromptTrimsOptionalSectionsBeforeFallbackDiff(t *testing.T) {

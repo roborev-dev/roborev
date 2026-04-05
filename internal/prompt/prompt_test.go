@@ -486,21 +486,29 @@ func TestBuildRangePromptCodexOversizedDiffProvidesGitInspectionInstructions(t *
 }
 
 func codexCommitFallback(sha string) string {
-	return codexCommitInspectionFallbackVariants(sha, nil)[0]
+	return mustRenderPromptTestDiffBlock(codexCommitInspectionFallbackVariants(sha, nil)[0])
 }
 
 func codexRangeFallback(rangeRef string) string {
-	return codexRangeInspectionFallbackVariants(rangeRef, nil)[0]
+	return mustRenderPromptTestDiffBlock(codexRangeInspectionFallbackVariants(rangeRef, nil)[0])
 }
 
 func shortestCodexCommitFallback(sha string) string {
 	variants := codexCommitInspectionFallbackVariants(sha, nil)
-	return variants[len(variants)-1]
+	return mustRenderPromptTestDiffBlock(variants[len(variants)-1])
 }
 
 func shortestCodexRangeFallback(rangeRef string) string {
 	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
-	return variants[len(variants)-1]
+	return mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+}
+
+func mustRenderPromptTestDiffBlock(view diffSectionView) string {
+	block, err := renderDiffBlock(view)
+	if err != nil {
+		panic(err)
+	}
+	return block
 }
 
 func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
@@ -1008,8 +1016,8 @@ func TestBuildPromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) {
 	repoPath, sha := setupLargeExcludePatternRepo(t)
 	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
+	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+	secondShortest := mustRenderPromptTestDiffBlock(variants[len(variants)-2])
 	prefixLen := singleCommitPromptPrefixLen(t, repoPath, sha)
 	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
 	cfg := &config.Config{
@@ -1032,8 +1040,8 @@ func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) 
 	rangeRef := sha + "~1.." + sha
 	pathspecArgs := gitpkg.FormatExcludeArgs([]string{"custom.dat"})
 	variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-	shortest := variants[len(variants)-1]
-	secondShortest := variants[len(variants)-2]
+	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+	secondShortest := mustRenderPromptTestDiffBlock(variants[len(variants)-2])
 	prefixLen := rangePromptPrefixLen(t, repoPath, rangeRef)
 	cap := prefixLen + len(shortest) + max(1, (len(secondShortest)-len(shortest))/2)
 	cfg := &config.Config{
