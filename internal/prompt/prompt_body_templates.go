@@ -143,21 +143,7 @@ type dirtyTruncatedDiffFallbackView struct {
 
 var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	templateFS,
-	"templates/prompt_sections.md.gotmpl",
-	"templates/assembled_single.md.gotmpl",
-	"templates/assembled_range.md.gotmpl",
-	"templates/assembled_dirty.md.gotmpl",
-	"templates/assembled_address.md.gotmpl",
-	"templates/default_review.md.gotmpl",
-	"templates/default_dirty.md.gotmpl",
-	"templates/default_range.md.gotmpl",
-	"templates/default_security.md.gotmpl",
-	"templates/default_address.md.gotmpl",
-	"templates/default_design_review.md.gotmpl",
-	"templates/claude-code_review.md.gotmpl",
-	"templates/codex_review.md.gotmpl",
-	"templates/gemini_review.md.gotmpl",
-	"templates/gemini_run.md.gotmpl",
+	"templates/*.md.gotmpl",
 ))
 
 func renderSinglePrompt(view singlePromptView) (string, error) {

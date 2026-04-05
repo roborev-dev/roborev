@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -243,4 +244,28 @@ func TestRenderSystemPrompt_AgentSpecificTemplates(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, body, "You are a code reviewer")
+}
+
+func TestRenderSystemPrompt_AllEmbeddedAgentSpecificTemplates(t *testing.T) {
+	matches, err := fs.Glob(templateFS, "templates/*.md.gotmpl")
+	require.NoError(t, err)
+
+	for _, match := range matches {
+		name := strings.TrimPrefix(match, "templates/")
+		if strings.HasPrefix(name, "default_") || strings.HasPrefix(name, "assembled_") || name == "prompt_sections.md.gotmpl" {
+			continue
+		}
+
+		t.Run(name, func(t *testing.T) {
+			tmpl := promptTemplates.Lookup(name)
+			require.NotNil(t, tmpl, "embedded agent-specific template should be parsed into the template set")
+
+			body, err := renderSystemPrompt(name, systemPromptView{
+				NoSkillsInstruction: noSkillsInstruction,
+				CurrentDate:         "2030-06-15",
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, body)
+		})
+	}
 }
