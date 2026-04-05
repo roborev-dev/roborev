@@ -637,6 +637,34 @@ func TestResolveRerunModelProviderPreservesRequestedOverridesOnParseableInvalidC
 	assert.Equal(t, "anthropic", provider)
 }
 
+func TestResolveRerunModelProviderRejectsMalformedConfigWithRequestedOverrides(t *testing.T) {
+	mainRepo := t.TempDir()
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mainRepo, ".roborev.toml"),
+		[]byte("this is not valid toml [[["),
+		0o644,
+	))
+
+	job := &storage.ReviewJob{
+		Agent:             "test",
+		JobType:           storage.JobTypeReview,
+		ReviewType:        config.ReviewTypeDefault,
+		Reasoning:         "thorough",
+		RepoPath:          mainRepo,
+		RequestedModel:    "requested-model",
+		RequestedProvider: "anthropic",
+	}
+
+	model, provider, err := resolveRerunModelProvider(
+		job, config.DefaultConfig(),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "resolve workflow config")
+	assert.Empty(t, model)
+	assert.Empty(t, provider)
+}
+
 func TestResolveRerunModelProviderRejectsInvalidAgentWithRequestedOverrides(t *testing.T) {
 	mainRepo := t.TempDir()
 
