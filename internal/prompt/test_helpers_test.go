@@ -97,6 +97,27 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	return r.dir, commits
 }
 
+func setupSmallDiffRepo(t *testing.T) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "small.txt"),
+		[]byte("hello world\n"), 0o644,
+	))
+	r.git("add", "small.txt")
+	r.git("commit", "-m", "small change")
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
 func setupLargeDiffRepo(t *testing.T) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
@@ -294,39 +315,6 @@ func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (str
 
 	endSHA := r.git("rev-parse", "HEAD")
 	return r.dir, startSHA + ".." + endSHA
-}
-
-func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
-
-	var keep strings.Builder
-	for range 12000 {
-		keep.WriteString("package main\n")
-	}
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "keep.go"),
-		[]byte(keep.String()), 0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "custom.dat"),
-		[]byte(strings.Repeat("generated\n", 2048)), 0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "go.sum"),
-		[]byte(strings.Repeat("sum\n", 1024)), 0o644,
-	))
-	r.git("add", "keep.go", "custom.dat", "go.sum")
-	r.git("commit", "-m", "large change")
-
-	return r.dir, r.git("rev-parse", "HEAD")
 }
 
 func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {

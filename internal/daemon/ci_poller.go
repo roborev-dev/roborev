@@ -104,7 +104,16 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.loadRepoConfigFn = loadCIRepoConfig
 	p.buildReviewPromptFn = func(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string, cfg *config.Config) (string, error) {
 		builder := prompt.NewBuilderWithConfig(p.db, cfg)
-		return builder.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
+		return builder.BuildWithAdditionalContextAndDiffFile(
+			repoPath,
+			gitRef,
+			repoID,
+			contextCount,
+			agentName,
+			reviewType,
+			additionalContext,
+			prompt.DiffFilePathPlaceholder,
+		)
 	}
 	p.postPRCommentFn = p.postPRComment
 	p.synthesizeFn = p.synthesizeBatchResults
@@ -1824,7 +1833,16 @@ func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, 
 		return p.buildReviewPromptFn(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext, cfg)
 	}
 	builder := prompt.NewBuilderWithConfig(p.db, cfg)
-	return builder.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, additionalContext)
+	return builder.BuildWithAdditionalContextAndDiffFile(
+		repoPath,
+		gitRef,
+		repoID,
+		contextCount,
+		agentName,
+		reviewType,
+		additionalContext,
+		prompt.DiffFilePathPlaceholder,
+	)
 }
 
 func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {

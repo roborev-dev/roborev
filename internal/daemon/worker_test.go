@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
@@ -509,6 +513,244 @@ func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 	require.NotEmpty(t, capturedPrompt)
 	assert.NotEqual(t, "stale prompt from prior attempt", capturedPrompt)
 	assert.Equal(t, capturedPrompt, updated.Prompt)
+}
+
+func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	worktreeDir := filepath.Join(t.TempDir(), "feature-worktree")
+
+	cmd := exec.Command("git", "-C", repo.Root, "worktree", "add", "-b", "feature/worktree", worktreeDir, "HEAD")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %s", out)
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", repo.Root, "worktree", "remove", "--force", worktreeDir).Run()
+	})
+
+	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "feature.txt"), []byte("feature change\n"), 0o644))
+	cmd = exec.Command("git", "-C", worktreeDir, "add", "feature.txt")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", out)
+	cmd = exec.Command("git", "-C", worktreeDir, "commit", "-m", "worktree change")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", out)
+
+	shaBytes, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	sha := strings.TrimSpace(string(shaBytes))
+
+	job := &storage.ReviewJob{ID: 42, Agent: "codex", GitRef: sha}
+	diffFile, cleanup, err := prepareDiffFile(worktreeDir, job, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
+	require.NotNil(t, cleanup)
+
+	gitDirBytes, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "--git-dir").Output()
+	require.NoError(t, err)
+	gitDir := strings.TrimSpace(string(gitDirBytes))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreeDir, gitDir)
+	}
+
+	assert.Equal(t, filepath.Join(gitDir, "roborev-review-42.diff"), diffFile)
+	data, err := os.ReadFile(diffFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "diff --git")
+	assert.Contains(t, string(data), "feature.txt")
+
+	cleanup()
+	_, err = os.Stat(diffFile)
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err), "expected cleanup to remove diff file, got %v", err)
+}
+
+func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := &storage.ReviewJob{ID: 73, Agent: "codex", GitRef: sha}
+
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
+		tc.TmpDir,
+		job,
+		"## Pull Request Discussion\n\n### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
+	assert.Contains(t, reviewPrompt, "roborev-review-73.diff")
+
+	cleanup()
+}
+
+func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
+	baseDir := t.TempDir()
+	repoPath := filepath.Join(baseDir, "repo's")
+	require.NoError(t, os.MkdirAll(repoPath, 0o755))
+	testutil.InitTestGitRepo(t, repoPath)
+
+	sha := testutil.GetHeadSHA(t, repoPath)
+	job := &storage.ReviewJob{ID: 74, Agent: "codex", GitRef: sha}
+
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
+		repoPath,
+		job,
+		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+
+	gitDir, err := gitpkg.ResolveGitDir(repoPath)
+	require.NoError(t, err)
+	expectedPath := filepath.Join(gitDir, "roborev-review-74.diff")
+
+	assert.Contains(t, reviewPrompt, expectedPath)
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
+
+	cleanup()
+}
+
+func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing.T) {
+	prev := agent.AllowUnsafeAgents()
+	agent.SetAllowUnsafeAgents(true)
+	t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
+
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := &storage.ReviewJob{ID: 75, Agent: "codex", GitRef: sha}
+
+	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
+		tc.TmpDir,
+		job,
+		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
+	assert.Contains(t, reviewPrompt, "roborev-review-75.diff")
+
+	cleanup()
+}
+
+func TestProcessJob_SmallDiffSucceedsWhenSnapshotFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict writes on Windows")
+	}
+
+	originalCodex, err := agent.Get("codex")
+	require.NoError(t, err)
+
+	agentCalled := false
+	agent.Register(&agent.FakeAgent{
+		NameStr: "codex",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
+			agentCalled = true
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalCodex) })
+
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "test", time.Now())
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "codex",
+	})
+	require.NoError(t, err)
+
+	// Make git dir read-only so diff file write fails
+	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
+	require.NoError(t, err)
+	info, err := os.Stat(gitDir)
+	require.NoError(t, err)
+	origMode := info.Mode().Perm()
+	require.NoError(t, os.Chmod(gitDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(gitDir, origMode) })
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	// Small diff fits inline — snapshot failure doesn't matter
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.True(t, agentCalled, "agent should run for small diffs even when snapshot fails")
+}
+
+func TestProcessJob_LargeDiffRetriesWhenSnapshotFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not restrict writes on Windows")
+	}
+
+	originalCodex, err := agent.Get("codex")
+	require.NoError(t, err)
+
+	agentCalled := false
+	agent.Register(&agent.FakeAgent{
+		NameStr: "codex",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
+			agentCalled = true
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalCodex) })
+
+	tc := newWorkerTestContext(t, 1)
+	var content strings.Builder
+	for range 20000 {
+		content.WriteString("line ")
+		content.WriteString(strings.Repeat("x", 20))
+		content.WriteString(" ")
+		content.WriteString(strings.Repeat("y", 20))
+		content.WriteString("\n")
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tc.TmpDir, "large.txt"),
+		[]byte(content.String()), 0o644,
+	))
+	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "large.txt")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", out)
+	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "large diff")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", out)
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "large", time.Now())
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "codex",
+	})
+	require.NoError(t, err)
+
+	// Make git dir read-only so diff file write fails
+	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
+	require.NoError(t, err)
+	info, err := os.Stat(gitDir)
+	require.NoError(t, err)
+	origMode := info.Mode().Perm()
+	require.NoError(t, os.Chmod(gitDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(gitDir, origMode) })
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	// Large diff can't inline and snapshot failed — must retry
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.False(t, agentCalled, "agent should not run when large diff has no snapshot")
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {

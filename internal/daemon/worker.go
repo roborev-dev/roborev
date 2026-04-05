@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -388,6 +389,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		var cleanup func()
+		excludes := config.ResolveExcludePatterns(
+			effectiveRepoPath, cfg, job.ReviewType,
+		)
+		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
+			effectiveRepoPath, job, reviewPrompt, excludes,
+		)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
+			wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
+			return
+		}
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
@@ -406,8 +422,34 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
-		// Normal job - build prompt from git ref
-		reviewPrompt, err = pb.Build(effectiveRepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		// Normal job - build prompt from git ref. BuildWithDiffFile
+		// with empty path returns ErrDiffTruncatedNoFile when the
+		// diff is too large, signaling that a snapshot is needed.
+		// Small diffs inline normally.
+		reviewPrompt, err = pb.BuildWithDiffFile(
+			effectiveRepoPath, job.GitRef, job.RepoID,
+			cfg.ReviewContextCount, job.Agent, job.ReviewType, "",
+		)
+		if errors.Is(err, prompt.ErrDiffTruncatedNoFile) {
+			excludes := config.ResolveExcludePatterns(
+				effectiveRepoPath, cfg, job.ReviewType,
+			)
+			diffFile, cleanup, diffErr := prepareDiffFile(
+				effectiveRepoPath, job, excludes,
+			)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if diffErr != nil {
+				err = fmt.Errorf("prepare diff snapshot: %w", diffErr)
+			} else {
+				reviewPrompt, err = pb.BuildWithDiffFile(
+					effectiveRepoPath, job.GitRef, job.RepoID,
+					cfg.ReviewContextCount, job.Agent,
+					job.ReviewType, diffFile,
+				)
+			}
+		}
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
@@ -994,6 +1036,39 @@ func (wp *WorkerPool) failoverOrFail(
 	}
 }
 
+func preparePrebuiltPrompt(
+	repoPath string, job *storage.ReviewJob, reviewPrompt string, excludes []string,
+) (string, func(), error) {
+	if !strings.Contains(reviewPrompt, prompt.DiffFilePathPlaceholder) {
+		return reviewPrompt, nil, nil
+	}
+	diffFile, cleanup, err := prepareDiffFile(repoPath, job, excludes)
+	if err != nil || diffFile == "" {
+		// The prebuilt prompt was built expecting a diff file. Without
+		// it the agent has no diff access — fail so the job retries.
+		if cleanup != nil {
+			cleanup()
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("prepare diff snapshot for prebuilt prompt: %w", err)
+		}
+		return "", nil, fmt.Errorf("prebuilt prompt needs diff file but diff was empty")
+	}
+	replacer := strings.NewReplacer(
+		shellQuoteForPrompt(prompt.DiffFilePathPlaceholder),
+		shellQuoteForPrompt(diffFile),
+		prompt.DiffFilePathPlaceholder, diffFile,
+	)
+	return replacer.Replace(reviewPrompt), cleanup, nil
+}
+
+func shellQuoteForPrompt(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // logJobFailed logs a job failure to the activity log
 func (wp *WorkerPool) logJobFailed(
 	jobID int64, workerID, agentName, errorMsg string,
@@ -1011,6 +1086,44 @@ func (wp *WorkerPool) logJobFailed(
 			"error":  errorMsg,
 		},
 	)
+}
+
+// prepareDiffFile writes the full diff for a job into the checkout's
+// git dir so the prompt builder can reference it when the diff is too
+// large to inline. Returns the file path, a cleanup function, and an
+// error. An empty path with nil error means the diff was empty.
+func prepareDiffFile(
+	repoPath string, job *storage.ReviewJob, excludes []string,
+) (string, func(), error) {
+	var fullDiff string
+	var err error
+	if gitpkg.IsRange(job.GitRef) {
+		fullDiff, err = gitpkg.GetRangeDiff(
+			repoPath, job.GitRef, excludes...,
+		)
+	} else {
+		fullDiff, err = gitpkg.GetDiff(
+			repoPath, job.GitRef, excludes...,
+		)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("capture diff: %w", err)
+	}
+	if fullDiff == "" {
+		return "", nil, nil
+	}
+	gitDir, err := gitpkg.ResolveGitDir(repoPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve git dir: %w", err)
+	}
+	diffFile := filepath.Join(
+		gitDir,
+		fmt.Sprintf("roborev-review-%d.diff", job.ID),
+	)
+	if err := os.WriteFile(diffFile, []byte(fullDiff), 0o644); err != nil {
+		return "", nil, fmt.Errorf("write diff snapshot: %w", err)
+	}
+	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
 // markCompactSourceJobs marks all source jobs as closed for a completed compact job
