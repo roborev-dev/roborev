@@ -916,6 +916,37 @@ func TestBuildDirtyTruncatedFallbackPreservesClosingFenceAtTightCap(t *testing.T
 		"dirty truncated fallback should keep the truncation marker and closing fence")
 }
 
+func TestBuildDirtyTruncatedFallbackTrimsOptionalContextBeforeShrinkingSnippet(t *testing.T) {
+	repoPath := t.TempDir()
+	guidelines := strings.Repeat("g", 4000)
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(toml), 0o644))
+
+	diff := strings.Repeat("+ retained after optional trim\n", 128)
+	currentSection, err := renderDirtyChangesSection(dirtyChangesSectionView{
+		Description: "The following changes have not yet been committed.",
+	})
+	require.NoError(t, err)
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+	require.NoError(t, err)
+
+	bodyLimit := len(currentSection) + len(fallbackBlock) + 1200
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + bodyLimit
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.NotContains(t, prompt, guidelines,
+		"oversized optional guidelines should be trimmed before collapsing the truncated diff snippet")
+	assert.Contains(t, prompt, "```diff\n+ retained after optional trim",
+		"dirty prompt should retain a truncated diff snippet after optional context is trimmed")
+	assert.Contains(t, prompt, "... (truncated)\n```\n")
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)

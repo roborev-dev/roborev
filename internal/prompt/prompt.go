@@ -152,6 +152,17 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		}
 		maxDiffLen := bodyLimit - len(currentSection) - len(fallbackBlock)
 		view.Diff.Body = ""
+		sizingView := view
+		sizingBody, err := renderDirtyPrompt(sizingView)
+		if err != nil {
+			return "", err
+		}
+		for len(sizingBody) > bodyLimit && trimOptionalSections(&sizingView.Optional) {
+			sizingBody, err = renderDirtyPrompt(sizingView)
+			if err != nil {
+				return "", err
+			}
+		}
 		if maxDiffLen > 1000 {
 			sampleBody := "X\n"
 			sampleFallback, err := renderDirtyTruncatedDiffFallback(sampleBody)
@@ -173,7 +184,8 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 					if err != nil {
 						return "", err
 					}
-					rendered, err := renderDirtyPrompt(view)
+					sizingView.Diff = view.Diff
+					rendered, err := renderDirtyPrompt(sizingView)
 					if err != nil {
 						return "", err
 					}
