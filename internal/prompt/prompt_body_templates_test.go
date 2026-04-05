@@ -64,6 +64,31 @@ func TestRenderRangePromptUsesNestedSections(t *testing.T) {
 	assert.Contains(t, body, "### Combined Diff")
 }
 
+func TestRenderCommitRangeSectionsFromTemplate(t *testing.T) {
+	required, err := renderCommitRangeRequired(commitRangeSectionView{
+		Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, required, "## Commit Range")
+	assert.Contains(t, required, "Reviewing 2 commits:")
+
+	overflow, err := renderCommitRangeOverflow(commitRangeSectionView{
+		Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, overflow, "- abc1234 first")
+	assert.Contains(t, overflow, "- def5678 second")
+}
+
+func TestRenderDirtyTruncatedDiffFallbackFromTemplate(t *testing.T) {
+	fallback, err := renderDirtyTruncatedDiffFallback("+line\n... (truncated)\n")
+	require.NoError(t, err)
+	assert.Contains(t, fallback, "(Diff too large to include in full)")
+	assert.Contains(t, fallback, "```diff")
+	assert.Contains(t, fallback, "+line")
+	assert.Contains(t, fallback, "... (truncated)")
+}
+
 func TestRenderDirtyPromptUsesNestedSections(t *testing.T) {
 	view := dirtyPromptView{
 		Optional: optionalSectionsView{

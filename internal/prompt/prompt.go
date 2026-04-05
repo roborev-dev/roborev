@@ -137,14 +137,29 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if err != nil {
 		return "", err
 	}
-	fullDiffSectionLen := len("### Diff\n\n") + len(view.Diff.Body)
-	if len(currentSection)+fullDiffSectionLen > bodyLimit {
-		prefixLen := len(currentSection) + len("### Diff\n\n") + len("(Diff too large to include in full)\n")
-		maxDiffLen := bodyLimit - prefixLen - len("```diff\n") - len("\n... (truncated)\n") - len("```\n")
+	fullDiffBlock, err := renderDiffBlock(view.Diff)
+	if err != nil {
+		return "", err
+	}
+	if len(currentSection)+len(fullDiffBlock) > bodyLimit {
+		fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+		if err != nil {
+			return "", err
+		}
+		fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+		if err != nil {
+			return "", err
+		}
+		maxDiffLen := bodyLimit - len(currentSection) - len(fallbackBlock)
 		view.Diff.Body = ""
-		view.Diff.Fallback = "(Diff too large to include in full)\n"
 		if maxDiffLen > 1000 {
-			view.Diff.Fallback += "```diff\n" + truncateUTF8(diff, maxDiffLen) + "\n... (truncated)\n```\n"
+			truncatedBody := truncateUTF8(diff, maxDiffLen-len("... (truncated)\n")) + "... (truncated)\n"
+			view.Diff.Fallback, err = renderDirtyTruncatedDiffFallback(truncatedBody)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			view.Diff.Fallback = fallbackOnly
 		}
 	}
 
@@ -450,29 +465,37 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 
-	// Commit range section
-	var currentRequired strings.Builder
-	currentRequired.WriteString("## Commit Range\n\n")
-	fmt.Fprintf(&currentRequired, "Reviewing %d commits:\n\n", len(commits))
-
-	var currentOverflow strings.Builder
-	for _, sha := range commits {
-		info, err := git.GetCommitInfo(repoPath, sha)
-		shortSHA := git.ShortSHA(sha)
+	entries := make([]commitRangeEntryView, 0, len(commits))
+	for _, commitSHA := range commits {
+		short := git.ShortSHA(commitSHA)
+		info, err := git.GetCommitInfo(repoPath, commitSHA)
 		if err == nil {
-			fmt.Fprintf(&currentOverflow, "- %s %s\n", shortSHA, info.Subject)
-		} else {
-			fmt.Fprintf(&currentOverflow, "- %s\n", shortSHA)
+			entries = append(entries, commitRangeEntryView{Commit: short, Subject: info.Subject})
+			continue
 		}
+		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	currentOverflow.WriteString("\n")
-	currentRequiredText := currentRequired.String()
-	currentOverflowText := currentOverflow.String()
+	currentView := commitRangeSectionView{Entries: entries}
+	currentRequiredText, err := renderCommitRangeRequired(currentView)
+	if err != nil {
+		return "", err
+	}
+	currentOverflowText, err := renderCommitRangeOverflow(currentView)
+	if err != nil {
+		return "", err
+	}
+	emptyInlineDiff, err := renderInlineDiff("")
+	if err != nil {
+		return "", err
+	}
+	emptyDiffBlock, err := renderDiffBlock(diffSectionView{Heading: "### Combined Diff", Body: emptyInlineDiff})
+	if err != nil {
+		return "", err
+	}
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
 	bodyLimit := max(0, promptCap-len(requiredPrefix))
-	diffWrap := len("### Combined Diff\n\n```diff\n") + len("\n```\n") + 1
-	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-diffWrap)
+	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
@@ -516,22 +539,11 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		}
 	}
 
-	entries := make([]commitRangeEntryView, 0, len(commits))
-	for _, commitSHA := range commits {
-		short := git.ShortSHA(commitSHA)
-		info, err := git.GetCommitInfo(repoPath, commitSHA)
-		if err == nil {
-			entries = append(entries, commitRangeEntryView{Commit: short, Subject: info.Subject})
-			continue
-		}
-		entries = append(entries, commitRangeEntryView{Commit: short})
-	}
-
 	body, err := fitRangePrompt(
 		bodyLimit,
 		rangePromptView{
 			Optional: optional,
-			Current:  commitRangeSectionView{Entries: entries},
+			Current:  currentView,
 			Diff: diffSectionView{
 				Heading:  "### Combined Diff",
 				Body:     strings.TrimPrefix(diffSection, "### Combined Diff\n\n"),

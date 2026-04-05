@@ -126,6 +126,10 @@ View with: {{.ViewCmd}}
 {{define "generic_range_fallback"}}(Diff too large to include - please review the commits directly)
 View with: {{.ViewCmd}}
 {{end}}
+{{define "dirty_truncated_diff_fallback"}}(Diff too large to include in full)
+{{if .Body}}```diff
+{{.Body}}```
+{{end}}{{end}}
 {{define "address_attempts"}}{{if .PreviousAttempts}}## Previous Addressing Attempts
 
 {{range .PreviousAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---

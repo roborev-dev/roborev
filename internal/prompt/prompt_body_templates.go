@@ -136,6 +136,10 @@ type genericDiffFallbackView struct {
 	ViewCmd string
 }
 
+type dirtyTruncatedDiffFallbackView struct {
+	Body string
+}
+
 var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	templateFS,
 	"templates/prompt_sections.md.gotmpl",
@@ -327,6 +331,14 @@ func renderCurrentCommitOverflow(view currentCommitSectionView) (string, error) 
 	return executePromptTemplate("current_commit_overflow", view)
 }
 
+func renderCommitRangeRequired(view commitRangeSectionView) (string, error) {
+	return executePromptTemplate("commit_range_required", view)
+}
+
+func renderCommitRangeOverflow(view commitRangeSectionView) (string, error) {
+	return executePromptTemplate("commit_range_overflow", view)
+}
+
 func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
 	return executePromptTemplate("dirty_changes", view)
 }
@@ -356,6 +368,13 @@ func renderGenericCommitFallback(viewCmd string) (string, error) {
 
 func renderGenericRangeFallback(viewCmd string) (string, error) {
 	return executePromptTemplate("generic_range_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
+}
+
+func renderDirtyTruncatedDiffFallback(body string) (string, error) {
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return executePromptTemplate("dirty_truncated_diff_fallback", dirtyTruncatedDiffFallbackView{Body: body})
 }
 
 func previousReviewViews(contexts []ReviewContext) []previousReviewView {
