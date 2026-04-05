@@ -190,7 +190,11 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 						return "", err
 					}
 					if len(rendered) <= bodyLimit {
+						view.Optional = sizingView.Optional
 						break
+					}
+					if trimOptionalSections(&sizingView.Optional) {
+						continue
 					}
 					overflow := len(rendered) - bodyLimit
 					next := truncateUTF8(truncatedContent, max(0, len(truncatedContent)-overflow))
@@ -201,6 +205,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 				}
 				if truncatedContent == "" {
 					view.Diff.Fallback = fallbackOnly
+					view.Optional = sizingView.Optional
 				}
 			} else {
 				view.Diff.Fallback = fallbackOnly
@@ -569,18 +574,34 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+			trimmedView, _, err := trimRangePromptView(bodyLimit, rangePromptView{
+				Optional: optional,
+				Current:  currentView,
+				Diff:     variants[len(variants)-1],
+			})
+			if err != nil {
+				return "", err
+			}
+			optionalPrefix, err := renderOptionalSectionsPrefix(trimmedView.Optional)
+			if err != nil {
+				return "", err
+			}
+			trimmedRequiredText, err := renderCommitRangeRequired(trimmedView.Current)
+			if err != nil {
+				return "", err
+			}
+			trimmedOverflowText, err := renderCommitRangeOverflow(trimmedView.Current)
+			if err != nil {
+				return "", err
+			}
 			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
 			if err != nil {
 				return "", err
 			}
-			optionalPrefix, err := renderOptionalSectionsPrefix(optional)
-			if err != nil {
-				return "", err
-			}
-			softBudget := max(0, bodyLimit-len(currentRequiredText)-len(shortestBlock))
-			softLen := len(optionalPrefix) + len(currentOverflowText)
+			softBudget := max(0, bodyLimit-len(trimmedRequiredText)-len(shortestBlock))
+			softLen := len(optionalPrefix) + len(trimmedOverflowText)
 			effectiveSoftLen := min(softLen, softBudget)
-			remaining := max(0, bodyLimit-len(currentRequiredText)-effectiveSoftLen)
+			remaining := max(0, bodyLimit-len(trimmedRequiredText)-effectiveSoftLen)
 			diffView, err = selectDiffSectionVariant(variants, remaining)
 			if err != nil {
 				return "", err

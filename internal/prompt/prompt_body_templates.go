@@ -216,21 +216,29 @@ func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
 }
 
 func fitRangePrompt(limit int, view rangePromptView) (string, error) {
-	body, err := renderRangePrompt(view)
+	_, body, err := trimRangePromptView(limit, view)
 	if err != nil {
 		return "", err
 	}
+	return hardCapPrompt(body, limit), nil
+}
+
+func trimRangePromptView(limit int, view rangePromptView) (rangePromptView, string, error) {
+	body, err := renderRangePrompt(view)
+	if err != nil {
+		return rangePromptView{}, "", err
+	}
 	if len(body) <= limit {
-		return body, nil
+		return view, body, nil
 	}
 
 	for trimOptionalSections(&view.Optional) {
 		body, err = renderRangePrompt(view)
 		if err != nil {
-			return "", err
+			return rangePromptView{}, "", err
 		}
 		if len(body) <= limit {
-			return body, nil
+			return view, body, nil
 		}
 	}
 
@@ -241,7 +249,7 @@ func fitRangePrompt(limit int, view rangePromptView) (string, error) {
 		view.Current.Entries[i].Subject = ""
 		body, err = renderRangePrompt(view)
 		if err != nil {
-			return "", err
+			return rangePromptView{}, "", err
 		}
 	}
 
@@ -249,11 +257,11 @@ func fitRangePrompt(limit int, view rangePromptView) (string, error) {
 		view.Current.Entries = view.Current.Entries[:len(view.Current.Entries)-1]
 		body, err = renderRangePrompt(view)
 		if err != nil {
-			return "", err
+			return rangePromptView{}, "", err
 		}
 	}
 
-	return hardCapPrompt(body, limit), nil
+	return view, body, nil
 }
 
 func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
