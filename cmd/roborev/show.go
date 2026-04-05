@@ -117,8 +117,7 @@ Examples:
 			}
 
 			if jsonOutput {
-				// Include comments in JSON output so tools/skills can see them.
-				// Merge job-based and legacy SHA-based comments (mirroring TUI).
+				// Include comments so tools/skills can see developer feedback.
 				type reviewWithComments struct {
 					storage.Review
 					Comments []storage.Response `json:"comments,omitempty"`

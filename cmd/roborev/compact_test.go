@@ -429,21 +429,7 @@ func TestCompactWorktreeBranchResolution(t *testing.T) {
 	opts := compactOptions{quiet: true}
 	_ = runCompact(cmd, opts)
 
-	if receivedRepo == "" {
-		require.Condition(t, func() bool {
-			return false
-		}, "expected repo param to be sent")
-	}
-	if receivedRepo != repo.Dir {
-		assert.Condition(t, func() bool {
-			return false
-		}, "repo: want main repo %q, got %q",
-			repo.Dir, receivedRepo)
-	}
-	if receivedBranch != "wt-branch" {
-		assert.Condition(t, func() bool {
-			return false
-		}, "branch: want worktree branch %q, got %q",
-			"wt-branch", receivedBranch)
-	}
+	require.NotEmpty(t, receivedRepo, "expected repo param to be sent")
+	assert.Equal(t, repo.Dir, receivedRepo, "repo: want main repo path")
+	assert.Equal(t, "wt-branch", receivedBranch, "branch: want worktree branch")
 }
