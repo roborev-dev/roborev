@@ -133,7 +133,7 @@ Run these as **separate commands**, but only run `roborev close` after
 confirming the comment succeeded:
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>"
+roborev comment --commenter roborev-fix --job <job_id> "<summary of changes>"
 # Only if the comment above succeeded:
 roborev close <job_id>
 ```
@@ -167,9 +167,9 @@ Agent:
 4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - `roborev comment --job 1019 "Fixed null check and added error handling"`
+   - `roborev comment --commenter roborev-fix --job 1019 "Fixed null check and added error handling"`
    - `roborev close 1019`
-   - `roborev comment --job 1021 "Fixed missing validation"`
+   - `roborev comment --commenter roborev-fix --job 1021 "Fixed missing validation"`
    - `roborev close 1021`
 7. Commits the changes per project conventions
 
@@ -183,7 +183,7 @@ Agent:
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
 5. Records comment and closes review:
-   - `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
+   - `roborev comment --commenter roborev-fix --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
    - `roborev close 1019`
 6. Commits the changes per project conventions
 

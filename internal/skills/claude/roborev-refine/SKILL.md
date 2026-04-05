@@ -130,7 +130,7 @@ Commit first per the project's conventions (see CLAUDE.md). Only after the
 commit succeeds, record a summary comment on the review and close it:
 
 ```bash
-roborev comment --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
+roborev comment --commenter roborev-refine --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
 <summary of changes>
 ROBOREV_COMMENT
 )"
