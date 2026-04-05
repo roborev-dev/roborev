@@ -786,6 +786,49 @@ func TestBuildRangePromptCodexRecomputesFallbackAfterTrimmingEntries(t *testing.
 		"range fallback should not stay pinned to the shortest variant once trimming entries makes a richer fallback fit")
 }
 
+func TestBuildRangePromptCodexTrimsForRicherFallbackEvenWhenShortestAlreadyFits(t *testing.T) {
+	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 1024)
+	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
+	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
+
+	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
+	require.NoError(t, err)
+	entries := make([]commitRangeEntryView, 0, len(commits))
+	for _, sha := range commits {
+		info, infoErr := gitpkg.GetCommitInfo(repoPath, sha)
+		require.NoError(t, infoErr)
+		entries = append(entries, commitRangeEntryView{Commit: gitpkg.ShortSHA(sha), Subject: info.Subject})
+	}
+	fullShortestBody, err := renderRangePrompt(rangePromptView{
+		Current: commitRangeSectionView{Count: len(entries), Entries: entries},
+		Diff:    variants[len(variants)-1],
+	})
+	require.NoError(t, err)
+	trimmedEntries := make([]commitRangeEntryView, 0, 10)
+	for _, entry := range entries[:10] {
+		trimmedEntries = append(trimmedEntries, commitRangeEntryView{Commit: entry.Commit})
+	}
+	trimmedRicherBody, err := renderRangePrompt(rangePromptView{
+		Current: commitRangeSectionView{Count: len(entries), Entries: trimmedEntries},
+		Diff:    variants[len(variants)-2],
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(fullShortestBody), len(trimmedRicherBody),
+		"test setup must allow a richer fallback after trimming a few entries even though the full shortest fallback already fits")
+
+	cap := len(GetSystemPrompt("codex", "range")+"\n") + len(fullShortestBody)
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assertContains(t, prompt, "git diff --unified=80",
+		"range fallback selection should try richer variants with metadata trimming even when the shortest variant already fits")
+	assert.NotContains(t, prompt, shortest,
+		"range fallback should not stop at the shortest variant when trimming entries would allow a richer fallback")
+}
+
 func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 5000)
 	cap := 10000
@@ -1054,6 +1097,45 @@ func TestBuildDirtyTruncatedFallbackContinuesTrimmingOptionalContextForSnippet(t
 		"dirty truncated fallback should keep sizing the snippet after trimming all removable optional context")
 }
 
+func TestBuildDirtyFallbackOnlyRestoresOptionalContextWhenSnippetCannotFit(t *testing.T) {
+	repoPath := t.TempDir()
+	guidelines := "Keep it simple."
+	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(toml), 0o644))
+	diff := strings.Repeat("+ snippet cannot fit here\n", 128)
+
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	singleLineFallback, err := renderDirtyTruncatedDiffFallback("+ snippet cannot fit here\n... (truncated)\n")
+	require.NoError(t, err)
+	guidelinesFallbackView := dirtyPromptView{
+		Optional: optionalSectionsView{ProjectGuidelines: buildProjectGuidelinesSectionView(guidelines)},
+		Current:  dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:     diffSectionView{Heading: "### Diff", Fallback: fallbackOnly},
+	}
+	requiredSingleLineView := dirtyPromptView{
+		Current: dirtyChangesSectionView{Description: "The following changes have not yet been committed."},
+		Diff:    diffSectionView{Heading: "### Diff", Fallback: singleLineFallback},
+	}
+	guidelinesFallbackBody, err := renderDirtyPrompt(guidelinesFallbackView)
+	require.NoError(t, err)
+	requiredSingleLineBody, err := renderDirtyPrompt(requiredSingleLineView)
+	require.NoError(t, err)
+	require.NotEmpty(t, requiredSingleLineBody)
+
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + len(guidelinesFallbackBody)
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, guidelines,
+		"fallback-only dirty prompt should restore optional context that still fits once snippet sizing fails")
+	assert.NotContains(t, prompt, "```diff",
+		"final prompt should fall back to the marker-only dirty diff when no snippet can fit")
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)
@@ -1153,9 +1235,9 @@ func TestBuildRangePromptCodexShortestFallbackCarriesExcludeScope(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.LessOrEqual(t, len(prompt), cap)
-	assert.Contains(t, prompt, shortest, "expected tiny-cap range prompt to use the shortest fallback variant")
+	assertContains(t, prompt, "git diff", "expected tiny-cap range prompt to retain Codex diff guidance")
 	assertContains(t, prompt, `:(exclude,glob)**/custom.dat`,
-		"expected shortest range fallback command to preserve custom exclude patterns")
+		"expected tiny-cap range fallback command to preserve custom exclude patterns")
 }
 
 func TestLoadGuidelines(t *testing.T) {

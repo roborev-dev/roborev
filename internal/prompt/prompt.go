@@ -164,6 +164,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 			}
 		}
 		if maxDiffLen > 1000 {
+			emptyFallbackOptional := sizingView.Optional
 			sampleBody := "X\n"
 			sampleFallback, err := renderDirtyTruncatedDiffFallback(sampleBody)
 			if err != nil {
@@ -205,7 +206,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 				}
 				if truncatedContent == "" {
 					view.Diff.Fallback = fallbackOnly
-					view.Optional = sizingView.Optional
+					view.Optional = emptyFallbackOptional
 				}
 			} else {
 				view.Diff.Fallback = fallbackOnly
@@ -374,6 +375,25 @@ func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSect
 	}
 	view.Fallback = truncateUTF8(view.Fallback, max(0, limit-len(baseBlock)))
 	return view, nil
+}
+
+func selectRichestRangePromptView(limit int, view rangePromptView, variants []diffSectionView) (rangePromptView, error) {
+	fallback := rangePromptView{Optional: view.Optional, Current: view.Current}
+	if len(variants) > 0 {
+		fallback.Diff = variants[len(variants)-1]
+	}
+	for _, variant := range variants {
+		candidate := rangePromptView{Optional: view.Optional, Current: view.Current, Diff: variant}
+		trimmed, body, err := trimRangePromptView(limit, candidate)
+		if err != nil {
+			return rangePromptView{}, err
+		}
+		fallback = trimmed
+		if len(body) <= limit {
+			return trimmed, nil
+		}
+	}
+	return fallback, nil
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
@@ -574,38 +594,16 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
 		if isCodexReviewAgent(agentName) {
 			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
-			trimmedView, _, err := trimRangePromptView(bodyLimit, rangePromptView{
+			selectedView, err := selectRichestRangePromptView(bodyLimit, rangePromptView{
 				Optional: optional,
 				Current:  currentView,
-				Diff:     variants[len(variants)-1],
-			})
+			}, variants)
 			if err != nil {
 				return "", err
 			}
-			optionalPrefix, err := renderOptionalSectionsPrefix(trimmedView.Optional)
-			if err != nil {
-				return "", err
-			}
-			trimmedRequiredText, err := renderCommitRangeRequired(trimmedView.Current)
-			if err != nil {
-				return "", err
-			}
-			trimmedOverflowText, err := renderCommitRangeOverflow(trimmedView.Current)
-			if err != nil {
-				return "", err
-			}
-			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
-			if err != nil {
-				return "", err
-			}
-			softBudget := max(0, bodyLimit-len(trimmedRequiredText)-len(shortestBlock))
-			softLen := len(optionalPrefix) + len(trimmedOverflowText)
-			effectiveSoftLen := min(softLen, softBudget)
-			remaining := max(0, bodyLimit-len(trimmedRequiredText)-effectiveSoftLen)
-			diffView, err = selectDiffSectionVariant(variants, remaining)
-			if err != nil {
-				return "", err
-			}
+			optional = selectedView.Optional
+			currentView = selectedView.Current
+			diffView = selectedView.Diff
 		} else {
 			fallback, err := renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
 			if err != nil {
