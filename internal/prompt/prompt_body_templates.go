@@ -138,37 +138,37 @@ type genericDiffFallbackView struct {
 
 var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	templateFS,
-	"templates/prompt_sections.txt.gotmpl",
-	"templates/assembled_single.txt.gotmpl",
-	"templates/assembled_range.txt.gotmpl",
-	"templates/assembled_dirty.txt.gotmpl",
-	"templates/assembled_address.txt.gotmpl",
-	"templates/default_review.txt.gotmpl",
-	"templates/default_dirty.txt.gotmpl",
-	"templates/default_range.txt.gotmpl",
-	"templates/default_security.txt.gotmpl",
-	"templates/default_address.txt.gotmpl",
-	"templates/default_design_review.txt.gotmpl",
-	"templates/claude-code_review.txt.gotmpl",
-	"templates/codex_review.txt.gotmpl",
-	"templates/gemini_review.txt.gotmpl",
-	"templates/gemini_run.txt.gotmpl",
+	"templates/prompt_sections.md.gotmpl",
+	"templates/assembled_single.md.gotmpl",
+	"templates/assembled_range.md.gotmpl",
+	"templates/assembled_dirty.md.gotmpl",
+	"templates/assembled_address.md.gotmpl",
+	"templates/default_review.md.gotmpl",
+	"templates/default_dirty.md.gotmpl",
+	"templates/default_range.md.gotmpl",
+	"templates/default_security.md.gotmpl",
+	"templates/default_address.md.gotmpl",
+	"templates/default_design_review.md.gotmpl",
+	"templates/claude-code_review.md.gotmpl",
+	"templates/codex_review.md.gotmpl",
+	"templates/gemini_review.md.gotmpl",
+	"templates/gemini_run.md.gotmpl",
 ))
 
 func renderSinglePrompt(view singlePromptView) (string, error) {
-	return executePromptTemplate("assembled_single.txt.gotmpl", view)
+	return executePromptTemplate("assembled_single.md.gotmpl", view)
 }
 
 func renderRangePrompt(view rangePromptView) (string, error) {
-	return executePromptTemplate("assembled_range.txt.gotmpl", view)
+	return executePromptTemplate("assembled_range.md.gotmpl", view)
 }
 
 func renderDirtyPrompt(view dirtyPromptView) (string, error) {
-	return executePromptTemplate("assembled_dirty.txt.gotmpl", view)
+	return executePromptTemplate("assembled_dirty.md.gotmpl", view)
 }
 
 func renderAddressPrompt(view addressPromptView) (string, error) {
-	return executePromptTemplate("assembled_address.txt.gotmpl", view)
+	return executePromptTemplate("assembled_address.md.gotmpl", view)
 }
 
 func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
