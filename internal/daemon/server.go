@@ -2496,11 +2496,12 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		}
 		// Fetch comments for context (user feedback, previous tool attempts),
 		// including legacy commit-based comments.
-		var parentCommitID int64
-		if parentJob.CommitID != nil {
-			parentCommitID = *parentJob.CommitID
+		commitID := parentJob.CommitIDValue()
+		var fallbackSHA string
+		if commitID == 0 && git.LooksLikeSHA(parentJob.GitRef) {
+			fallbackSHA = parentJob.GitRef
 		}
-		comments, commentsErr := s.db.GetAllCommentsForJob(req.ParentJobID, parentCommitID, parentJob.GitRef)
+		comments, commentsErr := s.db.GetAllCommentsForJob(req.ParentJobID, commitID, fallbackSHA)
 		if commentsErr != nil {
 			log.Printf("fix job for parent %d: failed to fetch comments: %v", req.ParentJobID, commentsErr)
 		}

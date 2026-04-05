@@ -101,6 +101,14 @@ func (j ReviewJob) IsDirtyJob() bool {
 	return j.DiffContent != nil || j.GitRef == "dirty"
 }
 
+// CommitIDValue returns the commit ID as a plain int64 (0 if nil).
+func (j ReviewJob) CommitIDValue() int64 {
+	if j.CommitID != nil {
+		return *j.CommitID
+	}
+	return 0
+}
+
 // IsTaskJob returns true if this is a task job (run, analyze, custom label) rather than
 // a commit review or dirty review. Task jobs have pre-stored prompts and no verdicts.
 // Compact jobs are not considered task jobs since they produce P/F verdicts.

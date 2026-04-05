@@ -177,8 +177,9 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		assert.Equal(t, "bob", all[1].Responder)
 	})
 
-	t.Run("skips SHA fallback for ranges", func(t *testing.T) {
-		all, err := db.GetAllCommentsForJob(job.ID, 0, "abc1234..def4567")
+	t.Run("skips fallback when SHA is empty", func(t *testing.T) {
+		// Callers pass "" when gitRef is not a valid SHA (e.g. ranges).
+		all, err := db.GetAllCommentsForJob(job.ID, 0, "")
 		require.NoError(t, err)
 		require.Len(t, all, 1)
 	})

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/git"
 )
 
 // GetReviewByJobID finds a review by its job ID
@@ -528,24 +527,22 @@ func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 }
 
 // GetAllCommentsForJob returns all comments for a job, merging legacy
-// commit-based comments via MergeResponses. Prefers commitID (repo-scoped,
-// unambiguous) but falls back to gitRef SHA lookup for legacy jobs that
-// have no commit_id.
-func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Response, error) {
+// commit-based comments via MergeResponses. When commitID > 0, fetches
+// legacy comments by commit ID. Otherwise, if fallbackSHA is non-empty,
+// fetches by SHA. Callers should validate the SHA (e.g. via
+// git.LooksLikeSHA) before passing it here.
+func (db *DB) GetAllCommentsForJob(jobID, commitID int64, fallbackSHA string) ([]Response, error) {
 	responses, err := db.GetCommentsForJob(jobID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch legacy commit-based comments: prefer commit_id (unambiguous),
-	// fall back to SHA for legacy jobs without commit linkage.
-	// Errors are returned so callers can log/warn as appropriate.
 	var legacyResponses []Response
 	var legacyErr error
 	if commitID > 0 {
 		legacyResponses, legacyErr = db.GetCommentsForCommit(commitID)
-	} else if git.LooksLikeSHA(gitRef) {
-		legacyResponses, legacyErr = db.GetCommentsForCommitSHA(gitRef)
+	} else if fallbackSHA != "" {
+		legacyResponses, legacyErr = db.GetCommentsForCommitSHA(fallbackSHA)
 	}
 	if legacyErr != nil {
 		return responses, fmt.Errorf("legacy comment lookup: %w", legacyErr)

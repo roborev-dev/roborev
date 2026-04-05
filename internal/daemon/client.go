@@ -384,8 +384,9 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 }
 
 // GetAllCommentsForJob fetches comments for a job, merging legacy
-// commit-based comments via storage.MergeResponses. Prefers commit_id
-// when available, falls back to SHA for legacy jobs without commit linkage.
+// commit-based comments via storage.MergeResponses. When commitID > 0,
+// fetches legacy by commit ID. Otherwise, if gitRef looks like a SHA,
+// fetches by SHA. Callers may pre-validate gitRef via git.LooksLikeSHA.
 func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]storage.Response, error) {
 	responses, err := c.GetCommentsForJob(jobID)
 	if err != nil {

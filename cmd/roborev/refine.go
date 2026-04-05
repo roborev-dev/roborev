@@ -522,9 +522,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		var reviewCommitID int64
 		var reviewGitRef string
 		if currentFailedReview.Job != nil {
-			if currentFailedReview.Job.CommitID != nil {
-				reviewCommitID = *currentFailedReview.Job.CommitID
-			}
+			reviewCommitID = currentFailedReview.Job.CommitIDValue()
 			reviewGitRef = currentFailedReview.Job.GitRef
 		}
 		previousAttempts, err := client.GetAllCommentsForJob(currentFailedReview.JobID, reviewCommitID, reviewGitRef)

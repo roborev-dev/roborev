@@ -866,9 +866,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	var commitID int64
 	var gitRef string
 	if job != nil {
-		if job.CommitID != nil {
-			commitID = *job.CommitID
-		}
+		commitID = job.CommitIDValue()
 		gitRef = job.GitRef
 	}
 	comments, commentsErr := fetchComments(ctx, addr, jobID, commitID, gitRef)
@@ -1045,9 +1043,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		var batchCommitID int64
 		var batchGitRef string
 		if job != nil {
-			if job.CommitID != nil {
-				batchCommitID = *job.CommitID
-			}
+			batchCommitID = job.CommitIDValue()
 			batchGitRef = job.GitRef
 		}
 		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchCommitID, batchGitRef)
