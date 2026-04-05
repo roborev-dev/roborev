@@ -890,6 +890,32 @@ func TestBuildPromptLargeGuidelinesPrefersDiffOverContext(t *testing.T) {
 		"small diff should be inlined after trimming guidelines")
 }
 
+func TestBuildDirtyTruncatedFallbackPreservesClosingFenceAtTightCap(t *testing.T) {
+	repoPath := t.TempDir()
+	diff := strings.Repeat("+ keep this line in the truncated fallback\n", 128)
+
+	currentSection, err := renderDirtyChangesSection(dirtyChangesSectionView{
+		Description: "The following changes have not yet been committed.",
+	})
+	require.NoError(t, err)
+	fallbackOnly, err := renderDirtyTruncatedDiffFallback("")
+	require.NoError(t, err)
+	fallbackBlock, err := renderDiffBlock(diffSectionView{Heading: "### Diff", Fallback: fallbackOnly})
+	require.NoError(t, err)
+
+	bodyLimit := len(currentSection) + len(fallbackBlock) + 1005
+	cap := len(GetSystemPrompt("claude-code", "dirty")+"\n") + bodyLimit
+	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
+
+	prompt, err := b.BuildDirty(repoPath, diff, 0, 0, "claude-code", "")
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(prompt), cap)
+	assert.Contains(t, prompt, "(Diff too large to include in full)")
+	assert.Contains(t, prompt, "... (truncated)\n```\n",
+		"dirty truncated fallback should keep the truncation marker and closing fence")
+}
+
 func TestBuildDirtySmallCapTruncatesUTF8Safely(t *testing.T) {
 	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
 	diff := strings.Repeat("+ ascii line\n", 256) + strings.Repeat("+ 世界\n", 4096)

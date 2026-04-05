@@ -153,10 +153,45 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		maxDiffLen := bodyLimit - len(currentSection) - len(fallbackBlock)
 		view.Diff.Body = ""
 		if maxDiffLen > 1000 {
-			truncatedBody := truncateUTF8(diff, maxDiffLen-len("... (truncated)\n")) + "... (truncated)\n"
-			view.Diff.Fallback, err = renderDirtyTruncatedDiffFallback(truncatedBody)
+			sampleBody := "X\n"
+			sampleFallback, err := renderDirtyTruncatedDiffFallback(sampleBody)
 			if err != nil {
 				return "", err
+			}
+			wrapperOverhead := len(sampleFallback) - len(fallbackOnly) - len(sampleBody)
+			truncationSuffix := "\n... (truncated)\n"
+			availableContentLen := maxDiffLen - wrapperOverhead - len(truncationSuffix)
+			if availableContentLen > 0 {
+				truncatedContent := truncateUTF8(diff, availableContentLen)
+				for truncatedContent != "" {
+					truncatedBody := truncatedContent
+					if !strings.HasSuffix(truncatedBody, "\n") {
+						truncatedBody += "\n"
+					}
+					truncatedBody += "... (truncated)\n"
+					view.Diff.Fallback, err = renderDirtyTruncatedDiffFallback(truncatedBody)
+					if err != nil {
+						return "", err
+					}
+					rendered, err := renderDirtyPrompt(view)
+					if err != nil {
+						return "", err
+					}
+					if len(rendered) <= bodyLimit {
+						break
+					}
+					overflow := len(rendered) - bodyLimit
+					next := truncateUTF8(truncatedContent, max(0, len(truncatedContent)-overflow))
+					if next == truncatedContent {
+						next = truncateUTF8(truncatedContent, max(0, len(truncatedContent)-1))
+					}
+					truncatedContent = next
+				}
+				if truncatedContent == "" {
+					view.Diff.Fallback = fallbackOnly
+				}
+			} else {
+				view.Diff.Fallback = fallbackOnly
 			}
 		} else {
 			view.Diff.Fallback = fallbackOnly
