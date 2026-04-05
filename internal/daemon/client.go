@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/git"
@@ -385,16 +384,8 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 }
 
 // GetAllCommentsForJob fetches comments for a job, merging legacy
-// commit-based comments. Prefers commit_id when available, falls back
-// to SHA for legacy jobs without commit linkage.
-//
-// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
-//   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
-//   - cmd/roborev/fix.go           fetchComments()
-//   - cmd/roborev/show.go          fetchShowComments()
-//   - cmd/roborev/tui/fetch.go     loadResponses()
-//
-// Keep all five in sync when changing the merge logic.
+// commit-based comments via storage.MergeResponses. Prefers commit_id
+// when available, falls back to SHA for legacy jobs without commit linkage.
 func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]storage.Response, error) {
 	responses, err := c.GetCommentsForJob(jobID)
 	if err != nil {
@@ -418,20 +409,8 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				if json.NewDecoder(legacyResp.Body).Decode(&result) == nil && len(result.Responses) > 0 {
-					seen := make(map[int64]bool, len(responses))
-					for _, r := range responses {
-						seen[r.ID] = true
-					}
-					for _, r := range result.Responses {
-						if !seen[r.ID] {
-							seen[r.ID] = true
-							responses = append(responses, r)
-						}
-					}
-					sort.Slice(responses, func(i, j int) bool {
-						return responses[i].CreatedAt.Before(responses[j].CreatedAt)
-					})
+				if json.NewDecoder(legacyResp.Body).Decode(&result) == nil {
+					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}
 		}

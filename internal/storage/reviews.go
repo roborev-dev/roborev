@@ -528,18 +528,9 @@ func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 }
 
 // GetAllCommentsForJob returns all comments for a job, merging legacy
-// commit-based comments. Prefers commitID (repo-scoped, unambiguous)
-// but falls back to gitRef SHA lookup for legacy jobs that have no
-// commit_id.
-//
-// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in four HTTP-
-// based callers that can't use the DB directly:
-//   - internal/daemon/client.go    GetAllCommentsForJob() (HTTP client)
-//   - cmd/roborev/fix.go           fetchComments()
-//   - cmd/roborev/show.go          fetchShowComments()
-//   - cmd/roborev/tui/fetch.go     loadResponses()
-//
-// Keep all five in sync when changing the merge logic.
+// commit-based comments via MergeResponses. Prefers commitID (repo-scoped,
+// unambiguous) but falls back to gitRef SHA lookup for legacy jobs that
+// have no commit_id.
 func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Response, error) {
 	responses, err := db.GetCommentsForJob(jobID)
 	if err != nil {
@@ -560,21 +551,28 @@ func (db *DB) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]Resp
 		return responses, fmt.Errorf("legacy comment lookup: %w", legacyErr)
 	}
 
-	if len(legacyResponses) > 0 {
-		seen := make(map[int64]bool, len(responses))
-		for _, r := range responses {
-			seen[r.ID] = true
-		}
-		for _, r := range legacyResponses {
-			if !seen[r.ID] {
-				seen[r.ID] = true
-				responses = append(responses, r)
-			}
-		}
-		sort.Slice(responses, func(i, j int) bool {
-			return responses[i].CreatedAt.Before(responses[j].CreatedAt)
-		})
-	}
+	return MergeResponses(responses, legacyResponses), nil
+}
 
-	return responses, nil
+// MergeResponses deduplicates two Response slices by ID and returns
+// a chronologically sorted result. This is used wherever job-based
+// and legacy commit-based comments are merged.
+func MergeResponses(primary, extra []Response) []Response {
+	if len(extra) == 0 {
+		return primary
+	}
+	seen := make(map[int64]bool, len(primary))
+	for _, r := range primary {
+		seen[r.ID] = true
+	}
+	for _, r := range extra {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			primary = append(primary, r)
+		}
+	}
+	sort.Slice(primary, func(i, j int) bool {
+		return primary[i].CreatedAt.Before(primary[j].CreatedAt)
+	})
+	return primary
 }

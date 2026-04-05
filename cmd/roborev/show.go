@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -171,15 +170,7 @@ Examples:
 }
 
 // fetchShowComments retrieves comments for a review, merging legacy
-// SHA-based comments for single-commit reviews (mirroring TUI/CLI fix).
-//
-// NOTE: The merge/dedup-by-ID/sort pattern is duplicated in:
-//   - internal/storage/reviews.go  GetAllCommentsForJob() (DB path)
-//   - internal/daemon/client.go    GetAllCommentsForJob() (HTTP client)
-//   - cmd/roborev/fix.go           fetchComments()
-//   - cmd/roborev/tui/fetch.go     loadResponses()
-//
-// Keep all five in sync when changing the merge logic.
+// SHA-based comments via storage.MergeResponses.
 func fetchShowComments(client *http.Client, addr string, review storage.Review) []storage.Response {
 	var responses []storage.Response
 
@@ -217,19 +208,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 					Responses []storage.Response `json:"responses"`
 				}
 				if json.NewDecoder(resp.Body).Decode(&result) == nil {
-					seen := make(map[int64]bool, len(responses))
-					for _, r := range responses {
-						seen[r.ID] = true
-					}
-					for _, r := range result.Responses {
-						if !seen[r.ID] {
-							seen[r.ID] = true
-							responses = append(responses, r)
-						}
-					}
-					sort.Slice(responses, func(i, j int) bool {
-						return responses[i].CreatedAt.Before(responses[j].CreatedAt)
-					})
+					responses = storage.MergeResponses(responses, result.Responses)
 				}
 			}
 		}
