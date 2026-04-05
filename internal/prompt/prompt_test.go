@@ -805,6 +805,29 @@ func TestSelectRichestRangePromptViewPrefersSummaryWhenRicherNeedsMoreTrimming(t
 	assert.Equal(t, view.Current.Entries, selected.Current.Entries)
 }
 
+func TestSelectRichestRangePromptViewPrefersOptionalContextWhenRicherNeedsMoreTrimming(t *testing.T) {
+	view := rangePromptView{
+		Optional: optionalSectionsView{AdditionalContext: strings.Repeat("context\n", 24)},
+		Current:  commitRangeSectionView{Count: 1, Entries: []commitRangeEntryView{{Commit: "abc1234", Subject: "summary"}}},
+	}
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
+	}
+	shorterBody, err := renderRangePrompt(rangePromptView{Optional: view.Optional, Current: view.Current, Diff: variants[1]})
+	require.NoError(t, err)
+	trimmedRicherBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[0]})
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(trimmedRicherBody), len(shorterBody),
+		"test setup must allow the richer variant only after trimming more optional context than the shorter variant needs")
+
+	selected, err := selectRichestRangePromptView(len(shorterBody), view, variants)
+	require.NoError(t, err)
+
+	assert.Equal(t, variants[1].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, view.Optional.AdditionalContext, selected.Optional.AdditionalContext)
+}
+
 func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {
 	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 5000)
 	cap := 10000

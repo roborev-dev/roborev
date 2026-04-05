@@ -378,26 +378,49 @@ func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSect
 }
 
 type rangeMetadataLoss struct {
-	RemovedEntries int
-	BlankedSubject int
+	RemovedEntries  int
+	BlankedSubject  int
+	TrimmedOptional int
 }
 
 func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
 	switch {
 	case a.RemovedEntries != b.RemovedEntries:
 		return a.RemovedEntries - b.RemovedEntries
-	default:
+	case a.BlankedSubject != b.BlankedSubject:
 		return a.BlankedSubject - b.BlankedSubject
+	default:
+		return a.TrimmedOptional - b.TrimmedOptional
 	}
 }
 
-func measureRangeMetadataLoss(original, trimmed commitRangeSectionView) rangeMetadataLoss {
-	loss := rangeMetadataLoss{RemovedEntries: len(original.Entries) - len(trimmed.Entries)}
-	for i := range trimmed.Entries {
-		if i >= len(original.Entries) {
+func measureOptionalSectionsLoss(original, trimmed optionalSectionsView) int {
+	loss := 0
+	if len(original.PreviousAttempts) > 0 && len(trimmed.PreviousAttempts) == 0 {
+		loss++
+	}
+	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
+		loss++
+	}
+	if original.AdditionalContext != "" && trimmed.AdditionalContext == "" {
+		loss++
+	}
+	if original.ProjectGuidelines != nil && trimmed.ProjectGuidelines == nil {
+		loss++
+	}
+	return loss
+}
+
+func measureRangeMetadataLoss(original, trimmed rangePromptView) rangeMetadataLoss {
+	loss := rangeMetadataLoss{
+		RemovedEntries:  len(original.Current.Entries) - len(trimmed.Current.Entries),
+		TrimmedOptional: measureOptionalSectionsLoss(original.Optional, trimmed.Optional),
+	}
+	for i := range trimmed.Current.Entries {
+		if i >= len(original.Current.Entries) {
 			break
 		}
-		if original.Entries[i].Subject != "" && trimmed.Entries[i].Subject == "" {
+		if original.Current.Entries[i].Subject != "" && trimmed.Current.Entries[i].Subject == "" {
 			loss.BlankedSubject++
 		}
 	}
@@ -424,7 +447,7 @@ func selectRichestRangePromptView(limit int, view rangePromptView, variants []di
 		if len(body) > limit {
 			continue
 		}
-		loss := measureRangeMetadataLoss(view.Current, trimmed.Current)
+		loss := measureRangeMetadataLoss(view, trimmed)
 		if !haveBest || compareRangeMetadataLoss(loss, bestLoss) < 0 {
 			best = trimmed
 			bestLoss = loss
