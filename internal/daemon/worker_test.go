@@ -538,8 +538,7 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 	require.NoError(t, err)
 	sha := strings.TrimSpace(string(shaBytes))
 
-	job := &storage.ReviewJob{ID: 42, Agent: "codex", GitRef: sha}
-	diffFile, cleanup, err := prepareDiffFile(worktreeDir, job, nil)
+	diffFile, cleanup, err := prompt.WriteDiffSnapshot(worktreeDir, sha, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
 	require.NotNil(t, cleanup)
@@ -551,7 +550,8 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 		gitDir = filepath.Join(worktreeDir, gitDir)
 	}
 
-	assert.Equal(t, filepath.Join(gitDir, "roborev-review-42.diff"), diffFile)
+	assert.True(t, strings.HasPrefix(diffFile, gitDir),
+		"snapshot should be in git dir: got %s, want prefix %s", diffFile, gitDir)
 	data, err := os.ReadFile(diffFile)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "diff --git")
@@ -578,7 +578,7 @@ func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	require.NotNil(t, cleanup)
 
 	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
-	assert.Contains(t, reviewPrompt, "roborev-review-73.diff")
+	assert.Contains(t, reviewPrompt, "roborev-snapshot-")
 
 	cleanup()
 }
@@ -601,11 +601,8 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
 
-	gitDir, err := gitpkg.ResolveGitDir(repoPath)
-	require.NoError(t, err)
-	expectedPath := filepath.Join(gitDir, "roborev-review-74.diff")
-
-	assert.Contains(t, reviewPrompt, expectedPath)
+	assert.Contains(t, reviewPrompt, "roborev-snapshot-")
+	assert.Contains(t, reviewPrompt, ".diff")
 	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
 
 	cleanup()
@@ -629,7 +626,7 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
 	assert.NotContains(t, reviewPrompt, prompt.DiffFilePathPlaceholder)
-	assert.Contains(t, reviewPrompt, "roborev-review-75.diff")
+	assert.Contains(t, reviewPrompt, "roborev-snapshot-")
 
 	cleanup()
 }

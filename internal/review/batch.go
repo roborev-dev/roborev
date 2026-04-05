@@ -154,14 +154,21 @@ func runSingle(
 		promptReviewType = ""
 	}
 
-	reviewPrompt, err := builder.Build(
+	excludes := config.ResolveExcludePatterns(
+		cfg.RepoPath, cfg.GlobalConfig, promptReviewType,
+	)
+	snapResult, err := builder.BuildWithSnapshot(
 		cfg.RepoPath, cfg.GitRef, 0, cfg.ContextCount,
-		resolvedAgent.Name(), promptReviewType)
+		resolvedAgent.Name(), promptReviewType, excludes)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(
 			"build prompt: %v", err)
 		return result
+	}
+	reviewPrompt := snapResult.Prompt
+	if snapResult.Cleanup != nil {
+		defer snapResult.Cleanup()
 	}
 
 	// Run review

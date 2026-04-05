@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -214,6 +216,84 @@ func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, conte
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
 	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+}
+
+// SnapshotResult holds a prompt and an optional cleanup function for
+// a diff snapshot file that was written during prompt construction.
+type SnapshotResult struct {
+	Prompt  string
+	Cleanup func() // nil when no snapshot was written
+}
+
+// BuildWithSnapshot builds a review prompt, automatically writing a
+// diff snapshot file when the diff is too large to inline. The caller
+// must call Cleanup (if non-nil) after the prompt is no longer needed.
+// excludes are applied to the snapshot diff.
+func (b *Builder) BuildWithSnapshot(
+	repoPath, gitRef string, repoID int64,
+	contextCount int, agentName, reviewType string,
+	excludes []string,
+) (SnapshotResult, error) {
+	p, err := b.BuildWithDiffFile(
+		repoPath, gitRef, repoID,
+		contextCount, agentName, reviewType, "",
+	)
+	if !errors.Is(err, ErrDiffTruncatedNoFile) {
+		return SnapshotResult{Prompt: p}, err
+	}
+	// Diff too large — write a snapshot file and retry.
+	diffFile, cleanup, writeErr := WriteDiffSnapshot(
+		repoPath, gitRef, excludes,
+	)
+	if writeErr != nil {
+		return SnapshotResult{}, fmt.Errorf(
+			"write diff snapshot: %w", writeErr,
+		)
+	}
+	p, err = b.BuildWithDiffFile(
+		repoPath, gitRef, repoID,
+		contextCount, agentName, reviewType, diffFile,
+	)
+	if err != nil {
+		cleanup()
+		return SnapshotResult{}, err
+	}
+	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
+}
+
+// WriteDiffSnapshot writes the full diff for a git ref to a file in
+// the repo's git dir. Returns the file path and a cleanup function.
+func WriteDiffSnapshot(
+	repoPath, gitRef string, excludes []string,
+) (string, func(), error) {
+	var fullDiff string
+	var err error
+	if git.IsRange(gitRef) {
+		fullDiff, err = git.GetRangeDiff(
+			repoPath, gitRef, excludes...,
+		)
+	} else {
+		fullDiff, err = git.GetDiff(
+			repoPath, gitRef, excludes...,
+		)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("capture diff: %w", err)
+	}
+	if fullDiff == "" {
+		return "", nil, fmt.Errorf("diff is empty")
+	}
+	gitDir, err := git.ResolveGitDir(repoPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve git dir: %w", err)
+	}
+	diffFile := filepath.Join(
+		gitDir, fmt.Sprintf("roborev-snapshot-%d.diff", os.Getpid()),
+	)
+	if err := os.WriteFile(diffFile, []byte(fullDiff), 0o644); err != nil {
+		return "", nil, fmt.Errorf("write snapshot: %w", err)
+	}
+	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
