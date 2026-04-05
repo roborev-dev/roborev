@@ -1290,3 +1290,70 @@ func TestBuildAddressPromptSplitsResponses(t *testing.T) {
 	assert.Contains(t, p, "false positive")
 	assert.Contains(t, p, "alice")
 }
+
+func TestBuildRangePrompt_IncludesInRangeReviews(t *testing.T) {
+	r := newTestRepo(t)
+
+	// Create initial commit (will serve as range start / merge base)
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("base\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+	baseSHA := r.git("rev-parse", "HEAD")
+
+	// Create two commits on the "branch"
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change1\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "first feature commit")
+	commit1 := r.git("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change2\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "second feature commit")
+	commit2 := r.git("rev-parse", "HEAD")
+
+	// Set up DB with repo and per-commit reviews
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, commit1, "test",
+		"Found bug: missing null check in handler\n\nVerdict: FAIL")
+	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
+		"No issues found.\n\nVerdict: PASS")
+
+	// Build range prompt
+	rangeRef := baseSHA + ".." + commit2
+	builder := NewBuilder(db)
+	prompt, err := builder.Build(r.dir, rangeRef, repo.ID, 0, "test", "")
+	require.NoError(t, err)
+
+	// Should contain the in-range reviews section
+	assert := assert.New(t)
+	assert.Contains(prompt, "Per-Commit Reviews in This Range")
+	assert.Contains(prompt, "Do not re-raise issues")
+	assert.Contains(prompt, "missing null check in handler")
+	assert.Contains(prompt, "No issues found.")
+	assert.Contains(prompt, "failed")
+	assert.Contains(prompt, "passed")
+}
+
+func TestBuildRangePrompt_NoInRangeReviewsWithoutDB(t *testing.T) {
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("base\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+	baseSHA := r.git("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "feature")
+	headSHA := r.git("rev-parse", "HEAD")
+
+	// Build without DB — should not include in-range reviews section
+	builder := NewBuilder(nil)
+	prompt, err := builder.Build(r.dir, baseSHA+".."+headSHA, 0, 0, "test", "")
+	require.NoError(t, err)
+
+	assert.NotContains(t, prompt, "Per-Commit Reviews in This Range")
+}

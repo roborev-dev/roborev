@@ -119,6 +119,17 @@ responses from developers. Use this context to:
 - Consider developer responses about why certain patterns exist
 `
 
+// InRangeReviewsHeader introduces per-commit reviews within a range review
+const InRangeReviewsHeader = `
+## Per-Commit Reviews in This Range
+
+The following commits in this range have already been individually reviewed.
+Issues found in earlier commits may have been fixed by later commits in the range.
+
+Do not re-raise issues identified below unless they persist in the final code.
+Focus on cross-commit interactions and problems not caught by per-commit reviews.
+`
+
 // ReviewContext holds a commit SHA and its associated review (if any) plus responses
 type ReviewContext struct {
 	SHA       string
@@ -607,6 +618,10 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 
+	// Include per-commit reviews for commits in this range so the
+	// reviewer doesn't re-raise issues already found and addressed.
+	b.writeInRangeReviews(&optionalContext, commits)
+
 	// Commit range section
 	var currentRequired strings.Builder
 	currentRequired.WriteString("## Commit Range\n\n")
@@ -801,37 +816,81 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 	}
 }
 
+// writeInRangeReviews writes per-commit reviews for commits within a range.
+// This gives the range reviewer context about issues already found and
+// addressed, preventing duplicate findings.
+func (b *Builder) writeInRangeReviews(sb *strings.Builder, commits []string) {
+	if b.db == nil || len(commits) == 0 {
+		return
+	}
+
+	contexts := b.lookupReviewContexts(commits, true)
+	if len(contexts) == 0 {
+		return
+	}
+
+	sb.WriteString(InRangeReviewsHeader)
+	sb.WriteString("\n")
+
+	for _, ctx := range contexts {
+		shortSHA := git.ShortSHA(ctx.SHA)
+		verdict := storage.ParseVerdict(ctx.Review.Output)
+		verdictLabel := "unknown"
+		switch verdict {
+		case "P":
+			verdictLabel = "passed"
+		case "F":
+			verdictLabel = "failed"
+		}
+
+		fmt.Fprintf(sb, "--- Commit %s (%s, %s) ---\n",
+			shortSHA, ctx.Review.Agent, verdictLabel)
+		sb.WriteString(ctx.Review.Output)
+		sb.WriteString("\n")
+
+		if len(ctx.Responses) > 0 {
+			sb.WriteString("\nComments on this review:\n")
+			for _, resp := range ctx.Responses {
+				fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
+			}
+		}
+		sb.WriteString("\n")
+	}
+}
+
+// lookupReviewContexts fetches review contexts for the given SHAs.
+// When skipMissing is true, SHAs without reviews are omitted; when false,
+// they are included with Review == nil (used by writePreviousReviews to
+// show "No review available").
+func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []ReviewContext {
+	var contexts []ReviewContext
+	for _, sha := range shas {
+		review, err := b.db.GetReviewByCommitSHA(sha)
+		if err != nil {
+			if skipMissing {
+				continue
+			}
+			contexts = append(contexts, ReviewContext{SHA: sha})
+			continue
+		}
+		ctx := ReviewContext{SHA: sha, Review: review}
+		if review.JobID > 0 {
+			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
+				ctx.Responses = responses
+			}
+		}
+		contexts = append(contexts, ctx)
+	}
+	return contexts
+}
+
 // getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
 func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]ReviewContext, error) {
-	// Get parent commits from git
 	parentSHAs, err := git.GetParentCommits(repoPath, sha, count)
 	if err != nil {
 		return nil, fmt.Errorf("get parent commits: %w", err)
 	}
-
-	var contexts []ReviewContext
-	for _, parentSHA := range parentSHAs {
-		ctx := ReviewContext{SHA: parentSHA}
-
-		// Try to look up review for this commit
-		review, err := b.db.GetReviewByCommitSHA(parentSHA)
-		if err == nil {
-			ctx.Review = review
-
-			// Also fetch comments for this review's job
-			if review.JobID > 0 {
-				responses, err := b.db.GetCommentsForJob(review.JobID)
-				if err == nil {
-					ctx.Responses = responses
-				}
-			}
-		}
-		// If no review found, ctx.Review stays nil
-
-		contexts = append(contexts, ctx)
-	}
-
-	return contexts, nil
+	return b.lookupReviewContexts(parentSHAs, false), nil
 }
 
 // SystemPromptDesignReview is the base instruction for reviewing design documents.

@@ -143,7 +143,8 @@ by interpolating dynamic text directly into a shell string. Review-derived
 content may contain shell metacharacters that could cause unintended execution.
 
 The comment should reference each finding by severity and file, state what was
-fixed, and note any findings intentionally skipped. Keep it concise.
+fixed, and note why any dismissed findings were skipped. These comments are
+included in re-review prompts. Keep it concise.
 
 #### 3d. Re-review
 
