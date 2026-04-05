@@ -2793,17 +2793,31 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: []int64{1},
 		},
 		{
-			name: "unreachable commit excluded",
+			name: "unreachable SHA different branch excluded",
 			jobs: []storage.ReviewJob{
-				{ID: 2, GitRef: otherSHA},
+				{ID: 2, GitRef: otherSHA, Branch: "other-branch"},
 			},
 			wantIDs: nil,
 		},
 		{
-			name: "mixed reachable and unreachable",
+			name: "unreachable SHA same branch included (rebase)",
+			jobs: []storage.ReviewJob{
+				{ID: 2, GitRef: otherSHA, Branch: defaultBranch},
+			},
+			wantIDs: []int64{2},
+		},
+		{
+			name: "unreachable SHA no branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 2, GitRef: otherSHA},
+			},
+			wantIDs: []int64{2},
+		},
+		{
+			name: "mixed reachable and unreachable different branch",
 			jobs: []storage.ReviewJob{
 				{ID: 1, GitRef: mainSHA},
-				{ID: 2, GitRef: otherSHA},
+				{ID: 2, GitRef: otherSHA, Branch: "other-branch"},
 			},
 			wantIDs: []int64{1},
 		},
@@ -2857,11 +2871,20 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: []int64{5},
 		},
 		{
-			name: "range ref with unreachable end excluded",
+			name: "range ref unreachable end different branch excluded",
 			jobs: []storage.ReviewJob{
-				{ID: 5, GitRef: mainSHA + ".." + otherSHA},
+				{ID: 5, GitRef: mainSHA + ".." + otherSHA,
+					Branch: "other-branch"},
 			},
 			wantIDs: nil,
+		},
+		{
+			name: "range ref unreachable end same branch included (rebase)",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: mainSHA + ".." + otherSHA,
+					Branch: defaultBranch},
+			},
+			wantIDs: []int64{5},
 		},
 		{
 			name: "range ref with bad end fails open",

@@ -549,13 +549,23 @@ func jobReachable(
 	// Range ref: check whether the end commit is reachable.
 	if _, end, ok := git.ParseRange(ref); ok {
 		reachable, err := git.IsAncestor(worktreeRoot, end, "HEAD")
-		return err != nil || reachable
+		if err != nil || reachable {
+			return true
+		}
+		// SHA unreachable (commit may have been rebased) —
+		// fall back to branch matching.
+		return branchMatch(matchBranch, j.Branch)
 	}
 
 	// SHA ref: check commit graph reachability.
 	if looksLikeSHA(ref) {
 		reachable, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
-		return err != nil || reachable
+		if err != nil || reachable {
+			return true
+		}
+		// SHA unreachable (commit may have been rebased) —
+		// fall back to branch matching.
+		return branchMatch(matchBranch, j.Branch)
 	}
 
 	// Non-SHA ref (empty, "dirty", task labels like "run"/"analyze"):
