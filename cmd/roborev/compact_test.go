@@ -407,11 +407,10 @@ func TestWriteCompactMetadata(t *testing.T) {
 }
 
 func TestCompactWorktreeBranchResolution(t *testing.T) {
-	var receivedRepo, receivedBranch string
+	var receivedRepo string
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			receivedRepo = r.URL.Query().Get("repo")
-			receivedBranch = r.URL.Query().Get("branch")
 			writeJSON(w, map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
@@ -431,5 +430,4 @@ func TestCompactWorktreeBranchResolution(t *testing.T) {
 
 	require.NotEmpty(t, receivedRepo, "expected repo param to be sent")
 	assert.Equal(t, repo.Dir, receivedRepo, "repo: want main repo path")
-	assert.Equal(t, "wt-branch", receivedBranch, "branch: want worktree branch")
 }

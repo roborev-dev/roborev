@@ -322,12 +322,29 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	branchFilter := resolveCurrentBranchFilter(
 		roots.worktreeRoot, opts.branch, opts.allBranches,
 	)
+	explicitBranch := opts.branch != ""
+
+	// When the branch was auto-resolved, skip the API-level branch
+	// filter so jobs from merged branches are included.
+	apiBranch := branchFilter
+	if !explicitBranch {
+		apiBranch = ""
+	}
 
 	// Query and limit jobs, excluding non-review types (compact, task)
 	// to prevent recursive self-compaction loops
-	allJobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branchFilter)
+	allJobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, apiBranch)
 	if err != nil {
 		return err
+	}
+	if !opts.allBranches {
+		filterBranch := ""
+		if explicitBranch {
+			filterBranch = branchFilter
+		}
+		allJobs = filterReachableJobs(
+			roots.worktreeRoot, filterBranch, allJobs,
+		)
 	}
 	jobs := filterReviewJobs(allJobs)
 

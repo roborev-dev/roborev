@@ -116,7 +116,10 @@ Examples:
 				effectiveBranch := resolveCurrentBranchFilter(
 					roots.worktreeRoot, branch, allBranches,
 				)
-				return runFixList(cmd, effectiveBranch, newestFirst)
+				return runFixList(
+					cmd, effectiveBranch,
+					allBranches, branch != "", newestFirst,
+				)
 			}
 			opts := fixOptions{
 				agentName:   agentName,
@@ -436,7 +439,15 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 	seen := make(map[int64]bool)
 
 	for {
-		jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
+		// When the branch was auto-resolved (not passed via --branch),
+		// skip the API-level branch filter so jobs from merged branches
+		// are included. filterReachableJobs handles the actual
+		// filtering via commit-graph reachability.
+		apiBranch := branch
+		if !explicitBranch {
+			apiBranch = ""
+		}
+		jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, apiBranch)
 		if err != nil {
 			return err
 		}
@@ -539,13 +550,23 @@ func jobReachable(
 	// Range ref: check whether the end commit is reachable.
 	if _, end, ok := git.ParseRange(ref); ok {
 		reachable, err := git.IsAncestor(worktreeRoot, end, "HEAD")
-		return err != nil || reachable
+		if err != nil || reachable {
+			return true
+		}
+		// SHA unreachable (commit may have been rebased) —
+		// fall back to branch matching.
+		return branchMatch(matchBranch, j.Branch)
 	}
 
 	// SHA ref: check commit graph reachability.
 	if git.LooksLikeSHA(ref) {
 		reachable, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
-		return err != nil || reachable
+		if err != nil || reachable {
+			return true
+		}
+		// SHA unreachable (commit may have been rebased) —
+		// fall back to branch matching.
+		return branchMatch(matchBranch, j.Branch)
 	}
 
 	// Non-SHA ref (empty, "dirty", task labels like "run"/"analyze"):
@@ -626,7 +647,11 @@ func queryOpenJobIDs(
 }
 
 // runFixList prints open jobs with detailed information without running any agent.
-func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
+func runFixList(
+	cmd *cobra.Command,
+	branch string,
+	allBranches, explicitBranch, newestFirst bool,
+) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
@@ -640,15 +665,24 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		return err
 	}
 
-	jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
+	// When the branch was auto-resolved, skip the API-level branch
+	// filter so jobs from merged branches are included.
+	apiBranch := branch
+	if !explicitBranch {
+		apiBranch = ""
+	}
+	jobs, err := queryOpenJobs(ctx, roots.mainRepoRoot, apiBranch)
 	if err != nil {
 		return err
 	}
-	// When listing a specific branch, filter by reachability/branch.
-	// When listing all branches (branch==""), skip filtering — the
-	// user explicitly asked for everything in this repo.
-	if branch != "" {
-		jobs = filterReachableJobs(roots.worktreeRoot, branch, jobs)
+	if !allBranches {
+		filterBranch := ""
+		if explicitBranch {
+			filterBranch = branch
+		}
+		jobs = filterReachableJobs(
+			roots.worktreeRoot, filterBranch, jobs,
+		)
 	}
 
 	jobIDs := make([]int64, len(jobs))
@@ -942,7 +976,11 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobs, queryErr := queryOpenJobs(ctx, roots.mainRepoRoot, branch)
+		apiBranch := branch
+		if !explicitBranch {
+			apiBranch = ""
+		}
+		jobs, queryErr := queryOpenJobs(ctx, roots.mainRepoRoot, apiBranch)
 		if queryErr != nil {
 			return queryErr
 		}
