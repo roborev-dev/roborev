@@ -99,11 +99,7 @@ Skip any reviews where `closed` is `true`, unless the user explicitly provided t
 
 If all reviews are skipped, inform the user there is nothing to fix.
 
-**Check comments before fixing.** If the review has comments from the developer
-(responder is not `roborev-*`), read them carefully — they may flag findings as
-false positives, provide context about intentional design choices, or request
-specific fix approaches. Respect this feedback: skip findings the developer
-marked as false positives and follow any preferred approaches they described.
+If the review has `comments`, respect any developer feedback (false positives, preferred approaches).
 
 ### 3. Fix all findings
 
