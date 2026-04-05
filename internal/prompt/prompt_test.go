@@ -743,90 +743,66 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
 }
 
-func TestBuildRangePromptCodexRecomputesFallbackAfterTrimmingEntries(t *testing.T) {
-	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 1024)
-	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
-	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
-
-	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
-	require.NoError(t, err)
-	entries := make([]commitRangeEntryView, 0, len(commits))
-	for _, sha := range commits {
-		info, infoErr := gitpkg.GetCommitInfo(repoPath, sha)
-		require.NoError(t, infoErr)
-		entries = append(entries, commitRangeEntryView{Commit: gitpkg.ShortSHA(sha), Subject: info.Subject})
+func TestSelectRichestRangePromptViewPrefersRicherVariantOnEqualMetadataLoss(t *testing.T) {
+	view := rangePromptView{
+		Current: commitRangeSectionView{Count: 3, Entries: []commitRangeEntryView{
+			{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+			{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+			{Commit: "ghi9012", Subject: strings.Repeat("s", 200)},
+		}},
 	}
-	trimmedEntries := make([]commitRangeEntryView, 0, 10)
-	for _, entry := range entries[:10] {
-		trimmedEntries = append(trimmedEntries, commitRangeEntryView{Commit: entry.Commit})
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
 	}
-	trimmedBody, err := renderRangePrompt(rangePromptView{
-		Current: commitRangeSectionView{Count: len(entries), Entries: trimmedEntries},
-		Diff:    variants[len(variants)-2],
-	})
+	trimmedCurrent := commitRangeSectionView{Count: 3, Entries: []commitRangeEntryView{
+		{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+		{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+		{Commit: "ghi9012"},
+	}}
+	richerBody, err := renderRangePrompt(rangePromptView{Current: trimmedCurrent, Diff: variants[0]})
 	require.NoError(t, err)
-	fullBody, err := renderRangePrompt(rangePromptView{
-		Current: commitRangeSectionView{Count: len(entries), Entries: entries},
-		Diff:    variants[len(variants)-2],
-	})
+	fullShorterBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[1]})
 	require.NoError(t, err)
-	require.Greater(t, len(fullBody), len(trimmedBody),
-		"test setup must leave more room for a richer fallback after trimming range metadata")
+	require.LessOrEqual(t, len(richerBody), len(fullShorterBody),
+		"test setup must allow the richer variant once both candidates lose the same amount of metadata")
+	require.Greater(t, len(fullShorterBody), len(richerBody),
+		"test setup must still require metadata trimming before the richer variant fits")
 
-	cap := len(GetSystemPrompt("codex", "range")+"\n") + (len(trimmedBody)+len(fullBody))/2
-	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
-
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	selected, err := selectRichestRangePromptView(len(richerBody), view, variants)
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(prompt), cap)
-	assertContains(t, prompt, "git diff --unified=80",
-		"range fallback should be recomputed after trimming entries so a richer Codex fallback survives")
-	assert.NotContains(t, prompt, shortest,
-		"range fallback should not stay pinned to the shortest variant once trimming entries makes a richer fallback fit")
+	assert.Equal(t, variants[0].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, trimmedCurrent.Entries, selected.Current.Entries)
 }
 
-func TestBuildRangePromptCodexTrimsForRicherFallbackEvenWhenShortestAlreadyFits(t *testing.T) {
-	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 1024)
-	variants := codexRangeInspectionFallbackVariants(rangeRef, nil)
-	shortest := mustRenderPromptTestDiffBlock(variants[len(variants)-1])
-
-	commits, err := gitpkg.GetRangeCommits(repoPath, rangeRef)
-	require.NoError(t, err)
-	entries := make([]commitRangeEntryView, 0, len(commits))
-	for _, sha := range commits {
-		info, infoErr := gitpkg.GetCommitInfo(repoPath, sha)
-		require.NoError(t, infoErr)
-		entries = append(entries, commitRangeEntryView{Commit: gitpkg.ShortSHA(sha), Subject: info.Subject})
+func TestSelectRichestRangePromptViewPrefersSummaryWhenRicherNeedsMoreTrimming(t *testing.T) {
+	view := rangePromptView{
+		Current: commitRangeSectionView{Count: 2, Entries: []commitRangeEntryView{
+			{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+			{Commit: "def5678", Subject: strings.Repeat("s", 200)},
+		}},
 	}
-	fullShortestBody, err := renderRangePrompt(rangePromptView{
-		Current: commitRangeSectionView{Count: len(entries), Entries: entries},
-		Diff:    variants[len(variants)-1],
-	})
-	require.NoError(t, err)
-	trimmedEntries := make([]commitRangeEntryView, 0, 10)
-	for _, entry := range entries[:10] {
-		trimmedEntries = append(trimmedEntries, commitRangeEntryView{Commit: entry.Commit})
+	variants := []diffSectionView{
+		{Heading: "### Combined Diff", Fallback: strings.Repeat("richer guidance\n", 8)},
+		{Heading: "### Combined Diff", Fallback: "short guidance\n"},
 	}
-	trimmedRicherBody, err := renderRangePrompt(rangePromptView{
-		Current: commitRangeSectionView{Count: len(entries), Entries: trimmedEntries},
-		Diff:    variants[len(variants)-2],
-	})
+	shorterBody, err := renderRangePrompt(rangePromptView{Current: view.Current, Diff: variants[1]})
 	require.NoError(t, err)
-	require.Greater(t, len(fullShortestBody), len(trimmedRicherBody),
-		"test setup must allow a richer fallback after trimming a few entries even though the full shortest fallback already fits")
+	trimmedRicherCurrent := commitRangeSectionView{Count: 2, Entries: []commitRangeEntryView{
+		{Commit: "abc1234", Subject: strings.Repeat("s", 200)},
+		{Commit: "def5678"},
+	}}
+	trimmedRicherBody, err := renderRangePrompt(rangePromptView{Current: trimmedRicherCurrent, Diff: variants[0]})
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(trimmedRicherBody), len(shorterBody),
+		"test setup must allow the richer variant only after trimming more metadata than the shorter variant needs")
 
-	cap := len(GetSystemPrompt("codex", "range")+"\n") + len(fullShortestBody)
-	b := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: cap})
-
-	prompt, err := b.Build(repoPath, rangeRef, 0, 0, "codex", "")
+	selected, err := selectRichestRangePromptView(len(shorterBody), view, variants)
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(prompt), cap)
-	assertContains(t, prompt, "git diff --unified=80",
-		"range fallback selection should try richer variants with metadata trimming even when the shortest variant already fits")
-	assert.NotContains(t, prompt, shortest,
-		"range fallback should not stop at the shortest variant when trimming entries would allow a richer fallback")
+	assert.Equal(t, variants[1].Fallback, selected.Diff.Fallback)
+	assert.Equal(t, view.Current.Entries, selected.Current.Entries)
 }
 
 func TestBuildPromptNonCodexSmallCapStaysWithinCap(t *testing.T) {

@@ -223,7 +223,17 @@ func fitRangePrompt(limit int, view rangePromptView) (string, error) {
 	return hardCapPrompt(body, limit), nil
 }
 
+func cloneCommitRangeSectionView(view commitRangeSectionView) commitRangeSectionView {
+	cloned := view
+	if len(view.Entries) == 0 {
+		return cloned
+	}
+	cloned.Entries = append([]commitRangeEntryView(nil), view.Entries...)
+	return cloned
+}
+
 func trimRangePromptView(limit int, view rangePromptView) (rangePromptView, string, error) {
+	view.Current = cloneCommitRangeSectionView(view.Current)
 	body, err := renderRangePrompt(view)
 	if err != nil {
 		return rangePromptView{}, "", err

@@ -377,11 +377,43 @@ func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSect
 	return view, nil
 }
 
+type rangeMetadataLoss struct {
+	RemovedEntries int
+	BlankedSubject int
+}
+
+func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
+	switch {
+	case a.RemovedEntries != b.RemovedEntries:
+		return a.RemovedEntries - b.RemovedEntries
+	default:
+		return a.BlankedSubject - b.BlankedSubject
+	}
+}
+
+func measureRangeMetadataLoss(original, trimmed commitRangeSectionView) rangeMetadataLoss {
+	loss := rangeMetadataLoss{RemovedEntries: len(original.Entries) - len(trimmed.Entries)}
+	for i := range trimmed.Entries {
+		if i >= len(original.Entries) {
+			break
+		}
+		if original.Entries[i].Subject != "" && trimmed.Entries[i].Subject == "" {
+			loss.BlankedSubject++
+		}
+	}
+	return loss
+}
+
 func selectRichestRangePromptView(limit int, view rangePromptView, variants []diffSectionView) (rangePromptView, error) {
 	fallback := rangePromptView{Optional: view.Optional, Current: view.Current}
 	if len(variants) > 0 {
 		fallback.Diff = variants[len(variants)-1]
 	}
+	var (
+		best     rangePromptView
+		bestLoss rangeMetadataLoss
+		haveBest bool
+	)
 	for _, variant := range variants {
 		candidate := rangePromptView{Optional: view.Optional, Current: view.Current, Diff: variant}
 		trimmed, body, err := trimRangePromptView(limit, candidate)
@@ -389,9 +421,18 @@ func selectRichestRangePromptView(limit int, view rangePromptView, variants []di
 			return rangePromptView{}, err
 		}
 		fallback = trimmed
-		if len(body) <= limit {
-			return trimmed, nil
+		if len(body) > limit {
+			continue
 		}
+		loss := measureRangeMetadataLoss(view.Current, trimmed.Current)
+		if !haveBest || compareRangeMetadataLoss(loss, bestLoss) < 0 {
+			best = trimmed
+			bestLoss = loss
+			haveBest = true
+		}
+	}
+	if haveBest {
+		return best, nil
 	}
 	return fallback, nil
 }
