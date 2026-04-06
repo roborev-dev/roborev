@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-//go:embed templates/*.tmpl
+//go:embed templates/*.md.gotmpl
 var templateFS embed.FS
 
 // GetSystemPrompt returns the system prompt for the specified agent and type.
 // If a specific template exists for the agent, it uses that.
-// Otherwise, it falls back to the default constant.
+// Otherwise, it falls back to the default templates.
 // Supported prompt types: review, range, dirty, address, design-review, run, security
 func GetSystemPrompt(agentName string, promptType string) string {
 	return getSystemPrompt(agentName, promptType, time.Now)
@@ -26,49 +26,53 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		agentName = "claude-code"
 	}
 
-	// For review operations (review, range, dirty), use {agent}_review.tmpl
+	// For review operations (review, range, dirty), use {agent}_review.md.gotmpl
 	// These are all code reviews, just with different input formats
-	// Security reviews use {agent}_security.tmpl
+	// Security reviews use {agent}_security.md.gotmpl
 	templateType := promptType
 	if promptType == "range" || promptType == "dirty" {
 		templateType = "review"
 	}
 
-	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
-	content, err := templateFS.ReadFile(tmplName)
-	if err == nil {
-		base := string(content)
-		if promptType != "run" {
-			base += noSkillsInstruction
+	tmplName := fmt.Sprintf("%s_%s.md.gotmpl", agentName, templateType)
+	if _, err := templateFS.ReadFile("templates/" + tmplName); err == nil {
+		body, err := renderSystemPrompt(tmplName, systemPromptView{
+			NoSkillsInstruction: noSkillsInstruction,
+			CurrentDate:         now().UTC().Format("2006-01-02"),
+		})
+		if err == nil {
+			return body
 		}
-		return appendDateLine(base, now)
 	}
 
-	// Fallback to default constants
-	var base string
+	// Fallback to default templates
+	var fallbackName string
 	switch promptType {
 	case "review":
-		base = SystemPromptSingle
+		fallbackName = "default_review.md.gotmpl"
 	case "dirty":
-		base = SystemPromptDirty
+		fallbackName = "default_dirty.md.gotmpl"
 	case "range":
-		base = SystemPromptRange
+		fallbackName = "default_range.md.gotmpl"
 	case "address":
-		base = SystemPromptAddress
+		fallbackName = "default_address.md.gotmpl"
 	case "security":
-		base = SystemPromptSecurity
+		fallbackName = "default_security.md.gotmpl"
 	case "design-review":
-		base = SystemPromptDesignReview
+		fallbackName = "default_design_review.md.gotmpl"
 	case "run":
 		// No default run preamble - return empty so raw prompts are used
 		return ""
 	default:
-		base = SystemPromptSingle
+		fallbackName = "default_review.md.gotmpl"
 	}
-	return appendDateLine(base+noSkillsInstruction, now)
-}
 
-// appendDateLine adds the current UTC date to a system prompt.
-func appendDateLine(prompt string, now func() time.Time) string {
-	return prompt + "\n\nCurrent date: " + now().UTC().Format("2006-01-02") + " (UTC)"
+	body, err := renderSystemPrompt(fallbackName, systemPromptView{
+		NoSkillsInstruction: noSkillsInstruction,
+		CurrentDate:         now().UTC().Format("2006-01-02"),
+	})
+	if err != nil {
+		return ""
+	}
+	return body
 }
