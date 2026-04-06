@@ -501,14 +501,12 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 }
 
 // filterReachableJobs returns only those jobs relevant to the
-// current worktree. Jobs are matched by their stored Branch field
+// current worktree by matching the job's stored Branch field
 // against the current (or overridden) branch. branchOverride is
-// the explicit --branch value for non-mutating flows (e.g. --list);
-// when set, all job types use branch matching so cross-branch
-// listing works. Mutating flows (fix, --batch) pass "" so that
-// the current branch is auto-detected. Callers that want all
-// branches (--all-branches) skip this function entirely. On git
-// errors the job is kept (fail open) to avoid silently dropping work.
+// the explicit --branch value for non-mutating flows (e.g. --list).
+// Mutating flows (fix, --batch) pass "" so that the current branch
+// is auto-detected. Callers that want all branches (--all-branches)
+// skip this function entirely.
 func filterReachableJobs(
 	worktreeRoot, branchOverride string,
 	jobs []storage.ReviewJob,
@@ -519,53 +517,11 @@ func filterReachableJobs(
 	}
 	var filtered []storage.ReviewJob
 	for _, j := range jobs {
-		if jobReachable(
-			worktreeRoot, matchBranch, branchOverride != "", j,
-		) {
+		if branchMatch(matchBranch, j.Branch) {
 			filtered = append(filtered, j)
 		}
 	}
 	return filtered
-}
-
-// jobReachable decides whether a single job belongs to the current
-// worktree. Jobs are matched primarily by their stored Branch
-// field. SHA and range refs additionally check the commit graph
-// so that unknown-object git errors fail open (include the job)
-// rather than silently dropping work.
-func jobReachable(
-	worktreeRoot, matchBranch string,
-	branchOnly bool, j storage.ReviewJob,
-) bool {
-	ref := j.GitRef
-
-	// When an explicit branch was requested (non-mutating listing),
-	// match all job types by their stored Branch field.
-	if branchOnly {
-		return branchMatch(matchBranch, j.Branch)
-	}
-
-	// Range ref: fail open on git errors, otherwise branch match.
-	if _, end, ok := git.ParseRange(ref); ok {
-		_, err := git.IsAncestor(worktreeRoot, end, "HEAD")
-		if err != nil {
-			return true
-		}
-		return branchMatch(matchBranch, j.Branch)
-	}
-
-	// SHA ref: fail open on git errors, otherwise branch match.
-	if git.LooksLikeSHA(ref) {
-		_, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
-		if err != nil {
-			return true
-		}
-		return branchMatch(matchBranch, j.Branch)
-	}
-
-	// Non-SHA ref (empty, "dirty", task labels like "run"/"analyze"):
-	// match by branch when possible.
-	return branchMatch(matchBranch, j.Branch)
 }
 
 // branchMatch returns true when a job's branch is compatible with
