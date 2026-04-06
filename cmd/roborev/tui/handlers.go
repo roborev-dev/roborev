@@ -283,7 +283,7 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 			job := m.jobs[nextIdx]
 			if job.Status == storage.JobStatusDone {
 				return m, m.fetchReviewForPrompt(job.ID)
-			} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+			} else if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
 				m.currentReview = &storage.Review{
 					Agent:  job.Agent,
 					Prompt: job.Prompt,
@@ -404,7 +404,7 @@ func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 			job := m.jobs[prevIdx]
 			if job.Status == storage.JobStatusDone {
 				return m, m.fetchReviewForPrompt(job.ID)
-			} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+			} else if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
 				m.currentReview = &storage.Review{
 					Agent:  job.Agent,
 					Prompt: job.Prompt,
