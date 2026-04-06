@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -287,11 +286,16 @@ func WriteDiffSnapshot(
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve git dir: %w", err)
 	}
-	diffFile := filepath.Join(
-		gitDir, fmt.Sprintf("roborev-snapshot-%d.diff", os.Getpid()),
-	)
-	if err := os.WriteFile(diffFile, []byte(fullDiff), 0o644); err != nil {
-		return "", nil, fmt.Errorf("write snapshot: %w", err)
+	f, err := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
+	if err != nil {
+		return "", nil, fmt.Errorf("create snapshot: %w", err)
+	}
+	diffFile := f.Name()
+	_, writeErr := f.WriteString(fullDiff)
+	f.Close()
+	if writeErr != nil {
+		os.Remove(diffFile)
+		return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
 	}
 	return diffFile, func() { os.Remove(diffFile) }, nil
 }
