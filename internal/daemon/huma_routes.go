@@ -12,7 +12,6 @@ import (
 // registerHumaAPI creates a Huma API on the given mux and registers
 // all typed endpoints. The returned huma.API can be used to serve
 // the generated OpenAPI spec.
-//
 func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	cfg := huma.DefaultConfig("roborev", version.Version)
 	cfg.DocsPath = ""
@@ -33,12 +32,9 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"reviews"}
 		})
 
-	huma.Get(api, "/api/job/output", s.humaGetJobOutput,
-		func(o *huma.Operation) {
-			o.OperationID = "get-job-output"
-			o.Summary = "Get live output for a running job"
-			o.Tags = []string{"jobs"}
-		})
+	// /api/job/output is registered as a plain HandleFunc
+	// (not Huma) because its stream=1 mode uses NDJSON
+	// streaming which doesn't fit Huma's typed response model.
 
 	huma.Get(api, "/api/comments", s.humaListComments,
 		func(o *huma.Operation) {

@@ -286,7 +286,6 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	wantPaths := map[string]string{
 		"/api/jobs":         "get",
 		"/api/review":       "get",
-		"/api/job/output":   "get",
 		"/api/comments":     "get",
 		"/api/repos":        "get",
 		"/api/branches":     "get",
@@ -296,6 +295,8 @@ func TestHumaOpenAPISpec(t *testing.T) {
 		"/api/job/rerun":    "post",
 		"/api/review/close": "post",
 		"/api/comment":      "post",
+		// /api/job/output is a plain HandleFunc (supports
+		// NDJSON streaming) so it is not in the OpenAPI spec.
 	}
 	for p, method := range wantPaths {
 		pathObj, exists := paths[p]

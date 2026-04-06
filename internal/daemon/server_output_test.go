@@ -38,7 +38,7 @@ func TestHandleJobOutput(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "body: %s", w.Body.String())
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 	})
 
 	t.Run("invalid job_id", func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestHandleJobOutput(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "body: %s", w.Body.String())
+		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 	})
 
 	t.Run("nonexistent job", func(t *testing.T) {
@@ -92,23 +92,22 @@ func TestHandleJobOutput(t *testing.T) {
 		assert.False(t, resp.HasMore, "expected has_more=false for completed job")
 	})
 
-	t.Run("stream param returns polling response", func(t *testing.T) {
+	t.Run("stream completed job returns NDJSON complete", func(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-stream"), "abc123", "test-agent")
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
-		// stream=1 is no longer handled specially; the Huma handler
-		// always returns polling-mode JSON.
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, "application/x-ndjson", w.Header().Get("Content-Type"))
 
 		var resp jobOutputResponse
 		testutil.DecodeJSON(t, w, &resp)
 
+		assert.Equal(t, "complete", resp.Type)
 		assert.Equal(t, "done", resp.Status)
-		assert.False(t, resp.HasMore, "completed job should not have more output")
 	})
 }
 

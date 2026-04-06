@@ -15,11 +15,18 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
+// limitNotProvided is the sentinel default for the Limit
+// query parameter. A distinct value is needed so that an
+// explicit limit=-1 (which legacy clients use to mean
+// "unlimited") is distinguishable from "parameter omitted".
+const limitNotProvided = -999999
+
 func (s *Server) humaListJobs(
 	ctx context.Context, input *ListJobsInput,
 ) (*ListJobsOutput, error) {
-	// Single job lookup by ID
-	if input.ID > 0 {
+	// Single job lookup by ID (>= 0 because ID=0 should
+	// return empty, not fall through to the list path).
+	if input.ID >= 0 {
 		job, err := s.db.GetJobByID(input.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -48,7 +55,12 @@ func (s *Server) humaListJobs(
 
 	const maxLimit = 10000
 	limit := 50
-	if input.Limit >= 0 {
+	switch {
+	case input.Limit == limitNotProvided:
+		// Not provided — use default
+	case input.Limit < 0:
+		limit = 0 // any negative → unlimited (legacy behavior)
+	default:
 		limit = input.Limit
 	}
 	if limit > maxLimit {
@@ -157,7 +169,7 @@ func (s *Server) humaListJobs(
 	resp := &ListJobsOutput{}
 	resp.Body.Jobs = jobs
 	resp.Body.HasMore = hasMore
-	resp.Body.Stats = stats
+	resp.Body.Stats = &stats
 	return resp, nil
 }
 
@@ -167,7 +179,7 @@ func (s *Server) humaGetReview(
 	var review *storage.Review
 	var err error
 
-	if input.JobID > 0 {
+	if input.JobID >= 0 {
 		review, err = s.db.GetReviewByJobID(input.JobID)
 	} else if input.SHA != "" {
 		review, err = s.db.GetReviewByCommitSHA(input.SHA)
@@ -184,43 +196,20 @@ func (s *Server) humaGetReview(
 	return &GetReviewOutput{Body: review}, nil
 }
 
-func (s *Server) humaGetJobOutput(
-	ctx context.Context, input *GetJobOutputInput,
-) (*GetJobOutputOutput, error) {
-	job, err := s.db.GetJobByID(input.JobID)
-	if err != nil {
-		return nil, huma.Error404NotFound("job not found")
-	}
-
-	lines := s.workerPool.GetJobOutput(input.JobID)
-	if lines == nil {
-		lines = []OutputLine{}
-	}
-
-	resp := &GetJobOutputOutput{}
-	resp.Body = JobOutputResponse{
-		JobID:   input.JobID,
-		Status:  string(job.Status),
-		Lines:   lines,
-		HasMore: job.Status == storage.JobStatusRunning,
-	}
-	return resp, nil
-}
-
 func (s *Server) humaListComments(
 	ctx context.Context, input *ListCommentsInput,
 ) (*ListCommentsOutput, error) {
 	var responses []storage.Response
 	var err error
 
-	if input.JobID > 0 {
+	if input.JobID >= 0 {
 		responses, err = s.db.GetCommentsForJob(input.JobID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("get responses: %v", err),
 			)
 		}
-	} else if input.CommitID > 0 {
+	} else if input.CommitID >= 0 {
 		responses, err = s.db.GetCommentsForCommit(input.CommitID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(

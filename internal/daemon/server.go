@@ -89,6 +89,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
+	mux.HandleFunc("/api/job/output", s.handleJobOutput)
 	mux.HandleFunc("/api/enqueue", s.handleEnqueue)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/ping", s.handlePing)
@@ -1306,6 +1307,127 @@ func (s *Server) handleRegisterRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, repo)
+}
+
+// handleJobOutput returns the in-memory output buffer for a job.
+// In polling mode (default) it returns a JSON object with the
+// current lines. In streaming mode (stream=1) it uses NDJSON to
+// push lines in real time until the job completes or the client
+// disconnects.
+func (s *Server) handleJobOutput(
+	w http.ResponseWriter, r *http.Request,
+) {
+	if r.Method != http.MethodGet {
+		writeError(
+			w, http.StatusMethodNotAllowed, "method not allowed",
+		)
+		return
+	}
+
+	jobIDStr := r.URL.Query().Get("job_id")
+	if jobIDStr == "" {
+		writeError(w, http.StatusBadRequest, "job_id required")
+		return
+	}
+
+	jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid job_id")
+		return
+	}
+
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	stream := r.URL.Query().Get("stream") == "1"
+
+	if !stream {
+		lines := s.workerPool.GetJobOutput(jobID)
+		if lines == nil {
+			lines = []OutputLine{}
+		}
+		writeJSON(w, JobOutputResponse{
+			JobID:   jobID,
+			Status:  string(job.Status),
+			Lines:   lines,
+			HasMore: job.Status == storage.JobStatusRunning,
+		})
+		return
+	}
+
+	// Streaming mode — NDJSON
+	if job.Status != storage.JobStatusRunning {
+		w.Header().Set(
+			"Content-Type", "application/x-ndjson",
+		)
+		writeNDJSON(w, map[string]any{
+			"type":   "complete",
+			"status": string(job.Status),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(
+			w, http.StatusInternalServerError,
+			"streaming not supported",
+		)
+		return
+	}
+
+	initial, ch, cancel := s.workerPool.SubscribeJobOutput(
+		jobID,
+	)
+	defer cancel()
+
+	for _, line := range initial {
+		if !writeNDJSON(w, map[string]any{
+			"type":      "line",
+			"ts":        line.Timestamp.Format(time.RFC3339Nano),
+			"text":      line.Text,
+			"line_type": line.Type,
+		}) {
+			return
+		}
+	}
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				finalStatus := "done"
+				if fj, err := s.db.GetJobByID(jobID); err == nil {
+					finalStatus = string(fj.Status)
+				}
+				writeNDJSON(w, map[string]any{
+					"type":   "complete",
+					"status": finalStatus,
+				})
+				flusher.Flush()
+				return
+			}
+			if !writeNDJSON(w, map[string]any{
+				"type":      "line",
+				"ts":        line.Timestamp.Format(time.RFC3339Nano),
+				"text":      line.Text,
+				"line_type": line.Type,
+			}) {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // handleJobLog serves the raw JSONL log file for a job.
