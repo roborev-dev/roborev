@@ -539,7 +539,8 @@ func TestBuildWithDiffFileNonCodexUsesDiffFile(t *testing.T) {
 }
 
 func TestBuildWithDiffFileSmallDiffInlineIgnoresFile(t *testing.T) {
-	repoPath, sha := setupSmallDiffRepo(t)
+	repoPath, commits := setupTestRepo(t)
+	sha := commits[len(commits)-1]
 
 	b := NewBuilder(nil)
 	diffFile := filepath.Join(repoPath, ".roborev-review-42.diff")
