@@ -524,17 +524,12 @@ func filterReachableJobs(
 	return filtered
 }
 
-// branchMatch returns true when a job's branch is compatible with
-// the match branch. When both are known they must be equal. When
-// the job has no branch, fail open (include it). When the match
-// branch is unknown (detached HEAD), exclude jobs that do have a
-// branch to avoid cross-worktree leaks in mutating flows.
+// branchMatch returns true when a job's branch matches the target.
+// Both must be known and equal. Jobs with no branch are excluded
+// (use --all-branches to include them).
 func branchMatch(matchBranch, jobBranch string) bool {
-	if matchBranch == "" {
-		return jobBranch == ""
-	}
-	if jobBranch == "" {
-		return true
+	if matchBranch == "" || jobBranch == "" {
+		return false
 	}
 	return jobBranch == matchBranch
 }
