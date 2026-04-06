@@ -283,24 +283,32 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	paths, ok := spec["paths"].(map[string]any)
 	require.True(t, ok, "spec must have paths object")
 
-	wantPaths := []string{
-		"/api/jobs",
-		"/api/review",
-		"/api/job/output",
-		"/api/comments",
-		"/api/repos",
-		"/api/branches",
-		"/api/status",
-		"/api/summary",
-		"/api/job/cancel",
-		"/api/job/rerun",
-		"/api/review/close",
-		"/api/comment",
+	wantPaths := map[string]string{
+		"/api/jobs":         "get",
+		"/api/review":       "get",
+		"/api/job/output":   "get",
+		"/api/comments":     "get",
+		"/api/repos":        "get",
+		"/api/branches":     "get",
+		"/api/status":       "get",
+		"/api/summary":      "get",
+		"/api/job/cancel":   "post",
+		"/api/job/rerun":    "post",
+		"/api/review/close": "post",
+		"/api/comment":      "post",
 	}
-	for _, p := range wantPaths {
-		_, exists := paths[p]
+	for p, method := range wantPaths {
+		pathObj, exists := paths[p]
 		assert.True(t, exists,
 			"expected path %s in OpenAPI spec", p)
+		if exists {
+			methods, ok := pathObj.(map[string]any)
+			require.True(t, ok,
+				"path %s should be an object", p)
+			_, hasMethod := methods[method]
+			assert.True(t, hasMethod,
+				"path %s should have method %s", p, method)
+		}
 	}
 }
 
