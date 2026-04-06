@@ -292,10 +292,13 @@ func WriteDiffSnapshot(
 	}
 	diffFile := f.Name()
 	_, writeErr := f.WriteString(fullDiff)
-	f.Close()
-	if writeErr != nil {
+	closeErr := f.Close()
+	if writeErr != nil || closeErr != nil {
 		os.Remove(diffFile)
-		return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
+		if writeErr != nil {
+			return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
+		}
+		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
 	return diffFile, func() { os.Remove(diffFile) }, nil
 }
