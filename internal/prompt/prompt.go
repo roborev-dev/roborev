@@ -303,6 +303,46 @@ func WriteDiffSnapshot(
 	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
+// BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff
+// to a snapshot file when it's too large to inline. The caller must
+// call Cleanup (if non-nil) after the prompt is no longer needed.
+func (b *Builder) BuildDirtyWithSnapshot(
+	repoPath, diff string, repoID int64,
+	contextCount int, agentName, reviewType string,
+) (SnapshotResult, error) {
+	p, err := b.BuildDirty(repoPath, diff, repoID, contextCount, agentName, reviewType)
+	if err != nil {
+		return SnapshotResult{}, err
+	}
+	// If the diff was truncated and we have the full content, write
+	// a snapshot so the agent can read the complete diff.
+	if strings.Contains(p, "(Diff too large to include in full)") && len(diff) > 0 {
+		gitDir, dirErr := git.ResolveGitDir(repoPath)
+		if dirErr != nil {
+			return SnapshotResult{Prompt: p}, nil
+		}
+		f, createErr := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
+		if createErr != nil {
+			return SnapshotResult{Prompt: p}, nil
+		}
+		diffFile := f.Name()
+		_, writeErr := f.WriteString(diff)
+		closeErr := f.Close()
+		if writeErr != nil || closeErr != nil {
+			os.Remove(diffFile)
+			return SnapshotResult{Prompt: p}, nil
+		}
+		p += fmt.Sprintf(
+			"\nThe full diff is also available at: `%s`\n", diffFile,
+		)
+		return SnapshotResult{
+			Prompt:  p,
+			Cleanup: func() { os.Remove(diffFile) },
+		}, nil
+	}
+	return SnapshotResult{Prompt: p}, nil
+}
+
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.

@@ -113,7 +113,7 @@ func TestSnapshotFlow_LargeDiffWritesFileAndReferencesInPrompt(t *testing.T) {
 		"large diff should not be inlined")
 	assert.Contains(t, receivedPrompt, "Read the diff from:",
 		"large diff should reference snapshot file")
-	assert.Contains(t, receivedPrompt, "roborev-review-",
+	assert.Contains(t, receivedPrompt, "roborev-snapshot-",
 		"prompt should contain the snapshot filename")
 }
 

@@ -419,7 +419,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = pb.BuildDirty(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
+		if dirtyResult.Cleanup != nil {
+			defer dirtyResult.Cleanup()
+		}
+		reviewPrompt = dirtyResult.Prompt
+		err = dirtyErr
 	} else {
 		// Normal job - build prompt from git ref, writing a diff
 		// snapshot file when the diff is too large to inline.
