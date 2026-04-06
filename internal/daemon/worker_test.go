@@ -550,7 +550,8 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 		gitDir = filepath.Join(worktreeDir, gitDir)
 	}
 
-	assert.True(t, strings.HasPrefix(diffFile, gitDir),
+	assert.True(t,
+		strings.HasPrefix(filepath.Clean(diffFile), filepath.Clean(gitDir)),
 		"snapshot should be in git dir: got %s, want prefix %s", diffFile, gitDir)
 	data, err := os.ReadFile(diffFile)
 	require.NoError(t, err)
