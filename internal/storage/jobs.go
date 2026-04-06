@@ -676,6 +676,7 @@ type listJobsOptions struct {
 	jobType            string
 	excludeJobType     string
 	repoPrefix         string
+	beforeCursor       *int64
 }
 
 // WithGitRef filters jobs by git ref.
@@ -710,6 +711,11 @@ func WithJobType(jobType string) ListJobsOption {
 // WithExcludeJobType excludes jobs of the given type.
 func WithExcludeJobType(jobType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.excludeJobType = jobType }
+}
+
+// WithBeforeCursor filters jobs to those with ID < cursor (for cursor pagination).
+func WithBeforeCursor(id int64) ListJobsOption {
+	return func(o *listJobsOptions) { o.beforeCursor = &id }
 }
 
 // WithRepoPrefix filters jobs to repos whose root_path starts with the given prefix.
@@ -781,6 +787,10 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	if o.excludeJobType != "" {
 		conditions = append(conditions, "j.job_type != ?")
 		args = append(args, o.excludeJobType)
+	}
+	if o.beforeCursor != nil {
+		conditions = append(conditions, "j.id < ?")
+		args = append(args, *o.beforeCursor)
 	}
 
 	if len(conditions) == 0 {

@@ -945,3 +945,72 @@ func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 		assert.Equal(t, 4, total)
 	})
 }
+
+func TestListJobsWithBeforeCursor(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, jobs := seedJobs(t, db, "/tmp/cursor-repo", 5)
+
+	t.Run("before cursor returns only older jobs", func(t *testing.T) {
+		// Use the middle job's ID as cursor
+		cursor := jobs[2].ID
+		result, err := db.ListJobs("", "", 50, 0, WithBeforeCursor(cursor))
+		require.NoError(t, err, "ListJobs failed")
+
+		for _, j := range result {
+			assert.Less(t, j.ID, cursor,
+				"all returned job IDs should be less than cursor")
+		}
+	})
+
+	t.Run("cursor at lowest ID returns empty", func(t *testing.T) {
+		cursor := jobs[0].ID
+		result, err := db.ListJobs("", "", 50, 0, WithBeforeCursor(cursor))
+		require.NoError(t, err, "ListJobs failed")
+
+		assert.Empty(t, result)
+	})
+
+	t.Run("cursor above highest ID returns all jobs", func(t *testing.T) {
+		cursor := jobs[len(jobs)-1].ID + 100
+		result, err := db.ListJobs("", "", 50, 0, WithBeforeCursor(cursor))
+		require.NoError(t, err, "ListJobs failed")
+
+		assert.Len(t, result, 5)
+	})
+
+	t.Run("cursor with limit returns correct page", func(t *testing.T) {
+		cursor := jobs[4].ID
+		result, err := db.ListJobs("", "", 2, 0, WithBeforeCursor(cursor))
+		require.NoError(t, err, "ListJobs failed")
+
+		assert.Len(t, result, 2)
+		for _, j := range result {
+			assert.Less(t, j.ID, cursor)
+		}
+		// Results ordered by ID DESC, so first result has highest ID
+		assert.Greater(t, result[0].ID, result[1].ID)
+	})
+
+	t.Run("cursor combined with other filters", func(t *testing.T) {
+		// Set branch on some jobs for combined filtering
+		setJobBranch(t, db, jobs[0].ID, "main")
+		setJobBranch(t, db, jobs[1].ID, "main")
+		setJobBranch(t, db, jobs[2].ID, "feature")
+		setJobBranch(t, db, jobs[3].ID, "main")
+		setJobBranch(t, db, jobs[4].ID, "main")
+
+		cursor := jobs[4].ID
+		result, err := db.ListJobs("", "", 50, 0,
+			WithBeforeCursor(cursor), WithBranch("main"))
+		require.NoError(t, err, "ListJobs failed")
+
+		for _, j := range result {
+			assert.Less(t, j.ID, cursor)
+			assert.Equal(t, "main", j.Branch)
+		}
+		// jobs[0], jobs[1], jobs[3] have branch=main and ID < jobs[4].ID
+		assert.Len(t, result, 3)
+	})
+}
