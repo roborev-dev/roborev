@@ -88,23 +88,13 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	}
 
 	mux := http.NewServeMux()
+	s.registerHumaAPI(mux)
 	mux.HandleFunc("/api/enqueue", s.handleEnqueue)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/ping", s.handlePing)
-	mux.HandleFunc("/api/jobs", s.handleListJobs)
-	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
-	mux.HandleFunc("/api/job/output", s.handleJobOutput)
 	mux.HandleFunc("/api/job/log", s.handleJobLog)
-	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
-	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/repos/register", s.handleRegisterRepo)
-	mux.HandleFunc("/api/branches", s.handleListBranches)
-	mux.HandleFunc("/api/review", s.handleGetReview)
-	mux.HandleFunc("/api/review/close", s.handleCloseReview)
-	mux.HandleFunc("/api/comment", s.handleAddComment)
-	mux.HandleFunc("/api/comments", s.handleListComments)
-	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/jobs/batch", s.handleBatchJobs)
 	mux.HandleFunc("/api/remap", s.handleRemap)
@@ -115,7 +105,6 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/applied", s.handleMarkJobApplied)
 	mux.HandleFunc("/api/job/rebased", s.handleMarkJobRebased)
 	mux.HandleFunc("/api/activity", s.handleActivity)
-	mux.HandleFunc("/api/summary", s.handleSummary)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -2777,6 +2766,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"entries": entries})
 }
 
+//nolint:unused // removed in Task 7 (old handler replaced by Huma)
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

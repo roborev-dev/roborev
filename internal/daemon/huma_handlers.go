@@ -15,7 +15,6 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaListJobs(
 	ctx context.Context, input *ListJobsInput,
 ) (*ListJobsOutput, error) {
@@ -167,7 +166,6 @@ func (s *Server) humaListJobs(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaGetReview(
 	ctx context.Context, input *GetReviewInput,
 ) (*GetReviewOutput, error) {
@@ -191,7 +189,6 @@ func (s *Server) humaGetReview(
 	return &GetReviewOutput{Body: review}, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaGetJobOutput(
 	ctx context.Context, input *GetJobOutputInput,
 ) (*GetJobOutputOutput, error) {
@@ -215,7 +212,6 @@ func (s *Server) humaGetJobOutput(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaListComments(
 	ctx context.Context, input *ListCommentsInput,
 ) (*ListCommentsOutput, error) {
@@ -252,7 +248,6 @@ func (s *Server) humaListComments(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaListRepos(
 	ctx context.Context, input *ListReposInput,
 ) (*ListReposOutput, error) {
@@ -288,7 +283,6 @@ func (s *Server) humaListRepos(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaListBranches(
 	ctx context.Context, input *ListBranchesInput,
 ) (*ListBranchesOutput, error) {
@@ -317,7 +311,6 @@ func (s *Server) humaListBranches(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaGetStatus(
 	ctx context.Context, input *GetStatusInput,
 ) (*GetStatusOutput, error) {
@@ -354,7 +347,6 @@ func (s *Server) humaGetStatus(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaGetSummary(
 	ctx context.Context, input *GetSummaryInput,
 ) (*GetSummaryOutput, error) {
@@ -386,7 +378,6 @@ func (s *Server) humaGetSummary(
 	return &GetSummaryOutput{Body: summary}, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaCancelJob(
 	ctx context.Context, input *CancelJobInput,
 ) (*CancelJobOutput, error) {
@@ -414,7 +405,6 @@ func (s *Server) humaCancelJob(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaRerunJob(
 	ctx context.Context, input *RerunJobInput,
 ) (*RerunJobOutput, error) {
@@ -466,7 +456,6 @@ func (s *Server) humaRerunJob(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaCloseReview(
 	ctx context.Context, input *CloseReviewInput,
 ) (*CloseReviewOutput, error) {
@@ -512,7 +501,6 @@ func (s *Server) humaCloseReview(
 	return resp, nil
 }
 
-//nolint:unused // wired in by a later commit
 func (s *Server) humaAddComment(
 	ctx context.Context, input *AddCommentInput,
 ) (*AddCommentOutput, error) {

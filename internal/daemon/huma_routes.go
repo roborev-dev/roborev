@@ -13,7 +13,6 @@ import (
 // all typed endpoints. The returned huma.API can be used to serve
 // the generated OpenAPI spec.
 //
-//nolint:unused // wired in by a later commit
 func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	cfg := huma.DefaultConfig("roborev", version.Version)
 	cfg.DocsPath = ""
