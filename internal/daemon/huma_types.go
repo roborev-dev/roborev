@@ -115,8 +115,7 @@ type RerunJobOutput struct {
 
 // GetJobOutputInput holds query parameters for fetching job output.
 type GetJobOutputInput struct {
-	JobID  int64  `query:"job_id" required:"true" doc:"Job ID to fetch output for"`
-	Stream string `query:"stream" doc:"Set to 1 for SSE streaming mode"`
+	JobID int64 `query:"job_id" required:"true" doc:"Job ID to fetch output for"`
 }
 
 // GetJobOutputOutput is the polling-mode response
