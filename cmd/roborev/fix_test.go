@@ -3200,13 +3200,11 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 		"main-only job should be filtered out")
 }
 
-// TestRunFixOpenFindsMergedBranchJobs verifies that roborev fix on the
-// main branch discovers jobs whose commits were originally reviewed on
-// a feature branch and later merged to main. The API query must NOT
-// filter by branch when the branch was auto-resolved (not --branch),
-// so that filterReachableJobs can accept the job via commit-graph
-// reachability.
-func TestRunFixOpenFindsMergedBranchJobs(t *testing.T) {
+// TestRunFixOpenExcludesMergedBranchJobs verifies that roborev fix on
+// the main branch does NOT process jobs whose commits were originally
+// reviewed on a feature branch, even when those commits are reachable
+// from HEAD via a merge. Jobs are scoped by their stored Branch field.
+func TestRunFixOpenExcludesMergedBranchJobs(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("base.txt", "base", "initial commit")
 
@@ -3226,14 +3224,11 @@ func TestRunFixOpenFindsMergedBranchJobs(t *testing.T) {
 
 	var processedJobIDs []int64
 	var mu sync.Mutex
-	var apiQueries []string
 
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
-			apiQueries = append(apiQueries, r.URL.RawQuery)
 			if q.Get("closed") == "false" && q.Get("limit") == "0" {
-				// Return job created on the feature branch
 				writeJSON(w, map[string]any{
 					"jobs": []storage.ReviewJob{
 						{
@@ -3279,7 +3274,6 @@ func TestRunFixOpenFindsMergedBranchJobs(t *testing.T) {
 		Build()
 
 	// Run from main with auto-resolved branch (explicitBranch=false).
-	// The feature SHA is reachable from HEAD via the merge commit.
 	_, runErr := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		return runFixOpen(
 			cmd, defaultBranch, false, false, false,
@@ -3288,16 +3282,103 @@ func TestRunFixOpenFindsMergedBranchJobs(t *testing.T) {
 	})
 	require.NoError(t, runErr, "runFixOpen")
 
-	// The API query should NOT include a branch filter
-	require.NotEmpty(t, apiQueries,
-		"expected at least one API query")
-	assert.NotContains(t, apiQueries[0], "branch=",
-		"auto-resolved branch should not filter API query")
-
-	// The merged feature job should be processed
+	// The feature branch job should NOT be processed — branch
+	// scoping excludes jobs from other branches even when the
+	// commit is reachable via a merge.
 	mu.Lock()
 	ids := processedJobIDs
 	mu.Unlock()
-	assert.Contains(t, ids, int64(300),
-		"merged feature branch job should be found via commit-graph")
+	assert.NotContains(t, ids, int64(300),
+		"feature branch job should be excluded on main")
+}
+
+// TestFilterReachableJobsFeatureBranch verifies that on a feature
+// branch, jobs from other branches are excluded even though their
+// SHAs are reachable from HEAD. Jobs with no branch fail open.
+func TestFilterReachableJobsFeatureBranch(t *testing.T) {
+	repo := newTestGitRepo(t)
+	baseSHA := repo.CommitFile("base.txt", "base", "base commit")
+
+	defaultBranch := strings.TrimSpace(
+		repo.Run("rev-parse", "--abbrev-ref", "HEAD"),
+	)
+
+	mainOnlySHA := repo.CommitFile(
+		"main-only.txt", "m", "main-only commit",
+	)
+
+	repo.Run("checkout", "-b", "feature-x")
+	featureSHA := repo.CommitFile(
+		"feature.txt", "f", "feature commit",
+	)
+
+	tests := []struct {
+		name    string
+		jobs    []storage.ReviewJob
+		wantIDs []int64
+	}{
+		{
+			name: "feature branch commit included",
+			jobs: []storage.ReviewJob{
+				{ID: 1, GitRef: featureSHA, Branch: "feature-x"},
+			},
+			wantIDs: []int64{1},
+		},
+		{
+			name: "base branch commit with base branch excluded",
+			jobs: []storage.ReviewJob{
+				{
+					ID: 2, GitRef: mainOnlySHA,
+					Branch: defaultBranch,
+				},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "base branch commit with no branch fails open",
+			jobs: []storage.ReviewJob{
+				{ID: 3, GitRef: baseSHA},
+			},
+			wantIDs: []int64{3},
+		},
+		{
+			name: "base branch commit matching branch included",
+			jobs: []storage.ReviewJob{
+				{
+					ID: 4, GitRef: mainOnlySHA,
+					Branch: "feature-x",
+				},
+			},
+			wantIDs: []int64{4},
+		},
+		{
+			name: "mixed: matching and branchless survive",
+			jobs: []storage.ReviewJob{
+				{
+					ID: 10, GitRef: featureSHA,
+					Branch: "feature-x",
+				},
+				{
+					ID: 20, GitRef: mainOnlySHA,
+					Branch: defaultBranch,
+				},
+				{
+					ID: 30, GitRef: baseSHA,
+					Branch: "other",
+				},
+			},
+			wantIDs: []int64{10},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterReachableJobs(repo.Dir, "", tt.jobs)
+			var gotIDs []int64
+			for _, j := range got {
+				gotIDs = append(gotIDs, j.ID)
+			}
+			assert.Equal(t, tt.wantIDs, gotIDs)
+		})
+	}
 }

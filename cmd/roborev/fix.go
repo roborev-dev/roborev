@@ -501,13 +501,12 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 }
 
 // filterReachableJobs returns only those jobs relevant to the
-// current worktree. SHA and range refs are checked via the commit
-// graph; non-SHA refs (dirty, empty, task labels) fall back to
-// branch matching. branchOverride is the explicit --branch value
-// for non-mutating flows (e.g. --list); when set, all job types
-// use branch matching so cross-branch listing works for SHA/range
-// jobs too. Mutating flows (fix, --batch) pass "" so that
-// commit-graph reachability is checked. Callers that want all
+// current worktree. Jobs are matched by their stored Branch field
+// against the current (or overridden) branch. branchOverride is
+// the explicit --branch value for non-mutating flows (e.g. --list);
+// when set, all job types use branch matching so cross-branch
+// listing works. Mutating flows (fix, --batch) pass "" so that
+// the current branch is auto-detected. Callers that want all
 // branches (--all-branches) skip this function entirely. On git
 // errors the job is kept (fail open) to avoid silently dropping work.
 func filterReachableJobs(
@@ -530,11 +529,10 @@ func filterReachableJobs(
 }
 
 // jobReachable decides whether a single job belongs to the current
-// worktree. When branchOnly is true (explicit --branch in a
-// non-mutating flow), all job types match by Branch field so
-// cross-branch listing works. Otherwise SHA and range refs are
-// checked via the commit graph, and non-SHA refs fall back to
-// branch matching.
+// worktree. Jobs are matched primarily by their stored Branch
+// field. SHA and range refs additionally check the commit graph
+// so that unknown-object git errors fail open (include the job)
+// rather than silently dropping work.
 func jobReachable(
 	worktreeRoot, matchBranch string,
 	branchOnly bool, j storage.ReviewJob,
@@ -547,25 +545,21 @@ func jobReachable(
 		return branchMatch(matchBranch, j.Branch)
 	}
 
-	// Range ref: check whether the end commit is reachable.
+	// Range ref: fail open on git errors, otherwise branch match.
 	if _, end, ok := git.ParseRange(ref); ok {
-		reachable, err := git.IsAncestor(worktreeRoot, end, "HEAD")
-		if err != nil || reachable {
+		_, err := git.IsAncestor(worktreeRoot, end, "HEAD")
+		if err != nil {
 			return true
 		}
-		// SHA unreachable (commit may have been rebased) —
-		// fall back to branch matching.
 		return branchMatch(matchBranch, j.Branch)
 	}
 
-	// SHA ref: check commit graph reachability.
+	// SHA ref: fail open on git errors, otherwise branch match.
 	if git.LooksLikeSHA(ref) {
-		reachable, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
-		if err != nil || reachable {
+		_, err := git.IsAncestor(worktreeRoot, ref, "HEAD")
+		if err != nil {
 			return true
 		}
-		// SHA unreachable (commit may have been rebased) —
-		// fall back to branch matching.
 		return branchMatch(matchBranch, j.Branch)
 	}
 
