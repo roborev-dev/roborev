@@ -19,8 +19,8 @@ func (s *Server) humaListJobs(
 	ctx context.Context, input *ListJobsInput,
 ) (*ListJobsOutput, error) {
 	// Single job lookup by ID
-	if input.ID != nil {
-		job, err := s.db.GetJobByID(*input.ID)
+	if input.ID > 0 {
+		job, err := s.db.GetJobByID(input.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				resp := &ListJobsOutput{}
@@ -48,20 +48,15 @@ func (s *Server) humaListJobs(
 
 	const maxLimit = 10000
 	limit := 50
-	if input.Limit != nil {
-		limit = *input.Limit
+	if input.Limit >= 0 {
+		limit = input.Limit
 	}
-	if limit < 0 {
-		limit = 0
-	} else if limit > maxLimit {
+	if limit > maxLimit {
 		limit = maxLimit
 	}
 
-	offset := 0
-	if input.Offset != nil {
-		offset = *input.Offset
-	}
-	if offset < 0 || limit == 0 {
+	offset := max(input.Offset, 0)
+	if limit == 0 {
 		offset = 0
 	}
 
@@ -110,9 +105,9 @@ func (s *Server) humaListJobs(
 			listOpts, storage.WithRepoPrefix(repoPrefix),
 		)
 	}
-	if input.Before != nil {
+	if input.Before > 0 {
 		listOpts = append(
-			listOpts, storage.WithBeforeCursor(*input.Before),
+			listOpts, storage.WithBeforeCursor(input.Before),
 		)
 	}
 
@@ -172,8 +167,8 @@ func (s *Server) humaGetReview(
 	var review *storage.Review
 	var err error
 
-	if input.JobID != nil {
-		review, err = s.db.GetReviewByJobID(*input.JobID)
+	if input.JobID > 0 {
+		review, err = s.db.GetReviewByJobID(input.JobID)
 	} else if input.SHA != "" {
 		review, err = s.db.GetReviewByCommitSHA(input.SHA)
 	} else {
@@ -218,15 +213,15 @@ func (s *Server) humaListComments(
 	var responses []storage.Response
 	var err error
 
-	if input.JobID != nil {
-		responses, err = s.db.GetCommentsForJob(*input.JobID)
+	if input.JobID > 0 {
+		responses, err = s.db.GetCommentsForJob(input.JobID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("get responses: %v", err),
 			)
 		}
-	} else if input.CommitID != nil {
-		responses, err = s.db.GetCommentsForCommit(*input.CommitID)
+	} else if input.CommitID > 0 {
+		responses, err = s.db.GetCommentsForCommit(input.CommitID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("get responses: %v", err),

@@ -7,20 +7,24 @@ import (
 // -- GET /api/jobs --
 
 // ListJobsInput holds query parameters for listing jobs.
+// Huma does not support pointer types for query parameters,
+// so we use sentinel values: ID=0 means not provided,
+// Limit=-1 means use the default (50), Before=0 means
+// no cursor.
 type ListJobsInput struct {
-	ID                 *int64  `query:"id" doc:"Return a single job by ID"`
-	Status             string  `query:"status" doc:"Filter by job status"`
-	Repo               string  `query:"repo" doc:"Filter by repo root path"`
-	GitRef             string  `query:"git_ref" doc:"Filter by git ref"`
-	Branch             string  `query:"branch" doc:"Filter by branch name"`
-	BranchIncludeEmpty string  `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false"`
-	Closed             string  `query:"closed" doc:"Filter by review closed state" enum:"true,false"`
-	JobType            string  `query:"job_type" doc:"Filter by job type"`
-	ExcludeJobType     string  `query:"exclude_job_type" doc:"Exclude jobs of this type"`
-	RepoPrefix         string  `query:"repo_prefix" doc:"Filter repos by path prefix"`
-	Limit              *int    `query:"limit" doc:"Max results (default 50, 0=unlimited, max 10000)"`
-	Offset             *int    `query:"offset" doc:"Skip N results (requires limit>0)"`
-	Before             *int64  `query:"before" doc:"Cursor: return jobs with ID < this value"`
+	ID                 int64  `query:"id" default:"0" doc:"Return a single job by ID"`
+	Status             string `query:"status" doc:"Filter by job status"`
+	Repo               string `query:"repo" doc:"Filter by repo root path"`
+	GitRef             string `query:"git_ref" doc:"Filter by git ref"`
+	Branch             string `query:"branch" doc:"Filter by branch name"`
+	BranchIncludeEmpty string `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
+	Closed             string `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
+	JobType            string `query:"job_type" doc:"Filter by job type"`
+	ExcludeJobType     string `query:"exclude_job_type" doc:"Exclude jobs of this type"`
+	RepoPrefix         string `query:"repo_prefix" doc:"Filter repos by path prefix"`
+	Limit              int    `query:"limit" default:"-1" doc:"Max results (default 50, 0=unlimited, max 10000)"`
+	Offset             int    `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
+	Before             int64  `query:"before" default:"0" doc:"Cursor: return jobs with ID < this value"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.
@@ -36,7 +40,7 @@ type ListJobsOutput struct {
 
 // GetReviewInput holds query parameters for fetching a review.
 type GetReviewInput struct {
-	JobID *int64 `query:"job_id" doc:"Look up review by job ID"`
+	JobID int64  `query:"job_id" default:"0" doc:"Look up review by job ID"`
 	SHA   string `query:"sha" doc:"Look up review by commit SHA"`
 }
 
@@ -117,8 +121,8 @@ type AddCommentOutput struct {
 
 // ListCommentsInput holds query parameters for listing comments.
 type ListCommentsInput struct {
-	JobID    *int64 `query:"job_id" doc:"List comments by job ID"`
-	CommitID *int64 `query:"commit_id" doc:"List comments by commit ID"`
+	JobID    int64  `query:"job_id" default:"0" doc:"List comments by job ID"`
+	CommitID int64  `query:"commit_id" default:"0" doc:"List comments by commit ID"`
 	SHA      string `query:"sha" doc:"List comments by commit SHA"`
 }
 
