@@ -102,6 +102,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "add-comment"
 			o.Summary = "Add a comment to a job or commit"
 			o.Tags = []string{"comments"}
+			o.DefaultStatus = 201
 		})
 
 	return api
