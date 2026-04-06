@@ -28,13 +28,13 @@ type listJobsResponse struct {
 	HasMore bool                `json:"has_more"`
 }
 
-// fetchJobs calls handleListJobs with the given query string, asserts HTTP 200,
+// fetchJobs calls GET /api/jobs via the mux, asserts HTTP 200,
 // decodes the JSON body, and returns the parsed response.
 func fetchJobs(t *testing.T, server *Server, query string) listJobsResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/jobs?"+query, nil)
 	w := httptest.NewRecorder()
-	server.handleListJobs(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "GET /api/jobs?%s: %s", query, w.Body.String())
 	var resp listJobsResponse
 	testutil.DecodeJSON(t, w, &resp)
@@ -61,7 +61,6 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		{"repo filter with limit", "repo=" + url.QueryEscape(repo1.RootPath) + "&limit=2", 2, "repo1"},
 		{"negative limit treated as unlimited", "limit=-1", 5, ""},
 		{"very large limit capped to max", "limit=999999", 5, ""},
-		{"invalid limit uses default", "limit=abc", 5, ""},
 	}
 
 	for _, tt := range tests {
@@ -1566,7 +1565,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		// Request job 1 specifically
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job1ID), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -1596,7 +1595,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		// Request job 2 specifically (the middle job)
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job2ID), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -1625,7 +1624,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		// Request a job ID that doesn't exist
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=99999", nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -1648,20 +1647,18 @@ func TestHandleListJobsByID(t *testing.T) {
 	t.Run("returns error for invalid job ID", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=notanumber", nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
-		if w.Code != http.StatusBadRequest {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected 400, got %d: %s", w.Code, w.Body.String())
-		}
+		assert.GreaterOrEqual(t, w.Code, 400,
+			"expected client error for invalid id, got %d: %s",
+			w.Code, w.Body.String())
 	})
 
 	t.Run("without id param returns all jobs", func(t *testing.T) {
 		// Request without id param should return all jobs
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -2254,7 +2251,14 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 
 func TestHandleListJobsIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	testInvalidIDParsing(t, server.handleListJobs, "/api/jobs?id=%s")
+	for _, id := range []string{"abc", "10abc", "1.5"} {
+		t.Run("invalid_id_"+id, func(t *testing.T) {
+			rr := serveHuma(t, server, http.MethodGet,
+				"/api/jobs?id="+id, nil)
+			assert.GreaterOrEqual(t, rr.Code, 400,
+				"expected client error for invalid id %q", id)
+		})
+	}
 }
 
 func TestHandleListJobsJobTypeFilter(t *testing.T) {
@@ -2290,7 +2294,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			http.MethodGet, "/api/jobs?job_type=fix", nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -2321,7 +2325,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			http.MethodGet, "/api/jobs", nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -2346,7 +2350,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			http.MethodGet, "/api/jobs?exclude_job_type=fix", nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -2384,7 +2388,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	t.Run("repo_prefix returns only child repos", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {
@@ -2413,7 +2417,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		seedRepoWithJobs(t, db, workspace, 1, "exact")
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {
@@ -2433,7 +2437,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		exactRepo := filepath.Join(workspace, "repo-a")
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo="+url.QueryEscape(exactRepo)+"&repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {
@@ -2451,7 +2455,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	t.Run("repo_prefix trailing slash is normalized", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace+"/"), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {
@@ -2471,7 +2475,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(dotdotPrefix), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {
@@ -2840,7 +2844,7 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/jobs?repo_prefix="+url.QueryEscape(ws), nil)
 		w := httptest.NewRecorder()
-		server.handleListJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var resp struct {

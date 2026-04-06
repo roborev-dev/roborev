@@ -460,12 +460,12 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 		{
 			"non-numeric job_id",
 			"job_id=abc",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 		},
 		{
 			"partial numeric job_id",
 			"job_id=10abc",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 		},
 		{
 			"not found job_id",
@@ -483,7 +483,7 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, url, nil)
 			w := httptest.NewRecorder()
 
-			server.handleGetReview(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != tt.wantStatus {
 				assert.Condition(t, func() bool {

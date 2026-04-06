@@ -143,24 +143,6 @@ func createTestJob(t *testing.T, db *storage.DB, dir, gitRef, agent string) *sto
 	return job
 }
 
-// testInvalidIDParsing is a generic helper to test invalid ID query parameters.
-func testInvalidIDParsing(t *testing.T, handler http.HandlerFunc, urlTemplate string) {
-	t.Helper()
-	tests := []string{"abc", "10abc", "1.5"}
-	for _, invalidID := range tests {
-		t.Run("invalid_id_"+invalidID, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(urlTemplate, invalidID), nil)
-			w := httptest.NewRecorder()
-			handler(w, req)
-			if w.Code != http.StatusBadRequest {
-				assert.Condition(t, func() bool {
-					return false
-				}, "expected status %d for id %s, got %d", http.StatusBadRequest, invalidID, w.Code)
-			}
-		})
-	}
-}
-
 func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
 	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)

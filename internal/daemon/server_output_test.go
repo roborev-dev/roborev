@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-// jobOutputResponse covers the union of fields returned by handleJobOutput
+// jobOutputResponse covers the union of fields returned by GET /api/job/output
 // in both polling and streaming modes.
 type jobOutputResponse struct {
 	JobID   int64  `json:"job_id"`
@@ -36,23 +36,23 @@ func TestHandleJobOutput(t *testing.T) {
 	t.Run("missing job_id", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "body: %s", w.Body.String())
 	})
 
 	t.Run("invalid job_id", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "body: %s", w.Body.String())
 	})
 
 	t.Run("nonexistent job", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
 	})
@@ -63,7 +63,7 @@ func TestHandleJobOutput(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
@@ -81,7 +81,7 @@ func TestHandleJobOutput(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
@@ -92,28 +92,36 @@ func TestHandleJobOutput(t *testing.T) {
 		assert.False(t, resp.HasMore, "expected has_more=false for completed job")
 	})
 
-	t.Run("streaming completed job", func(t *testing.T) {
+	t.Run("stream param returns polling response", func(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-stream"), "abc123", "test-agent")
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
+		// stream=1 is no longer handled specially; the Huma handler
+		// always returns polling-mode JSON.
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
 		w := httptest.NewRecorder()
-		server.handleJobOutput(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
-		// Should return immediately with complete message, not hang
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 		var resp jobOutputResponse
 		testutil.DecodeJSON(t, w, &resp)
 
-		assert.Equal(t, "complete", resp.Type)
 		assert.Equal(t, "done", resp.Status)
+		assert.False(t, resp.HasMore, "completed job should not have more output")
 	})
 }
 
 func TestHandleJobOutputIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	testInvalidIDParsing(t, server.handleJobOutput, "/api/job-output?job_id=%s")
+	for _, id := range []string{"abc", "10abc", "1.5"} {
+		t.Run("invalid_id_"+id, func(t *testing.T) {
+			rr := serveHuma(t, server, http.MethodGet,
+				"/api/job/output?job_id="+id, nil)
+			assert.GreaterOrEqual(t, rr.Code, 400,
+				"expected client error for invalid id %q", id)
+		})
+	}
 }
 
 func TestHandleJobLog(t *testing.T) {

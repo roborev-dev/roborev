@@ -22,7 +22,7 @@ func TestHandleListRepos(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
@@ -52,7 +52,7 @@ func TestHandleListRepos(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
@@ -96,7 +96,7 @@ func TestHandleListRepos(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {
@@ -128,7 +128,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	t.Run("filter by main branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -148,7 +148,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	t.Run("filter by feature branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=feature", nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -168,7 +168,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	t.Run("nonexistent branch returns empty", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=nonexistent", nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -198,7 +198,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	t.Run("prefix returns only child repos", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -218,7 +218,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	t.Run("prefix excludes non-matching repos", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -241,7 +241,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=main", nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -262,7 +262,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=feature", nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -283,7 +283,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace+"/"), nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -300,7 +300,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(dotdotPrefix), nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -335,7 +335,7 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(ws), nil)
 		w := httptest.NewRecorder()
-		server.handleListRepos(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response reposResponse
@@ -392,7 +392,7 @@ func TestHandleListBranches(t *testing.T) {
 	t.Run("list all branches", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
 		w := httptest.NewRecorder()
-		server.handleListBranches(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response branchesResponse
@@ -418,7 +418,7 @@ func TestHandleListBranches(t *testing.T) {
 		repoPath := filepath.Join(tmpDir, "repo1")
 		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repoPath, nil)
 		w := httptest.NewRecorder()
-		server.handleListBranches(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response branchesResponse
@@ -438,9 +438,10 @@ func TestHandleListBranches(t *testing.T) {
 	t.Run("filter by multiple repos", func(t *testing.T) {
 		repo1Path := filepath.Join(tmpDir, "repo1")
 		repo2Path := filepath.Join(tmpDir, "repo2")
-		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repo1Path+"&repo="+repo2Path, nil)
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/branches?repo="+url.QueryEscape(repo1Path)+"&repo="+url.QueryEscape(repo2Path), nil)
 		w := httptest.NewRecorder()
-		server.handleListBranches(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response branchesResponse
@@ -460,7 +461,7 @@ func TestHandleListBranches(t *testing.T) {
 	t.Run("empty repo param treated as no filter", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo=", nil)
 		w := httptest.NewRecorder()
-		server.handleListBranches(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response branchesResponse
@@ -481,7 +482,7 @@ func TestHandleListBranches(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
 		w := httptest.NewRecorder()
 
-		server.handleListBranches(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {

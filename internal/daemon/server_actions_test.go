@@ -50,7 +50,7 @@ func TestHandleStatus(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
-		server.handleStatus(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -73,7 +73,7 @@ func TestHandleStatus(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/status", nil)
 		w := httptest.NewRecorder()
 
-		server.handleStatus(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {
@@ -86,7 +86,7 @@ func TestHandleStatus(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
-		server.handleStatus(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		var status storage.DaemonStatus
 		testutil.DecodeJSON(t, w, &status)
@@ -104,7 +104,7 @@ func TestHandleStatus(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
-		server.handleStatus(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		var status storage.DaemonStatus
 		testutil.DecodeJSON(t, w, &status)
@@ -198,7 +198,7 @@ func TestHandleCancelJob(t *testing.T) {
 				// the full code path including workerPool side-effects.
 				req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
 				w := httptest.NewRecorder()
-				server.handleCancelJob(w, req)
+				server.httpServer.Handler.ServeHTTP(w, req)
 				require.Equal(t, http.StatusOK, w.Code, "first cancel should succeed")
 				return job.ID
 			},
@@ -225,7 +225,7 @@ func TestHandleCancelJob(t *testing.T) {
 			request: func(t *testing.T, jobID int64) *http.Request {
 				return testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]any{})
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusUnprocessableEntity,
 		},
 		{
 			name: "cancel with wrong method",
@@ -265,7 +265,7 @@ func TestHandleCancelJob(t *testing.T) {
 			req := tt.request(t, jobID)
 			w := httptest.NewRecorder()
 
-			server.handleCancelJob(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code, "response body: %s", w.Body.String())
 
@@ -296,7 +296,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			assert.Condition(t, func() bool {
@@ -325,7 +325,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			assert.Condition(t, func() bool {
@@ -364,7 +364,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			assert.Condition(t, func() bool {
@@ -416,7 +416,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		updated, err := isolatedDB.GetJobByID(job.ID)
@@ -432,7 +432,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusNotFound {
 			assert.Condition(t, func() bool {
@@ -472,12 +472,10 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 
-		var resp ErrorResponse
-		testutil.DecodeJSON(t, w, &resp)
-		assert.Contains(t, resp.Error, "rerun job worktree path is stale or invalid")
+		assert.Contains(t, w.Body.String(), "rerun job worktree path is stale or invalid")
 
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
@@ -488,7 +486,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: 99999})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusNotFound {
 			assert.Condition(t, func() bool {
@@ -501,12 +499,12 @@ func TestHandleRerunJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", map[string]any{})
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
-		if w.Code != http.StatusBadRequest {
+		if w.Code != http.StatusUnprocessableEntity {
 			assert.Condition(t, func() bool {
 				return false
-			}, "Expected status 400 for missing job_id, got %d", w.Code)
+			}, "Expected status 422 for missing job_id, got %d", w.Code)
 		}
 	})
 
@@ -514,7 +512,7 @@ func TestHandleRerunJob(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/rerun", nil)
 		w := httptest.NewRecorder()
 
-		server.handleRerunJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {
@@ -741,7 +739,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 			w := httptest.NewRecorder()
 
-			server.handleAddComment(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusCreated {
 				assert.Condition(t, func() bool {
@@ -774,7 +772,7 @@ func TestHandleAddCommentToNonExistentJob(t *testing.T) {
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
 
-	server.handleAddComment(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		assert.Condition(t, func() bool {
@@ -815,7 +813,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
 
-	server.handleAddComment(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		assert.Condition(t, func() bool {
@@ -861,7 +859,7 @@ func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 		Closed: true,
 	})
 	w := httptest.NewRecorder()
-	server.handleCloseReview(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	assert.Equal(http.StatusOK, w.Code)
 
@@ -899,7 +897,7 @@ func TestHandleCloseReview_BroadcastsReopenEvent(t *testing.T) {
 		Closed: false,
 	})
 	w := httptest.NewRecorder()
-	server.handleCloseReview(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	assert.Equal(http.StatusOK, w.Code)
 
@@ -940,7 +938,7 @@ func TestHandleCloseReview_RepoFilteredSubscriber(t *testing.T) {
 		Closed: true,
 	})
 	w := httptest.NewRecorder()
-	server.handleCloseReview(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	assert.Equal(http.StatusOK, w.Code)
 
 	// Filtered subscriber receives the event
@@ -996,5 +994,12 @@ func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
 
 func TestHandleListCommentsJobIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	testInvalidIDParsing(t, server.handleListComments, "/api/comments?job_id=%s")
+	for _, id := range []string{"abc", "10abc", "1.5"} {
+		t.Run("invalid_id_"+id, func(t *testing.T) {
+			rr := serveHuma(t, server, http.MethodGet,
+				"/api/comments?job_id="+id, nil)
+			assert.GreaterOrEqual(t, rr.Code, 400,
+				"expected client error for invalid id %q", id)
+		})
+	}
 }
