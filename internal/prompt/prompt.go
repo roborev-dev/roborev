@@ -319,18 +319,21 @@ func (b *Builder) BuildDirtyWithSnapshot(
 	if strings.Contains(p, "(Diff too large to include in full)") && len(diff) > 0 {
 		gitDir, dirErr := git.ResolveGitDir(repoPath)
 		if dirErr != nil {
-			return SnapshotResult{Prompt: p}, nil
+			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", dirErr)
 		}
 		f, createErr := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
 		if createErr != nil {
-			return SnapshotResult{Prompt: p}, nil
+			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", createErr)
 		}
 		diffFile := f.Name()
 		_, writeErr := f.WriteString(diff)
 		closeErr := f.Close()
 		if writeErr != nil || closeErr != nil {
 			os.Remove(diffFile)
-			return SnapshotResult{Prompt: p}, nil
+			if writeErr != nil {
+				return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", writeErr)
+			}
+			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", closeErr)
 		}
 		p += fmt.Sprintf(
 			"\nThe full diff is also available at: `%s`\n", diffFile,
