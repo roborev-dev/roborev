@@ -569,9 +569,10 @@ Expected: PASS — all existing tests pass with the extra column.
 - Modify: `internal/storage/sync.go:581-607` — UpsertPulledJob INSERT
 - Modify: `internal/storage/postgres.go:17,22-23` — bump pgSchemaVersion, embed directive
 - Modify: `internal/storage/postgres.go:291-304` — add v11 migration block
-- Modify: `internal/storage/postgres.go:554-577` — UpsertJob INSERT
+- Modify: `internal/storage/postgres.go:554-577` — UpsertJob INSERT (test-only path)
 - Modify: `internal/storage/postgres.go:609-639` — add MinSeverity to PulledJob
 - Modify: `internal/storage/postgres.go:658-662` — PullJobs SELECT
+- Modify: `internal/storage/postgres.go:945-972` — BatchUpsertJobs INSERT (production sync push path)
 - Create: `internal/storage/schemas/postgres_v11.sql` — new schema with min_severity
 
 - [ ] **Step 1: Add MinSeverity to SyncableJob struct**
@@ -654,13 +655,25 @@ Add `min_severity = EXCLUDED.min_severity` to the ON CONFLICT update list.
 
 Update the parameter placeholder numbering accordingly.
 
-- [ ] **Step 9: Update PullJobs SELECT**
+- [ ] **Step 9: Update BatchUpsertJobs INSERT (production sync push path)**
+
+In `internal/storage/postgres.go` at `BatchUpsertJobs` (line 945), update the INSERT SQL:
+
+Add `min_severity` to the column list (after `worktree_path`).
+Add `normalizeMinSeverityForWrite(j.MinSeverity)` to the values (after the `j.SourceMachineID` value).
+Add `min_severity = EXCLUDED.min_severity` to the ON CONFLICT update list (after `worktree_path`).
+
+Update the parameter placeholder numbering: currently `$1` through `$21`, the new column becomes `$22` and `NOW()` for `updated_at` moves to inline (it's already inline, not a placeholder).
+
+This is the **production sync push path** — `SyncWorker.pushChangesWithStats` calls `BatchUpsertJobs`, not `UpsertJob`. Without this change, all sync pushes would omit `min_severity` and other machines would see `''` for every synced job.
+
+- [ ] **Step 10: Update PullJobs SELECT**
 
 In `internal/storage/postgres.go` at the PullJobs SELECT (lines 658-662), add `COALESCE(j.min_severity, '')` after `COALESCE(j.worktree_path, '')`.
 
 Add `&pj.MinSeverity` to the scan call after `&pj.WorktreePath`.
 
-- [ ] **Step 10: Verify build**
+- [ ] **Step 11: Verify build**
 
 Run: `nix develop -c go build ./internal/storage/...`
 Expected: Build succeeds.
@@ -909,6 +922,7 @@ Known production callers (update each with trailing `, ""`):
 | `internal/daemon/worker.go` | 401 | `pb.Build(...)` | Task 10 |
 | `cmd/roborev/review.go` | ~431 | `pb.BuildDirty(...)` | Task 12 |
 | `cmd/roborev/review.go` | ~433 | `pb.Build(...)` | Task 12 |
+| `internal/review/batch.go` | 152 | `builder.Build(...)` | Task 12.5 |
 
 Also update any test callers of `Build`/`BuildDirty` in `internal/prompt/prompt_test.go` (existing tests, not the new ones from Step 1) to add `, ""`. The new tests from Step 1 already include the parameter.
 
@@ -1380,6 +1394,82 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 		assert.NotContains(t, got.Prompt, "Severity filter:")
 		assert.Contains(t, got.Prompt, "Rebase Fix Request")
 	})
+
+	t.Run("worktree config overrides repo config", func(t *testing.T) {
+		s, db, tmpDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tmpDir)
+
+		// Main repo: fix_min_severity = "medium"
+		os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"), []byte(`fix_min_severity = "medium"`), 0644)
+
+		// Create a worktree dir with a different config
+		wtDir := t.TempDir()
+		os.WriteFile(filepath.Join(wtDir, ".roborev.toml"), []byte(`fix_min_severity = "critical"`), 0644)
+
+		// Create parent with WorktreePath set to the worktree dir
+		repo, err := db.GetOrCreateRepo(tmpDir)
+		require.NoError(t, err)
+		sha := testutil.GetHeadSHA(t, tmpDir)
+		commit, err := db.GetOrCreateCommit(repo.ID, sha, "A", "S", time.Now())
+		require.NoError(t, err)
+		parentJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       sha,
+			Agent:        "test",
+			WorktreePath: wtDir,
+		})
+		require.NoError(t, err)
+		setJobStatus(t, db, parentJob.ID, storage.JobStatusDone)
+		_, err = db.CreateReview(parentJob.ID, "test", "prompt", "- High — bug")
+		require.NoError(t, err)
+
+		body := fmt.Sprintf(`{"parent_job_id":%d}`, parentJob.ID)
+		req := httptest.NewRequest(http.MethodPost, "/api/job/fix", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var fixJob storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&fixJob)
+		got, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		// Should use worktree's "critical", not main repo's "medium"
+		assert.Contains(t, got.Prompt, "Critical")
+	})
+
+	t.Run("legacy task parent with empty job_type skips severity", func(t *testing.T) {
+		s, db, tmpDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tmpDir)
+		os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"), []byte(`fix_min_severity = "high"`), 0644)
+
+		// Create a legacy-style task parent: empty JobType, has Prompt, no CommitID
+		repo, err := db.GetOrCreateRepo(tmpDir)
+		require.NoError(t, err)
+		parentJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "analyze the code",
+			// JobType intentionally left empty — legacy shape
+		})
+		require.NoError(t, err)
+		setJobStatus(t, db, parentJob.ID, storage.JobStatusDone)
+		_, err = db.CreateReview(parentJob.ID, "test", "prompt", "Found issues")
+		require.NoError(t, err)
+
+		body := fmt.Sprintf(`{"parent_job_id":%d}`, parentJob.ID)
+		req := httptest.NewRequest(http.MethodPost, "/api/job/fix", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var fixJob storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&fixJob)
+		got, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		// IsTaskJob() should return true for legacy shape — no severity injection
+		assert.NotContains(t, got.Prompt, "Severity filter:")
+	})
 }
 ```
 
@@ -1526,6 +1616,105 @@ func TestReviewMinSeverityFlag(t *testing.T) {
 
 Run: `nix develop -c go test ./cmd/roborev/ -run TestReviewMinSeverity -v`
 Expected: PASS
+
+Run: `nix develop -c go build ./...`
+Expected: Build succeeds.
+
+---
+
+### Task 12.5: CI batch review — thread min-severity through BatchConfig
+
+**Files:**
+- Modify: `internal/review/batch.go:14-31` — add MinSeverity to BatchConfig
+- Modify: `internal/review/batch.go:152` — pass MinSeverity to builder.Build
+- Modify: `cmd/roborev/ci.go:~210` — resolve and set BatchConfig.MinSeverity
+- Test: `internal/review/batch_test.go` — verify injection
+
+`roborev ci` runs reviews without the daemon/worker, calling `internal/review.RunBatch` → `runSingle` → `builder.Build` directly. Without this task, the `minSeverity` parameter added in Task 8 would get `""` here, silently disabling severity filtering for all CI reviews.
+
+- [ ] **Step 1: Add MinSeverity to BatchConfig**
+
+In `internal/review/batch.go`, add to `BatchConfig` (after `GlobalConfig`):
+
+```go
+	// MinSeverity is the effective review-level minimum severity filter.
+	// Resolved by the caller via config.ResolveReviewMinSeverity.
+	MinSeverity string
+```
+
+- [ ] **Step 2: Thread into runSingle's builder.Build call**
+
+In `internal/review/batch.go` at line 152, update the `builder.Build` call:
+
+```go
+	reviewPrompt, err := builder.Build(
+		cfg.RepoPath, cfg.GitRef, 0, cfg.ContextCount,
+		resolvedAgent.Name(), promptReviewType, cfg.MinSeverity)
+```
+
+- [ ] **Step 3: Resolve in cmd/roborev/ci.go**
+
+In `cmd/roborev/ci.go`, before building `BatchConfig` (~line 210), resolve:
+
+```go
+	reviewMinSev, err := config.ResolveReviewMinSeverity("", repoPath, cfg)
+	if err != nil {
+		return fmt.Errorf("resolve review min-severity: %w", err)
+	}
+```
+
+Then set `MinSeverity: reviewMinSev` on the `BatchConfig` literal.
+
+- [ ] **Step 4: Write test**
+
+Add to `internal/review/batch_test.go`:
+
+```go
+func TestBatchMinSeverityInjection(t *testing.T) {
+	assert := assert.New(t)
+	repoPath := testutil.NewTestRepoWithCommit(t)
+	sha := testutil.GetHeadSHA(t, repoPath)
+
+	var capturedPrompt string
+	mockAgent := &agent.FakeAgent{
+		NameStr: "batch-sev-test",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			capturedPrompt = prompt
+			return "No issues found.", nil
+		},
+	}
+
+	results := RunBatch(context.Background(), BatchConfig{
+		RepoPath:      repoPath,
+		GitRef:        sha,
+		Agents:        []string{"batch-sev-test"},
+		ReviewTypes:   []string{"review"},
+		MinSeverity:   "high",
+		AgentRegistry: map[string]agent.Agent{"batch-sev-test": mockAgent},
+	})
+	require.Len(t, results, 1)
+	assert.Equal(ResultDone, results[0].Status)
+	assert.Contains(capturedPrompt, "Severity filter:")
+	assert.Contains(capturedPrompt, "SEVERITY_THRESHOLD_MET")
+
+	// Empty severity: no injection
+	capturedPrompt = ""
+	results2 := RunBatch(context.Background(), BatchConfig{
+		RepoPath:      repoPath,
+		GitRef:        sha,
+		Agents:        []string{"batch-sev-test"},
+		ReviewTypes:   []string{"review"},
+		AgentRegistry: map[string]agent.Agent{"batch-sev-test": mockAgent},
+	})
+	require.Len(t, results2, 1)
+	assert.NotContains(capturedPrompt, "Severity filter:")
+}
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `nix develop -c go test ./internal/review/ -run TestBatchMinSeverity -v`
+Expected: PASS.
 
 Run: `nix develop -c go build ./...`
 Expected: Build succeeds.

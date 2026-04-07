@@ -151,7 +151,8 @@ Plain `string`, not `sql.NullString` — all queries use `COALESCE(j.min_severit
 | `internal/storage/sync.go` | `GetJobsToSync` SELECT (~304) | Add column with `COALESCE(j.min_severity, '')`, add to scan, add to `SyncableJob` struct |
 | `internal/storage/sync.go` | `UpsertPulledJob` INSERT + ON CONFLICT (~582) | Add column to INSERT, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params and ON CONFLICT update, add to `PulledJob` struct |
 | `internal/storage/postgres.go` | v11 migration (~291) | New `ALTER TABLE ... ADD COLUMN IF NOT EXISTS min_severity` block |
-| `internal/storage/postgres.go` | `UpsertJob` INSERT (~554) | Add column to INSERT and ON CONFLICT update list, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params |
+| `internal/storage/postgres.go` | `UpsertJob` INSERT (~554) | Add column to INSERT and ON CONFLICT update list, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params (used in tests only; production sync uses `BatchUpsertJobs`) |
+| `internal/storage/postgres.go` | `BatchUpsertJobs` INSERT (~945) | Add `min_severity` to INSERT column list and ON CONFLICT update, add `normalizeMinSeverityForWrite(j.MinSeverity)` to params. This is the **production sync push path** (`SyncWorker.pushChangesWithStats` → `BatchUpsertJobs`). |
 | `internal/storage/postgres.go` | `PullJobs` SELECT (~656) | Add `COALESCE(j.min_severity, '')` to column list and scan into `PulledJob` |
 
 The `SyncableJob` and `PulledJob` structs (in `sync.go` and `postgres.go` respectively) each gain a `MinSeverity string` field. Tests that build these structs by hand may need updating.
@@ -331,6 +332,12 @@ The `handleFixJob` callsite in §3.5 uses the same principle: a non-nil error fr
 
 **Skipped job kinds:** `task`, `insights`, `compact`, and `fix` jobs all return `true` from `UsesStoredPrompt()`. They use pre-built prompts stored on the job and bypass `prompt.Build` / `prompt.BuildDirty` entirely. The `UsesStoredPrompt` branch in `worker.go` handles them and is not modified by this change. Severity handling for fix jobs has two distinct paths: (a) the daemon "Fix" button enqueues a fix job — §3.5 bakes severity into the stored prompt at enqueue time, the worker then runs it verbatim; (b) the `roborev fix` CLI invokes the agent directly via `fixJobDirect()` without ever touching the worker — `cmd/roborev/fix.go` already injects severity into `buildGenericFixPrompt` / `buildBatchFixPrompt`, the only change there is loading global `cfg` so the cascade can reach it. Task/insights/compact jobs intentionally have free-form prompts and never receive the severity instruction.
 
+### 5.5. CI batch review path
+
+`roborev ci` runs reviews without the daemon or worker — it calls `internal/review.RunBatch` which dispatches `runSingle` per agent x review-type. `runSingle` calls `builder.Build` directly (line 152), bypassing the worker's severity resolution. Without changes, adding the `minSeverity` parameter to `Build` would require passing `""` here, silently disabling severity filtering for all CI reviews.
+
+Add `MinSeverity string` to `BatchConfig`. In `runSingle`, pass `cfg.MinSeverity` as the trailing argument to `builder.Build`. In `cmd/roborev/ci.go`, resolve via `config.ResolveReviewMinSeverity("", repoPath, cfg)` and set `BatchConfig.MinSeverity` to the result.
+
 ### 6. Prompt builder injection point
 
 `internal/prompt/prompt.go`:
@@ -407,6 +414,7 @@ No new TUI work. The verdict change in §7 means `SEVERITY_THRESHOLD_MET` review
 | `cmd/roborev/review_test.go` | New cases: (a) `--min-severity=high` stores the value on the enqueued job; (b) bad values error before enqueue at the CLI; (c) `--min-severity=HIGH` (mixed case) stores the canonical lowercase `"high"` on the job — verifies normalization happens at the CLI boundary; (d) `--min-severity=" high "` (leading/trailing whitespace) likewise stores `"high"`; (e) `--local --min-severity=high` injects the severity instruction into the prompt without going through the daemon (use `runLocalReview` with a stub agent that captures the prompt); (f) `--local` with a bad `review_min_severity` in global config fails fast instead of running the review. |
 | `internal/daemon/server_test.go` | (a) `handleEnqueue` accepts a valid `min_severity` and stores the canonical lowercase form on the job; (b) `handleEnqueue` accepts a mixed-case `min_severity=HIGH` and stores `"high"` (verifies the daemon trust boundary normalizes too, not just the CLI); (c) `handleEnqueue` rejects an invalid `min_severity=mideum` with 400 Bad Request — guards the case where a non-CLI client (sync, MCP, custom script) bypasses CLI normalization. |
 | `cmd/roborev/fix_test.go` | Sanity check that loading `cfg` for `fixSingleJob` / `runFixBatch` doesn't break the existing happy path. The existing `IsTaskJob` skip in `cmd/roborev/fix.go:824` already has coverage; the daemon-side parity test lives in `server_fix_test.go` (case c above). |
+| `internal/review/batch_test.go` | Verify `runSingle` injects severity instruction when `BatchConfig.MinSeverity` is set, and skips when empty. |
 
 All tests use `assert`/`require` from testify per project convention.
 
@@ -429,11 +437,11 @@ None remaining — CLI flag for review confirmed as Option A (new column).
 | `internal/config/config.go` | 3 new global fields (`ReviewMinSeverity`, `RefineMinSeverity`, `FixMinSeverity`), 1 new repo field (`ReviewMinSeverity`), 1 new resolver (`ResolveReviewMinSeverity`), updated signatures on `ResolveRefineMinSeverity` and `ResolveFixMinSeverity` to accept `globalCfg *Config` |
 | `internal/config/config_test.go` | Extend severity resolver test table to cover global tier + new review resolver |
 | `internal/storage/db.go` | Append idempotent ALTER to add `min_severity` column to `review_jobs` |
-| `internal/storage/postgres.go` | Bump `pgSchemaVersion` 10→11, update `//go:embed` directive to `postgres_v11.sql`, add v11 migration block, add `min_severity` to `UpsertJob` INSERT and `PullJobs` SELECT, add `MinSeverity` field to `PulledJob` struct |
+| `internal/storage/postgres.go` | Bump `pgSchemaVersion` 10→11, update `//go:embed` directive to `postgres_v11.sql`, add v11 migration block, add `min_severity` to `UpsertJob` INSERT (test-only path), `BatchUpsertJobs` INSERT (**production sync push path**), and `PullJobs` SELECT, add `MinSeverity` field to `PulledJob` struct |
 | `internal/storage/schemas/postgres_v11.sql` | New file copied from `postgres_v10.sql` with `min_severity TEXT NOT NULL DEFAULT ''` added to the `review_jobs` table definition |
 | `internal/storage/sync.go` | Add `min_severity` to `GetJobsToSync` SELECT and `UpsertPulledJob` INSERT, add `MinSeverity` field to `SyncableJob` struct |
 | `internal/storage/models.go` | `ReviewJob.MinSeverity` field |
-| `internal/storage/hydration.go` | `MinSeverity sql.NullString` field on `reviewJobScanFields`, copy-through in `applyReviewJobScan` |
+| `internal/storage/hydration.go` | `MinSeverity string` field on `reviewJobScanFields` (plain string — queries use `COALESCE`), copy-through in `applyReviewJobScan` |
 | `internal/storage/jobs.go` | `EnqueueOpts.MinSeverity`, INSERT in `EnqueueJob`, SELECT/scan in `ClaimJob` / `ListJobs` / `GetJobByID` |
 | `internal/storage/reviews.go` | Add `j.min_severity` to SELECTs in `GetReviewByJobID`, `GetReviewByCommitSHA`, `GetJobsWithReviewsByIDs`, plus their scans |
 | `internal/storage/verdict.go` | Marker → pass shortcut at top of `ParseVerdict`, new import of `internal/config` |
@@ -447,5 +455,7 @@ None remaining — CLI flag for review confirmed as Option A (new column).
 | `internal/daemon/server_test.go` (or new test) | Verify: (a) `handleEnqueue` stores `MinSeverity` on the job when request includes `min_severity`; (b) `handleFixJob` bakes severity instruction into the stored prompt when configured |
 | `cmd/roborev/review.go` | New `--min-severity` flag, validate via `NormalizeMinSeverity` (early error), set `min_severity` field on the `EnqueueRequest` JSON body sent to the daemon **using the normalized return value** (not the raw user input — see §4 for why this matters). Also thread the flag into `runLocalReview`: new `minSeverity string` parameter, call `ResolveReviewMinSeverity` with already-loaded `cfg` (fail-fast), pass result into `pb.Build`/`pb.BuildDirty`. The resolver always returns canonical values, so `runLocalReview` doesn't need a separate normalization step. |
 | `cmd/roborev/review_test.go` | Flag handling: valid value stored, mixed-case input normalized to lowercase, whitespace trimmed, bad value errors before enqueue |
+| `internal/review/batch.go` | Add `MinSeverity string` to `BatchConfig`, thread into `runSingle`'s `builder.Build` call. The CI batch review path (`roborev ci`) runs reviews without the daemon/worker, so it must resolve severity independently. |
+| `cmd/roborev/ci.go` | Resolve `ResolveReviewMinSeverity("", repoPath, cfg)` and pass into `BatchConfig.MinSeverity` |
 | `cmd/roborev/refine.go` | Pass already-loaded `cfg` into `ResolveRefineMinSeverity` |
 | `cmd/roborev/fix.go` | Load `cfg` (or hoist existing load) and pass into `ResolveFixMinSeverity` at both `fixSingleJob` and `runFixBatch` callsites |
