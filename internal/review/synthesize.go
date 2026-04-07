@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
@@ -94,7 +95,8 @@ func formatSingleResult(
 	headSHA string,
 ) string {
 	var header string
-	if r.Output == "" || r.Output == "No issues found." {
+	if r.Output == "" || r.Output == "No issues found." ||
+		strings.Contains(r.Output, config.SeverityThresholdMarker) {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
 			git.ShortSHA(headSHA))

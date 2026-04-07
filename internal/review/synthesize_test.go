@@ -107,6 +107,21 @@ func TestSynthesize_Formatting(t *testing.T) {
 			},
 		},
 		{
+			name: "SingleSeverityThresholdMet",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "review",
+					Status:     "done",
+					Output:     "SEVERITY_THRESHOLD_MET",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Passed",
+			},
+		},
+		{
 			name: "AllQuota",
 			results: []ReviewResult{
 				{
