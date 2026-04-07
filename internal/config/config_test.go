@@ -3190,75 +3190,53 @@ gemini = ["default"]
 }
 
 func TestResolveMinSeverity(t *testing.T) {
-	type resolverFunc func(explicit string, dir string) (string, error)
+	type resolverFunc func(explicit string, dir string, globalCfg *Config) (string, error)
 
 	runTests := func(
 		t *testing.T, name string, fn resolverFunc,
-		configKey string,
+		configKey string, makeGlobal func(string) *Config,
 	) {
 		t.Run(name, func(t *testing.T) {
 			tests := []struct {
-				testName   string
-				explicit   string
-				repoConfig string
-				want       string
-				wantErr    bool
+				testName     string
+				explicit     string
+				repoConfig   string
+				globalConfig *Config
+				want         string
+				wantErr      bool
 			}{
-				{
-					"default when no config",
-					"", "", "", false,
-				},
-				{
-					"repo config when explicit empty",
-					"",
-					fmt.Sprintf(`%s = "high"`, configKey),
-					"high", false,
-				},
-				{
-					"explicit overrides repo config",
-					"critical",
-					fmt.Sprintf(`%s = "medium"`, configKey),
-					"critical", false,
-				},
-				{
-					"explicit normalization",
-					"HIGH", "", "high", false,
-				},
-				{
-					"invalid explicit",
-					"bogus", "", "", true,
-				},
-				{
-					"invalid repo config",
-					"",
-					fmt.Sprintf(`%s = "invalid"`, configKey),
-					"", true,
-				},
+				{"default when no config", "", "", nil, "", false},
+				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "high"`, configKey), nil, "high", false},
+				{"explicit overrides repo config", "critical", fmt.Sprintf(`%s = "medium"`, configKey), nil, "critical", false},
+				{"explicit normalization", "HIGH", "", nil, "high", false},
+				{"invalid explicit", "bogus", "", nil, "", true},
+				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), nil, "", true},
+				{"global wins when repo empty", "", "", makeGlobal("medium"), "medium", false},
+				{"repo wins over global", "", fmt.Sprintf(`%s = "high"`, configKey), makeGlobal("medium"), "high", false},
+				{"explicit wins over both", "critical", fmt.Sprintf(`%s = "high"`, configKey), makeGlobal("medium"), "critical", false},
+				{"empty everywhere returns empty", "", "", &Config{}, "", false},
 			}
-
 			for _, tt := range tests {
 				t.Run(tt.testName, func(t *testing.T) {
 					tmpDir := newTempRepo(t, tt.repoConfig)
-					got, err := fn(tt.explicit, tmpDir)
+					got, err := fn(tt.explicit, tmpDir, tt.globalConfig)
 					if (err != nil) != tt.wantErr {
-						assert.Condition(t, func() bool {
-							return false
-						}, "error = %v, wantErr %v",
-							err, tt.wantErr)
-
+						assert.Condition(t, func() bool { return false }, "error = %v, wantErr %v", err, tt.wantErr)
 					}
 					if !tt.wantErr && got != tt.want {
-						assert.Condition(t, func() bool {
-							return false
-						}, "got %q, want %q", got, tt.want)
+						assert.Condition(t, func() bool { return false }, "got %q, want %q", got, tt.want)
 					}
 				})
 			}
 		})
 	}
 
-	runTests(t, "Fix", ResolveFixMinSeverity, "fix_min_severity")
-	runTests(t, "Refine", ResolveRefineMinSeverity, "refine_min_severity")
+	runTests(t, "Fix", ResolveFixMinSeverity, "fix_min_severity",
+		func(v string) *Config { return &Config{FixMinSeverity: v} })
+	runTests(t, "Refine", ResolveRefineMinSeverity, "refine_min_severity",
+		func(v string) *Config { return &Config{RefineMinSeverity: v} })
+	runTests(t, "Review", ResolveReviewMinSeverity, "review_min_severity",
+		func(v string) *Config { return &Config{ReviewMinSeverity: v} })
 }
 
 func TestSeverityInstruction(t *testing.T) {
@@ -3334,6 +3312,45 @@ func TestSeverityInstruction(t *testing.T) {
 					tt.minSeverity, SeverityThresholdMarker)
 
 			}
+		})
+	}
+}
+
+func TestIsMarkerOnlyOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"empty", "", false},
+		{"whitespace only", "   \n\t  ", false},
+		{"marker alone", "SEVERITY_THRESHOLD_MET", true},
+		{"marker with surrounding whitespace", "  SEVERITY_THRESHOLD_MET\n", true},
+		{"marker with newlines", "\n\nSEVERITY_THRESHOLD_MET\n\n", true},
+		{"marker with trailing period", "SEVERITY_THRESHOLD_MET.", true},
+		{"marker bold star", "**SEVERITY_THRESHOLD_MET**", true},
+		{"marker bold underscore", "__SEVERITY_THRESHOLD_MET__", true},
+		{"marker italic star", "*SEVERITY_THRESHOLD_MET*", true},
+		{"marker italic underscore", "_SEVERITY_THRESHOLD_MET_", true},
+		{"marker bold italic", "***SEVERITY_THRESHOLD_MET***", true},
+		{"marker bold with period", "**SEVERITY_THRESHOLD_MET**.", false},
+		{"marker as bullet", "- SEVERITY_THRESHOLD_MET", true},
+		{"marker as star bullet", "* SEVERITY_THRESHOLD_MET", true},
+		{"marker in fenced block", "```\nSEVERITY_THRESHOLD_MET\n```", true},
+		{"marker in fenced block with language", "```text\nSEVERITY_THRESHOLD_MET\n```", true},
+		{"marker plus prose finding", "SEVERITY_THRESHOLD_MET\n\nThe auth module leaks tokens.", false},
+		{"marker plus narration before", "All findings below threshold.\nSEVERITY_THRESHOLD_MET", false},
+		{"marker plus narration after", "SEVERITY_THRESHOLD_MET\nNo code changes needed.", false},
+		{"marker buried in prose", "I checked the code and SEVERITY_THRESHOLD_MET applies here.", false},
+		{"marker plus severity label", "SEVERITY_THRESHOLD_MET\n- High: critical bug", false},
+		{"different text only", "All good, no issues.", false},
+		{"marker substring inside another word", "PRESEVERITY_THRESHOLD_MET", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsMarkerOnlyOutput(tt.output),
+				"IsMarkerOnlyOutput(%q)", tt.output)
 		})
 	}
 }

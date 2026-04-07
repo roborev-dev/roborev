@@ -36,6 +36,7 @@ type reviewJobScanFields struct {
 	PromptPrebuilt    int
 	Closed            sql.NullInt64
 	WorktreePath      string
+	MinSeverity       string
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
@@ -123,6 +124,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.Closed = &closed
 	}
 	job.WorktreePath = fields.WorktreePath
+	job.MinSeverity = fields.MinSeverity
 }
 
 type reviewScanFields struct {

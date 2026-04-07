@@ -144,6 +144,11 @@ type Config struct {
 	SecurityBackupModel string `toml:"security_backup_model"`
 	DesignBackupModel   string `toml:"design_backup_model"`
 
+	// Minimum severity thresholds (global defaults)
+	ReviewMinSeverity string `toml:"review_min_severity" comment:"Minimum severity for reviews: critical, high, medium, or low. Empty disables filtering."`
+	RefineMinSeverity string `toml:"refine_min_severity" comment:"Minimum severity for refine: critical, high, medium, or low. Empty disables filtering."`
+	FixMinSeverity    string `toml:"fix_min_severity" comment:"Minimum severity for fix: critical, high, medium, or low. Empty disables filtering."`
+
 	AllowUnsafeAgents   *bool `toml:"allow_unsafe_agents"`   // nil = not set, allows commands to choose their own default
 	DisableCodexSandbox bool  `toml:"disable_codex_sandbox"` // use --full-auto instead of --sandbox read-only (for systems where bwrap is broken)
 	ReuseReviewSession  *bool `toml:"reuse_review_session"`  // nil = not set; when true, reuse prior branch review sessions when possible
@@ -621,8 +626,9 @@ type RepoConfig struct {
 	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
 	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
 	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
-	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`    // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."` // Minimum severity for refine: critical, high, medium, low
+	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
+	ReviewMinSeverity          string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
 	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
@@ -1442,6 +1448,54 @@ var severityAbove = map[string]string{
 // from "agent couldn't fix it."
 const SeverityThresholdMarker = "SEVERITY_THRESHOLD_MET"
 
+// IsMarkerOnlyOutput reports whether output is essentially the
+// SeverityThresholdMarker by itself, allowing only whitespace and
+// minimal markdown decoration: bold (**...** or __...__), italic
+// (*...* or _..._), a fenced code block, a leading list bullet,
+// and an optional trailing period. Any prose or other substantive
+// content disqualifies the output, since we cannot reliably tell
+// chatty narration from prose findings without severity labels.
+//
+// Callers that want to treat the marker as a "below threshold"
+// signal should use this helper rather than substring matching,
+// which is too easy to fool with marker-bearing prose findings.
+func IsMarkerOnlyOutput(output string) bool {
+	s := strings.TrimSpace(output)
+	if s == "" {
+		return false
+	}
+
+	// Strip a fenced code block if the output is wrapped in one.
+	if rest, ok := strings.CutPrefix(s, "```"); ok {
+		if _, after, found := strings.Cut(rest, "\n"); found {
+			s = after
+		} else {
+			s = rest
+		}
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	}
+
+	// Strip a leading list marker (- or *) followed by space.
+	if len(s) >= 2 && (s[0] == '-' || s[0] == '*') && s[1] == ' ' {
+		s = strings.TrimSpace(s[2:])
+	}
+
+	// Strip surrounding bold/italic markers. Bold forms (** and __)
+	// are stripped before italic forms (* and _) so that **X** fully
+	// unwraps in one pass rather than degrading to *X*.
+	for _, wrap := range []string{"**", "__", "*", "_"} {
+		if strings.HasPrefix(s, wrap) && strings.HasSuffix(s, wrap) && len(s) >= 2*len(wrap) {
+			s = strings.TrimSpace(s[len(wrap) : len(s)-len(wrap)])
+		}
+	}
+
+	// Strip a trailing period.
+	s = strings.TrimSpace(strings.TrimSuffix(s, "."))
+
+	return s == SeverityThresholdMarker
+}
+
 // SeverityInstruction returns a prompt instruction telling the agent
 // to focus only on findings at or above minSeverity. Returns "" for
 // empty, "low", or unrecognized input (no filtering needed).
@@ -1567,35 +1621,74 @@ func validateRepoReasoningOverride(
 }
 
 // ResolveFixMinSeverity determines minimum severity for fix.
-// Priority: explicit > per-repo config > "" (no filter)
-func ResolveFixMinSeverity(
-	explicit string, repoPath string,
-) (string, error) {
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveFixMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
-		repoCfg != nil &&
-		strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.FixMinSeverity)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.FixMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.FixMinSeverity)
 	}
 	return "", nil
 }
 
 // ResolveRefineMinSeverity determines minimum severity for refine.
-// Priority: explicit > per-repo config > "" (no filter)
-func ResolveRefineMinSeverity(
-	explicit string, repoPath string,
-) (string, error) {
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveRefineMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil &&
-		repoCfg != nil &&
-		strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.RefineMinSeverity)
 	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.RefineMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.RefineMinSeverity)
+	}
 	return "", nil
+}
+
+// ResolveReviewMinSeverity determines minimum severity for review.
+// Priority: explicit > per-repo config > global config > "" (no filter)
+func ResolveReviewMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeMinSeverity(explicit)
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
+		return NormalizeMinSeverity(repoCfg.ReviewMinSeverity)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewMinSeverity) != "" {
+		return NormalizeMinSeverity(globalCfg.ReviewMinSeverity)
+	}
+	return "", nil
+}
+
+// severityRank returns a numeric rank for a severity level.
+// Higher rank = stricter threshold (fewer findings pass).
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// StricterSeverity returns whichever severity threshold is stricter
+// (filters more). Empty string means "no filter" (least strict).
+func StricterSeverity(a, b string) string {
+	if severityRank(a) >= severityRank(b) {
+		return a
+	}
+	return b
 }
 
 // ResolveModel determines which model to use based on config priority:

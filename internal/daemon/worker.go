@@ -418,30 +418,44 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// daemon version mismatch or storage issue. Fail clearly instead
 		// of trying to build a prompt from a non-git label.
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
-	} else if job.DiffContent != nil {
-		// Dirty job - use pre-captured diff
-		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
-		if dirtyResult.Cleanup != nil {
-			defer dirtyResult.Cleanup()
-		}
-		reviewPrompt = dirtyResult.Prompt
-		err = dirtyErr
 	} else {
-		// Normal job - build prompt from git ref, writing a diff
-		// snapshot file when the diff is too large to inline.
-		excludes := config.ResolveExcludePatterns(
-			effectiveRepoPath, cfg, job.ReviewType,
-		)
-		snapResult, snapErr := pb.BuildWithSnapshot(
-			effectiveRepoPath, job.GitRef, job.RepoID,
-			cfg.ReviewContextCount, job.Agent,
-			job.ReviewType, excludes,
-		)
-		if snapResult.Cleanup != nil {
-			defer snapResult.Cleanup()
+		// Resolve effective min-severity: job-level override wins, then cascade.
+		minSev := job.MinSeverity
+		if minSev == "" {
+			resolved, resErr := config.ResolveReviewMinSeverity("", effectiveRepoPath, cfg)
+			if resErr != nil {
+				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
+				wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
+				return
+			}
+			minSev = resolved
 		}
-		reviewPrompt = snapResult.Prompt
-		err = snapErr
+
+		if job.DiffContent != nil {
+			// Dirty job - use pre-captured diff
+			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(effectiveRepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev)
+			if dirtyResult.Cleanup != nil {
+				defer dirtyResult.Cleanup()
+			}
+			reviewPrompt = dirtyResult.Prompt
+			err = dirtyErr
+		} else {
+			// Normal job - build prompt from git ref, writing a diff
+			// snapshot file when the diff is too large to inline.
+			excludes := config.ResolveExcludePatterns(
+				effectiveRepoPath, cfg, job.ReviewType,
+			)
+			snapResult, snapErr := pb.BuildWithSnapshot(
+				effectiveRepoPath, job.GitRef, job.RepoID,
+				cfg.ReviewContextCount, job.Agent,
+				job.ReviewType, minSev, excludes,
+			)
+			if snapResult.Cleanup != nil {
+				defer snapResult.Cleanup()
+			}
+			reviewPrompt = snapResult.Prompt
+			err = snapErr
+		}
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)

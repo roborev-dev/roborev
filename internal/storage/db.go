@@ -787,6 +787,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add min_severity column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'min_severity'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check min_severity column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN min_severity TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("add min_severity column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

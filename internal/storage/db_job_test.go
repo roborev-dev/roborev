@@ -1246,3 +1246,70 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	require.NoError(t, err, "GetJobByID after worker-B second save: %v", err)
 	assert.Equal(t, "session-B", j.SessionID)
 }
+
+func TestMinSeverityRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	repo := createRepo(t, db, "/tmp/min-sev-test")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// Enqueue with min_severity set
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "abc123",
+		Agent:       "test",
+		MinSeverity: "high",
+	})
+	require.NoError(t, err)
+	assert.Equal("high", job.MinSeverity)
+
+	// Claim preserves it
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal("high", claimed.MinSeverity)
+
+	// GetJobByID preserves it
+	got, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal("high", got.MinSeverity)
+
+	// ListJobs preserves it
+	jobs, err := db.ListJobs("", "", 0, 0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal("high", jobs[0].MinSeverity)
+
+	// Empty MinSeverity round-trips as empty
+	job2, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "def456",
+		Agent:    "test",
+	})
+	require.NoError(t, err)
+	assert.Empty(job2.MinSeverity)
+}
+
+func TestMinSeverityNormalizesOnWrite(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	repo := createRepo(t, db, "/tmp/min-sev-norm")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	// Invalid value gets dropped to empty
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "abc123",
+		Agent:       "test",
+		MinSeverity: "bogus",
+	})
+	require.NoError(t, err)
+	assert.Empty(job.MinSeverity)
+}

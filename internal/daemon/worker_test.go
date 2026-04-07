@@ -1626,3 +1626,76 @@ func TestAutoClosePassingReviews(t *testing.T) {
 		assert.False(t, review.Closed, "task job should not be auto-closed")
 	})
 }
+
+func TestProcessJob_MinSeverityCascade(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	var capturedPrompt string
+	agentName := "min-sev-cascade-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			capturedPrompt = prompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	// Set global config with ReviewMinSeverity
+	cfg := config.DefaultConfig()
+	cfg.ReviewMinSeverity = "medium"
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+
+	job := tc.createJobWithAgent(t, sha, agentName)
+	claimed, err := tc.DB.ClaimJob("test-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob("test-worker", claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Contains(t, capturedPrompt, "Severity filter:")
+	assert.Contains(t, capturedPrompt, "SEVERITY_THRESHOLD_MET")
+}
+
+func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	var capturedPrompt string
+	agentName := "min-sev-override-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			capturedPrompt = prompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	// Global says "medium" but job says "critical"
+	cfg := config.DefaultConfig()
+	cfg.ReviewMinSeverity = "medium"
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      tc.Repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      sha,
+		Agent:       agentName,
+		MinSeverity: "critical",
+	})
+	require.NoError(t, err)
+
+	claimed, err := tc.DB.ClaimJob("test-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob("test-worker", claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Contains(t, capturedPrompt, "Critical")
+}

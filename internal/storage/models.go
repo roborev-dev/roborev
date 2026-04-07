@@ -78,7 +78,8 @@ type ReviewJob struct {
 	Patch             *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
 	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
 	CommandLine       string     `json:"command_line,omitempty"`  // Actual agent command line used for this run
-	TokenUsage        string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
+	MinSeverity       string     `json:"min_severity,omitempty"`
+	TokenUsage        string     `json:"token_usage,omitempty"` // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
 	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this job

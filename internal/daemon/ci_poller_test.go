@@ -1145,7 +1145,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(string, string, int64, int, string, string, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 

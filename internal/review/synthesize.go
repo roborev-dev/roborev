@@ -10,6 +10,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // ErrAllFailed is returned by Synthesize when every review job
@@ -68,8 +69,11 @@ func Synthesize(
 		return comment, ErrAllFailed
 	}
 
-	// Single result — return directly, no synthesis needed
-	if len(results) == 1 && successCount == 1 {
+	// Single result — return directly unless CI min-severity
+	// filtering is needed (synthesis applies the filter).
+	// "low" means no filtering, so treat same as empty.
+	if len(results) == 1 && successCount == 1 &&
+		(opts.MinSeverity == "" || opts.MinSeverity == "low") {
 		return formatSingleResult(
 			results[0], opts.HeadSHA), nil
 	}
@@ -91,7 +95,8 @@ func formatSingleResult(
 	headSHA string,
 ) string {
 	var header string
-	if r.Output == "" || r.Output == "No issues found." {
+	if r.Output == "" || r.Output == "No issues found." ||
+		storage.ParseVerdict(r.Output) == "P" {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
 			git.ShortSHA(headSHA))

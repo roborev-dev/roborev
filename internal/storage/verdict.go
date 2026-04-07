@@ -3,6 +3,8 @@ package storage
 import (
 	"database/sql"
 	"strings"
+
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 const (
@@ -58,6 +60,14 @@ func ParseVerdict(output string) string {
 	// These appear as "- Medium —", "* Low:", "Critical -", etc.
 	if hasSeverityLabel(output) {
 		return verdictFail
+	}
+
+	// Marker signals pass ONLY when it stands alone. A loose
+	// substring check would let prose findings without severity
+	// labels (e.g. "the auth module leaks tokens") flip to pass
+	// just because the agent echoed the marker in narration.
+	if config.IsMarkerOnlyOutput(output) {
+		return verdictPass
 	}
 
 	for line := range strings.SplitSeq(output, "\n") {

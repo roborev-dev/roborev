@@ -28,6 +28,9 @@ type BatchConfig struct {
 	// AgentRegistry is an optional registry for dependency injection in testing.
 	// If nil, the global agent registry is used.
 	AgentRegistry map[string]agent.Agent
+	// MinSeverity is the minimum severity threshold for the review prompt.
+	// When non-empty (and not "low"), agents are instructed to filter findings.
+	MinSeverity string
 }
 
 // RunBatch executes all review_type x agent combinations in
@@ -159,7 +162,7 @@ func runSingle(
 	)
 	snapResult, err := builder.BuildWithSnapshot(
 		cfg.RepoPath, cfg.GitRef, 0, cfg.ContextCount,
-		resolvedAgent.Name(), promptReviewType, excludes)
+		resolvedAgent.Name(), promptReviewType, cfg.MinSeverity, excludes)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(

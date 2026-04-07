@@ -2870,3 +2870,43 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleEnqueueMinSeverity(t *testing.T) {
+	t.Run("valid min_severity stored as canonical lowercase", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tmpDir)
+
+		reqData := EnqueueRequest{
+			RepoPath:    tmpDir,
+			GitRef:      "HEAD",
+			Agent:       "test",
+			MinSeverity: "HIGH",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+		w := httptest.NewRecorder()
+		server.handleEnqueue(w, req)
+		require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+		jobs, err := db.ListJobs("", "", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		assert.Equal(t, "high", jobs[0].MinSeverity)
+	})
+
+	t.Run("invalid min_severity returns 400", func(t *testing.T) {
+		server, _, tmpDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tmpDir)
+
+		reqData := EnqueueRequest{
+			RepoPath:    tmpDir,
+			GitRef:      "HEAD",
+			Agent:       "test",
+			MinSeverity: "bogus",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+		w := httptest.NewRecorder()
+		server.handleEnqueue(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid min_severity")
+	})
+}

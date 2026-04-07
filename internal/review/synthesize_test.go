@@ -107,6 +107,36 @@ func TestSynthesize_Formatting(t *testing.T) {
 			},
 		},
 		{
+			name: "SingleSeverityThresholdMet",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "review",
+					Status:     "done",
+					Output:     "SEVERITY_THRESHOLD_MET",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Passed",
+			},
+		},
+		{
+			name: "ThresholdMetWithFindings",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "review",
+					Status:     "done",
+					Output:     "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Complete",
+			},
+		},
+		{
 			name: "AllQuota",
 			results: []ReviewResult{
 				{

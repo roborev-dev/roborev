@@ -324,6 +324,26 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 	})
 }
 
+func TestGetJobsWithReviewsByIDsPreservesMinSeverity(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/min-sev-batch-test")
+
+	job := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "sev123",
+		MinSeverity: "high",
+	}, "No issues found.")
+
+	results, err := db.GetJobsWithReviewsByIDs([]int64{job.ID})
+	require.NoError(t, err)
+
+	res, ok := results[job.ID]
+	require.True(t, ok)
+	assert.Equal(t, "high", res.Job.MinSeverity)
+}
+
 func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

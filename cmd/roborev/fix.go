@@ -799,8 +799,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// task/analyze jobs have free-form output without severity labels)
 	var minSev string
 	if !job.IsTaskJob() {
+		fixCfg, _ := config.LoadGlobal()
 		minSev, err = config.ResolveFixMinSeverity(
-			opts.minSeverity, repoRoot,
+			opts.minSeverity, repoRoot, fixCfg,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve min-severity: %w", err)
@@ -1011,11 +1012,14 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		return err
 	}
 
+	// Load global config for severity + prompt-size resolution.
+	cfg, _ := config.LoadGlobal()
+
 	// Resolve minimum severity filter. Suppress if any entry is a
 	// task job — task/analyze output has no severity labels, so the
 	// instruction would confuse the agent for those entries.
 	minSev, err := config.ResolveFixMinSeverity(
-		opts.minSeverity, roots.worktreeRoot,
+		opts.minSeverity, roots.worktreeRoot, cfg,
 	)
 	if err != nil {
 		return fmt.Errorf("resolve min-severity: %w", err)
@@ -1031,7 +1035,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 
 	// Split into batches by prompt size (after severity resolution
 	// so the severity instruction overhead is accounted for)
-	cfg, _ := config.LoadGlobal()
 	maxSize := config.ResolveMaxPromptSize(roots.worktreeRoot, cfg)
 	batches := splitIntoBatches(entries, maxSize, minSev)
 

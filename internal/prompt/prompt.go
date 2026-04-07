@@ -187,14 +187,17 @@ func (b *Builder) resolveExcludes(
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
-func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
-	return b.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, "")
+func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	return b.BuildWithAdditionalContext(repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, "")
 }
 
 // BuildWithAdditionalContext constructs a review prompt with an optional
 // caller-provided markdown context block inserted ahead of the current diff.
-func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext string) (string, error) {
-	opts := buildOpts{additionalContext: additionalContext}
+func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string) (string, error) {
+	opts := buildOpts{
+		additionalContext: additionalContext,
+		minSeverity:       minSeverity,
+	}
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
@@ -204,11 +207,12 @@ func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int
 // BuildWithAdditionalContextAndDiffFile constructs a review prompt with
 // caller-provided markdown context and an optional oversized-diff file
 // reference for sandboxed Codex reviews.
-func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, additionalContext, diffFilePath string) (string, error) {
+func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext, diffFilePath string) (string, error) {
 	opts := buildOpts{
 		additionalContext: additionalContext,
 		diffFilePath:      diffFilePath,
 		requireDiffFile:   true,
+		minSeverity:       minSeverity,
 	}
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
@@ -220,8 +224,12 @@ func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string,
 // file is referenced for large diffs instead of git commands. This is
 // used for Codex agents running in a sandboxed environment that cannot
 // execute git directly.
-func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, diffFilePath string) (string, error) {
-	opts := buildOpts{diffFilePath: diffFilePath, requireDiffFile: true}
+func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, diffFilePath string) (string, error) {
+	opts := buildOpts{
+		diffFilePath:    diffFilePath,
+		requireDiffFile: true,
+		minSeverity:     minSeverity,
+	}
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
@@ -241,12 +249,12 @@ type SnapshotResult struct {
 // excludes are applied to the snapshot diff.
 func (b *Builder) BuildWithSnapshot(
 	repoPath, gitRef string, repoID int64,
-	contextCount int, agentName, reviewType string,
+	contextCount int, agentName, reviewType, minSeverity string,
 	excludes []string,
 ) (SnapshotResult, error) {
 	p, err := b.BuildWithDiffFile(
 		repoPath, gitRef, repoID,
-		contextCount, agentName, reviewType, "",
+		contextCount, agentName, reviewType, minSeverity, "",
 	)
 	if !errors.Is(err, ErrDiffTruncatedNoFile) {
 		return SnapshotResult{Prompt: p}, err
@@ -262,7 +270,7 @@ func (b *Builder) BuildWithSnapshot(
 	}
 	p, err = b.BuildWithDiffFile(
 		repoPath, gitRef, repoID,
-		contextCount, agentName, reviewType, diffFile,
+		contextCount, agentName, reviewType, minSeverity, diffFile,
 	)
 	if err != nil {
 		cleanup()
@@ -319,9 +327,9 @@ func WriteDiffSnapshot(
 // call Cleanup (if non-nil) after the prompt is no longer needed.
 func (b *Builder) BuildDirtyWithSnapshot(
 	repoPath, diff string, repoID int64,
-	contextCount int, agentName, reviewType string,
+	contextCount int, agentName, reviewType, minSeverity string,
 ) (SnapshotResult, error) {
-	p, err := b.BuildDirty(repoPath, diff, repoID, contextCount, agentName, reviewType)
+	p, err := b.BuildDirty(repoPath, diff, repoID, contextCount, agentName, reviewType, minSeverity)
 	if err != nil {
 		return SnapshotResult{}, err
 	}
@@ -360,7 +368,7 @@ func (b *Builder) BuildDirtyWithSnapshot(
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
-func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
+func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	// Start with system prompt for dirty changes
 	promptType := "dirty"
 	if !config.IsDefaultReviewType(reviewType) {
@@ -370,6 +378,9 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		promptType = "design-review"
 	}
 	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		requiredPrefix += inst + "\n"
+	}
 
 	var optionalContext strings.Builder
 
@@ -447,6 +458,9 @@ type buildOpts struct {
 	// is available. Set by BuildWithDiffFile so the worker can
 	// detect when a snapshot is needed.
 	requireDiffFile bool
+	// minSeverity, when non-empty, injects a severity filter
+	// instruction into the system prompt.
+	minSeverity string
 }
 
 func writeLongestFitting(sb *strings.Builder, limit int, variants ...string) {
@@ -556,6 +570,9 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		promptType = "design-review"
 	}
 	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	if inst := config.SeverityInstruction(opts.minSeverity); inst != "" {
+		requiredPrefix += inst + "\n"
+	}
 
 	var optionalContext strings.Builder
 
@@ -663,6 +680,9 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		promptType = "design-review"
 	}
 	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	if inst := config.SeverityInstruction(opts.minSeverity); inst != "" {
+		requiredPrefix += inst + "\n"
+	}
 
 	var optionalContext strings.Builder
 
@@ -984,7 +1004,7 @@ If you find no issues, state "No issues found." after the summary.`
 // BuildSimple constructs a simpler prompt without database context
 func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}
-	return b.Build(repoPath, sha, 0, 0, agentName, "")
+	return b.Build(repoPath, sha, 0, 0, agentName, "", "")
 }
 
 // SystemPromptSecurity is the instruction for security-focused reviews

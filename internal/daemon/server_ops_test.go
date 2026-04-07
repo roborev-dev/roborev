@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -1198,4 +1199,144 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 			assertHandlerStatus(t, w, tt.expectedCode)
 		})
 	}
+}
+
+func TestHandleFixJobMinSeverity(t *testing.T) {
+	t.Run("bakes severity instruction into stored prompt", func(t *testing.T) {
+		fixture := setupFixJobFixture(t, "repo-fix-sev", "fix-sev-abc")
+		server := fixture.server
+		db := fixture.db
+
+		// Write repo config with fix_min_severity
+		require.NoError(t, os.WriteFile(
+			filepath.Join(fixture.repoDir, ".roborev.toml"),
+			[]byte("fix_min_severity = \"high\"\n"),
+			0o644,
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: fixture.reviewJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		assert.Contains(t, stored.Prompt, "Severity filter:")
+		assert.Contains(t, stored.Prompt, config.SeverityThresholdMarker)
+	})
+
+	t.Run("skips severity for task parent", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		server.configWatcher.Config().FixAgent = "test"
+
+		repoDir := filepath.Join(tmpDir, "repo-fix-task")
+		testutil.InitTestGitRepo(t, repoDir)
+
+		// Write repo config with fix_min_severity
+		require.NoError(t, os.WriteFile(
+			filepath.Join(repoDir, ".roborev.toml"),
+			[]byte("fix_min_severity = \"high\"\n"),
+			0o644,
+		))
+
+		repo, err := db.GetOrCreateRepo(repoDir)
+		require.NoError(t, err)
+
+		// Enqueue a task job (no commit) with pre-stored prompt
+		taskJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:  repo.ID,
+			GitRef:  "task-ref",
+			Agent:   "test",
+			JobType: storage.JobTypeTask,
+			Prompt:  "analyze this",
+			Label:   "analyze",
+		})
+		require.NoError(t, err)
+
+		_, claimErr := db.ClaimJob("w-task")
+		require.NoError(t, claimErr)
+		require.NoError(t, db.CompleteJob(
+			taskJob.ID, "test", "analyze this", "FAIL: issues found",
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: taskJob.ID},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		assert.NotContains(t, stored.Prompt, "Severity filter:")
+	})
+
+	t.Run("rebase prompt has no severity instruction", func(t *testing.T) {
+		fixture := setupFixJobFixture(t, "repo-fix-rebase-sev", "fix-rebase-abc")
+		server := fixture.server
+		db := fixture.db
+
+		// Write repo config with fix_min_severity
+		require.NoError(t, os.WriteFile(
+			filepath.Join(fixture.repoDir, ".roborev.toml"),
+			[]byte("fix_min_severity = \"high\"\n"),
+			0o644,
+		))
+
+		// Create a stale fix job with a patch
+		staleFix, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:      fixture.repo.ID,
+			CommitID:    fixture.commit.ID,
+			GitRef:      "fix-rebase-abc",
+			Agent:       "test",
+			JobType:     storage.JobTypeFix,
+			ParentJobID: fixture.reviewJob.ID,
+		})
+		require.NoError(t, err)
+
+		// Drain queue until we claim stale fix
+		for {
+			claimed, claimErr := db.ClaimJob("w-rebase")
+			require.NoError(t, claimErr)
+			require.NotNil(t, claimed)
+			if claimed.ID == staleFix.ID {
+				break
+			}
+			db.CompleteJob(claimed.ID, "test", "prompt", "PASS")
+		}
+
+		patch := "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new\n"
+		require.NoError(t, db.CompleteFixJob(
+			staleFix.ID, "test", "prompt", "done", patch,
+		))
+
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{
+				ParentJobID: fixture.reviewJob.ID,
+				StaleJobID:  staleFix.ID,
+			},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+		assertHandlerStatus(t, w, http.StatusCreated)
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		assert.Contains(t, stored.Prompt, "Rebase Fix Request")
+		assert.NotContains(t, stored.Prompt, "Severity filter:")
+	})
 }

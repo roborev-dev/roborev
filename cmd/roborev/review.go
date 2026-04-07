@@ -26,21 +26,22 @@ const MaxDirtyDiffSize = 200 * 1024
 
 func reviewCmd() *cobra.Command {
 	var (
-		repoPath   string
-		sha        string
-		agent      string
-		model      string
-		reasoning  string
-		reviewType string
-		fast       bool
-		quiet      bool
-		dirty      bool
-		wait       bool
-		branch     string
-		baseBranch string
-		since      string
-		local      bool
-		provider   string
+		repoPath    string
+		sha         string
+		agent       string
+		model       string
+		reasoning   string
+		reviewType  string
+		fast        bool
+		quiet       bool
+		dirty       bool
+		wait        bool
+		branch      string
+		baseBranch  string
+		since       string
+		local       bool
+		provider    string
+		minSeverity string
 	)
 
 	cmd := &cobra.Command{
@@ -270,7 +271,7 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, provider, reasoning, reviewType, quiet)
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, provider, reasoning, reviewType, quiet, minSeverity)
 			}
 
 			// Build request body
@@ -284,6 +285,7 @@ Examples:
 				Reasoning:   reasoning,
 				ReviewType:  reviewType,
 				DiffContent: diffContent,
+				MinSeverity: minSeverity,
 			}
 
 			reqBody, _ := json.Marshal(reqFields)
@@ -358,6 +360,7 @@ Examples:
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
 	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design) — changes system prompt")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
+	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum severity threshold: critical, high, medium, low")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
 
@@ -365,7 +368,7 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, provider, reasoning, reviewType string, quiet bool) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -376,6 +379,12 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath, cfg)
 	if err != nil {
 		return fmt.Errorf("invalid reasoning: %w", err)
+	}
+
+	// Resolve review min-severity
+	resolvedMinSev, err := config.ResolveReviewMinSeverity(minSeverity, repoPath, cfg)
+	if err != nil {
+		return fmt.Errorf("invalid min-severity: %w", err)
 	}
 
 	// Map review_type to config workflow (matches daemon behavior)
@@ -435,13 +444,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	var snapshotCleanup func()
 	if diffContent != "" {
 		// Dirty review
-		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType)
+		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
 		reviewPrompt = dirtyResult.Prompt
 		snapshotCleanup = dirtyResult.Cleanup
 		err = dirtyErr
 	} else {
 		excludes := config.ResolveExcludePatterns(repoPath, cfg, reviewType)
-		result, buildErr := pb.BuildWithSnapshot(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType, excludes)
+		result, buildErr := pb.BuildWithSnapshot(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt
 		snapshotCleanup = result.Cleanup
 		err = buildErr

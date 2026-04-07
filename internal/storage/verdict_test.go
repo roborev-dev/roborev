@@ -639,6 +639,77 @@ var verdictTests = []verdictTestCase{
 		output: "Severity - High\nLocation: file.go\nProblem: Bug found.",
 		want:   VerdictFail,
 	},
+
+	// --- SeverityThresholdMarker: SEVERITY_THRESHOLD_MET handling ---
+	// The marker only signals pass when it appears as the entire
+	// substantive output. A loose substring check would let prose
+	// findings without severity labels flip to pass just because
+	// the agent echoed the marker in narration.
+	{
+		name:   "ThresholdMarker/marker alone is pass",
+		output: "SEVERITY_THRESHOLD_MET",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with surrounding whitespace is pass",
+		output: "\n\n  SEVERITY_THRESHOLD_MET  \n\n",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with bold decoration is pass",
+		output: "**SEVERITY_THRESHOLD_MET**",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with italic star is pass",
+		output: "*SEVERITY_THRESHOLD_MET*",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with italic underscore is pass",
+		output: "_SEVERITY_THRESHOLD_MET_",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with bold italic is pass",
+		output: "***SEVERITY_THRESHOLD_MET***",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with trailing period is pass",
+		output: "SEVERITY_THRESHOLD_MET.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker in code fence is pass",
+		output: "```\nSEVERITY_THRESHOLD_MET\n```",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker as bullet item is pass",
+		output: "- SEVERITY_THRESHOLD_MET",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with chatty narration is fail",
+		output: "All findings are below medium severity.\n\nSEVERITY_THRESHOLD_MET\n\nNo code changes needed.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ThresholdMarker/marker plus prose finding without severity label is fail",
+		output: "SEVERITY_THRESHOLD_MET\n\nThe auth module leaks session tokens to logs.",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ThresholdMarker/marker plus severity labels is fail",
+		output: "- Medium — some issue\n\nSEVERITY_THRESHOLD_MET",
+		want:   VerdictFail,
+	},
+	{
+		name:   "ThresholdMarker/marker plus high severity is fail",
+		output: "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
+		want:   VerdictFail,
+	},
 }
 
 func TestParseVerdict(t *testing.T) {

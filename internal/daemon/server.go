@@ -678,6 +678,7 @@ type EnqueueRequest struct {
 	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
 	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
+	MinSeverity  string `json:"min_severity,omitempty"`  // Minimum severity filter: critical, high, medium, low
 }
 
 type ErrorResponse struct {
@@ -915,6 +916,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate min_severity if provided
+	var normalizedMinSev string
+	if strings.TrimSpace(req.MinSeverity) != "" {
+		normalizedMinSev, err = config.NormalizeMinSeverity(req.MinSeverity)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	requestedModel := strings.TrimSpace(req.Model)
 	requestedProvider := strings.TrimSpace(req.Provider)
 
@@ -1016,6 +1027,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RequestedModel:    requestedModel,
 			RequestedProvider: requestedProvider,
 			WorktreePath:      worktreePath,
+			MinSeverity:       normalizedMinSev,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
@@ -1038,6 +1050,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RequestedModel:    requestedModel,
 			RequestedProvider: requestedProvider,
 			WorktreePath:      worktreePath,
+			MinSeverity:       normalizedMinSev,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
@@ -1114,6 +1127,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RequestedModel:    requestedModel,
 			RequestedProvider: requestedProvider,
 			WorktreePath:      worktreePath,
+			MinSeverity:       normalizedMinSev,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -1168,6 +1182,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RequestedModel:    requestedModel,
 			RequestedProvider: requestedProvider,
 			WorktreePath:      worktreePath,
+			MinSeverity:       normalizedMinSev,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -1981,7 +1996,25 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		}
 		fixPrompt = buildRebasePrompt(staleJob.Patch)
 	}
+	var fixMinSev string
 	if fixPrompt == "" {
+		// Resolve fix min-severity (skip for task/insights parents — their
+		// free-form output has no severity-labeled findings to filter).
+		if !parentJob.IsTaskJob() {
+			effectivePath := parentJob.RepoPath
+			if parentJob.WorktreePath != "" &&
+				git.ValidateWorktreeForRepo(parentJob.WorktreePath, parentJob.RepoPath) {
+				effectivePath = parentJob.WorktreePath
+			}
+			cfg := s.configWatcher.Config()
+			resolved, resolveErr := config.ResolveFixMinSeverity("", effectivePath, cfg)
+			if resolveErr != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve fix min-severity: %v", resolveErr))
+				return
+			}
+			fixMinSev = resolved
+		}
+
 		// Fetch the review output for the parent job
 		review, err := s.db.GetReviewByJobID(req.ParentJobID)
 		if err != nil || review == nil {
@@ -2000,9 +2033,9 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			log.Printf("fix job for parent %d: failed to fetch comments: %v", req.ParentJobID, commentsErr)
 		}
 		if req.Prompt != "" {
-			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt, comments)
+			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt, fixMinSev, comments)
 		} else {
-			fixPrompt = buildFixPromptWithInstructions(review.Output, "", comments)
+			fixPrompt = buildFixPromptWithInstructions(review.Output, "", fixMinSev, comments)
 		}
 	}
 
@@ -2096,6 +2129,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		JobType:      storage.JobTypeFix,
 		ParentJobID:  req.ParentJobID,
 		WorktreePath: worktreePath,
+		MinSeverity:  fixMinSev,
 	})
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("enqueue fix job: %v", err))
@@ -2273,11 +2307,14 @@ func parseDuration(s string) (time.Duration, error) {
 // buildFixPromptWithInstructions constructs a fix prompt that includes the review
 // findings, optional user-provided instructions, and any comments/responses
 // (split into tool attempts and user comments for proper framing).
-func buildFixPromptWithInstructions(reviewOutput, userInstructions string, responses []storage.Response) string {
+func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity string, responses []storage.Response) string {
 	toolAttempts, userComments := prompt.SplitResponses(responses)
 	p := "# Fix Request\n\n" +
-		"An analysis was performed and produced the following findings:\n\n" +
-		"## Analysis Findings\n\n" +
+		"An analysis was performed and produced the following findings:\n\n"
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		p += inst + "\n"
+	}
+	p += "## Analysis Findings\n\n" +
 		reviewOutput + "\n\n"
 	p += prompt.FormatToolAttempts(toolAttempts)
 	p += prompt.FormatUserComments(userComments)
