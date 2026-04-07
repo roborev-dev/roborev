@@ -160,20 +160,38 @@ The `SyncableJob` and `PulledJob` structs (in `sync.go` and `postgres.go` respec
 
 `internal/daemon/server.go handleFixJob` builds fix prompts via `buildFixPrompt`, `buildFixPromptWithInstructions`, and `buildRebasePrompt` (all in `server.go`), then stores them on the job at enqueue time. None of these helpers currently inject `SeverityInstruction`, so daemon-enqueued fix jobs (the "Fix" button in the TUI) ignore both global and per-repo severity settings.
 
-Resolve at enqueue time inside `handleFixJob`:
+**Skip task/insights parents.** `handleFixJob` only rejects parents where `parentJob.IsFixJob()` is true; task and insights parents (`JobTypeTask`, `JobTypeInsights`) flow through and get fix prompts built from their free-form output. The CLI fix path at `cmd/roborev/fix.go:824` already guards severity resolution with `if !job.IsTaskJob() { ... }` because task/insights outputs do not have severity-labeled findings — telling the agent to "ignore findings below high" against a free-form analysis would suppress the very content the user wants acted on. The daemon path must mirror this exactly:
 
 ```go
-// cfg already loaded at line ~2430 as `cfg := s.configWatcher.Config()`
-fixMinSev, err := config.ResolveFixMinSeverity("", parentJob.RepoPath, cfg)
-if err != nil {
-    writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve fix min-severity: %v", err))
-    return
+var fixMinSev string
+if !parentJob.IsTaskJob() {
+    // Resolve against the worktree checkout when the parent has one,
+    // otherwise the main repo. Worktree-backed jobs may carry a
+    // different .roborev.toml on a feature branch.
+    effectivePath := parentJob.RepoPath
+    if parentJob.WorktreePath != "" &&
+        gitpkg.ValidateWorktreeForRepo(parentJob.WorktreePath, parentJob.RepoPath) {
+        effectivePath = parentJob.WorktreePath
+    }
+    // cfg already loaded at line ~2430 as `cfg := s.configWatcher.Config()`
+    resolved, err := config.ResolveFixMinSeverity("", effectivePath, cfg)
+    if err != nil {
+        writeError(w, http.StatusBadRequest, fmt.Sprintf("resolve fix min-severity: %v", err))
+        return
+    }
+    fixMinSev = resolved
 }
 ```
 
+Two things to notice:
+
+1. **Worktree-aware path resolution.** `parentJob.WorktreePath` is set on jobs that ran in an isolated worktree (the field is documented in `internal/storage/models.go:78` as "Worktree checkout path (empty = use RepoPath)"). Worker code at `internal/daemon/worker.go:367–375` already uses an `effectiveRepoPath = job.RepoPath; if job.WorktreePath != "" && gitpkg.ValidateWorktreeForRepo(...) { effectiveRepoPath = job.WorktreePath }` pattern. The fix-job resolver call must use the same pattern, or daemon/TUI fixes will read `.roborev.toml` from the main checkout and ignore per-branch overrides on the worktree. The validation guard is important: a stale `WorktreePath` that no longer points to a valid worktree must fall back to `RepoPath`, matching the worker behavior.
+
+2. **Task/insights skip.** When `parentJob.IsTaskJob()` is true, `fixMinSev` stays empty and no `SeverityInstruction` gets injected — the agent receives the original free-form prompt unchanged. This matches `cmd/roborev/fix.go:824` exactly. Without this guard, a "Fix" click on an insights/task review would tell the agent to ignore everything in its own output that wasn't severity-labeled, which is the opposite of the user's intent.
+
 Resolver errors surface as 400 Bad Request — a misconfigured `fix_min_severity` should block the fix from being enqueued, not silently disable the filter. This mirrors the worker fail-fast behavior in §5.
 
-Then thread `fixMinSev` into the prompt builders. Each helper gains a trailing `minSeverity string` parameter and emits `config.SeverityInstruction(minSeverity)` once after the existing preamble:
+Then thread `fixMinSev` into the prompt builders. Each helper gains a trailing `minSeverity string` parameter and emits `config.SeverityInstruction(minSeverity)` once after the existing preamble (a no-op when `fixMinSev` is empty, which is what skipped task/insights parents will pass):
 
 - `buildFixPrompt(reviewOutput, minSeverity)`
 - `buildFixPromptWithInstructions(reviewOutput, instructions, minSeverity)`
@@ -186,9 +204,13 @@ Why bake at enqueue (not store-and-resolve-at-worker-time): `handleFixJob` alrea
 Add `--min-severity` to `cmd/roborev/review.go`. The flag value:
 
 1. Validates via `NormalizeMinSeverity` (early error on bad input).
-2. Gets sent to the daemon in the enqueue request body.
-3. The daemon stores it as the literal user-supplied value on the enqueued `ReviewJob.MinSeverity` field.
+2. The CLI sends the **normalized return value** (canonical lowercase) to the daemon in the enqueue request body — NOT the raw user input.
+3. The daemon stores the canonical value on the enqueued `ReviewJob.MinSeverity` field.
 4. Empty (flag not set) means "fall back to cascade resolution at worker time."
+
+**Why normalize at the boundary:** `config.SeverityInstruction(minSeverity)` looks up its argument in a strict map (`severityAbove` at `internal/config/config.go:1372`) that only accepts canonical lowercase keys (`critical`, `high`, `medium`, `low`). It returns `""` for anything else. The worker uses `job.MinSeverity` directly when non-empty (it does NOT re-normalize), so if the CLI stored `"HIGH"` or `" high "` the worker would pass that through to `SeverityInstruction`, get back `""`, and silently disable the filter. Normalizing at the CLI before sending to the daemon guarantees the stored value always matches the map's contract — same boundary discipline that `NormalizeReasoning` uses for the `reasoning` column. The `runLocalReview` path in this same file similarly receives the normalized value via the resolver chain (the resolvers always return canonical values).
+
+**Defensive belt-and-braces:** the worker's `pb.Build` / `pb.BuildDirty` callsite in §5 must also pass `job.MinSeverity` through verbatim (no re-normalization in the worker). If a future caller bypasses the CLI's normalization, the bug surfaces as a no-op filter rather than a panic, and the test suite covers the case (see §9 — `cmd/roborev/review_test.go` includes a mixed-case explicit value test that verifies the stored job has the canonical lowercase form).
 
 **Wire path:**
 
@@ -334,9 +356,9 @@ No new TUI work. The verdict change in §7 means `SEVERITY_THRESHOLD_MET` review
 | `internal/storage/postgres_test.go` | Verify v10→v11 migration adds `min_severity` and that `pgSchemaVersion` is 11. |
 | `internal/storage/jobs_test.go` | Round-trip: enqueue with `EnqueueOpts{MinSeverity: "high"}`, claim, list, get-by-id — value preserved across all hydration paths. |
 | `internal/daemon/worker_test.go` | (a) Worker resolves cascade when `job.MinSeverity == ""`: stub `cfgGetter` to return a config with `ReviewMinSeverity = "medium"`; verify the prompt contains `SeverityInstruction("medium")` text. (b) Worker fails the job with a clear error when the configured severity is invalid (e.g. `ReviewMinSeverity = "mideum"`) — does NOT silently proceed with empty filter. |
-| `internal/daemon/server_fix_test.go` (or `server_test.go`) | `handleFixJob` bakes severity instruction into stored prompt when global/repo config sets `fix_min_severity`. Use the existing daemon test scaffolding. |
-| `cmd/roborev/review_test.go` | New cases: (a) `--min-severity=high` stores the value on the enqueued job; (b) bad values error before enqueue; (c) `--local --min-severity=high` injects the severity instruction into the prompt without going through the daemon (use `runLocalReview` with a stub agent that captures the prompt); (d) `--local` with a bad `review_min_severity` in global config fails fast instead of running the review. |
-| `cmd/roborev/fix_test.go` | Sanity check that loading `cfg` for `fixSingleJob` / `runFixBatch` doesn't break the existing happy path. |
+| `internal/daemon/server_fix_test.go` (or `server_test.go`) | (a) `handleFixJob` bakes severity instruction into stored prompt when global/repo config sets `fix_min_severity`. Use the existing daemon test scaffolding. (b) `handleFixJob` resolves config from `parentJob.WorktreePath` when present and valid — set up a parent job with a worktree path that has its own `.roborev.toml` with a different `fix_min_severity`, verify the stored prompt reflects the worktree value, not the main repo's. (c) `handleFixJob` SKIPS severity injection when the parent job is `JobTypeTask` or `JobTypeInsights`, even when global `fix_min_severity` is set — verify the stored prompt does NOT contain `SeverityInstruction` text. (d) Worktree-aware path resolution falls back to `RepoPath` when `WorktreePath` is set but no longer valid (mirror the worker's `ValidateWorktreeForRepo` guard). |
+| `cmd/roborev/review_test.go` | New cases: (a) `--min-severity=high` stores the value on the enqueued job; (b) bad values error before enqueue; (c) `--min-severity=HIGH` (mixed case) stores the canonical lowercase `"high"` on the job — verifies normalization happens at the CLI boundary; (d) `--min-severity=" high "` (leading/trailing whitespace) likewise stores `"high"`; (e) `--local --min-severity=high` injects the severity instruction into the prompt without going through the daemon (use `runLocalReview` with a stub agent that captures the prompt); (f) `--local` with a bad `review_min_severity` in global config fails fast instead of running the review. |
+| `cmd/roborev/fix_test.go` | Sanity check that loading `cfg` for `fixSingleJob` / `runFixBatch` doesn't break the existing happy path. The existing `IsTaskJob` skip in `cmd/roborev/fix.go:824` already has coverage; the daemon-side parity test lives in `server_fix_test.go` (case c above). |
 
 All tests use `assert`/`require` from testify per project convention.
 
@@ -373,9 +395,9 @@ None remaining — CLI flag for review confirmed as Option A (new column).
 | `internal/prompt/prompt.go` | `minSeverity` parameter on `Build` / `BuildDirty` / `buildSinglePrompt` / `buildRangePrompt`, inject `SeverityInstruction` after guidelines |
 | `internal/prompt/prompt_test.go` | Injection coverage for all three review types (default, security, design) |
 | `internal/daemon/worker.go` | Resolve effective severity from `job.MinSeverity` → cascade, thread into `pb.Build` / `pb.BuildDirty` calls |
-| `internal/daemon/server.go` | `EnqueueRequest` struct: add `MinSeverity string` field with `min_severity` JSON tag. `handleEnqueue`: pass `MinSeverity: req.MinSeverity` through all four review-branch `EnqueueOpts` literals (prompt/dirty/range/single). `handleFixJob`: resolve `ResolveFixMinSeverity` with already-loaded `cfg`, pass into `buildFixPrompt` / `buildFixPromptWithInstructions` / `buildRebasePrompt`. Each helper gains a trailing `minSeverity string` parameter and emits `SeverityInstruction` once. |
+| `internal/daemon/server.go` | `EnqueueRequest` struct: add `MinSeverity string` field with `min_severity` JSON tag. `handleEnqueue`: pass `MinSeverity: req.MinSeverity` through all four review-branch `EnqueueOpts` literals (prompt/dirty/range/single). `handleFixJob`: skip resolution entirely when `parentJob.IsTaskJob()` (task/insights parents — mirrors `cmd/roborev/fix.go:824`); otherwise resolve `ResolveFixMinSeverity` against `parentJob.WorktreePath` when present and valid (via `gitpkg.ValidateWorktreeForRepo`), falling back to `parentJob.RepoPath` (mirrors `internal/daemon/worker.go:367–375`); pass result into `buildFixPrompt` / `buildFixPromptWithInstructions` / `buildRebasePrompt`. Each helper gains a trailing `minSeverity string` parameter and emits `SeverityInstruction` once (no-op when empty). |
 | `internal/daemon/server_test.go` (or new test) | Verify: (a) `handleEnqueue` stores `MinSeverity` on the job when request includes `min_severity`; (b) `handleFixJob` bakes severity instruction into the stored prompt when configured |
-| `cmd/roborev/review.go` | New `--min-severity` flag, validate via `NormalizeMinSeverity` (early error), set `min_severity` field on the `EnqueueRequest` JSON body sent to the daemon. Also thread the flag into `runLocalReview`: new `minSeverity string` parameter, call `ResolveReviewMinSeverity` with already-loaded `cfg` (fail-fast), pass result into `pb.Build`/`pb.BuildDirty`. |
-| `cmd/roborev/review_test.go` | Flag handling: valid value stored, bad value errors before enqueue |
+| `cmd/roborev/review.go` | New `--min-severity` flag, validate via `NormalizeMinSeverity` (early error), set `min_severity` field on the `EnqueueRequest` JSON body sent to the daemon **using the normalized return value** (not the raw user input — see §4 for why this matters). Also thread the flag into `runLocalReview`: new `minSeverity string` parameter, call `ResolveReviewMinSeverity` with already-loaded `cfg` (fail-fast), pass result into `pb.Build`/`pb.BuildDirty`. The resolver always returns canonical values, so `runLocalReview` doesn't need a separate normalization step. |
+| `cmd/roborev/review_test.go` | Flag handling: valid value stored, mixed-case input normalized to lowercase, whitespace trimmed, bad value errors before enqueue |
 | `cmd/roborev/refine.go` | Pass already-loaded `cfg` into `ResolveRefineMinSeverity` |
 | `cmd/roborev/fix.go` | Load `cfg` (or hoist existing load) and pass into `ResolveFixMinSeverity` at both `fixSingleJob` and `runFixBatch` callsites |
