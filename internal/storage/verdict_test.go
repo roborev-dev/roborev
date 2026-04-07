@@ -661,6 +661,21 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "ThresholdMarker/marker with italic star is pass",
+		output: "*SEVERITY_THRESHOLD_MET*",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with italic underscore is pass",
+		output: "_SEVERITY_THRESHOLD_MET_",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ThresholdMarker/marker with bold italic is pass",
+		output: "***SEVERITY_THRESHOLD_MET***",
+		want:   VerdictPass,
+	},
+	{
 		name:   "ThresholdMarker/marker with trailing period is pass",
 		output: "SEVERITY_THRESHOLD_MET.",
 		want:   VerdictPass,

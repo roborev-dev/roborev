@@ -1450,8 +1450,9 @@ const SeverityThresholdMarker = "SEVERITY_THRESHOLD_MET"
 
 // IsMarkerOnlyOutput reports whether output is essentially the
 // SeverityThresholdMarker by itself, allowing only whitespace and
-// minimal markdown decoration (bold/italic, code fence, leading
-// list bullet, trailing period). Any prose or other substantive
+// minimal markdown decoration: bold (**...** or __...__), italic
+// (*...* or _..._), a fenced code block, a leading list bullet,
+// and an optional trailing period. Any prose or other substantive
 // content disqualifies the output, since we cannot reliably tell
 // chatty narration from prose findings without severity labels.
 //
@@ -1480,8 +1481,10 @@ func IsMarkerOnlyOutput(output string) bool {
 		s = strings.TrimSpace(s[2:])
 	}
 
-	// Strip surrounding bold/italic markers (** or __).
-	for _, wrap := range []string{"**", "__"} {
+	// Strip surrounding bold/italic markers. Bold forms (** and __)
+	// are stripped before italic forms (* and _) so that **X** fully
+	// unwraps in one pass rather than degrading to *X*.
+	for _, wrap := range []string{"**", "__", "*", "_"} {
 		if strings.HasPrefix(s, wrap) && strings.HasSuffix(s, wrap) && len(s) >= 2*len(wrap) {
 			s = strings.TrimSpace(s[len(wrap) : len(s)-len(wrap)])
 		}
