@@ -210,6 +210,7 @@ func (cw *ConfigWatcher) reloadConfig() {
 
 	// Update global agent settings
 	agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
+	agent.SetCodexSandboxDisabled(newCfg.DisableCodexSandbox)
 	agent.SetAnthropicAPIKey(newCfg.AnthropicAPIKey)
 
 	// Log what changed (for debugging)

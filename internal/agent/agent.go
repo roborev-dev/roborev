@@ -99,6 +99,7 @@ var (
 )
 
 var allowUnsafeAgents atomic.Bool
+var codexSandboxDisabled atomic.Bool
 var anthropicAPIKey atomic.Value
 
 func AllowUnsafeAgents() bool {
@@ -107,6 +108,18 @@ func AllowUnsafeAgents() bool {
 
 func SetAllowUnsafeAgents(allow bool) {
 	allowUnsafeAgents.Store(allow)
+}
+
+// CodexSandboxDisabled returns true when the Codex bwrap sandbox
+// should be skipped (e.g. on machines without unprivileged user
+// namespace support). When true, Codex runs with --full-auto
+// instead of --sandbox read-only.
+func CodexSandboxDisabled() bool {
+	return codexSandboxDisabled.Load()
+}
+
+func SetCodexSandboxDisabled(v bool) {
+	codexSandboxDisabled.Store(v)
 }
 
 // AnthropicAPIKey returns the configured Anthropic API key, or empty string if not set

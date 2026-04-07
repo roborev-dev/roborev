@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -106,26 +107,32 @@ func (a *CodexAgent) CommandName() string {
 func (a *CodexAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	args := a.commandArgs(codexArgOptions{
-		agenticMode: agenticMode,
-		autoApprove: !agenticMode,
-		preview:     true,
+		agenticMode:   agenticMode,
+		autoApprove:   !agenticMode,
+		sandboxBroken: CodexSandboxDisabled(),
+		preview:       true,
 	})
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *CodexAgent) buildArgs(repoPath string, agenticMode, autoApprove bool) []string {
+func (a *CodexAgent) buildArgs(
+	repoPath string,
+	agenticMode, autoApprove, sandboxBroken bool,
+) []string {
 	return a.commandArgs(codexArgOptions{
-		repoPath:    repoPath,
-		agenticMode: agenticMode,
-		autoApprove: autoApprove,
+		repoPath:      repoPath,
+		agenticMode:   agenticMode,
+		autoApprove:   autoApprove,
+		sandboxBroken: sandboxBroken,
 	})
 }
 
 type codexArgOptions struct {
-	repoPath    string
-	agenticMode bool
-	autoApprove bool
-	preview     bool
+	repoPath      string
+	agenticMode   bool
+	autoApprove   bool
+	sandboxBroken bool
+	preview       bool
 }
 
 func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
@@ -141,10 +148,13 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		args = append(args, codexDangerousFlag)
 	}
 	if opts.autoApprove {
-		// Use read-only sandbox for review mode. The worker
-		// writes the diff to a file that Codex can read within
-		// the sandbox, removing the need for git commands.
-		args = append(args, "--sandbox", "read-only")
+		if opts.sandboxBroken {
+			// Fall back to --full-auto when bwrap is broken
+			// (e.g. missing unprivileged user namespace support).
+			args = append(args, codexAutoApproveFlag)
+		} else {
+			args = append(args, "--sandbox", "read-only")
+		}
 	}
 	if !opts.preview {
 		args = append(args, "-C", opts.repoPath)
@@ -226,7 +236,11 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 
 	// Use codex exec with --json for JSONL streaming output
 	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
-	args := a.buildArgs(repoPath, agenticMode, autoApprove)
+	sandboxBroken := CodexSandboxDisabled()
+	if sandboxBroken && autoApprove {
+		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
+	}
+	args := a.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken)
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",

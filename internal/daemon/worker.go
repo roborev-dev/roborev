@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -499,6 +500,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	agentName := a.Name()
 	if agentName != job.Agent {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
+	}
+
+	// Codex --sandbox read-only cannot read files inside .git/.
+	// When the prompt references a snapshot file (oversized diff),
+	// read the file and inline its content so Codex gets the full
+	// diff via stdin without needing filesystem access. The DB
+	// keeps the truncated prompt; only the agent prompt expands.
+	if agentName == "codex" && !agentic {
+		reviewPrompt = expandSnapshotInline(reviewPrompt)
 	}
 
 	// Use the effective worktree path for events (empty when worktree is gone or not a worktree job).
@@ -1045,6 +1055,63 @@ func preparePrebuiltPrompt(
 		prompt.DiffFilePathPlaceholder, diffFile,
 	)
 	return replacer.Replace(reviewPrompt), cleanup, nil
+}
+
+// snapshotFileRefRE matches the file-reference lines emitted by
+// diffFileFallbackVariants in the prompt builder when a diff is too
+// large to inline. Example:
+//
+//	Read the diff from: `/path/to/.git/roborev-snapshot-1234.diff`
+var snapshotFileRefRE = regexp.MustCompile(
+	"`([^`]+roborev-snapshot-[^`]+\\.diff)`",
+)
+
+// expandSnapshotInline reads snapshot files referenced in a prompt
+// and replaces the file-reference section with the actual diff
+// content. This allows sandboxed agents that cannot access .git/ to
+// receive the full diff via stdin.
+func expandSnapshotInline(reviewPrompt string) string {
+	m := snapshotFileRefRE.FindStringSubmatch(reviewPrompt)
+	if m == nil {
+		return reviewPrompt
+	}
+	snapshotPath := m[1]
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		// File unreadable — return the prompt as-is; the agent
+		// will see the truncated reference (same as before).
+		log.Printf("expand snapshot inline: read %s: %v", snapshotPath, err)
+		return reviewPrompt
+	}
+
+	// Replace the entire "(Diff too large …) … Read the diff from …"
+	// block with an inline diff fence.
+	inline := "```diff\n" + string(data)
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		inline += "\n"
+	}
+	inline += "```\n"
+
+	// The fallback block always starts with "(Diff too large" and
+	// ends after the file-reference line. Replace that span.
+	start := strings.Index(reviewPrompt, "(Diff too large")
+	if start < 0 {
+		// Dirty-review fallback uses different wording.
+		start = strings.Index(reviewPrompt, "The full diff is also available at:")
+		if start < 0 {
+			return reviewPrompt
+		}
+	}
+	refEnd := strings.Index(reviewPrompt[start:], m[0])
+	if refEnd < 0 {
+		return reviewPrompt
+	}
+	// Include the trailing backtick and any newlines after it.
+	end := start + refEnd + len(m[0])
+	for end < len(reviewPrompt) && reviewPrompt[end] == '\n' {
+		end++
+	}
+	return reviewPrompt[:start] + inline + reviewPrompt[end:]
 }
 
 func shellQuoteForPrompt(s string) string {

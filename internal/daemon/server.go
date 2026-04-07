@@ -55,6 +55,7 @@ type Server struct {
 func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	// Always set for deterministic state - default to false (conservative)
 	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
+	agent.SetCodexSandboxDisabled(cfg.DisableCodexSandbox)
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	broadcaster := NewBroadcaster()
 

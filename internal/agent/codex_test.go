@@ -29,6 +29,7 @@ func TestCodex_buildArgs(t *testing.T) {
 		name             string
 		agentic          bool
 		autoApprove      bool
+		sandboxBroken    bool
 		wantFlags        []string
 		wantMissingFlags []string
 	}{
@@ -46,11 +47,19 @@ func TestCodex_buildArgs(t *testing.T) {
 			wantFlags:        []string{codexDangerousFlag, "--json"},
 			wantMissingFlags: []string{codexAutoApproveFlag},
 		},
+		{
+			name:             "SandboxBrokenFallback",
+			agentic:          false,
+			autoApprove:      true,
+			sandboxBroken:    true,
+			wantFlags:        []string{codexAutoApproveFlag, "--json"},
+			wantMissingFlags: []string{"--sandbox", codexDangerousFlag},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove)
+			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove, tt.sandboxBroken)
 
 			for _, flag := range tt.wantFlags {
 				assert.Contains(t, args, flag, "buildArgs() missing expected flag %q, args: %v", flag, args)
@@ -68,7 +77,7 @@ func TestCodex_buildArgs(t *testing.T) {
 func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 	a := NewCodexAgent("codex").WithSessionID("session-123").(*CodexAgent)
 
-	args := a.buildArgs("/repo", false, true)
+	args := a.buildArgs("/repo", false, true, false)
 
 	require.GreaterOrEqual(t, len(args), 3)
 	assert.Equal(t, "exec", args[0])
@@ -81,7 +90,7 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
 	a := NewCodexAgent("codex").WithSessionID("-bad-session").(*CodexAgent)
 
-	args := a.buildArgs("/repo", false, true)
+	args := a.buildArgs("/repo", false, true, false)
 
 	require.GreaterOrEqual(t, len(args), 2)
 	assert.Equal(t, "exec", args[0])
