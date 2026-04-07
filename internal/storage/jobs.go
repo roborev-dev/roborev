@@ -215,7 +215,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type,
-		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, '')
+		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, ''), j.command_line
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -224,7 +224,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
 		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.PromptPrebuilt, &fields.JobType, &fields.ReviewType,
-		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath)
+		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath, &fields.CommandLine)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +238,13 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 // SaveJobPrompt stores the prompt for a running job
 func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 	_, err := db.Exec(`UPDATE review_jobs SET prompt = ? WHERE id = ?`, prompt, jobID)
+	return err
+}
+
+// SaveJobCommandLine stores the actual agent command line used for
+// this execution. Purely informational — reconstructed on each run.
+func (db *DB) SaveJobCommandLine(jobID int64, cmdLine string) error {
+	_, err := db.Exec(`UPDATE review_jobs SET command_line = ? WHERE id = ?`, cmdLine, jobID)
 	return err
 }
 
@@ -806,7 +813,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, '')
+		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
+		       j.command_line
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -844,7 +852,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath)
+			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
+			&fields.CommandLine)
 		if err != nil {
 			return nil, err
 		}
@@ -894,7 +903,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, '')
+		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -902,7 +911,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath)
+		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath, &fields.CommandLine)
 	if err != nil {
 		return nil, err
 	}

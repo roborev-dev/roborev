@@ -144,8 +144,9 @@ type Config struct {
 	SecurityBackupModel string `toml:"security_backup_model"`
 	DesignBackupModel   string `toml:"design_backup_model"`
 
-	AllowUnsafeAgents  *bool `toml:"allow_unsafe_agents"`  // nil = not set, allows commands to choose their own default
-	ReuseReviewSession *bool `toml:"reuse_review_session"` // nil = not set; when true, reuse prior branch review sessions when possible
+	AllowUnsafeAgents   *bool `toml:"allow_unsafe_agents"`   // nil = not set, allows commands to choose their own default
+	DisableCodexSandbox bool  `toml:"disable_codex_sandbox"` // use --full-auto instead of --sandbox read-only (for systems where bwrap is broken)
+	ReuseReviewSession  *bool `toml:"reuse_review_session"`  // nil = not set; when true, reuse prior branch review sessions when possible
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`

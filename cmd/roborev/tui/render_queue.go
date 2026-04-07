@@ -725,6 +725,11 @@ func commandLineForJob(job *storage.ReviewJob) string {
 	if job == nil {
 		return ""
 	}
+	// Prefer the actual command line saved by the daemon worker.
+	if job.CommandLine != "" {
+		return stripControlChars(job.CommandLine)
+	}
+	// Fallback: reconstruct locally (may not reflect daemon config).
 	a, err := agent.Get(job.Agent)
 	if err != nil {
 		return ""

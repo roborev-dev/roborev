@@ -751,6 +751,49 @@ func TestProcessJob_LargeDiffRetriesWhenSnapshotFails(t *testing.T) {
 	assert.False(t, agentCalled, "agent should not run when large diff has no snapshot")
 }
 
+func TestExpandSnapshotInline_ReplacesFileRef(t *testing.T) {
+	// Write a temp snapshot file
+	f, err := os.CreateTemp(t.TempDir(), "roborev-snapshot-*.diff")
+	require.NoError(t, err)
+	_, err = f.WriteString("diff --git a/file.go b/file.go\n+added line\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	prompt := fmt.Sprintf(
+		"### Diff\n\n"+
+			"(Diff too large to include inline)\n\n"+
+			"The full diff has been written to a file for review.\n"+
+			"Read the diff from: `%s`\n\n"+
+			"Review the actual diff before writing findings.\n"+
+			"\n## Summary\n",
+		f.Name(),
+	)
+
+	result := expandSnapshotInline(prompt)
+
+	assert := assert.New(t)
+	assert.NotContains(result, "Diff too large")
+	assert.NotContains(result, "roborev-snapshot-")
+	assert.Contains(result, "```diff")
+	assert.Contains(result, "+added line")
+	assert.Contains(result, "## Summary")
+}
+
+func TestExpandSnapshotInline_NoRef(t *testing.T) {
+	prompt := "### Diff\n\n```diff\n+inline diff\n```\n"
+	result := expandSnapshotInline(prompt)
+	assert.Equal(t, prompt, result)
+}
+
+func TestExpandSnapshotInline_MissingFile(t *testing.T) {
+	prompt := "### Diff\n\n" +
+		"(Diff too large to include inline)\n\n" +
+		"Read the diff from: `/nonexistent/roborev-snapshot-123.diff`\n"
+	result := expandSnapshotInline(prompt)
+	// Should return unchanged when file doesn't exist
+	assert.Equal(t, prompt, result)
+}
+
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "deadlock-test", testWorkerID)

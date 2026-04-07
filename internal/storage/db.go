@@ -775,6 +775,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add command_line column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'command_line'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check command_line column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN command_line TEXT`)
+		if err != nil {
+			return fmt.Errorf("add command_line column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err
