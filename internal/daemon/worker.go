@@ -502,6 +502,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
+	// Store the actual command line so the TUI displays what the
+	// daemon executes, not a client-side reconstruction.
+	if err := wp.db.SaveJobCommandLine(job.ID, a.CommandLine()); err != nil {
+		log.Printf("[%s] Error saving command line: %v", workerID, err)
+	}
+
 	// Codex --sandbox read-only cannot read files inside .git/.
 	// When the prompt references a snapshot file (oversized diff),
 	// read the file and inline its content so Codex gets the full

@@ -77,6 +77,7 @@ type ReviewJob struct {
 	ParentJobID       *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
 	Patch             *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
 	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
+	CommandLine       string     `json:"command_line,omitempty"`  // Actual agent command line used for this run
 	TokenUsage        string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync

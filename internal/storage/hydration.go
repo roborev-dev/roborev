@@ -30,6 +30,7 @@ type reviewJobScanFields struct {
 	Patch             sql.NullString
 	DiffContent       sql.NullString
 	OutputPrefix      sql.NullString
+	CommandLine       sql.NullString
 	TokenUsage        sql.NullString
 	Agentic           int
 	PromptPrebuilt    int
@@ -97,6 +98,9 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	if fields.UUID.Valid {
 		job.UUID = fields.UUID.String
+	}
+	if fields.CommandLine.Valid {
+		job.CommandLine = fields.CommandLine.String
 	}
 	if fields.TokenUsage.Valid {
 		job.TokenUsage = fields.TokenUsage.String
