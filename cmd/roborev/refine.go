@@ -616,10 +616,10 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 			// When severity filtering is active and the agent
 			// signals all findings are below threshold, treat as
-			// resolved rather than a fix failure.
-			if minSev != "" && strings.Contains(
-				output, config.SeverityThresholdMarker,
-			) {
+			// resolved rather than a fix failure. Require the
+			// marker to stand alone so prose findings echoed
+			// alongside it cannot silently close the review.
+			if minSev != "" && config.IsMarkerOnlyOutput(output) {
 				fmt.Println(
 					"All findings below severity " +
 						"threshold - closing review",

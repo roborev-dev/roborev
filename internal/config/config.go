@@ -1448,6 +1448,51 @@ var severityAbove = map[string]string{
 // from "agent couldn't fix it."
 const SeverityThresholdMarker = "SEVERITY_THRESHOLD_MET"
 
+// IsMarkerOnlyOutput reports whether output is essentially the
+// SeverityThresholdMarker by itself, allowing only whitespace and
+// minimal markdown decoration (bold/italic, code fence, leading
+// list bullet, trailing period). Any prose or other substantive
+// content disqualifies the output, since we cannot reliably tell
+// chatty narration from prose findings without severity labels.
+//
+// Callers that want to treat the marker as a "below threshold"
+// signal should use this helper rather than substring matching,
+// which is too easy to fool with marker-bearing prose findings.
+func IsMarkerOnlyOutput(output string) bool {
+	s := strings.TrimSpace(output)
+	if s == "" {
+		return false
+	}
+
+	// Strip a fenced code block if the output is wrapped in one.
+	if strings.HasPrefix(s, "```") {
+		if nl := strings.Index(s, "\n"); nl >= 0 {
+			s = s[nl+1:]
+		} else {
+			s = strings.TrimPrefix(s, "```")
+		}
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+	}
+
+	// Strip a leading list marker (- or *) followed by space.
+	if len(s) >= 2 && (s[0] == '-' || s[0] == '*') && s[1] == ' ' {
+		s = strings.TrimSpace(s[2:])
+	}
+
+	// Strip surrounding bold/italic markers (** or __).
+	for _, wrap := range []string{"**", "__"} {
+		if strings.HasPrefix(s, wrap) && strings.HasSuffix(s, wrap) && len(s) >= 2*len(wrap) {
+			s = strings.TrimSpace(s[len(wrap) : len(s)-len(wrap)])
+		}
+	}
+
+	// Strip a trailing period.
+	s = strings.TrimSpace(strings.TrimSuffix(s, "."))
+
+	return s == SeverityThresholdMarker
+}
+
 // SeverityInstruction returns a prompt instruction telling the agent
 // to focus only on findings at or above minSeverity. Returns "" for
 // empty, "low", or unrecognized input (no filtering needed).

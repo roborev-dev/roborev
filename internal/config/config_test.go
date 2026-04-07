@@ -3316,6 +3316,42 @@ func TestSeverityInstruction(t *testing.T) {
 	}
 }
 
+func TestIsMarkerOnlyOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"empty", "", false},
+		{"whitespace only", "   \n\t  ", false},
+		{"marker alone", "SEVERITY_THRESHOLD_MET", true},
+		{"marker with surrounding whitespace", "  SEVERITY_THRESHOLD_MET\n", true},
+		{"marker with newlines", "\n\nSEVERITY_THRESHOLD_MET\n\n", true},
+		{"marker with trailing period", "SEVERITY_THRESHOLD_MET.", true},
+		{"marker bold", "**SEVERITY_THRESHOLD_MET**", true},
+		{"marker italic underscore", "__SEVERITY_THRESHOLD_MET__", true},
+		{"marker bold with period", "**SEVERITY_THRESHOLD_MET**.", false},
+		{"marker as bullet", "- SEVERITY_THRESHOLD_MET", true},
+		{"marker as star bullet", "* SEVERITY_THRESHOLD_MET", true},
+		{"marker in fenced block", "```\nSEVERITY_THRESHOLD_MET\n```", true},
+		{"marker in fenced block with language", "```text\nSEVERITY_THRESHOLD_MET\n```", true},
+		{"marker plus prose finding", "SEVERITY_THRESHOLD_MET\n\nThe auth module leaks tokens.", false},
+		{"marker plus narration before", "All findings below threshold.\nSEVERITY_THRESHOLD_MET", false},
+		{"marker plus narration after", "SEVERITY_THRESHOLD_MET\nNo code changes needed.", false},
+		{"marker buried in prose", "I checked the code and SEVERITY_THRESHOLD_MET applies here.", false},
+		{"marker plus severity label", "SEVERITY_THRESHOLD_MET\n- High: critical bug", false},
+		{"different text only", "All good, no issues.", false},
+		{"marker substring inside another word", "PRESEVERITY_THRESHOLD_MET", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsMarkerOnlyOutput(tt.output),
+				"IsMarkerOnlyOutput(%q)", tt.output)
+		})
+	}
+}
+
 func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		c := CIConfig{}
