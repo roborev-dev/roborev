@@ -52,8 +52,8 @@ func TestCodex_buildArgs(t *testing.T) {
 			agentic:          false,
 			autoApprove:      true,
 			sandboxBroken:    true,
-			wantFlags:        []string{codexAutoApproveFlag, "--json"},
-			wantMissingFlags: []string{"--sandbox", codexDangerousFlag},
+			wantFlags:        []string{codexDangerousFlag, "--json"},
+			wantMissingFlags: []string{"--sandbox", codexAutoApproveFlag},
 		},
 	}
 

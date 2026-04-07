@@ -149,9 +149,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	}
 	if opts.autoApprove {
 		if opts.sandboxBroken {
-			// Fall back to --full-auto when bwrap is broken
-			// (e.g. missing unprivileged user namespace support).
-			args = append(args, codexAutoApproveFlag)
+			// --full-auto still uses bwrap internally, so we
+			// need the full bypass flag on broken systems.
+			args = append(args, codexDangerousFlag)
 		} else {
 			args = append(args, "--sandbox", "read-only")
 		}
