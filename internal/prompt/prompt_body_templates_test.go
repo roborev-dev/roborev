@@ -119,11 +119,11 @@ func TestRenderAddressPromptUsesNestedSections(t *testing.T) {
 			Heading: "## Project Guidelines",
 			Body:    "Keep it simple.",
 		},
-		ToolAttempts:   []addressAttemptView{{Responder: "developer", Response: "Tried a narrow fix", When: "2026-04-04 12:00"}},
-		SeverityFilter: "Only address medium and higher findings.\n\n",
-		ReviewFindings: "- medium: do the thing",
-		OriginalDiff:   "diff --git a/a b/a\n+line\n",
-		JobID:          42,
+		PreviousAttempts: []addressAttemptView{{Responder: "developer", Response: "Tried a narrow fix", When: "2026-04-04 12:00"}},
+		SeverityFilter:   "Only address medium and higher findings.\n\n",
+		ReviewFindings:   "- medium: do the thing",
+		OriginalDiff:     "diff --git a/a b/a\n+line\n",
+		JobID:            42,
 	}
 
 	body, err := renderAddressPrompt(view)
@@ -235,8 +235,66 @@ func TestBuildProjectGuidelinesSectionViewTrimsAndFormats(t *testing.T) {
 	assert.Equal(t, "Prefer composition over inheritance.", section.Body)
 }
 
-func TestPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
-	views := previousReviewViews([]ReviewContext{
+func TestReviewOptionalContextTrimNextPreservesPriority(t *testing.T) {
+	ctx := ReviewOptionalContext{
+		ProjectGuidelines: &MarkdownSection{Heading: "## Project Guidelines", Body: "Keep it simple."},
+		AdditionalContext: "## Pull Request Discussion\n\ncontext\n\n",
+		PreviousReviews:   []PreviousReviewTemplateContext{{Commit: "abc1234", Output: "review", Available: true}},
+		PreviousAttempts:  []ReviewAttemptTemplateContext{{Label: "Review Attempt 1", Output: "attempt"}},
+	}
+
+	require.True(t, ctx.TrimNext())
+	assert.Empty(t, ctx.PreviousAttempts)
+	require.True(t, ctx.TrimNext())
+	assert.Empty(t, ctx.PreviousReviews)
+	require.True(t, ctx.TrimNext())
+	assert.Empty(t, ctx.AdditionalContext)
+	require.True(t, ctx.TrimNext())
+	assert.Nil(t, ctx.ProjectGuidelines)
+	assert.False(t, ctx.TrimNext())
+}
+
+func TestTemplateContextCloneIsolatesNestedState(t *testing.T) {
+	ctx := TemplateContext{
+		Review: &ReviewTemplateContext{
+			Optional: ReviewOptionalContext{
+				ProjectGuidelines: &MarkdownSection{Heading: "## Project Guidelines", Body: "Keep it simple."},
+				PreviousAttempts:  []ReviewAttemptTemplateContext{{Label: "Review Attempt 1", Output: "attempt"}},
+			},
+			Subject: SubjectContext{
+				Range: &RangeSubjectContext{Count: 2, Entries: []RangeEntryContext{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}}},
+			},
+			Fallback: FallbackContext{Mode: FallbackModeRange, Range: &RangeFallbackContext{DiffCmd: "git diff"}},
+		},
+	}
+
+	cloned := ctx.Clone()
+	require.NotNil(t, cloned.Review)
+	require.True(t, cloned.Review.Optional.TrimNext())
+	require.True(t, cloned.Review.Subject.BlankNextRangeSubject())
+	cloned.Review.Fallback.Range.DiffCmd = "git diff --stat"
+
+	require.NotNil(t, ctx.Review.Optional.ProjectGuidelines)
+	require.Len(t, ctx.Review.Optional.PreviousAttempts, 1)
+	require.NotNil(t, ctx.Review.Subject.Range)
+	assert.Equal(t, "second", ctx.Review.Subject.Range.Entries[1].Subject)
+	assert.Equal(t, "git diff", ctx.Review.Fallback.Range.DiffCmd)
+}
+
+func TestTemplateContextSubjectRangeTrimmingHelpers(t *testing.T) {
+	ctx := SubjectContext{Range: &RangeSubjectContext{Count: 2, Entries: []RangeEntryContext{{Commit: "abc1234", Subject: "first"}, {Commit: "def5678", Subject: "second"}}}}
+
+	require.True(t, ctx.BlankNextRangeSubject())
+	require.NotNil(t, ctx.Range)
+	assert.Empty(t, ctx.Range.Entries[1].Subject)
+	assert.Equal(t, "first", ctx.Range.Entries[0].Subject)
+	require.True(t, ctx.DropLastRangeEntry())
+	require.Len(t, ctx.Range.Entries, 1)
+	assert.Equal(t, "abc1234", ctx.Range.Entries[0].Commit)
+}
+
+func TestHistoricalReviewContextPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
+	views := previousReviewViews([]HistoricalReviewContext{
 		{SHA: "bbbbbbb", Review: &storage.Review{Output: "second"}},
 		{SHA: "aaaaaaa", Review: &storage.Review{Output: "first"}},
 	})
@@ -246,7 +304,7 @@ func TestPreviousReviewViewsPreserveChronologicalOrder(t *testing.T) {
 }
 
 func TestRenderPreviousReviewsFromContexts(t *testing.T) {
-	body, err := renderPreviousReviewsFromContexts([]ReviewContext{
+	body, err := renderPreviousReviewsFromContexts([]HistoricalReviewContext{
 		{
 			SHA:    "abc1234",
 			Review: &storage.Review{Output: "Found a bug"},

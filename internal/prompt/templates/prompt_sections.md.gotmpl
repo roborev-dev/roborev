@@ -26,20 +26,6 @@ or provide context that affects how you should evaluate similar code in the curr
 {{template "review_comments" .Comments}}
 {{end}}{{end}}
 {{end}}
-{{define "in_range_reviews"}}{{if .InRangeReviews}}## Per-Commit Reviews in This Range
-
-The following commits in this range have already been individually reviewed.
-Issues found in earlier commits may have been fixed by later commits in the range.
-
-Do not re-raise issues identified below unless they persist in the final code.
-Focus on cross-commit interactions and problems not caught by per-commit reviews.
-
-{{range .InRangeReviews}}--- Commit {{.Commit}} ({{.Agent}}, {{.Verdict}}) ---
-{{.Output}}
-
-{{template "review_comments" .Comments}}
-{{end}}{{end}}
-{{end}}
 {{define "previous_review_attempts"}}{{if .PreviousAttempts}}## Previous Review Attempts
 
 This commit has been reviewed before. The following are previous review results and any
@@ -54,7 +40,7 @@ responses from developers. Use this context to:
 {{template "review_comments" .Comments}}
 {{end}}{{end}}
 {{end}}
-{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
+{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "previous_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
 {{define "current_commit_required"}}## Current Commit
 
 **Commit:** {{.Commit}}
@@ -82,9 +68,9 @@ Reviewing {{if gt .Count 0}}{{.Count}}{{else}}{{len .Entries}}{{end}} commits:
 {{if .Description}}{{.Description}}{{else}}The following changes have not yet been committed.{{end}}
 
 {{end}}
-{{define "diff_block"}}{{if .Heading}}{{.Heading}}{{else}}### Diff{{end}}
+{{define "diff_block"}}{{if .Diff.Heading}}{{.Diff.Heading}}{{else}}### Diff{{end}}
 
-{{if .Fallback}}{{.Fallback}}{{else}}{{.Body}}{{end}}{{end}}
+{{if .Fallback.HasContent}}{{.Fallback.Rendered}}{{else}}{{.Diff.Body}}{{end}}{{end}}
 {{define "inline_diff"}}```diff
 {{.Body}}```
 {{end}}
@@ -146,19 +132,9 @@ View with: {{.ViewCmd}}
 {{if .Body}}```diff
 {{.Body}}```
 {{end}}{{end}}
-{{define "address_tool_attempts"}}{{if .ToolAttempts}}## Previous Addressing Attempts
+{{define "address_attempts"}}{{if .PreviousAttempts}}## Previous Addressing Attempts
 
-{{range .ToolAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---
-{{.Response}}
-
-{{end}}{{end}}{{end}}
-{{define "address_user_comments"}}{{if .UserComments}}## User Comments
-
-The following comments were left by the developer on this review.
-Take them into account when applying fixes — they may flag false
-positives, provide additional context, or request specific approaches.
-
-{{range .UserComments}}**{{.Responder}}**{{if .When}} ({{.When}}){{end}}:
+{{range .PreviousAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---
 {{.Response}}
 
 {{end}}{{end}}{{end}}
