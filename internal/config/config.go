@@ -1466,11 +1466,11 @@ func IsMarkerOnlyOutput(output string) bool {
 	}
 
 	// Strip a fenced code block if the output is wrapped in one.
-	if strings.HasPrefix(s, "```") {
-		if nl := strings.Index(s, "\n"); nl >= 0 {
-			s = s[nl+1:]
+	if rest, ok := strings.CutPrefix(s, "```"); ok {
+		if nl := strings.Index(rest, "\n"); nl >= 0 {
+			s = rest[nl+1:]
 		} else {
-			s = strings.TrimPrefix(s, "```")
+			s = rest
 		}
 		s = strings.TrimSuffix(s, "```")
 		s = strings.TrimSpace(s)
