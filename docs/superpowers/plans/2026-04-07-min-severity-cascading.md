@@ -659,11 +659,11 @@ Update the parameter placeholder numbering accordingly.
 
 In `internal/storage/postgres.go` at `BatchUpsertJobs` (line 945), update the INSERT SQL:
 
-Add `min_severity` to the column list (after `worktree_path`).
-Add `normalizeMinSeverityForWrite(j.MinSeverity)` to the values (after the `j.SourceMachineID` value).
+Add `min_severity` to the column list (after `worktree_path`, before `source_machine_id`).
+Add `normalizeMinSeverityForWrite(j.MinSeverity)` to the values **between** `nullString(j.WorktreePath)` and `j.SourceMachineID` — column and value order must match.
 Add `min_severity = EXCLUDED.min_severity` to the ON CONFLICT update list (after `worktree_path`).
 
-Update the parameter placeholder numbering: currently `$1` through `$21`, the new column becomes `$22` and `NOW()` for `updated_at` moves to inline (it's already inline, not a placeholder).
+Update the parameter placeholder numbering: currently `$1` through `$21`, the new column shifts `source_machine_id` from `$21` to `$22`.
 
 This is the **production sync push path** — `SyncWorker.pushChangesWithStats` calls `BatchUpsertJobs`, not `UpsertJob`. Without this change, all sync pushes would omit `min_severity` and other machines would see `''` for every synced job.
 
@@ -1402,11 +1402,18 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 		// Main repo: fix_min_severity = "medium"
 		os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"), []byte(`fix_min_severity = "medium"`), 0644)
 
-		// Create a worktree dir with a different config
-		wtDir := t.TempDir()
+		// Create a real linked git worktree so ValidateWorktreeForRepo passes
+		wtDir := filepath.Join(t.TempDir(), "wt")
+		cmd := exec.Command("git", "worktree", "add", "--detach", wtDir, "HEAD")
+		cmd.Dir = tmpDir
+		require.NoError(t, cmd.Run())
+		t.Cleanup(func() {
+			exec.Command("git", "worktree", "remove", "--force", wtDir).Run()
+		})
+		// Worktree gets a different .roborev.toml
 		os.WriteFile(filepath.Join(wtDir, ".roborev.toml"), []byte(`fix_min_severity = "critical"`), 0644)
 
-		// Create parent with WorktreePath set to the worktree dir
+		// Create parent with WorktreePath set to the real worktree
 		repo, err := db.GetOrCreateRepo(tmpDir)
 		require.NoError(t, err)
 		sha := testutil.GetHeadSHA(t, tmpDir)
@@ -1438,21 +1445,68 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 		assert.Contains(t, got.Prompt, "Critical")
 	})
 
+	t.Run("stale worktree falls back to repo config", func(t *testing.T) {
+		s, db, tmpDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tmpDir)
+
+		// Main repo: fix_min_severity = "medium"
+		os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"), []byte(`fix_min_severity = "medium"`), 0644)
+
+		// Create parent with a WorktreePath that doesn't exist (stale)
+		repo, err := db.GetOrCreateRepo(tmpDir)
+		require.NoError(t, err)
+		sha := testutil.GetHeadSHA(t, tmpDir)
+		commit, err := db.GetOrCreateCommit(repo.ID, sha, "A", "S", time.Now())
+		require.NoError(t, err)
+		parentJob, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:       repo.ID,
+			CommitID:     commit.ID,
+			GitRef:       sha,
+			Agent:        "test",
+			WorktreePath: "/tmp/nonexistent-worktree-" + t.Name(),
+		})
+		require.NoError(t, err)
+		setJobStatus(t, db, parentJob.ID, storage.JobStatusDone)
+		_, err = db.CreateReview(parentJob.ID, "test", "prompt", "- High — bug")
+		require.NoError(t, err)
+
+		body := fmt.Sprintf(`{"parent_job_id":%d}`, parentJob.ID)
+		req := httptest.NewRequest(http.MethodPost, "/api/job/fix", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var fixJob storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&fixJob)
+		got, err := db.GetJobByID(fixJob.ID)
+		require.NoError(t, err)
+		// Stale worktree: should fall back to main repo's "medium"
+		assert.Contains(t, got.Prompt, "Severity filter:")
+		assert.Contains(t, got.Prompt, "Medium")
+	})
+
 	t.Run("legacy task parent with empty job_type skips severity", func(t *testing.T) {
 		s, db, tmpDir := newTestServer(t)
 		testutil.InitTestGitRepo(t, tmpDir)
 		os.WriteFile(filepath.Join(tmpDir, ".roborev.toml"), []byte(`fix_min_severity = "high"`), 0644)
 
-		// Create a legacy-style task parent: empty JobType, has Prompt, no CommitID
+		// Create a task parent normally (EnqueueJob auto-fills JobType=task)
 		repo, err := db.GetOrCreateRepo(tmpDir)
 		require.NoError(t, err)
 		parentJob, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "test",
 			Prompt: "analyze the code",
-			// JobType intentionally left empty — legacy shape
 		})
 		require.NoError(t, err)
+
+		// Clear job_type to simulate a legacy sync-pulled job from an older
+		// machine that pre-dates the explicit job_type column. IsTaskJob()
+		// must still return true via its fallback heuristic (has Prompt,
+		// no CommitID, non-range GitRef).
+		_, err = db.Exec(`UPDATE review_jobs SET job_type = '' WHERE id = ?`, parentJob.ID)
+		require.NoError(t, err)
+
 		setJobStatus(t, db, parentJob.ID, storage.JobStatusDone)
 		_, err = db.CreateReview(parentJob.ID, "test", "prompt", "Found issues")
 		require.NoError(t, err)
@@ -1467,7 +1521,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 		json.NewDecoder(w.Body).Decode(&fixJob)
 		got, err := db.GetJobByID(fixJob.ID)
 		require.NoError(t, err)
-		// IsTaskJob() should return true for legacy shape — no severity injection
+		// IsTaskJob() should return true via legacy fallback — no severity injection
 		assert.NotContains(t, got.Prompt, "Severity filter:")
 	})
 }
