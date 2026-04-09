@@ -34,7 +34,7 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.
 
-Before reviewing the diff, read any project instruction files (CLAUDE.md, AGENTS.md) in the repository root and in the directories containing the changed files. These files contain project-specific guidelines that should inform your review. Respect and apply whatever conventions, standards, or review criteria they describe.`
+Before reviewing the diff, read any project instruction files (e.g., CLAUDE.md, AGENTS.md) in the repository root and in the directories containing the changed files. These files contain project-specific guidelines that should inform your review. Respect and apply whatever conventions, standards, or review criteria they describe.`
 
 // SystemPromptSingle is the base instruction for single commit reviews
 const SystemPromptSingle = `You are a code reviewer. Review the git commit shown below for:
