@@ -10,59 +10,23 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-type markdownSectionView struct {
-	Heading string
-	Body    string
-}
+type markdownSectionView = MarkdownSection
 
-type reviewCommentView struct {
-	Responder string
-	Response  string
-}
+type reviewCommentView = ReviewCommentTemplateContext
 
-type previousReviewView struct {
-	Commit    string
-	Output    string
-	Comments  []reviewCommentView
-	Available bool
-}
+type previousReviewView = PreviousReviewTemplateContext
 
-type reviewAttemptView struct {
-	Label    string
-	Agent    string
-	When     string
-	Output   string
-	Comments []reviewCommentView
-}
+type reviewAttemptView = ReviewAttemptTemplateContext
 
-type optionalSectionsView struct {
-	ProjectGuidelines *markdownSectionView
-	AdditionalContext string
-	PreviousReviews   []previousReviewView
-	InRangeReviews    []inRangeReviewView
-	PreviousAttempts  []reviewAttemptView
-}
+type optionalSectionsView = ReviewOptionalContext
 
-type currentCommitSectionView struct {
-	Commit  string
-	Subject string
-	Author  string
-	Message string
-}
+type currentCommitSectionView = SingleSubjectContext
 
-type commitRangeEntryView struct {
-	Commit  string
-	Subject string
-}
+type commitRangeEntryView = RangeEntryContext
 
-type commitRangeSectionView struct {
-	Count   int
-	Entries []commitRangeEntryView
-}
+type commitRangeSectionView = RangeSubjectContext
 
-type dirtyChangesSectionView struct {
-	Description string
-}
+type dirtyChangesSectionView = DirtySubjectContext
 
 type diffSectionView struct {
 	Heading  string
@@ -88,24 +52,11 @@ type dirtyPromptView struct {
 	Diff     diffSectionView
 }
 
-type inRangeReviewView struct {
-	Commit   string
-	Agent    string
-	Verdict  string
-	Output   string
-	Comments []reviewCommentView
-}
-
-type addressAttemptView struct {
-	Responder string
-	Response  string
-	When      string
-}
+type addressAttemptView = AddressAttemptTemplateContext
 
 type addressPromptView struct {
 	ProjectGuidelines *markdownSectionView
-	ToolAttempts      []addressAttemptView
-	UserComments      []addressAttemptView
+	PreviousAttempts  []addressAttemptView
 	SeverityFilter    string
 	ReviewFindings    string
 	OriginalDiff      string
@@ -117,10 +68,7 @@ type reviewAttemptContext struct {
 	Responses []storage.Response
 }
 
-type systemPromptView struct {
-	NoSkillsInstruction string
-	CurrentDate         string
-}
+type systemPromptView = SystemTemplateContext
 
 type inlineDiffView struct {
 	Body string
@@ -135,24 +83,191 @@ var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
 	"templates/*.md.gotmpl",
 ))
 
+func markdownSectionFromView(view *markdownSectionView) *MarkdownSection {
+	if view == nil {
+		return nil
+	}
+	return &MarkdownSection{Heading: view.Heading, Body: view.Body}
+}
+
+func reviewCommentsFromView(views []reviewCommentView) []ReviewCommentTemplateContext {
+	comments := make([]ReviewCommentTemplateContext, 0, len(views))
+	for _, view := range views {
+		comments = append(comments, ReviewCommentTemplateContext(view))
+	}
+	return comments
+}
+
+func previousReviewsFromView(views []previousReviewView) []PreviousReviewTemplateContext {
+	reviews := make([]PreviousReviewTemplateContext, 0, len(views))
+	for _, view := range views {
+		reviews = append(reviews, PreviousReviewTemplateContext{
+			Commit:    view.Commit,
+			Output:    view.Output,
+			Comments:  reviewCommentsFromView(view.Comments),
+			Available: view.Available,
+		})
+	}
+	return reviews
+}
+
+func reviewAttemptsFromView(views []reviewAttemptView) []ReviewAttemptTemplateContext {
+	attempts := make([]ReviewAttemptTemplateContext, 0, len(views))
+	for _, view := range views {
+		attempts = append(attempts, ReviewAttemptTemplateContext{
+			Label:    view.Label,
+			Agent:    view.Agent,
+			When:     view.When,
+			Output:   view.Output,
+			Comments: reviewCommentsFromView(view.Comments),
+		})
+	}
+	return attempts
+}
+
+func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalContext {
+	return ReviewOptionalContext{
+		ProjectGuidelines: markdownSectionFromView(view.ProjectGuidelines),
+		AdditionalContext: view.AdditionalContext,
+		PreviousReviews:   previousReviewsFromView(view.PreviousReviews),
+		PreviousAttempts:  reviewAttemptsFromView(view.PreviousAttempts),
+	}
+}
+
+type commitInspectionFallbackView struct {
+	SHA         string
+	StatCmd     string
+	DiffCmd     string
+	FilesCmd    string
+	ShowPathCmd string
+}
+
+type rangeInspectionFallbackView struct {
+	RangeRef string
+	LogCmd   string
+	StatCmd  string
+	DiffCmd  string
+	FilesCmd string
+	ViewCmd  string
+}
+
+type genericDiffFallbackView struct {
+	ViewCmd string
+}
+
+func fallbackContextFromDiffSection(view diffSectionView) FallbackContext {
+	if view.Fallback == "" {
+		return FallbackContext{}
+	}
+	return FallbackContext{Mode: FallbackModeGeneric, Text: view.Fallback}
+}
+
+func templateContextFromSingleView(view singlePromptView) TemplateContext {
+	return TemplateContext{
+		Review: &ReviewTemplateContext{
+			Kind:     ReviewKindSingle,
+			Optional: reviewOptionalContextFromView(view.Optional),
+			Subject: SubjectContext{Single: &SingleSubjectContext{
+				Commit:  view.Current.Commit,
+				Subject: view.Current.Subject,
+				Author:  view.Current.Author,
+				Message: view.Current.Message,
+			}},
+			Diff:     DiffContext{Heading: view.Diff.Heading, Body: view.Diff.Body},
+			Fallback: fallbackContextFromDiffSection(view.Diff),
+		},
+	}
+}
+
+func templateContextFromRangeView(view rangePromptView) TemplateContext {
+	entries := make([]RangeEntryContext, 0, len(view.Current.Entries))
+	for _, entry := range view.Current.Entries {
+		entries = append(entries, RangeEntryContext(entry))
+	}
+	return TemplateContext{
+		Review: &ReviewTemplateContext{
+			Kind:     ReviewKindRange,
+			Optional: reviewOptionalContextFromView(view.Optional),
+			Subject:  SubjectContext{Range: &RangeSubjectContext{Count: view.Current.Count, Entries: entries}},
+			Diff:     DiffContext{Heading: view.Diff.Heading, Body: view.Diff.Body},
+			Fallback: fallbackContextFromDiffSection(view.Diff),
+		},
+	}
+}
+
+func templateContextFromDirtyView(view dirtyPromptView) TemplateContext {
+	fallback := fallbackContextFromDiffSection(view.Diff)
+	if fallback.Text != "" {
+		fallback.Mode = FallbackModeDirty
+		fallback.Dirty = &DirtyFallbackContext{Body: fallback.Text}
+		fallback.Text = ""
+	}
+	return TemplateContext{
+		Review: &ReviewTemplateContext{
+			Kind:     ReviewKindDirty,
+			Optional: reviewOptionalContextFromView(view.Optional),
+			Subject:  SubjectContext{Dirty: &DirtySubjectContext{Description: view.Current.Description}},
+			Diff:     DiffContext{Heading: view.Diff.Heading, Body: view.Diff.Body},
+			Fallback: fallback,
+		},
+	}
+}
+
+func templateContextFromAddressView(view addressPromptView) TemplateContext {
+	attempts := make([]AddressAttemptTemplateContext, 0, len(view.PreviousAttempts))
+	for _, attempt := range view.PreviousAttempts {
+		attempts = append(attempts, AddressAttemptTemplateContext(attempt))
+	}
+	return TemplateContext{
+		Address: &AddressTemplateContext{
+			ProjectGuidelines: markdownSectionFromView(view.ProjectGuidelines),
+			PreviousAttempts:  attempts,
+			SeverityFilter:    view.SeverityFilter,
+			ReviewFindings:    view.ReviewFindings,
+			OriginalDiff:      view.OriginalDiff,
+			JobID:             view.JobID,
+		},
+	}
+}
+
+func templateContextFromSystemView(view systemPromptView) TemplateContext {
+	return TemplateContext{System: &SystemTemplateContext{NoSkillsInstruction: view.NoSkillsInstruction, CurrentDate: view.CurrentDate}}
+}
+
+func renderSinglePromptContext(ctx TemplateContext) (string, error) {
+	return executePromptTemplate("assembled_single.md.gotmpl", ctx)
+}
+
+func renderRangePromptContext(ctx TemplateContext) (string, error) {
+	return executePromptTemplate("assembled_range.md.gotmpl", ctx)
+}
+
+func renderDirtyPromptContext(ctx TemplateContext) (string, error) {
+	return executePromptTemplate("assembled_dirty.md.gotmpl", ctx)
+}
+
+func renderAddressPromptContext(ctx TemplateContext) (string, error) {
+	return executePromptTemplate("assembled_address.md.gotmpl", ctx)
+}
+
 func renderSinglePrompt(view singlePromptView) (string, error) {
-	return executePromptTemplate("assembled_single.md.gotmpl", view)
+	return renderSinglePromptContext(templateContextFromSingleView(view))
 }
 
 func renderRangePrompt(view rangePromptView) (string, error) {
-	return executePromptTemplate("assembled_range.md.gotmpl", view)
+	return renderRangePromptContext(templateContextFromRangeView(view))
 }
 
 func renderDirtyPrompt(view dirtyPromptView) (string, error) {
-	return executePromptTemplate("assembled_dirty.md.gotmpl", view)
+	return renderDirtyPromptContext(templateContextFromDirtyView(view))
 }
 
 func renderAddressPrompt(view addressPromptView) (string, error) {
-	return executePromptTemplate("assembled_address.md.gotmpl", view)
+	return renderAddressPromptContext(templateContextFromAddressView(view))
 }
 
-func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
-	body, err := renderSinglePrompt(view)
+func fitSinglePromptContext(limit int, ctx TemplateContext) (string, error) {
+	body, err := renderSinglePromptContext(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -160,8 +275,8 @@ func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
 		return body, nil
 	}
 
-	for trimOptionalSections(&view.Optional) {
-		body, err = renderSinglePrompt(view)
+	for ctx.Review != nil && ctx.Review.Optional.TrimNext() {
+		body, err = renderSinglePromptContext(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -170,9 +285,8 @@ func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
 		}
 	}
 
-	if view.Current.Message != "" {
-		view.Current.Message = ""
-		body, err = renderSinglePrompt(view)
+	if ctx.Review != nil && ctx.Review.Subject.TrimSingleMessage() {
+		body, err = renderSinglePromptContext(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -181,9 +295,8 @@ func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
 		}
 	}
 
-	if view.Current.Author != "" {
-		view.Current.Author = ""
-		body, err = renderSinglePrompt(view)
+	if ctx.Review != nil && ctx.Review.Subject.TrimSingleAuthor() {
+		body, err = renderSinglePromptContext(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -192,79 +305,73 @@ func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
 		}
 	}
 
-	for len(body) > limit && view.Current.Subject != "" {
+	for ctx.Review != nil && ctx.Review.Subject.Single != nil && len(body) > limit && ctx.Review.Subject.Single.Subject != "" {
 		overflow := len(body) - limit
-		view.Current.Subject = truncateUTF8(view.Current.Subject, max(0, len(view.Current.Subject)-overflow))
-		body, err = renderSinglePrompt(view)
+		ctx.Review.Subject.TrimSingleSubjectTo(max(0, len(ctx.Review.Subject.Single.Subject)-overflow))
+		body, err = renderSinglePromptContext(ctx)
 		if err != nil {
 			return "", err
 		}
 	}
 
+	return hardCapPrompt(body, limit), nil
+}
+
+func fitSinglePrompt(limit int, view singlePromptView) (string, error) {
+	return fitSinglePromptContext(limit, templateContextFromSingleView(view))
+}
+
+func fitRangePromptContext(limit int, ctx TemplateContext) (string, error) {
+	_, body, err := trimRangePromptContext(limit, ctx)
+	if err != nil {
+		return "", err
+	}
 	return hardCapPrompt(body, limit), nil
 }
 
 func fitRangePrompt(limit int, view rangePromptView) (string, error) {
-	_, body, err := trimRangePromptView(limit, view)
-	if err != nil {
-		return "", err
-	}
-	return hardCapPrompt(body, limit), nil
+	return fitRangePromptContext(limit, templateContextFromRangeView(view))
 }
 
-func cloneCommitRangeSectionView(view commitRangeSectionView) commitRangeSectionView {
-	cloned := view
-	if len(view.Entries) == 0 {
-		return cloned
-	}
-	cloned.Entries = append([]commitRangeEntryView(nil), view.Entries...)
-	return cloned
-}
-
-func trimRangePromptView(limit int, view rangePromptView) (rangePromptView, string, error) {
-	view.Current = cloneCommitRangeSectionView(view.Current)
-	body, err := renderRangePrompt(view)
+func trimRangePromptContext(limit int, ctx TemplateContext) (TemplateContext, string, error) {
+	ctx = ctx.Clone()
+	body, err := renderRangePromptContext(ctx)
 	if err != nil {
-		return rangePromptView{}, "", err
+		return TemplateContext{}, "", err
 	}
 	if len(body) <= limit {
-		return view, body, nil
+		return ctx, body, nil
 	}
 
-	for trimOptionalSections(&view.Optional) {
-		body, err = renderRangePrompt(view)
+	for ctx.Review != nil && ctx.Review.Optional.TrimNext() {
+		body, err = renderRangePromptContext(ctx)
 		if err != nil {
-			return rangePromptView{}, "", err
+			return TemplateContext{}, "", err
 		}
 		if len(body) <= limit {
-			return view, body, nil
+			return ctx, body, nil
 		}
 	}
 
-	for i := len(view.Current.Entries) - 1; i >= 0 && len(body) > limit; i-- {
-		if view.Current.Entries[i].Subject == "" {
-			continue
-		}
-		view.Current.Entries[i].Subject = ""
-		body, err = renderRangePrompt(view)
+	for ctx.Review != nil && len(body) > limit && ctx.Review.Subject.BlankNextRangeSubject() {
+		body, err = renderRangePromptContext(ctx)
 		if err != nil {
-			return rangePromptView{}, "", err
+			return TemplateContext{}, "", err
 		}
 	}
 
-	for len(view.Current.Entries) > 0 && len(body) > limit {
-		view.Current.Entries = view.Current.Entries[:len(view.Current.Entries)-1]
-		body, err = renderRangePrompt(view)
+	for ctx.Review != nil && len(body) > limit && ctx.Review.Subject.DropLastRangeEntry() {
+		body, err = renderRangePromptContext(ctx)
 		if err != nil {
-			return rangePromptView{}, "", err
+			return TemplateContext{}, "", err
 		}
 	}
 
-	return view, body, nil
+	return ctx, body, nil
 }
 
-func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
-	body, err := renderDirtyPrompt(view)
+func fitDirtyPromptContext(limit int, ctx TemplateContext) (string, error) {
+	body, err := renderDirtyPromptContext(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -272,8 +379,8 @@ func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
 		return body, nil
 	}
 
-	for trimOptionalSections(&view.Optional) {
-		body, err = renderDirtyPrompt(view)
+	for ctx.Review != nil && ctx.Review.Optional.TrimNext() {
+		body, err = renderDirtyPromptContext(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -285,24 +392,27 @@ func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
 	return hardCapPrompt(body, limit), nil
 }
 
+func fitDirtyPrompt(limit int, view dirtyPromptView) (string, error) {
+	return fitDirtyPromptContext(limit, templateContextFromDirtyView(view))
+}
+
 func trimOptionalSections(view *optionalSectionsView) bool {
-	switch {
-	case len(view.PreviousAttempts) > 0:
-		view.PreviousAttempts = nil
-	case len(view.PreviousReviews) > 0:
-		view.PreviousReviews = nil
-	case view.AdditionalContext != "":
-		view.AdditionalContext = ""
-	case view.ProjectGuidelines != nil:
-		view.ProjectGuidelines = nil
-	default:
+	if view == nil {
 		return false
 	}
+	ctx := reviewOptionalContextFromView(*view)
+	if !ctx.TrimNext() {
+		return false
+	}
+	view.ProjectGuidelines = buildProjectGuidelinesSectionView(ctx.ProjectGuidelinesBody())
+	view.AdditionalContext = ctx.AdditionalContext
+	view.PreviousReviews = previousReviewViewsFromTemplateContext(ctx.PreviousReviews)
+	view.PreviousAttempts = reviewAttemptViewsFromTemplateContext(ctx.PreviousAttempts)
 	return true
 }
 
 func renderSystemPrompt(name string, view systemPromptView) (string, error) {
-	return executePromptTemplate(name, view)
+	return executePromptTemplate(name, templateContextFromSystemView(view))
 }
 
 func renderAddressPromptFromSections(view addressPromptView) (string, error) {
@@ -346,7 +456,11 @@ func renderDirtyChangesSection(view dirtyChangesSectionView) (string, error) {
 }
 
 func renderDiffBlock(view diffSectionView) (string, error) {
-	return executePromptTemplate("diff_block", view)
+	ctx := ReviewTemplateContext{
+		Diff:     DiffContext{Heading: view.Heading, Body: view.Body},
+		Fallback: fallbackContextFromDiffSection(view),
+	}
+	return executePromptTemplate("diff_block", ctx)
 }
 
 func renderInlineDiff(body string) (string, error) {
@@ -356,6 +470,22 @@ func renderInlineDiff(body string) (string, error) {
 	return executePromptTemplate("inline_diff", inlineDiffView{Body: body})
 }
 
+func renderCommitInspectionFallback(name string, view commitInspectionFallbackView) (string, error) {
+	return executePromptTemplate(name, view)
+}
+
+func renderRangeInspectionFallback(name string, view rangeInspectionFallbackView) (string, error) {
+	return executePromptTemplate(name, view)
+}
+
+func renderGenericCommitFallback(viewCmd string) (string, error) {
+	return executePromptTemplate("generic_commit_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
+}
+
+func renderGenericRangeFallback(viewCmd string) (string, error) {
+	return executePromptTemplate("generic_range_fallback", genericDiffFallbackView{ViewCmd: viewCmd})
+}
+
 func renderDirtyTruncatedDiffFallback(body string) (string, error) {
 	if body != "" && !strings.HasSuffix(body, "\n") {
 		body += "\n"
@@ -363,7 +493,22 @@ func renderDirtyTruncatedDiffFallback(body string) (string, error) {
 	return executePromptTemplate("dirty_truncated_diff_fallback", dirtyTruncatedDiffFallbackView{Body: body})
 }
 
-func previousReviewViews(contexts []ReviewContext) []previousReviewView {
+func previousReviewViewsFromTemplateContext(contexts []PreviousReviewTemplateContext) []previousReviewView {
+	views := make([]previousReviewView, 0, len(contexts))
+	for _, ctx := range contexts {
+		view := previousReviewView{Commit: ctx.Commit, Available: ctx.Available, Output: ctx.Output}
+		if len(ctx.Comments) > 0 {
+			view.Comments = make([]reviewCommentView, 0, len(ctx.Comments))
+			for _, comment := range ctx.Comments {
+				view.Comments = append(view.Comments, reviewCommentView(comment))
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func previousReviewViews(contexts []HistoricalReviewContext) []previousReviewView {
 	views := make([]previousReviewView, 0, len(contexts))
 	for _, ctx := range contexts {
 		view := previousReviewView{Commit: git.ShortSHA(ctx.SHA)}
@@ -382,39 +527,8 @@ func previousReviewViews(contexts []ReviewContext) []previousReviewView {
 	return views
 }
 
-func renderPreviousReviewsFromContexts(contexts []ReviewContext) (string, error) {
+func renderPreviousReviewsFromContexts(contexts []HistoricalReviewContext) (string, error) {
 	return renderOptionalSectionsFromView(optionalSectionsView{PreviousReviews: previousReviewViews(contexts)})
-}
-
-func inRangeReviewViews(contexts []ReviewContext) []inRangeReviewView {
-	views := make([]inRangeReviewView, 0, len(contexts))
-	for _, ctx := range contexts {
-		if ctx.Review == nil {
-			continue
-		}
-		verdict := storage.ParseVerdict(ctx.Review.Output)
-		verdictLabel := "unknown"
-		switch verdict {
-		case "P":
-			verdictLabel = "passed"
-		case "F":
-			verdictLabel = "failed"
-		}
-		view := inRangeReviewView{
-			Commit:  git.ShortSHA(ctx.SHA),
-			Agent:   ctx.Review.Agent,
-			Verdict: verdictLabel,
-			Output:  ctx.Review.Output,
-		}
-		if len(ctx.Responses) > 0 {
-			view.Comments = make([]reviewCommentView, 0, len(ctx.Responses))
-			for _, resp := range ctx.Responses {
-				view.Comments = append(view.Comments, reviewCommentView{Responder: resp.Responder, Response: resp.Response})
-			}
-		}
-		views = append(views, view)
-	}
-	return views
 }
 
 func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
@@ -436,6 +550,21 @@ func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
 
 func renderPreviousAttemptsFromReviews(reviews []storage.Review) (string, error) {
 	return renderOptionalSectionsFromView(optionalSectionsView{PreviousAttempts: reviewAttemptViews(reviews)})
+}
+
+func reviewAttemptViewsFromTemplateContext(attempts []ReviewAttemptTemplateContext) []reviewAttemptView {
+	views := make([]reviewAttemptView, 0, len(attempts))
+	for _, attempt := range attempts {
+		view := reviewAttemptView{Label: attempt.Label, Agent: attempt.Agent, When: attempt.When, Output: attempt.Output}
+		if len(attempt.Comments) > 0 {
+			view.Comments = make([]reviewCommentView, 0, len(attempt.Comments))
+			for _, comment := range attempt.Comments {
+				view.Comments = append(view.Comments, reviewCommentView(comment))
+			}
+		}
+		views = append(views, view)
+	}
+	return views
 }
 
 func previousAttemptViewsFromContexts(attempts []reviewAttemptContext) []reviewAttemptView {
