@@ -1493,7 +1493,12 @@ func IsMarkerOnlyOutput(output string) bool {
 	// Strip a trailing period.
 	s = strings.TrimSpace(strings.TrimSuffix(s, "."))
 
-	return s == SeverityThresholdMarker
+	// Collapse any internal whitespace models might inject
+	sNoSpace := strings.ReplaceAll(s, " ", "")
+	sNoSpace = strings.ReplaceAll(sNoSpace, "\n", "")
+	sNoSpace = strings.ReplaceAll(sNoSpace, "\r", "")
+	sNoSpace = strings.ReplaceAll(sNoSpace, "\t", "")
+	return sNoSpace == SeverityThresholdMarker
 }
 
 // SeverityInstruction returns a prompt instruction telling the agent
