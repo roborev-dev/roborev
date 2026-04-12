@@ -3345,6 +3345,8 @@ func TestIsMarkerOnlyOutput(t *testing.T) {
 		{"marker plus severity label", "SEVERITY_THRESHOLD_MET\n- High: critical bug", false},
 		{"different text only", "All good, no issues.", false},
 		{"marker substring inside another word", "PRESEVERITY_THRESHOLD_MET", false},
+		{"marker split by newline (gemini quirk)", "SEVERITY_THRESHOLD\n_MET", true},
+		{"marker split by double newline (gemini quirk)", "SEVERITY_THRESHOLD\n\n_MET", true},
 	}
 
 	for _, tt := range tests {
