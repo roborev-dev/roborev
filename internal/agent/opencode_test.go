@@ -223,6 +223,36 @@ func TestOpenCodeReviewStderrNotStreamedToOutput(t *testing.T) {
 	assertNotContains(t, outStr, "warning: something")
 }
 
+func TestOpenCodeReviewStderrPreservedInError(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	// StreamStderr is disabled for opencode, so stderr does not
+	// appear in the live log on success. On non-zero exit the
+	// captured stderr must still reach the user via the returned
+	// error, otherwise failure diagnostics would be lost.
+	stdoutLines := []string{makeTextEvent("Partial review")}
+	stderrLines := []string{
+		"Performing one time database migration, may take a few minutes...",
+		"sqlite-migration:done",
+		"Error: authentication token expired",
+	}
+
+	_, _, _, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+			StderrLines:  stderrLines,
+			ExitCode:     1,
+		},
+		Prompt: "prompt",
+	})
+	require.Error(t, err)
+
+	msg := err.Error()
+	assertContains(t, msg, "Error: authentication token expired")
+}
+
 func TestOpenCodeReviewNilOutput(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
