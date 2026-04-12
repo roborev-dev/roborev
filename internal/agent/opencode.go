@@ -102,13 +102,18 @@ func (a *OpenCodeAgent) Review(
 	args := a.buildArgs()
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
-		Name:         "opencode",
-		Command:      a.Command,
-		Args:         args,
-		Dir:          repoPath,
-		Stdin:        strings.NewReader(prompt),
-		Output:       output,
-		StreamStderr: true,
+		Name:    "opencode",
+		Command: a.Command,
+		Args:    args,
+		Dir:     repoPath,
+		Stdin:   strings.NewReader(prompt),
+		Output:  output,
+		// opencode prints sqlite-migration progress to stderr
+		// on every invocation, drowning the live log with
+		// noise. Skip stderr streaming; the full stderr is
+		// still captured by runStreamingCLI and surfaced via
+		// formatDetailedCLIWaitError on non-zero exit.
+		StreamStderr: false,
 		DrainStdout:  true,
 		Parse:        parseOpenCodeJSON,
 	})
