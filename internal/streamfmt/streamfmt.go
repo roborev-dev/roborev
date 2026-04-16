@@ -238,15 +238,64 @@ type contentBlock struct {
 	Input json.RawMessage `json:"input,omitempty"`
 }
 
-// geminiToolNames maps Gemini tool names to display names.
-var geminiToolNames = map[string]string{
-	"read_file":         "Read",
-	"replace":           "Edit",
-	"write_file":        "Write",
-	"run_shell_command": "Bash",
-	"grep":              "Grep",
-	"glob":              "Glob",
-	"list_dir":          "Glob",
+// toolAliases maps case- and underscore-normalized tool names to a
+// canonical display name. Covers the variants emitted by Claude Code,
+// Gemini CLI, opencode, and similar agents so the renderer does not
+// need per-agent special cases for cosmetic naming differences.
+var toolAliases = map[string]string{
+	"read":            "Read",
+	"readfile":        "Read",
+	"edit":            "Edit",
+	"multiedit":       "Edit",
+	"replace":         "Edit",
+	"write":           "Write",
+	"writefile":       "Write",
+	"bash":            "Bash",
+	"runshellcommand": "Bash",
+	"shell":           "Bash",
+	"grep":            "Grep",
+	"search":          "Grep",
+	"glob":            "Glob",
+	"listdir":         "Glob",
+	"list":            "List",
+	"ls":              "List",
+	"webfetch":        "WebFetch",
+	"fetch":           "WebFetch",
+}
+
+// normalizeToolKey lowercases s and strips underscores/dashes so
+// "file_path", "filePath", "FILE-PATH", and "FilePath" all collapse
+// to the same lookup key.
+func normalizeToolKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '_' || r == '-' {
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}
+
+// canonicalToolName returns the display name for a tool identifier
+// (e.g. "read_file" -> "Read") or the empty string if no alias is
+// registered.
+func canonicalToolName(name string) string {
+	return toolAliases[normalizeToolKey(name)]
+}
+
+// normalizeFields returns a copy of fields with each key normalized
+// via normalizeToolKey, enabling case- and separator-insensitive
+// lookups while preserving the raw JSON values.
+func normalizeFields(
+	fields map[string]json.RawMessage,
+) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(fields))
+	for k, v := range fields {
+		out[normalizeToolKey(k)] = v
+	}
+	return out
 }
 
 func (f *Formatter) processLine(line string) {
@@ -287,11 +336,7 @@ func (f *Formatter) processLine(line string) {
 		case ev.Part != nil:
 			f.processOpenCodePart(ev.Type, ev.Part)
 		case ev.Type == "tool_use" && ev.ToolName != "":
-			displayName := geminiToolNames[ev.ToolName]
-			if displayName == "" {
-				displayName = ev.ToolName
-			}
-			f.formatToolUse(displayName, ev.Parameters)
+			f.formatToolUse(ev.ToolName, ev.Parameters)
 		}
 	case "step_start", "step_finish":
 		// OpenCode lifecycle events — suppress
@@ -429,37 +474,43 @@ func (f *Formatter) processAssistantContent(raw json.RawMessage) {
 
 func (f *Formatter) formatToolUse(name string, input json.RawMessage) {
 	name = sanitizeControl(name)
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(input, &fields); err != nil {
-		f.writeTool(name, "")
-		return
+	display := canonicalToolName(name)
+	if display == "" {
+		display = name
 	}
 
-	switch name {
-	case "Read":
-		f.writeTool(name, jsonString(fields["file_path"]))
-	case "Edit", "MultiEdit":
-		f.writeTool(name, jsonString(fields["file_path"]))
-	case "Write":
-		f.writeTool(name, jsonString(fields["file_path"]))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(input, &raw); err != nil || len(raw) == 0 {
+		f.writeTool(display, "")
+		return
+	}
+	fields := normalizeFields(raw)
+
+	switch display {
+	case "Read", "Edit", "Write":
+		f.writeTool(display, jsonString(fields["filepath"]))
 	case "Bash":
 		cmd := jsonString(fields["command"])
 		if len(cmd) > 80 {
 			cmd = cmd[:77] + "..."
 		}
-		f.writeTool(name, cmd)
+		f.writeTool(display, cmd)
 	case "Grep":
 		pattern := jsonString(fields["pattern"])
 		path := jsonString(fields["path"])
 		if path != "" {
-			f.writeTool(name, pattern+"  "+path)
+			f.writeTool(display, pattern+"  "+path)
 		} else {
-			f.writeTool(name, pattern)
+			f.writeTool(display, pattern)
 		}
 	case "Glob":
-		f.writeTool(name, jsonString(fields["pattern"]))
+		f.writeTool(display, jsonString(fields["pattern"]))
+	case "List":
+		f.writeTool(display, jsonString(fields["path"]))
+	case "WebFetch":
+		f.writeTool(display, jsonString(fields["url"]))
 	default:
-		f.writeTool(name, "")
+		f.writeTool(display, "")
 	}
 }
 

@@ -312,8 +312,8 @@ func eventGeminiResult(status string) string {
 }
 
 type openCodeState struct {
-	Status string     `json:"status"`
-	Input  *toolInput `json:"input,omitempty"`
+	Status string `json:"status"`
+	Input  any    `json:"input,omitempty"`
 }
 
 type openCodePart struct {
@@ -724,6 +724,102 @@ func TestFormatter_OpenCode(t *testing.T) {
 				}),
 			},
 			contains: []string{"Read   internal/agent/opencode.go"},
+		},
+		{
+			// opencode 1.4 emits lowercase tool names and camelCase
+			// input fields. Real events sampled from
+			// `opencode run --format json` on 2026-04-16.
+			name: "LowercaseNamesCamelCaseFields",
+			events: []string{
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "read", ID: "tc_read",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"filePath": "main.go",
+							"offset":   1,
+							"limit":    2000,
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "grep", ID: "tc_grep",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"pattern": "TODO",
+							"path":    "internal/",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "glob", ID: "tc_glob",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"pattern": "**/*.go",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "bash", ID: "tc_bash",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"command": "go test ./...",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "edit", ID: "tc_edit",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"filePath":  "a.go",
+							"oldString": "x",
+							"newString": "y",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "write", ID: "tc_write",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"filePath": "new.txt",
+							"content":  "hi",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "webfetch", ID: "tc_wf",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"url": "https://example.com",
+						},
+					},
+				}),
+				eventOpenCode("tool_use", openCodePart{
+					Type: "tool", Tool: "list", ID: "tc_list",
+					State: &openCodeState{
+						Status: "completed",
+						Input: map[string]any{
+							"path": "internal/streamfmt",
+						},
+					},
+				}),
+			},
+			contains: []string{
+				"Read   main.go",
+				"Grep   TODO  internal/",
+				"Glob   **/*.go",
+				"Bash   go test ./...",
+				"Edit   a.go",
+				"Write  new.txt",
+				"WebFetch https://example.com",
+				"List   internal/streamfmt",
+			},
 		},
 	}
 
