@@ -115,7 +115,7 @@ func TestParseModel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			m, u, err := parseModel(tt.spec)
-			assert.NoError(err)
+			require.NoError(t, err)
 			assert.Equal(tt.wantModel, m)
 			assert.Equal(tt.wantBaseURL, u)
 		})
@@ -144,7 +144,7 @@ func TestParseModel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			_, _, err := parseModel(tt.spec)
-			assert.Error(err)
+			require.Error(t, err)
 			assert.Contains(err.Error(), tt.errSubstr)
 		})
 	}
