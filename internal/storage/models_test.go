@@ -186,6 +186,20 @@ func TestIsReviewJob(t *testing.T) {
 	}
 }
 
+func TestJobStatusSkipped(t *testing.T) {
+	assert.Equal(t, storage.JobStatus("skipped"), storage.JobStatusSkipped)
+}
+
+func TestJobTypeClassify(t *testing.T) {
+	assert.Equal(t, "classify", storage.JobTypeClassify)
+}
+
+func TestReviewJobHasSkipReason(t *testing.T) {
+	j := storage.ReviewJob{}
+	j.SkipReason = "trivial diff"
+	assert.Equal(t, "trivial diff", j.SkipReason)
+}
+
 func TestUsesStoredPrompt(t *testing.T) {
 	assert := assert.New(t)
 

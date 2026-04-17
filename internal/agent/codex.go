@@ -1,13 +1,16 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -393,3 +396,72 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 func init() {
 	Register(NewCodexAgent(""))
 }
+
+// classifyArgs builds argv for `codex exec` in schema mode.
+func (a *CodexAgent) classifyArgs(schemaPath, outPath string) []string {
+	args := []string{"exec",
+		"--output-schema", schemaPath,
+		"--output-last-message", outPath,
+		"--sandbox", "read-only",
+	}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	return args
+}
+
+// readCodexLastMessage reads codex's last-message output file and validates
+// that it contains valid JSON.
+func readCodexLastMessage(path string) (json.RawMessage, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read codex output: %w", err)
+	}
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("codex last-message file is empty")
+	}
+	if !json.Valid(trimmed) {
+		return nil, fmt.Errorf("codex last-message is not valid JSON: %q", string(trimmed))
+	}
+	return json.RawMessage(trimmed), nil
+}
+
+// ClassifyWithSchema runs a single constrained codex exec invocation.
+func (a *CodexAgent) ClassifyWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	tmp, err := os.MkdirTemp("", "roborev-classify-*")
+	if err != nil {
+		return nil, fmt.Errorf("mkdir temp: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+
+	schemaPath := filepath.Join(tmp, "schema.json")
+	outPath := filepath.Join(tmp, "result.json")
+	if err := os.WriteFile(schemaPath, schema, 0o600); err != nil {
+		return nil, fmt.Errorf("write schema: %w", err)
+	}
+
+	args := a.classifyArgs(schemaPath, outPath)
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(prompt)
+
+	if out != nil {
+		cmd.Stdout = out
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("codex exited: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return readCodexLastMessage(outPath)
+}
+
+// Compile-time assertion that CodexAgent implements SchemaAgent.
+var _ SchemaAgent = (*CodexAgent)(nil)

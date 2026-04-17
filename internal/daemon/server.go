@@ -1195,6 +1195,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	job.RepoPath = repo.RootPath
 	job.RepoName = repo.Name
 
+	// Auto-design-review integration: opportunistic, never fails the request.
+	// Only fires for explicit single-commit / range / dirty review jobs whose
+	// review_type is the default ("review"); explicit --type design from the
+	// caller is left alone, and so are fix/task/compact/classify rows.
+	if (job.JobType == storage.JobTypeReview || job.JobType == storage.JobTypeRange || job.JobType == storage.JobTypeDirty) && config.IsDefaultReviewType(req.ReviewType) {
+		if err := s.maybeDispatchAutoDesign(r.Context(), job); err != nil {
+			log.Printf("auto-design dispatch failed: %v", err)
+		}
+	}
+
 	// Log the enqueue activity
 	if s.activityLog != nil {
 		s.activityLog.Log(

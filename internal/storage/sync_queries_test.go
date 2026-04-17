@@ -427,3 +427,28 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	assert.False(t, foundLegacyResp, "Expected legacy response (job_id IS NULL) to be EXCLUDED from sync")
 
 }
+
+func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-sync-skipped").ID
+	commitID := createCommit(t, db, repoID, "deadf00d").ID
+	_, err := db.Exec(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, review_type, uuid, source_machine_id, updated_at)
+		VALUES (?, ?, 'deadf00d', 'skipped', 'design', 'test-uuid-1', 'test-machine', datetime('now'))
+	`, repoID, commitID)
+	require.NoError(t, err)
+
+	jobs, err := db.GetJobsToSync("test-machine", 100)
+	require.NoError(t, err)
+	found := false
+	for _, j := range jobs {
+		if j.UUID == "test-uuid-1" {
+			found = true
+			assert.Equal(t, "skipped", j.Status)
+		}
+	}
+	assert.True(t, found, "expected skipped job to be syncable")
+}

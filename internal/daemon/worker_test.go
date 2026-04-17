@@ -1699,3 +1699,85 @@ func TestProcessJob_MinSeverityJobOverrideWins(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.Contains(t, capturedPrompt, "Critical")
 }
+
+// createAndClaimClassifyJob enqueues a classify job and claims it with testWorkerID.
+func (c *workerTestContext) createAndClaimClassifyJob(
+	t *testing.T, sha, subject, diff string,
+) *storage.ReviewJob {
+	t.Helper()
+	commit, err := c.DB.GetOrCreateCommit(c.Repo.ID, sha, "Author", subject, time.Now())
+	require.NoError(t, err)
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      c.Repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      sha,
+		Agent:       "test",
+		JobType:     storage.JobTypeClassify,
+		ReviewType:  "design",
+		DiffContent: diff,
+		Prompt:      subject,
+	})
+	require.NoError(t, err)
+	// Mark the job as auto_design source so it participates in dedup.
+	_, err = c.DB.Exec(`UPDATE review_jobs SET source = 'auto_design' WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+	claimed, err := c.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	return claimed
+}
+
+func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
+	tc := newWorkerTestContext(t, 0)
+
+	job := tc.createAndClaimClassifyJob(t, "feedcafe", "feat: new package", "+lots of new code\n")
+
+	SetTestClassifierVerdict(true, "new package detected")
+	t.Cleanup(func() { SetTestClassifierVerdict(false, "") })
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	after, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal("review", after.JobType)
+	assert.Equal(storage.JobStatusQueued, after.Status)
+	assert.Equal("design", after.ReviewType)
+	assert.Equal("auto_design", after.Source, "source preserved across promotion")
+	assert.Empty(after.WorkerID, "worker_id cleared so a new worker can claim")
+	assert.Nil(after.StartedAt, "started_at cleared")
+
+	var n int
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT COUNT(*) FROM review_jobs rj JOIN commits c ON rj.commit_id = c.id
+		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
+		tc.Repo.ID, "feedcafe").Scan(&n))
+	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
+}
+
+func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
+	tc := newWorkerTestContext(t, 0)
+
+	job := tc.createAndClaimClassifyJob(t, "beefc0de", "fix: local rename", "+x\n")
+
+	SetTestClassifierVerdict(false, "local rename only")
+	t.Cleanup(func() { SetTestClassifierVerdict(false, "") })
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	after, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal("review", after.JobType, "job_type flipped from classify to review")
+	assert.Equal(storage.JobStatusSkipped, after.Status)
+	assert.Equal("design", after.ReviewType)
+	assert.Equal("auto_design", after.Source)
+	assert.Equal("local rename only", after.SkipReason)
+
+	var n int
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT COUNT(*) FROM review_jobs rj JOIN commits c ON rj.commit_id = c.id
+		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
+		tc.Repo.ID, "beefc0de").Scan(&n))
+	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
+}

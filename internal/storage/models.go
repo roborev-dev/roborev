@@ -33,6 +33,7 @@ const (
 	JobStatusCanceled JobStatus = "canceled"
 	JobStatusApplied  JobStatus = "applied"
 	JobStatusRebased  JobStatus = "rebased"
+	JobStatusSkipped  JobStatus = "skipped"
 )
 
 // JobType classifies what kind of work a review job represents.
@@ -44,6 +45,7 @@ const (
 	JobTypeInsights = "insights" // Historical review insights analysis
 	JobTypeCompact  = "compact"  // Consolidated review verification
 	JobTypeFix      = "fix"      // Background fix using worktree
+	JobTypeClassify = "classify" // Routing classifier that decides whether to enqueue a design review
 )
 
 type ReviewJob struct {
@@ -74,6 +76,8 @@ type ReviewJob struct {
 	ReviewType        string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
 	PatchID           string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix      string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	SkipReason        string     `json:"skip_reason,omitempty"`   // Reason a design review was skipped (status=skipped only)
+	Source            string     `json:"source,omitempty"`        // "auto_design" for auto-dispatched rows; empty for explicit/user rows
 	ParentJobID       *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
 	Patch             *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
 	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
@@ -225,6 +229,18 @@ type Response struct {
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
 }
 
+// AutoDesignStatus carries per-outcome counters for the automatic
+// design-review router. Only emitted when the feature is effectively
+// enabled for at least one repo on the daemon.
+type AutoDesignStatus struct {
+	Enabled             bool  `json:"enabled"`
+	TriggeredHeuristic  int64 `json:"triggered_heuristic"`
+	SkippedHeuristic    int64 `json:"skipped_heuristic"`
+	TriggeredClassifier int64 `json:"triggered_classifier"`
+	SkippedClassifier   int64 `json:"skipped_classifier"`
+	ClassifierFailed    int64 `json:"classifier_failed"`
+}
+
 type DaemonStatus struct {
 	Version             string `json:"version"`
 	QueuedJobs          int    `json:"queued_jobs"`
@@ -234,11 +250,14 @@ type DaemonStatus struct {
 	CanceledJobs        int    `json:"canceled_jobs"`
 	AppliedJobs         int    `json:"applied_jobs"`
 	RebasedJobs         int    `json:"rebased_jobs"`
+	SkippedJobs         int    `json:"skipped_jobs"`
 	ActiveWorkers       int    `json:"active_workers"`
 	MaxWorkers          int    `json:"max_workers"`
 	MachineID           string `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
 	ConfigReloadedAt    string `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
 	ConfigReloadCounter uint64 `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
+
+	AutoDesign *AutoDesignStatus `json:"auto_design,omitempty"` // Auto design review counters; nil when disabled everywhere
 }
 
 // HealthStatus represents the overall daemon health

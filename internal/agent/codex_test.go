@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -361,4 +362,37 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not emit valid --json events")
 	assert.ErrorIs(t, err, errNoCodexJSON)
+}
+
+func TestCodexClassify_BuildsArgs(t *testing.T) {
+	a := NewCodexAgent("codex")
+	got := a.classifyArgs("/tmp/schema.json", "/tmp/out.json")
+	assert := assert.New(t)
+	assert.Contains(got, "exec")
+	assert.Contains(got, "--output-schema")
+	assert.Contains(got, "/tmp/schema.json")
+	assert.Contains(got, "--output-last-message")
+	assert.Contains(got, "/tmp/out.json")
+}
+
+func TestCodexClassify_ReadsLastMessage(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "result.json")
+	require.NoError(t, os.WriteFile(out, []byte(`{"design_review":false,"reason":"local fix"}`), 0o644))
+	got, err := readCodexLastMessage(out)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"design_review":false,"reason":"local fix"}`, string(got))
+}
+
+func TestCodexClassify_EmptyResultErrors(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "result.json")
+	require.NoError(t, os.WriteFile(out, []byte(``), 0o644))
+	_, err := readCodexLastMessage(out)
+	assert.Error(t, err)
+}
+
+func TestCodexClassify_MissingFileErrors(t *testing.T) {
+	_, err := readCodexLastMessage("/tmp/does-not-exist-for-classify-test")
+	assert.Error(t, err)
 }

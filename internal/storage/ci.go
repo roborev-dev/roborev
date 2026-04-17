@@ -72,8 +72,9 @@ type BatchReviewResult struct {
 	Agent      string `json:"agent"`
 	ReviewType string `json:"review_type"`
 	Output     string `json:"output"`
-	Status     string `json:"status"` // "done" or "failed"
+	Status     string `json:"status"` // "done", "failed", "skipped", etc.
 	Error      string `json:"error"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // HasCIBatch checks if a batch already exists for this PR at this HEAD SHA.
@@ -267,7 +268,7 @@ func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 // GetBatchReviews returns all review results for a batch by joining through ci_pr_batch_jobs.
 func (db *DB) GetBatchReviews(batchID int64) ([]BatchReviewResult, error) {
 	rows, err := db.Query(`
-		SELECT bj.job_id, j.agent, j.review_type, COALESCE(rv.output, ''), j.status, COALESCE(j.error, '')
+		SELECT bj.job_id, j.agent, j.review_type, COALESCE(rv.output, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, '')
 		FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -281,7 +282,7 @@ func (db *DB) GetBatchReviews(batchID int64) ([]BatchReviewResult, error) {
 	var results []BatchReviewResult
 	for rows.Next() {
 		var r BatchReviewResult
-		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.Output, &r.Status, &r.Error); err != nil {
+		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.Output, &r.Status, &r.Error, &r.SkipReason); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -433,7 +434,7 @@ func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status NOT IN ('done', 'failed', 'canceled')
+			AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj WHERE bj.batch_id = b.id
@@ -579,7 +580,7 @@ func (db *DB) GetNonTerminalBatchJobIDs(batchID int64) ([]int64, error) {
 		SELECT bj.job_id FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		WHERE bj.batch_id = ?
-		AND j.status NOT IN ('done', 'failed', 'canceled')`,
+		AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped')`,
 		batchID)
 	if err != nil {
 		return nil, err
@@ -621,7 +622,7 @@ func (db *DB) HasMeaningfulBatchResult(batchID int64) (bool, error) {
 		SELECT COUNT(*) FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		WHERE bj.batch_id = ?
-		AND j.status IN ('done', 'failed')`,
+		AND j.status IN ('done', 'failed', 'skipped')`,
 		batchID).Scan(&count)
 	if err != nil {
 		return false, err
@@ -646,13 +647,13 @@ func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status IN ('done', 'failed')
+			AND j.status IN ('done', 'failed', 'skipped')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status NOT IN ('done', 'failed', 'canceled')
+			AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped')
 		)`, secs)
 	if err != nil {
 		return nil, err
@@ -687,7 +688,7 @@ func (db *DB) ReconcileBatch(batchID int64) (*CIPRBatch, error) {
 	var completed, failed int
 	err = tx.QueryRow(`
 		SELECT
-			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status IN ('done','skipped') THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status IN ('failed', 'canceled') THEN 1 ELSE 0 END), 0)
 		FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id

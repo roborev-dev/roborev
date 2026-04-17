@@ -710,7 +710,7 @@ func TestCancelJob(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-count")
 		db.CancelJob(job.ID)
 
-		_, _, _, _, canceled, _, _, err := db.GetJobCounts()
+		_, _, _, _, canceled, _, _, _, err := db.GetJobCounts()
 		require.NoError(t, err, "GetJobCounts failed: %v")
 
 		assert.GreaterOrEqual(t, canceled, 1)
@@ -1312,4 +1312,284 @@ func TestMinSeverityNormalizesOnWrite(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(job.MinSeverity)
+}
+
+func TestReenqueueJob_AcceptsSkipped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-rerun-skipped").ID
+	commitID := createCommit(t, db, repoID, "feed").ID
+
+	res, err := db.Exec(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, review_type, skip_reason)
+		VALUES (?, ?, 'feed', 'codex', 'skipped', 'design', 'trivial')
+	`, repoID, commitID)
+	require.NoError(t, err)
+	jobID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	require.NoError(t, db.ReenqueueJob(jobID, ReenqueueOpts{}))
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, j.Status)
+}
+
+func seedRunningClassify(t *testing.T, db *DB, path, sha, workerID string) int64 {
+	t.Helper()
+	repo := createRepo(t, db, path)
+	commit := createCommit(t, db, repo.ID, sha)
+	var jobID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
+		VALUES (?, ?, ?, 'running', 'classify', 'design', 'auto_design', ?, datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, commit.ID, sha, workerID).Scan(&jobID))
+	return jobID
+}
+
+func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	jobID := seedRunningClassify(t, db, "/tmp/repo-promote", "abc", "w1")
+
+	_, err := db.Exec(`UPDATE review_jobs SET error = ? WHERE id = ?`,
+		"classifier retry: timeout", jobID)
+	require.NoError(t, err)
+
+	require.NoError(t, db.PromoteClassifyToDesignReview(jobID, "w1"))
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, j.Status)
+	assert.Equal(t, "review", j.JobType)
+	assert.Equal(t, "design", j.ReviewType)
+	assert.Equal(t, "auto_design", j.Source)
+	assert.Empty(t, j.WorkerID, "worker_id cleared so a new worker can claim")
+	assert.Nil(t, j.StartedAt, "started_at cleared")
+	assert.Empty(t, j.Error, "error cleared")
+}
+
+func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	jobID := seedRunningClassify(t, db, "/tmp/repo-promote-stale", "abc", "w1")
+
+	err := db.PromoteClassifyToDesignReview(jobID, "w2")
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusRunning, j.Status, "row unchanged by stale worker")
+	assert.Equal(t, "classify", j.JobType)
+}
+
+func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-promote-cancel")
+	commit := createCommit(t, db, repo.ID, "abc")
+	var jobID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, enqueued_at, updated_at)
+		VALUES (?, ?, 'abc', 'canceled', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, commit.ID).Scan(&jobID))
+
+	err := db.PromoteClassifyToDesignReview(jobID, "w1")
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestMarkClassifyAsSkippedDesign_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	jobID := seedRunningClassify(t, db, "/tmp/repo-skip", "abc", "w1")
+	require.NoError(t, db.MarkClassifyAsSkippedDesign(jobID, "w1", "trivial diff"))
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusSkipped, j.Status)
+	assert.Equal(t, "review", j.JobType)
+	assert.Equal(t, "trivial diff", j.SkipReason)
+}
+
+func TestMarkClassifyAsSkippedDesign_StaleWorkerNoOps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	jobID := seedRunningClassify(t, db, "/tmp/repo-skip-stale", "abc", "w1")
+
+	err := db.MarkClassifyAsSkippedDesign(jobID, "w-other", "some reason")
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusRunning, j.Status)
+	assert.Equal(t, "classify", j.JobType)
+}
+
+func TestMarkClassifyAsSkippedDesign_CanceledNoOps(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-skip-cancel")
+	commit := createCommit(t, db, repo.ID, "abc")
+	var jobID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, enqueued_at, updated_at)
+		VALUES (?, ?, 'abc', 'canceled', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, commit.ID).Scan(&jobID))
+
+	err := db.MarkClassifyAsSkippedDesign(jobID, "w1", "some reason")
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	j, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusCanceled, j.Status)
+}
+
+func TestInsertSkippedDesignJob_BasicAndDedup(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-skip-insert")
+	commit := createCommit(t, db, repo.ID, "abc")
+
+	require.NoError(t, db.InsertSkippedDesignJob(InsertSkippedDesignJobParams{
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "abc",
+		SkipReason: "trivial",
+	}))
+
+	// Second insert is a no-op due to dedup index.
+	require.NoError(t, db.InsertSkippedDesignJob(InsertSkippedDesignJobParams{
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "abc",
+		SkipReason: "different reason",
+	}))
+
+	jobs, err := db.ListJobsByStatus(repo.ID, JobStatusSkipped)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "design", jobs[0].ReviewType)
+	assert.Equal(t, "trivial", jobs[0].SkipReason)
+	assert.Equal(t, "auto_design", jobs[0].Source)
+}
+
+func TestEnqueueAutoDesignJob_BasicAndDedup(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-enq-auto")
+	commit := createCommit(t, db, repo.ID, "abc")
+
+	id1, err := db.EnqueueAutoDesignJob(EnqueueOpts{
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "abc",
+		JobType:    JobTypeReview,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	assert.NotZero(t, id1)
+
+	// Second enqueue is a no-op (returns 0).
+	id2, err := db.EnqueueAutoDesignJob(EnqueueOpts{
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "abc",
+		JobType:    JobTypeReview,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	assert.Zero(t, id2)
+}
+
+func TestHasAutoDesignSlotForCommit(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-hasdesign").ID
+	createCommit(t, db, repoID, "cafef00d")
+	has, err := db.HasAutoDesignSlotForCommit(repoID, "cafef00d")
+	require.NoError(t, err)
+	assert.False(t, has)
+
+	_, err = db.Exec(
+		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
+		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'design', 'auto_design')`,
+		repoID, "cafef00d", "cafef00d")
+	require.NoError(t, err)
+	has, err = db.HasAutoDesignSlotForCommit(repoID, "cafef00d")
+	require.NoError(t, err)
+	assert.True(t, has)
+
+	repoIDExplicit := createRepo(t, db, "/tmp/repo-hasdesign-explicit").ID
+	createCommit(t, db, repoIDExplicit, "beef")
+	_, err = db.Exec(
+		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'design')`,
+		repoIDExplicit, "beef", "beef")
+	require.NoError(t, err)
+	has, err = db.HasAutoDesignSlotForCommit(repoIDExplicit, "beef")
+	require.NoError(t, err)
+	assert.False(t, has, "explicit source=NULL design rows must not count as slot-occupied")
+
+	repoIDCls := createRepo(t, db, "/tmp/repo-hasdesign-cls").ID
+	createCommit(t, db, repoIDCls, "abc")
+	_, err = db.Exec(
+		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, job_type, review_type, source)
+		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'classify', 'design', 'auto_design')`,
+		repoIDCls, "abc", "abc")
+	require.NoError(t, err)
+	has, err = db.HasAutoDesignSlotForCommit(repoIDCls, "abc")
+	require.NoError(t, err)
+	assert.True(t, has, "queued classify job must count as slot-occupied")
+
+	repoIDSk := createRepo(t, db, "/tmp/repo-hasdesign-skipped").ID
+	createCommit(t, db, repoIDSk, "feed")
+	_, err = db.Exec(
+		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, skip_reason, source)
+		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'skipped', 'design', 'trivial', 'auto_design')`,
+		repoIDSk, "feed", "feed")
+	require.NoError(t, err)
+	has, err = db.HasAutoDesignSlotForCommit(repoIDSk, "feed")
+	require.NoError(t, err)
+	assert.True(t, has)
+}
+
+func TestGetJobCounts_IncludesSkipped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-counts").ID
+	commitID := createCommit(t, db, repoID, "abc").ID
+
+	_, err := db.Exec(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, skip_reason)
+		VALUES (?, ?, 'abc', 'skipped', 'design', 'trivial')
+	`, repoID, commitID)
+	require.NoError(t, err)
+
+	queued, running, done, failed, canceled, applied, rebased, skipped, err := db.GetJobCounts()
+	require.NoError(t, err)
+	assert.Equal(t, 0, queued)
+	assert.Equal(t, 0, running)
+	assert.Equal(t, 0, done)
+	assert.Equal(t, 0, failed)
+	assert.Equal(t, 0, canceled)
+	assert.Equal(t, 0, applied)
+	assert.Equal(t, 0, rebased)
+	assert.Equal(t, 1, skipped)
 }

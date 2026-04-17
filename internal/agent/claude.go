@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -516,3 +517,92 @@ func filterEnv(env []string, keys ...string) []string {
 func init() {
 	Register(NewClaudeAgent(""))
 }
+
+// classifyArgs builds the argv for a schema-constrained one-shot classify call.
+func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
+	args := []string{"-p", "--output-format", "stream-json", "--verbose",
+		"--json-schema", string(schema),
+		"--dangerously-skip-permissions",
+	}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if eff := a.claudeEffort(); eff != "" {
+		args = append(args, claudeEffortFlag, eff)
+	}
+	return args
+}
+
+// parseClaudeClassifyStream reads Claude's stream-json output and returns the
+// final `result` field as raw JSON.
+func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
+	var final string
+	var found bool
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var msg claudeStreamMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		if msg.Type == "result" && msg.Result != "" {
+			final = msg.Result
+			found = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read stream: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("no result event in claude stream")
+	}
+	if !json.Valid([]byte(final)) {
+		return nil, fmt.Errorf("claude result is not valid JSON: %q", final)
+	}
+	return json.RawMessage(final), nil
+}
+
+// ClassifyWithSchema runs a single constrained Claude Code invocation and
+// returns the final JSON conforming to schema. Implements SchemaAgent.
+func (a *ClaudeAgent) ClassifyWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	args := a.classifyArgs(schema)
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(prompt)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start claude: %w", err)
+	}
+
+	buf, readErr := io.ReadAll(stdout)
+	if readErr != nil {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("read stdout: %w", readErr)
+	}
+	if out != nil {
+		_, _ = out.Write(buf)
+	}
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("claude exited: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseClaudeClassifyStream(strings.NewReader(string(buf)))
+}
+
+// Compile-time assertion that ClaudeAgent implements SchemaAgent.
+var _ SchemaAgent = (*ClaudeAgent)(nil)

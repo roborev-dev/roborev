@@ -891,3 +891,93 @@ func TestGetExpiredBatches(t *testing.T) {
 	_ = b3
 	_ = b4
 }
+
+func TestGetStaleBatches_TreatsSkippedAsTerminal(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-skipped-batch").ID
+	commitID := createCommit(t, db, repoID, "abc123").ID
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'abc123', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs, completed_jobs)
+		VALUES ('x/y', 1, 'abc123', 1, 0) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	batches, err := db.GetStaleBatches()
+	require.NoError(t, err)
+
+	found := false
+	for _, b := range batches {
+		if b.ID == batchID {
+			found = true
+		}
+	}
+	assert.True(t, found, "skipped-only batch must be considered terminal")
+}
+
+func TestReconcileBatch_CountsSkippedAsCompleted(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-recon").ID
+	commitID := createCommit(t, db, repoID, "cafef00d").ID
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'cafef00d', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
+		VALUES ('x/y', 2, 'cafef00d', 1) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	batch, err := db.ReconcileBatch(batchID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, batch.CompletedJobs)
+	assert.Equal(t, 0, batch.FailedJobs)
+}
+
+func TestHasMeaningfulBatchResult_CountsSkipped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-meaningful").ID
+	commitID := createCommit(t, db, repoID, "dead").ID
+
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'dead', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
+		VALUES ('x/y', 3, 'dead', 1) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	meaningful, err := db.HasMeaningfulBatchResult(batchID)
+	require.NoError(t, err)
+	assert.True(t, meaningful, "batch with a skipped auto-design row has a meaningful terminal outcome")
+}

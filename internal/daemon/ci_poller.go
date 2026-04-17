@@ -23,6 +23,7 @@ import (
 	ghpkg "github.com/roborev-dev/roborev/internal/github"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	reviewpkg "github.com/roborev-dev/roborev/internal/review"
+	"github.com/roborev-dev/roborev/internal/review/autotype"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -685,11 +686,114 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	log.Printf("CI poller: created batch %d for %s#%d (HEAD=%s, %d jobs)",
 		batch.ID, ghRepo, pr.Number, headShort, totalJobs)
 
+	// Auto design review integration: if "design" is not already in the
+	// matrix and auto-design is enabled, run heuristics on the head SHA
+	// and enqueue an extra design row (or skipped row, or classify job).
+	// Opportunistic — failures are logged but never block the CI batch.
+	hasDesignInMatrix := false
+	for _, m := range matrix {
+		if m.ReviewType == "design" {
+			hasDesignInMatrix = true
+			break
+		}
+	}
+	if !hasDesignInMatrix {
+		if err := p.maybeDispatchAutoDesignForCI(ctx, repo, pr.HeadRefOid); err != nil {
+			log.Printf("CI poller: auto-design dispatch failed for %s@%s: %v", ghRepo, headShort, err)
+		}
+	}
+
 	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
 	}
 
 	return nil
+}
+
+// maybeDispatchAutoDesignForCI runs the auto-design heuristics for a PR's
+// head SHA and enqueues either a design review, a classify job, or a
+// skipped row. Returns nil when auto-design is disabled.
+func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *storage.Repo, headSHA string) error {
+	cfg, _ := config.LoadGlobal()
+	if !config.ResolveAutoDesignEnabled(repo.RootPath, cfg) {
+		return nil
+	}
+	if has, _ := p.db.HasAutoDesignSlotForCommit(repo.ID, headSHA); has {
+		return nil
+	}
+
+	h := config.ResolveAutoDesignHeuristics(repo.RootPath, cfg)
+	hh := autotype.Heuristics{
+		MinDiffLines:           h.MinDiffLines,
+		LargeDiffLines:         h.LargeDiffLines,
+		LargeFileCount:         h.LargeFileCount,
+		TriggerPaths:           h.TriggerPaths,
+		SkipPaths:              h.SkipPaths,
+		TriggerMessagePatterns: h.TriggerMessagePatterns,
+		SkipMessagePatterns:    h.SkipMessagePatterns,
+	}
+
+	files, _ := gitpkg.GetFilesChanged(repo.RootPath, headSHA)
+	diff, _ := gitpkg.GetDiff(repo.RootPath, headSHA)
+
+	var commitID int64
+	subject := ""
+	if info, err := gitpkg.GetCommitInfo(repo.RootPath, headSHA); err == nil && info != nil {
+		subject = info.Subject
+		if c, err := p.db.GetOrCreateCommit(repo.ID, headSHA, info.Author, info.Subject, info.Timestamp); err == nil && c != nil {
+			commitID = c.ID
+		}
+	}
+
+	in := autotype.Input{
+		RepoPath:     repo.RootPath,
+		GitRef:       headSHA,
+		Diff:         diff,
+		Message:      classifierCommitMessage(repo.RootPath, headSHA, subject),
+		ChangedFiles: files,
+	}
+
+	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})
+	switch {
+	case err == nil && d.Run:
+		autoDesignMetrics.RecordHeuristic(true)
+		_, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
+			RepoID:     repo.ID,
+			CommitID:   commitID,
+			GitRef:     headSHA,
+			JobType:    storage.JobTypeReview,
+			ReviewType: "design",
+		})
+		return err
+	case err == nil && !d.Run:
+		autoDesignMetrics.RecordHeuristic(false)
+		return p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
+			RepoID:     repo.ID,
+			CommitID:   commitID,
+			GitRef:     headSHA,
+			SkipReason: d.Reason,
+		})
+	case errors.Is(err, autotype.ErrNeedsClassifier):
+		_, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
+			RepoID:     repo.ID,
+			CommitID:   commitID,
+			GitRef:     headSHA,
+			JobType:    storage.JobTypeClassify,
+			ReviewType: "design",
+		})
+		return err
+	default:
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
+		log.Printf("CI poller: auto-design Classify error: %v", err)
+		return p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
+			RepoID:     repo.ID,
+			CommitID:   commitID,
+			GitRef:     headSHA,
+			SkipReason: "auto-design: heuristic error",
+		})
+	}
 }
 
 // findOrCloneRepo finds the local repo that corresponds to a GitHub
@@ -2113,6 +2217,8 @@ func toReviewResult(
 		Output:     br.Output,
 		Status:     br.Status,
 		Error:      br.Error,
+		Skipped:    br.Status == string(storage.JobStatusSkipped),
+		SkipReason: br.SkipReason,
 	}
 }
 

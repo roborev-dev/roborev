@@ -349,7 +349,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
-		WHERE j.status IN ('done', 'failed', 'canceled')
+		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
 		AND (j.synced_at IS NULL OR datetime(

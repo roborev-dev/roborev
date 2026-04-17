@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/roborev-dev/roborev/internal/testenv"
 	"github.com/stretchr/testify/assert"
@@ -3378,4 +3379,215 @@ func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
 		c := CIConfig{BatchTimeout: "-5m"}
 		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
 	})
+}
+
+func TestAutoDesignReviewConfig_Load(t *testing.T) {
+	tmp := t.TempDir()
+	cfgFile := filepath.Join(tmp, "config.toml")
+	err := os.WriteFile(cfgFile, []byte(`
+[auto_design_review]
+enabled = true
+min_diff_lines = 20
+large_diff_lines = 400
+large_file_count = 8
+trigger_paths = ["foo/**", "bar/**"]
+skip_paths = ["**/*.md"]
+trigger_message_patterns = ['\brefactor\b']
+skip_message_patterns = ['^docs:']
+classifier_timeout_seconds = 45
+classifier_max_prompt_size = 32768
+`), 0o644)
+	require.NoError(t, err)
+
+	cfg, err := LoadGlobalFrom(cfgFile)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.True(cfg.AutoDesignReview.Enabled)
+	assert.Equal(20, cfg.AutoDesignReview.MinDiffLines)
+	assert.Equal(400, cfg.AutoDesignReview.LargeDiffLines)
+	assert.Equal(8, cfg.AutoDesignReview.LargeFileCount)
+	assert.Equal([]string{"foo/**", "bar/**"}, cfg.AutoDesignReview.TriggerPaths)
+	assert.Equal([]string{"**/*.md"}, cfg.AutoDesignReview.SkipPaths)
+	assert.Equal([]string{`\brefactor\b`}, cfg.AutoDesignReview.TriggerMessagePatterns)
+	assert.Equal([]string{`^docs:`}, cfg.AutoDesignReview.SkipMessagePatterns)
+	assert.Equal(45, cfg.AutoDesignReview.ClassifierTimeoutSeconds)
+	assert.Equal(32768, cfg.AutoDesignReview.ClassifierMaxPromptSize)
+}
+
+func TestClassifyWorkflowConfig_Load(t *testing.T) {
+	tmp := t.TempDir()
+	cfgFile := filepath.Join(tmp, "config.toml")
+	err := os.WriteFile(cfgFile, []byte(`
+classify_agent = "claude-code"
+classify_model = "haiku"
+classify_reasoning = "fast"
+classify_backup_agent = "codex"
+classify_backup_model = "o-mini"
+`), 0o644)
+	require.NoError(t, err)
+
+	cfg, err := LoadGlobalFrom(cfgFile)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal("claude-code", cfg.ClassifyAgent)
+	assert.Equal("haiku", cfg.ClassifyModel)
+	assert.Equal("fast", cfg.ClassifyReasoning)
+	assert.Equal("codex", cfg.ClassifyBackupAgent)
+	assert.Equal("o-mini", cfg.ClassifyBackupModel)
+}
+
+func TestResolveAutoDesignEnabled_Disabled(t *testing.T) {
+	tmp := t.TempDir()
+	assert.False(t, ResolveAutoDesignEnabled(tmp, &Config{}))
+}
+
+func TestResolveAutoDesignEnabled_GlobalEnabled(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{Enabled: true}}
+	assert.True(t, ResolveAutoDesignEnabled(tmp, cfg))
+}
+
+func TestResolveAutoDesignEnabled_RepoEnablesOverGlobalOff(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("[auto_design_review]\nenabled = true\n"), 0o644))
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{Enabled: false}}
+	assert.True(t, ResolveAutoDesignEnabled(tmp, cfg))
+}
+
+func TestResolveAutoDesignEnabled_RepoDisablesOverGlobalOn(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("[auto_design_review]\nenabled = false\n"), 0o644))
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{Enabled: true}}
+	assert.False(t, ResolveAutoDesignEnabled(tmp, cfg), "repo explicit false must override global true")
+}
+
+func TestResolveAutoDesignEnabled_RepoUnsetInherits(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("[auto_design_review]\nmin_diff_lines = 5\n"), 0o644))
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{Enabled: true}}
+	assert.True(t, ResolveAutoDesignEnabled(tmp, cfg), "repo without explicit enabled must inherit global")
+}
+
+func TestResolveAutoDesignHeuristics_Defaults(t *testing.T) {
+	h := ResolveAutoDesignHeuristics(t.TempDir(), &Config{})
+	assert := assert.New(t)
+	assert.Equal(10, h.MinDiffLines)
+	assert.Equal(500, h.LargeDiffLines)
+	assert.NotEmpty(h.TriggerPaths)
+}
+
+func TestResolveAutoDesignHeuristics_GlobalOverride(t *testing.T) {
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{
+		MinDiffLines:   20,
+		LargeDiffLines: 1000,
+		TriggerPaths:   []string{"foo/**"},
+	}}
+	h := ResolveAutoDesignHeuristics(t.TempDir(), cfg)
+	assert := assert.New(t)
+	assert.Equal(20, h.MinDiffLines)
+	assert.Equal(1000, h.LargeDiffLines)
+	assert.Equal([]string{"foo/**"}, h.TriggerPaths)
+}
+
+func TestResolveClassifyAgent_Default(t *testing.T) {
+	RegisterClassifyAgentValidator(nil)
+	name, err := ResolveClassifyAgent("", t.TempDir(), &Config{})
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", name)
+}
+
+func TestResolveClassifyAgent_CLIOverride(t *testing.T) {
+	RegisterClassifyAgentValidator(nil)
+	name, err := ResolveClassifyAgent("codex", t.TempDir(), &Config{})
+	require.NoError(t, err)
+	assert.Equal(t, "codex", name)
+}
+
+func TestResolveClassifyAgent_RepoOverridesGlobal(t *testing.T) {
+	RegisterClassifyAgentValidator(nil)
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("classify_agent = \"codex\"\n"), 0o644))
+	name, err := ResolveClassifyAgent("", tmp, &Config{ClassifyAgent: "claude-code"})
+	require.NoError(t, err)
+	assert.Equal(t, "codex", name)
+}
+
+func TestResolveClassifyAgent_ValidatorReject(t *testing.T) {
+	RegisterClassifyAgentValidator(func(name string) error {
+		if name == "gemini" {
+			return fmt.Errorf("agent %q does not support structured output; valid: claude-code, codex", name)
+		}
+		return nil
+	})
+	t.Cleanup(func() { RegisterClassifyAgentValidator(nil) })
+	_, err := ResolveClassifyAgent("gemini", t.TempDir(), &Config{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "structured output")
+}
+
+func TestResolveClassifyReasoning_Default(t *testing.T) {
+	lvl := ResolveClassifyReasoning("", t.TempDir(), &Config{})
+	assert.Equal(t, "fast", lvl)
+}
+
+func TestResolveClassifyReasoning_CLIOverride(t *testing.T) {
+	lvl := ResolveClassifyReasoning("standard", t.TempDir(), &Config{ClassifyReasoning: "fast"})
+	assert.Equal(t, "standard", lvl)
+}
+
+func TestResolveClassifierTimeout_Default(t *testing.T) {
+	d := ResolveClassifierTimeout(t.TempDir(), &Config{})
+	assert.Equal(t, 60*time.Second, d)
+}
+
+func TestResolveClassifierTimeout_GlobalOverride(t *testing.T) {
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{ClassifierTimeoutSeconds: 45}}
+	d := ResolveClassifierTimeout(t.TempDir(), cfg)
+	assert.Equal(t, 45*time.Second, d)
+}
+
+func TestResolveClassifierMaxPromptSize_Default(t *testing.T) {
+	n := ResolveClassifierMaxPromptSize(t.TempDir(), &Config{})
+	assert.Equal(t, 20*1024, n)
+}
+
+func TestResolveClassifierMaxPromptSize_RepoOverride(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("[auto_design_review]\nclassifier_max_prompt_size = 8192\n"), 0o644))
+	n := ResolveClassifierMaxPromptSize(tmp, &Config{})
+	assert.Equal(t, 8192, n)
+}
+
+func TestResolveAutoDesignHeuristics_RepoWins(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte(`[auto_design_review]
+min_diff_lines = 5
+trigger_paths = ["bar/**"]
+`), 0o644))
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{
+		MinDiffLines: 20,
+		TriggerPaths: []string{"foo/**"},
+	}}
+	h := ResolveAutoDesignHeuristics(tmp, cfg)
+	assert.Equal(t, 5, h.MinDiffLines)
+	assert.Equal(t, []string{"bar/**"}, h.TriggerPaths)
+}
+
+func TestClassifyWorkflowConfig_FoundByReflectionTag(t *testing.T) {
+	cfg := &Config{
+		ClassifyAgent:       "claude-code",
+		ClassifyModel:       "haiku",
+		ClassifyBackupAgent: "codex",
+		ClassifyBackupModel: "o-mini",
+	}
+	assert.Equal(t, "claude-code", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_agent"))
+	assert.Equal(t, "haiku", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_model"))
+	assert.Equal(t, "codex", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_backup_agent"))
+	assert.Equal(t, "o-mini", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_backup_model"))
 }
