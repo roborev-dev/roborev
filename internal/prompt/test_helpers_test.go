@@ -97,27 +97,6 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	return r.dir, commits
 }
 
-func setupSmallDiffRepo(t *testing.T) (string, string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "small.txt"),
-		[]byte("hello world\n"), 0o644,
-	))
-	r.git("add", "small.txt")
-	r.git("commit", "-m", "small change")
-
-	return r.dir, r.git("rev-parse", "HEAD")
-}
-
 func setupLargeDiffRepo(t *testing.T) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
@@ -143,6 +122,40 @@ func setupLargeDiffRepo(t *testing.T) (string, string) {
 		[]byte(content.String()), 0o644,
 	))
 	r.git("add", "large.txt")
+	r.git("commit", "-m", "large change")
+
+	return r.dir, r.git("rev-parse", "HEAD")
+}
+
+func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
+	t.Helper()
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "base.txt"),
+		[]byte("base\n"), 0o644,
+	))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+
+	var content strings.Builder
+	for range 20000 {
+		content.WriteString("line ")
+		content.WriteString(strings.Repeat("x", 20))
+		content.WriteString(" ")
+		content.WriteString(strings.Repeat("y", 20))
+		content.WriteString("\n")
+	}
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "large.txt"),
+		[]byte(content.String()), 0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.dir, "custom.dat"),
+		[]byte(content.String()), 0o644,
+	))
+	r.git("add", "large.txt", "custom.dat")
 	r.git("commit", "-m", "large change")
 
 	return r.dir, r.git("rev-parse", "HEAD")

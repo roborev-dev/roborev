@@ -34,8 +34,8 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
-// ReviewContext holds a commit SHA and its associated review (if any) plus responses
-type ReviewContext struct {
+// HistoricalReviewContext holds a commit SHA and its associated review (if any) plus responses.
+type HistoricalReviewContext struct {
 	SHA       string
 	Review    *storage.Review
 	Responses []storage.Response
@@ -91,66 +91,50 @@ func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int,
 // BuildWithAdditionalContext constructs a review prompt with an optional
 // caller-provided markdown context block inserted ahead of the current diff.
 func (b *Builder) BuildWithAdditionalContext(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string) (string, error) {
-	opts := buildOpts{
+	return b.buildWithOpts(repoPath, gitRef, repoID, contextCount, agentName, reviewType, buildOpts{
 		additionalContext: additionalContext,
 		minSeverity:       minSeverity,
-	}
-	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
-	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+	})
 }
 
 // BuildWithAdditionalContextAndDiffFile constructs a review prompt with
-// caller-provided markdown context and an optional oversized-diff file
-// reference for sandboxed Codex reviews.
+// caller-provided markdown context and an optional oversized-diff file reference.
 func (b *Builder) BuildWithAdditionalContextAndDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext, diffFilePath string) (string, error) {
-	opts := buildOpts{
+	return b.buildWithOpts(repoPath, gitRef, repoID, contextCount, agentName, reviewType, buildOpts{
 		additionalContext: additionalContext,
 		diffFilePath:      diffFilePath,
 		requireDiffFile:   true,
 		minSeverity:       minSeverity,
-	}
-	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
-	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
+	})
 }
 
-// BuildWithDiffFile constructs a review prompt where a pre-written diff
-// file is referenced for large diffs instead of git commands. This is
-// used for Codex agents running in a sandboxed environment that cannot
-// execute git directly.
+// BuildWithDiffFile constructs a review prompt where a pre-written diff file
+// is referenced for large diffs instead of inline content.
 func (b *Builder) BuildWithDiffFile(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, diffFilePath string) (string, error) {
-	opts := buildOpts{
+	return b.buildWithOpts(repoPath, gitRef, repoID, contextCount, agentName, reviewType, buildOpts{
 		diffFilePath:    diffFilePath,
 		requireDiffFile: true,
 		minSeverity:     minSeverity,
-	}
+	})
+}
+
+func (b *Builder) buildWithOpts(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 	}
 	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType, opts)
 }
 
-// SnapshotResult holds a prompt and an optional cleanup function for
-// a diff snapshot file that was written during prompt construction.
+// SnapshotResult holds a prompt and an optional cleanup function for a diff snapshot file.
 type SnapshotResult struct {
 	Prompt  string
 	Cleanup func()
 }
 
-// BuildWithSnapshot builds a review prompt, automatically writing a
-// diff snapshot file when the diff is too large to inline.
-func (b *Builder) BuildWithSnapshot(
-	repoPath, gitRef string, repoID int64,
-	contextCount int, agentName, reviewType, minSeverity string,
-	excludes []string,
-) (SnapshotResult, error) {
-	p, err := b.BuildWithDiffFile(
-		repoPath, gitRef, repoID,
-		contextCount, agentName, reviewType, minSeverity, "",
-	)
+// BuildWithSnapshot builds a review prompt, automatically writing a diff snapshot file
+// when the diff is too large to inline.
+func (b *Builder) BuildWithSnapshot(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity string, excludes []string) (SnapshotResult, error) {
+	p, err := b.BuildWithDiffFile(repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, "")
 	if !errors.Is(err, ErrDiffTruncatedNoFile) {
 		return SnapshotResult{Prompt: p}, err
 	}
@@ -158,10 +142,7 @@ func (b *Builder) BuildWithSnapshot(
 	if writeErr != nil {
 		return SnapshotResult{}, fmt.Errorf("write diff snapshot: %w", writeErr)
 	}
-	p, err = b.BuildWithDiffFile(
-		repoPath, gitRef, repoID,
-		contextCount, agentName, reviewType, minSeverity, diffFile,
-	)
+	p, err = b.BuildWithDiffFile(repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, diffFile)
 	if err != nil {
 		cleanup()
 		return SnapshotResult{}, err
@@ -169,8 +150,7 @@ func (b *Builder) BuildWithSnapshot(
 	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 }
 
-// WriteDiffSnapshot writes the full diff for a git ref to a file in
-// the repo's git dir. Returns the file path and a cleanup function.
+// WriteDiffSnapshot writes the full diff for a git ref to a file in the repo's git dir.
 func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func(), error) {
 	var (
 		fullDiff string
@@ -208,13 +188,9 @@ func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func
 	return diffFile, func() { os.Remove(diffFile) }, nil
 }
 
-// BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff
-// to a snapshot file when it's too large to inline. The caller must
-// call Cleanup (if non-nil) after the prompt is no longer needed.
-func (b *Builder) BuildDirtyWithSnapshot(
-	repoPath, diff string, repoID int64,
-	contextCount int, agentName, reviewType, minSeverity string,
-) (SnapshotResult, error) {
+// BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff to a snapshot file
+// when it's too large to inline.
+func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType, minSeverity string) (SnapshotResult, error) {
 	p, err := b.BuildDirty(repoPath, diff, repoID, contextCount, agentName, reviewType, minSeverity)
 	if err != nil {
 		return SnapshotResult{}, err
@@ -248,26 +224,11 @@ func (b *Builder) BuildDirtyWithSnapshot(
 // The diff is provided directly since it was captured at enqueue time.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
 func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
-	// Start with system prompt for dirty changes
-	promptType := "dirty"
-	if !config.IsDefaultReviewType(reviewType) {
-		promptType = reviewType
-	}
-	if promptType == config.ReviewTypeDesign {
-		promptType = "design-review"
-	}
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
-	if inst := config.SeverityInstruction(minSeverity); inst != "" {
-		requiredPrefix += inst + "\n"
-	}
-	requiredPrefix = hardCapPrompt(requiredPrefix, promptCap)
-
-	optional := optionalSectionsView{}
+	ctx := b.newPromptBuildContext(repoPath, agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
 
 	// Add project-specific guidelines if configured
 	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		optional.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
+		ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
 	}
 
 	// Get previous reviews for context (use HEAD as reference point)
@@ -276,18 +237,18 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, headSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				optional.PreviousReviews = orderedPreviousReviewViews(contexts)
+				ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
 		}
 	}
 
-	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	bodyLimit := max(0, ctx.promptCap-len(ctx.requiredPrefix))
 	inlineDiff, err := renderInlineDiff(diff)
 	if err != nil {
 		return "", err
 	}
 	view := dirtyPromptView{
-		Optional: optional,
+		Optional: ctx.optional,
 		Current: dirtyChangesSectionView{
 			Description: "The following changes have not yet been committed.",
 		},
@@ -380,11 +341,15 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		}
 	}
 
-	body, err := fitDirtyPrompt(bodyLimit, view)
+	body, err := fitDirtyPromptContext(bodyLimit, templateContextFromDirtyView(view))
 	if err != nil {
 		return "", err
 	}
-	return requiredPrefix + hardCapPrompt(body, bodyLimit), nil
+	return ctx.requiredPrefix + hardCapPrompt(body, bodyLimit), nil
+}
+
+func isCodexReviewAgent(agentName string) bool {
+	return strings.EqualFold(strings.TrimSpace(agentName), "codex")
 }
 
 func truncateUTF8(s string, maxBytes int) string {
@@ -410,8 +375,6 @@ func hardCapPrompt(prompt string, limit int) string {
 	return truncateUTF8(prompt, limit)
 }
 
-// buildOpts groups optional parameters for buildSinglePrompt and
-// buildRangePrompt to keep the positional parameter count manageable.
 type buildOpts struct {
 	additionalContext string
 	// diffFilePath, when non-empty, is a file containing the full
@@ -426,9 +389,39 @@ type buildOpts struct {
 	minSeverity string
 }
 
-// diffFileFallbackVariants returns progressively shorter prompt
-// variants for oversized diffs. When filePath is non-empty, the
-// variants reference the file; otherwise they just note truncation.
+type promptBuildContext struct {
+	requiredPrefix string
+	optional       optionalSectionsView
+	promptCap      int
+}
+
+func (b *Builder) newPromptBuildContext(repoPath, agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) promptBuildContext {
+	promptType := defaultPromptType
+	if !config.IsDefaultReviewType(reviewType) {
+		promptType = reviewType
+	}
+	if promptType == config.ReviewTypeDesign {
+		promptType = "design-review"
+	}
+	promptCap := b.resolveMaxPromptSize(repoPath)
+	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
+	if inst := config.SeverityInstruction(minSeverity); inst != "" {
+		requiredPrefix += inst + "\n"
+	}
+	return promptBuildContext{
+		requiredPrefix: hardCapPrompt(requiredPrefix, promptCap),
+		optional:       optional,
+		promptCap:      promptCap,
+	}
+}
+
+func defaultOptionalSections(repoPath, additionalContext string) optionalSectionsView {
+	return optionalSectionsView{
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		AdditionalContext: buildAdditionalContextSection(additionalContext),
+	}
+}
+
 func diffFileFallbackVariants(heading, filePath string) []string {
 	if filePath == "" {
 		return []string{heading + "\n\n(Diff too large to include inline)\n"}
@@ -486,38 +479,238 @@ func buildPromptPreservingCurrentSection(requiredPrefix, optionalContext, curren
 	return hardCapPrompt(sb.String(), limit)
 }
 
+// safeForMarkdown filters pathspec args to only those that can be
+// safely embedded in markdown inline code spans. Args containing
+// backticks or control characters are dropped.
+func safeForMarkdown(args []string) []string {
+	var safe []string
+	for _, a := range args {
+		ok := true
+		for _, r := range a {
+			if r < ' ' || r == '`' || r == 0x7f {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			safe = append(safe, a)
+		}
+	}
+	return safe
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func renderShellCommand(args ...string) string {
+	var quoted []string
+	for _, arg := range args {
+		if needsShellQuoting(arg) {
+			quoted = append(quoted, shellQuote(arg))
+			continue
+		}
+		quoted = append(quoted, arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func needsShellQuoting(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case strings.ContainsRune("@%_+=:,./-~", r):
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func codexCommitInspectionFallbackVariants(sha string, pathspecArgs []string) []diffSectionView {
+	view := commitInspectionFallbackView{
+		SHA:         sha,
+		StatCmd:     renderShellCommand(append([]string{"git", "show", "--stat", "--summary", sha, "--"}, pathspecArgs...)...),
+		DiffCmd:     renderShellCommand(append([]string{"git", "show", "--format=medium", "--unified=80", sha, "--"}, pathspecArgs...)...),
+		FilesCmd:    renderShellCommand(append([]string{"git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha, "--"}, pathspecArgs...)...),
+		ShowPathCmd: renderShellCommand(append([]string{"git", "show", sha, "--"}, pathspecArgs...)...),
+	}
+	names := []string{"codex_commit_fallback_full", "codex_commit_fallback_medium", "codex_commit_fallback_short", "codex_commit_fallback_shortest"}
+	variants := make([]diffSectionView, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderCommitInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		variants = append(variants, diffSectionView{Heading: "### Diff", Fallback: fallback})
+	}
+	return variants
+}
+
+func codexRangeInspectionFallbackVariants(rangeRef string, pathspecArgs []string) []diffSectionView {
+	view := rangeInspectionFallbackView{
+		RangeRef: rangeRef,
+		LogCmd:   renderShellCommand("git", "log", "--oneline", rangeRef),
+		StatCmd:  renderShellCommand(append([]string{"git", "diff", "--stat", rangeRef, "--"}, pathspecArgs...)...),
+		DiffCmd:  renderShellCommand(append([]string{"git", "diff", "--unified=80", rangeRef, "--"}, pathspecArgs...)...),
+		FilesCmd: renderShellCommand(append([]string{"git", "diff", "--name-only", rangeRef, "--"}, pathspecArgs...)...),
+		ViewCmd:  renderShellCommand(append([]string{"git", "diff", rangeRef, "--"}, pathspecArgs...)...),
+	}
+	names := []string{"codex_range_fallback_full", "codex_range_fallback_medium", "codex_range_fallback_short", "codex_range_fallback_shortest"}
+	variants := make([]diffSectionView, 0, len(names))
+	for _, name := range names {
+		fallback, err := renderRangeInspectionFallback(name, view)
+		if err != nil {
+			continue
+		}
+		variants = append(variants, diffSectionView{Heading: "### Combined Diff", Fallback: fallback})
+	}
+	return variants
+}
+
+func selectDiffSectionVariant(variants []diffSectionView, remaining int) (diffSectionView, error) {
+	if len(variants) == 0 {
+		return diffSectionView{}, nil
+	}
+	selected := variants[len(variants)-1]
+	for _, variant := range variants {
+		block, err := renderDiffBlock(variant)
+		if err != nil {
+			return diffSectionView{}, err
+		}
+		if len(block) <= remaining {
+			return variant, nil
+		}
+	}
+	return truncateDiffSectionFallbackToFit(selected, remaining)
+}
+
+func truncateDiffSectionFallbackToFit(view diffSectionView, limit int) (diffSectionView, error) {
+	block, err := renderDiffBlock(view)
+	if err != nil || len(block) <= limit {
+		return view, err
+	}
+	baseBlock, err := renderDiffBlock(diffSectionView{Heading: view.Heading, Body: ""})
+	if err != nil {
+		return diffSectionView{}, err
+	}
+	view.Fallback = truncateUTF8(view.Fallback, max(0, limit-len(baseBlock)))
+	return view, nil
+}
+
+type rangeMetadataLoss struct {
+	RemovedEntries  int
+	BlankedSubject  int
+	TrimmedOptional int
+}
+
+func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
+	switch {
+	case a.RemovedEntries != b.RemovedEntries:
+		return a.RemovedEntries - b.RemovedEntries
+	case a.BlankedSubject != b.BlankedSubject:
+		return a.BlankedSubject - b.BlankedSubject
+	default:
+		return a.TrimmedOptional - b.TrimmedOptional
+	}
+}
+
+func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
+	loss := 0
+	if len(original.PreviousAttempts) > 0 && len(trimmed.PreviousAttempts) == 0 {
+		loss++
+	}
+	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
+		loss++
+	}
+	if original.AdditionalContext != "" && trimmed.AdditionalContext == "" {
+		loss++
+	}
+	if original.ProjectGuidelines != nil && trimmed.ProjectGuidelines == nil {
+		loss++
+	}
+	return loss
+}
+
+func measureRangeMetadataLoss(original, trimmed TemplateContext) rangeMetadataLoss {
+	if original.Review == nil || trimmed.Review == nil || original.Review.Subject.Range == nil || trimmed.Review.Subject.Range == nil {
+		return rangeMetadataLoss{}
+	}
+	loss := rangeMetadataLoss{
+		RemovedEntries:  len(original.Review.Subject.Range.Entries) - len(trimmed.Review.Subject.Range.Entries),
+		TrimmedOptional: measureOptionalSectionsLoss(original.Review.Optional, trimmed.Review.Optional),
+	}
+	for i := range trimmed.Review.Subject.Range.Entries {
+		if i >= len(original.Review.Subject.Range.Entries) {
+			break
+		}
+		if original.Review.Subject.Range.Entries[i].Subject != "" && trimmed.Review.Subject.Range.Entries[i].Subject == "" {
+			loss.BlankedSubject++
+		}
+	}
+	return loss
+}
+
+func selectRichestRangePromptView(limit int, view TemplateContext, variants []diffSectionView) (TemplateContext, error) {
+	fallback := view.Clone()
+	if len(variants) > 0 && fallback.Review != nil {
+		fallback.Review.Diff = DiffContext{Heading: variants[len(variants)-1].Heading, Body: variants[len(variants)-1].Body}
+		fallback.Review.Fallback = fallbackContextFromDiffSection(variants[len(variants)-1])
+	}
+	var (
+		best     TemplateContext
+		bestLoss rangeMetadataLoss
+		haveBest bool
+	)
+	for _, variant := range variants {
+		candidate := view.Clone()
+		if candidate.Review != nil {
+			candidate.Review.Diff = DiffContext{Heading: variant.Heading, Body: variant.Body}
+			candidate.Review.Fallback = fallbackContextFromDiffSection(variant)
+		}
+		trimmed, body, err := trimRangePromptContext(limit, candidate)
+		if err != nil {
+			return TemplateContext{}, err
+		}
+		fallback = trimmed
+		if len(body) > limit {
+			continue
+		}
+		loss := measureRangeMetadataLoss(view, trimmed)
+		if !haveBest || compareRangeMetadataLoss(loss, bestLoss) < 0 {
+			best = trimmed
+			bestLoss = loss
+			haveBest = true
+		}
+	}
+	if haveBest {
+		return best, nil
+	}
+	return fallback, nil
+}
+
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	// Start with system prompt
-	promptType := "review"
-	if !config.IsDefaultReviewType(reviewType) {
-		promptType = reviewType
-	}
-	if promptType == config.ReviewTypeDesign {
-		promptType = "design-review"
-	}
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
-	if inst := config.SeverityInstruction(opts.minSeverity); inst != "" {
-		requiredPrefix += inst + "\n"
-	}
-	requiredPrefix = hardCapPrompt(requiredPrefix, promptCap)
-
-	optional := optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
-		AdditionalContext: buildAdditionalContextSection(opts.additionalContext),
-	}
+	ctx := b.newPromptBuildContext(repoPath, agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(repoPath, opts.additionalContext))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
 		contexts, err := b.getPreviousReviewContexts(repoPath, sha, contextCount)
 		if err == nil && len(contexts) > 0 {
-			optional.PreviousReviews = orderedPreviousReviewViews(contexts)
+			ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 		}
 	}
 
 	// Include previous review attempts for this same commit (for re-reviews)
-	optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
+	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 
 	// Current commit section
 	shortSHA := git.ShortSHA(sha)
@@ -552,7 +745,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	}
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	bodyLimit := max(0, ctx.promptCap-len(ctx.requiredPrefix))
 	diffLimit := max(0, bodyLimit-len(currentRequired)-len(currentOverflow)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetDiffLimited(repoPath, sha, diffLimit, excludes...)
 	if err != nil {
@@ -561,21 +754,42 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	diffView := diffSectionView{Heading: "### Diff"}
 	if truncated {
-		if opts.diffFilePath == "" && opts.requireDiffFile {
-			return "", ErrDiffTruncatedNoFile
+		if opts.diffFilePath != "" || opts.requireDiffFile {
+			if opts.diffFilePath == "" && opts.requireDiffFile {
+				return "", ErrDiffTruncatedNoFile
+			}
+			optionalPrefix, err := renderOptionalSectionsPrefix(ctx.optional)
+			if err != nil {
+				return "", err
+			}
+			return buildPromptPreservingCurrentSection(ctx.requiredPrefix, optionalPrefix, currentRequired, currentOverflow, ctx.promptCap, diffFileFallbackVariants("### Diff", opts.diffFilePath)...), nil
 		}
-		optionalPrefix, err := renderOptionalSectionsPrefix(optional)
-		if err != nil {
-			return "", err
+		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
+		if isCodexReviewAgent(agentName) {
+			variants := codexCommitInspectionFallbackVariants(sha, pathspecArgs)
+			shortestBlock, err := renderDiffBlock(variants[len(variants)-1])
+			if err != nil {
+				return "", err
+			}
+			optionalPrefix, err := renderOptionalSectionsPrefix(ctx.optional)
+			if err != nil {
+				return "", err
+			}
+			softBudget := max(0, bodyLimit-len(currentRequired)-len(shortestBlock))
+			softLen := len(optionalPrefix) + len(currentOverflow)
+			effectiveSoftLen := min(softLen, softBudget)
+			remaining := max(0, bodyLimit-len(currentRequired)-effectiveSoftLen)
+			diffView, err = selectDiffSectionVariant(variants, remaining)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			fallback, err := renderGenericCommitFallback(renderShellCommand("git", "show", sha))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
-		return buildPromptPreservingCurrentSection(
-			requiredPrefix,
-			optionalPrefix,
-			currentRequired,
-			currentOverflow,
-			promptCap,
-			diffFileFallbackVariants("### Diff", opts.diffFilePath)...,
-		), nil
 	} else {
 		inlineDiff, err := renderInlineDiff(diff)
 		if err != nil {
@@ -584,41 +798,23 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		diffView.Body = inlineDiff
 	}
 
-	body, err := fitSinglePrompt(
+	body, err := fitSinglePromptContext(
 		bodyLimit,
-		singlePromptView{
-			Optional: optional,
+		templateContextFromSingleView(singlePromptView{
+			Optional: ctx.optional,
 			Current:  currentView,
 			Diff:     diffView,
-		},
+		}),
 	)
 	if err != nil {
 		return "", err
 	}
-	return requiredPrefix + body, nil
+	return ctx.requiredPrefix + body, nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	// Start with system prompt for ranges
-	promptType := "range"
-	if !config.IsDefaultReviewType(reviewType) {
-		promptType = reviewType
-	}
-	if promptType == config.ReviewTypeDesign {
-		promptType = "design-review"
-	}
-	promptCap := b.resolveMaxPromptSize(repoPath)
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
-	if inst := config.SeverityInstruction(opts.minSeverity); inst != "" {
-		requiredPrefix += inst + "\n"
-	}
-	requiredPrefix = hardCapPrompt(requiredPrefix, promptCap)
-
-	optional := optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
-		AdditionalContext: buildAdditionalContextSection(opts.additionalContext),
-	}
+	ctx := b.newPromptBuildContext(repoPath, agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(repoPath, opts.additionalContext))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -626,21 +822,19 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(repoPath, startSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
-				optional.PreviousReviews = orderedPreviousReviewViews(contexts)
+				ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
 		}
 	}
 
 	// Include previous review attempts for this same range (for re-reviews)
-	optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(rangeRef))
+	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(rangeRef))
 
 	// Get commits in range
 	commits, err := git.GetRangeCommits(repoPath, rangeRef)
 	if err != nil {
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
-
-	optional.InRangeReviews = inRangeReviewViews(b.lookupReviewContexts(commits, true))
 
 	entries := make([]commitRangeEntryView, 0, len(commits))
 	for _, commitSHA := range commits {
@@ -671,7 +865,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	}
 
 	excludes := b.resolveExcludes(repoPath, reviewType)
-	bodyLimit := max(0, promptCap-len(requiredPrefix))
+	bodyLimit := max(0, ctx.promptCap-len(ctx.requiredPrefix))
 	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-len(emptyDiffBlock))
 	diff, truncated, err := git.GetRangeDiffLimited(repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
@@ -680,21 +874,49 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	diffView := diffSectionView{Heading: "### Combined Diff"}
 	if truncated {
-		if opts.diffFilePath == "" && opts.requireDiffFile {
-			return "", ErrDiffTruncatedNoFile
+		if opts.diffFilePath != "" || opts.requireDiffFile {
+			if opts.diffFilePath == "" && opts.requireDiffFile {
+				return "", ErrDiffTruncatedNoFile
+			}
+			optionalPrefix, err := renderOptionalSectionsPrefix(ctx.optional)
+			if err != nil {
+				return "", err
+			}
+			return buildPromptPreservingCurrentSection(ctx.requiredPrefix, optionalPrefix, currentRequiredText, currentOverflowText, ctx.promptCap, diffFileFallbackVariants("### Combined Diff", opts.diffFilePath)...), nil
 		}
-		optionalPrefix, err := renderOptionalSectionsPrefix(optional)
-		if err != nil {
-			return "", err
+		pathspecArgs := safeForMarkdown(git.FormatExcludeArgs(excludes))
+		if isCodexReviewAgent(agentName) {
+			variants := codexRangeInspectionFallbackVariants(rangeRef, pathspecArgs)
+			selectedCtx, err := selectRichestRangePromptView(bodyLimit, templateContextFromRangeView(rangePromptView{
+				Optional: ctx.optional,
+				Current:  currentView,
+			}), variants)
+			if err != nil {
+				return "", err
+			}
+			if selectedCtx.Review != nil {
+				ctx.optional = optionalSectionsView{
+					ProjectGuidelines: buildProjectGuidelinesSectionView(selectedCtx.Review.Optional.ProjectGuidelinesBody()),
+					AdditionalContext: selectedCtx.Review.Optional.AdditionalContext,
+					PreviousReviews:   previousReviewViewsFromTemplateContext(selectedCtx.Review.Optional.PreviousReviews),
+					PreviousAttempts:  reviewAttemptViewsFromTemplateContext(selectedCtx.Review.Optional.PreviousAttempts),
+				}
+				if selectedCtx.Review.Subject.Range != nil {
+					entries := make([]commitRangeEntryView, 0, len(selectedCtx.Review.Subject.Range.Entries))
+					for _, entry := range selectedCtx.Review.Subject.Range.Entries {
+						entries = append(entries, commitRangeEntryView(entry))
+					}
+					currentView = commitRangeSectionView{Count: selectedCtx.Review.Subject.Range.Count, Entries: entries}
+				}
+				diffView = diffSectionView{Heading: selectedCtx.Review.Diff.Heading, Body: selectedCtx.Review.Diff.Body, Fallback: selectedCtx.Review.Fallback.Rendered()}
+			}
+		} else {
+			fallback, err := renderGenericRangeFallback(renderShellCommand("git", "diff", rangeRef))
+			if err != nil {
+				return "", err
+			}
+			diffView.Fallback = fallback
 		}
-		return buildPromptPreservingCurrentSection(
-			requiredPrefix,
-			optionalPrefix,
-			currentRequiredText,
-			currentOverflowText,
-			promptCap,
-			diffFileFallbackVariants("### Combined Diff", opts.diffFilePath)...,
-		), nil
 	} else {
 		inlineDiff, err := renderInlineDiff(diff)
 		if err != nil {
@@ -703,18 +925,18 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		diffView.Body = inlineDiff
 	}
 
-	body, err := fitRangePrompt(
+	body, err := fitRangePromptContext(
 		bodyLimit,
-		rangePromptView{
-			Optional: optional,
+		templateContextFromRangeView(rangePromptView{
+			Optional: ctx.optional,
 			Current:  currentView,
 			Diff:     diffView,
-		},
+		}),
 	)
 	if err != nil {
 		return "", err
 	}
-	return requiredPrefix + body, nil
+	return ctx.requiredPrefix + body, nil
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {
@@ -736,8 +958,8 @@ func buildAdditionalContextSection(additionalContext string) string {
 	return trimmed + "\n\n"
 }
 
-func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
-	ordered := make([]ReviewContext, 0, len(contexts))
+func orderedPreviousReviewViews(contexts []HistoricalReviewContext) []previousReviewView {
+	ordered := make([]HistoricalReviewContext, 0, len(contexts))
 	for i := len(contexts) - 1; i >= 0; i-- {
 		ordered = append(ordered, contexts[i])
 	}
@@ -747,13 +969,6 @@ func orderedPreviousReviewViews(contexts []ReviewContext) []previousReviewView {
 // LoadGuidelines loads review guidelines from the repo's default
 // branch, falling back to filesystem config when the default branch
 // has no .roborev.toml.
-func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string) {
-	body, err := renderOptionalSectionsPrefix(optionalSectionsView{ProjectGuidelines: buildProjectGuidelinesSectionView(guidelines)})
-	if err == nil {
-		sb.WriteString(body)
-	}
-}
-
 func LoadGuidelines(repoPath string) string {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
@@ -805,38 +1020,37 @@ func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext 
 	return attempts
 }
 
-func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []ReviewContext {
-	if b.db == nil {
-		return nil
-	}
-	var contexts []ReviewContext
-	for _, sha := range shas {
-		review, err := b.db.GetReviewByCommitSHA(sha)
-		if err != nil {
-			if skipMissing {
-				continue
-			}
-			contexts = append(contexts, ReviewContext{SHA: sha})
-			continue
-		}
-		ctx := ReviewContext{SHA: sha, Review: review}
-		if review.JobID > 0 {
-			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
-				ctx.Responses = responses
-			}
-		}
-		contexts = append(contexts, ctx)
-	}
-	return contexts
-}
-
 // getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
-func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]ReviewContext, error) {
+func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]HistoricalReviewContext, error) {
+	// Get parent commits from git
 	parentSHAs, err := git.GetParentCommits(repoPath, sha, count)
 	if err != nil {
 		return nil, fmt.Errorf("get parent commits: %w", err)
 	}
-	return b.lookupReviewContexts(parentSHAs, false), nil
+
+	var contexts []HistoricalReviewContext
+	for _, parentSHA := range parentSHAs {
+		ctx := HistoricalReviewContext{SHA: parentSHA}
+
+		// Try to look up review for this commit
+		review, err := b.db.GetReviewByCommitSHA(parentSHA)
+		if err == nil {
+			ctx.Review = review
+
+			// Also fetch comments for this review's job
+			if review.JobID > 0 {
+				responses, err := b.db.GetCommentsForJob(review.JobID)
+				if err == nil {
+					ctx.Responses = responses
+				}
+			}
+		}
+		// If no review found, ctx.Review stays nil
+
+		contexts = append(contexts, ctx)
+	}
+
+	return contexts, nil
 }
 
 // BuildSimple constructs a simpler prompt without database context
@@ -845,7 +1059,6 @@ func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	return b.Build(repoPath, sha, 0, 0, agentName, "", "")
 }
 
-// PreviousAttemptsHeader introduces previous addressing attempts section.
 const PreviousAttemptsHeader = `
 ## Previous Addressing Attempts
 
@@ -855,7 +1068,6 @@ Be pragmatic - if previous attempts were rejected for being too minor, make more
 If they were rejected for being over-engineered, keep it simpler.
 `
 
-// UserCommentsHeader introduces user-authored comments on a review.
 const UserCommentsHeader = `## User Comments
 
 The following comments were left by the developer on this review.
@@ -864,14 +1076,10 @@ positives, provide additional context, or request specific approaches.
 
 `
 
-// IsToolResponse returns true when the response was left by an automated
-// tool (roborev-fix, roborev-refine, etc.) rather than a human user.
 func IsToolResponse(r storage.Response) bool {
 	return strings.HasPrefix(r.Responder, "roborev-")
 }
 
-// SplitResponses partitions responses into tool-generated attempts and
-// user-authored comments based on the Responder field.
 func SplitResponses(responses []storage.Response) (toolAttempts, userComments []storage.Response) {
 	for _, r := range responses {
 		if IsToolResponse(r) {
@@ -883,7 +1091,6 @@ func SplitResponses(responses []storage.Response) (toolAttempts, userComments []
 	return
 }
 
-// FormatToolAttempts renders automated tool responses into a prompt section.
 func FormatToolAttempts(attempts []storage.Response) string {
 	if len(attempts) == 0 {
 		return ""
@@ -899,7 +1106,6 @@ func FormatToolAttempts(attempts []storage.Response) string {
 	return sb.String()
 }
 
-// FormatUserComments renders user-authored comments into a prompt section.
 func FormatUserComments(comments []storage.Response) string {
 	if len(comments) == 0 {
 		return ""
@@ -927,26 +1133,17 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	}
 
 	if len(previousAttempts) > 0 {
-		toolAttempts, userComments := SplitResponses(previousAttempts)
-		if len(toolAttempts) > 0 {
-			view.ToolAttempts = make([]addressAttemptView, 0, len(toolAttempts))
-			for _, attempt := range toolAttempts {
-				when := ""
-				if !attempt.CreatedAt.IsZero() {
-					when = attempt.CreatedAt.Format("2006-01-02 15:04")
-				}
-				view.ToolAttempts = append(view.ToolAttempts, addressAttemptView{Responder: attempt.Responder, Response: attempt.Response, When: when})
+		view.PreviousAttempts = make([]addressAttemptView, 0, len(previousAttempts))
+		for _, attempt := range previousAttempts {
+			when := ""
+			if !attempt.CreatedAt.IsZero() {
+				when = attempt.CreatedAt.Format("2006-01-02 15:04")
 			}
-		}
-		if len(userComments) > 0 {
-			view.UserComments = make([]addressAttemptView, 0, len(userComments))
-			for _, comment := range userComments {
-				when := ""
-				if !comment.CreatedAt.IsZero() {
-					when = comment.CreatedAt.Format("2006-01-02 15:04")
-				}
-				view.UserComments = append(view.UserComments, addressAttemptView{Responder: comment.Responder, Response: comment.Response, When: when})
-			}
+			view.PreviousAttempts = append(view.PreviousAttempts, addressAttemptView{
+				Responder: attempt.Responder,
+				Response:  attempt.Response,
+				When:      when,
+			})
 		}
 	}
 
