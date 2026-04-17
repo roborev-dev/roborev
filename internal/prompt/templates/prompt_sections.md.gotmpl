@@ -1,0 +1,173 @@
+{{define "project_guidelines"}}{{with .ProjectGuidelines}}{{.Heading}}
+
+These guidelines supplement the default review criteria and may add repo-specific expectations or constraints.
+
+{{.Body}}
+
+{{end}}{{end}}
+{{define "additional_context"}}{{- .AdditionalContext -}}{{end}}
+{{define "review_comments"}}{{if .}}
+Comments on this review:
+{{range .}}- {{.Responder}}: {{printf "%q" .Response}}
+{{end}}{{end}}
+{{end}}
+{{define "previous_reviews"}}{{if .PreviousReviews}}## Previous Reviews
+
+The following are reviews of recent commits in this repository. Use them as context
+to understand ongoing work and to check if the current commit addresses previous feedback.
+
+**Important:** Reviews may include responses from developers. Pay attention to these responses -
+they may indicate known issues that should be ignored, explain why certain patterns exist,
+or provide context that affects how you should evaluate similar code in the current commit.
+
+{{range .PreviousReviews}}--- Review for commit {{.Commit}} ---
+{{if .Available}}{{.Output}}{{else}}No review available.{{end}}
+
+{{template "review_comments" .Comments}}
+{{end}}{{end}}
+{{end}}
+{{define "in_range_reviews"}}{{if .InRangeReviews}}## Per-Commit Reviews in This Range
+
+The following commits in this range have already been individually reviewed.
+Issues found in earlier commits may have been fixed by later commits in the range.
+
+Do not re-raise issues identified below unless they persist in the final code.
+Focus on cross-commit interactions and problems not caught by per-commit reviews.
+
+{{range .InRangeReviews}}--- Commit {{.Commit}} ({{.Agent}}, {{.Verdict}}) ---
+{{.Output}}
+
+{{template "review_comments" .Comments}}
+{{end}}{{end}}
+{{end}}
+{{define "previous_review_attempts"}}{{if .PreviousAttempts}}## Previous Review Attempts
+
+This commit has been reviewed before. The following are previous review results and any
+responses from developers. Use this context to:
+- Avoid repeating issues that have been marked as known/acceptable
+- Check if previously identified issues are still present
+- Consider developer responses about why certain patterns exist
+
+{{range .PreviousAttempts}}--- {{.Label}} ({{.Agent}}{{if .When}}, {{.When}}{{end}}) ---
+{{.Output}}
+
+{{template "review_comments" .Comments}}
+{{end}}{{end}}
+{{end}}
+{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
+{{define "current_commit_required"}}## Current Commit
+
+**Commit:** {{.Commit}}
+
+{{end}}
+{{define "current_commit_overflow"}}{{if .Subject}}**Subject:** {{.Subject}}
+{{end}}{{if .Author}}**Author:** {{.Author}}
+{{end}}
+{{if .Message}}**Message:**
+{{.Message}}
+
+{{end}}{{end}}
+{{define "current_commit"}}{{template "current_commit_required" .}}{{template "current_commit_overflow" .}}{{end}}
+{{define "commit_range_required"}}## Commit Range
+
+Reviewing {{if gt .Count 0}}{{.Count}}{{else}}{{len .Entries}}{{end}} commits:
+
+{{end}}
+{{define "commit_range_overflow"}}{{range .Entries}}- {{.Commit}}{{if .Subject}} {{.Subject}}{{end}}
+{{end}}
+{{end}}
+{{define "commit_range"}}{{template "commit_range_required" .}}{{template "commit_range_overflow" .}}{{end}}
+{{define "dirty_changes"}}## Uncommitted Changes
+
+{{if .Description}}{{.Description}}{{else}}The following changes have not yet been committed.{{end}}
+
+{{end}}
+{{define "diff_block"}}{{if .Heading}}{{.Heading}}{{else}}### Diff{{end}}
+
+{{if .Fallback}}{{.Fallback}}{{else}}{{.Body}}{{end}}{{end}}
+{{define "inline_diff"}}```diff
+{{.Body}}```
+{{end}}
+{{define "codex_commit_fallback_full"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.
+
+Use commands like:
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+- `{{.FilesCmd}}`
+- `{{.ShowPathCmd}}`
+
+Review the actual diff before writing findings.
+{{end}}
+{{define "codex_commit_fallback_medium"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit locally before writing findings.
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+{{end}}
+{{define "codex_commit_fallback_short"}}(Diff too large to include inline)
+
+For Codex, inspect locally with `{{.DiffCmd}}`.
+{{end}}
+{{define "codex_commit_fallback_shortest"}}(Diff too large; for Codex run `{{.ShowPathCmd}}` locally.)
+{{end}}
+{{define "codex_range_fallback_full"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit range locally with read-only git commands before writing findings. Do not claim the diff is inaccessible unless these commands fail.
+
+Use commands like:
+- `{{.LogCmd}}`
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+- `{{.FilesCmd}}`
+
+Review the actual diff before writing findings.
+{{end}}
+{{define "codex_range_fallback_medium"}}(Diff too large to include inline)
+
+For Codex in read-only review mode, inspect the commit range locally before writing findings.
+- `{{.StatCmd}}`
+- `{{.DiffCmd}}`
+{{end}}
+{{define "codex_range_fallback_short"}}(Diff too large to include inline)
+
+For Codex, inspect locally with `{{.DiffCmd}}`.
+{{end}}
+{{define "codex_range_fallback_shortest"}}(Diff too large; for Codex run `{{.ViewCmd}}` locally.)
+{{end}}
+{{define "generic_commit_fallback"}}(Diff too large to include - please review the commit directly)
+View with: {{.ViewCmd}}
+{{end}}
+{{define "generic_range_fallback"}}(Diff too large to include - please review the commits directly)
+View with: {{.ViewCmd}}
+{{end}}
+{{define "dirty_truncated_diff_fallback"}}(Diff too large to include in full)
+{{if .Body}}```diff
+{{.Body}}```
+{{end}}{{end}}
+{{define "address_tool_attempts"}}{{if .ToolAttempts}}## Previous Addressing Attempts
+
+{{range .ToolAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---
+{{.Response}}
+
+{{end}}{{end}}{{end}}
+{{define "address_user_comments"}}{{if .UserComments}}## User Comments
+
+The following comments were left by the developer on this review.
+Take them into account when applying fixes — they may flag false
+positives, provide additional context, or request specific approaches.
+
+{{range .UserComments}}**{{.Responder}}**{{if .When}} ({{.When}}){{end}}:
+{{.Response}}
+
+{{end}}{{end}}{{end}}
+{{define "address_findings"}}{{if .SeverityFilter}}{{.SeverityFilter}}{{end}}## Review Findings to Address (Job {{.JobID}})
+
+{{.ReviewFindings}}
+
+{{if .OriginalDiff}}## Original Commit Diff (for context)
+
+```diff
+{{.OriginalDiff}}```
+{{end}}{{end}}
