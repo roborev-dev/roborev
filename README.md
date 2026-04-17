@@ -187,6 +187,46 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 
 roborev auto-detects installed agents.
 
+### Routing Claude Code to a proxy (Ollama, LiteLLM, etc.)
+
+The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.
+When `<base_url>` starts with `http(s)://`, roborev points Claude Code at
+that endpoint and pins all tier aliases (Opus/Sonnet/Haiku/subagent) to the
+given model.
+
+```toml
+# .roborev.toml — local Ollama for reviews, real Anthropic for fixes
+agent = "claude-code"
+review_model = "glm-5.1:cloud@http://127.0.0.1:11434"
+fix_model    = "sonnet"
+```
+
+Or via CLI: `roborev review --model 'glm-5.1:cloud@http://127.0.0.1:11434'`.
+
+**Proxy auth.** Set `ROBOREV_CLAUDE_PROXY_TOKEN` to forward a bearer token
+to the proxy as `ANTHROPIC_AUTH_TOKEN`. If unset, roborev sends a placeholder
+(sufficient for gateways that don't check the header, such as Ollama).
+roborev does *not* forward `ANTHROPIC_API_KEY` to proxy endpoints — that
+would leak a real Anthropic credential to arbitrary third parties.
+
+**URL restrictions.** Proxy URLs must not embed `user:pass@` credentials
+(use `ROBOREV_CLAUDE_PROXY_TOKEN`); `http://` is only accepted for loopback
+hosts (`127.0.0.1`, `::1`, `localhost`) so plaintext endpoints can't receive
+tokens over the wire. Use `https://` for remote proxies. The full URL
+(including any path or query string) is forwarded as-is to
+`ANTHROPIC_BASE_URL`, so include the path your gateway expects (e.g.
+LiteLLM may want a trailing `/v1`; Ollama wants no path).
+
+**Environment behavior (breaking change in this release).** When the
+`claude-code` agent runs, roborev always strips inherited `ANTHROPIC_API_KEY`,
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL`
+from the child environment. If you were previously routing Claude Code by
+exporting these vars in your shell, switch to the `<model>@<base_url>` spec
+instead. For native (non-proxy) mode, configure `ANTHROPIC_API_KEY` via
+roborev's config (it is re-injected from roborev's stored key, not inherited
+from the operator's shell).
+
 ## Security Model
 
 roborev delegates code review and fix tasks to AI coding agents that

@@ -83,6 +83,356 @@ func TestClaudeBuildArgs(t *testing.T) {
 	})
 }
 
+func TestParseModel(t *testing.T) {
+	valid := []struct {
+		name        string
+		spec        string
+		wantModel   string
+		wantBaseURL string
+	}{
+		{"PlainModel", "sonnet", "sonnet", ""},
+		{"WithProxyHTTPLoopback", "glm-5.1:cloud@http://127.0.0.1:11434", "glm-5.1:cloud", "http://127.0.0.1:11434"},
+		{"WithProxyHTTPLocalhost", "foo@http://localhost:4000", "foo", "http://localhost:4000"},
+		{"WithProxyHTTPIPv6Loopback", "foo@http://[::1]:4000", "foo", "http://[::1]:4000"},
+		{"WithProxyHTTPS", "foo@https://proxy.example.com", "foo", "https://proxy.example.com"},
+		{"EmptyString", "", "", ""},
+		{"NonURLSuffix", "vendor/model@v2", "vendor/model@v2", ""},
+		{"ModelWithColon", "llama3.1:8b", "llama3.1:8b", ""},
+		{"ModelWithAtAndProxy", "vendor/model@v2@http://127.0.0.1:11434", "vendor/model@v2", "http://127.0.0.1:11434"},
+		// Paths may contain '@' by design — the URL is forwarded verbatim
+		// to the proxy, which is responsible for routing. parseModel splits
+		// at the first '@' whose suffix starts with http(s):// and treats
+		// everything after as the URL.
+		{"ProxyURLPathContainsAt", "foo@http://127.0.0.1:11434/path@extra", "foo", "http://127.0.0.1:11434/path@extra"},
+		// A second embedded http(s):// in the path portion is also forwarded
+		// verbatim — we split at the first '@' whose suffix is a URL and
+		// trust the proxy to route the rest. Locks in intended behavior.
+		{"ProxyURLPathContainsSecondURL", "foo@http://127.0.0.1:11434/p@http://x", "foo", "http://127.0.0.1:11434/p@http://x"},
+		// Query strings are forwarded verbatim to the proxy (README promise).
+		{"ProxyURLWithQuery", "foo@https://proxy.example.com/v1?key=x", "foo", "https://proxy.example.com/v1?key=x"},
+	}
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			m, u, err := parseModel(tt.spec)
+			assert.NoError(err)
+			assert.Equal(tt.wantModel, m)
+			assert.Equal(tt.wantBaseURL, u)
+		})
+	}
+
+	invalid := []struct {
+		name      string
+		spec      string
+		errSubstr string
+	}{
+		{"ProxyOnlyNoModel", "@http://localhost:4000", "no model"},
+		{"ProxyOnlyNoModelHTTPS", "@https://proxy.example.com", "no model"},
+		{"TrailingAt", "glm-5.1:cloud@", "trailing '@'"},
+		{"TrailingAtMultiple", "foo@@", "trailing '@'"},
+		{"ProxyURLWithUserinfo", "foo@http://user:pass@proxy.example.com", "must not embed credentials"},
+		{"ProxyURLWithUserOnly", "foo@https://bob@proxy.example.com", "must not embed credentials"},
+		{"HTTPNonLoopback", "foo@http://proxy.example.com", "non-loopback"},
+		{"HTTPPublicIP", "foo@http://8.8.8.8:4000", "non-loopback"},
+		{"BareHTTPURL", "http://127.0.0.1:11434", "bare proxy URL"},
+		{"BareHTTPSURL", "https://proxy.example.com", "bare proxy URL"},
+		{"LeadingAtNonURL", "@foo", "starts with '@'"},
+		{"MalformedMultiURL", "foo@httpx://bar@http://127.0.0.1:11434", "URL-like substring"},
+		{"ProxyURLWithFragment", "foo@http://127.0.0.1:11434/#frag", "fragment"},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			_, _, err := parseModel(tt.spec)
+			assert.Error(err)
+			assert.Contains(err.Error(), tt.errSubstr)
+		})
+	}
+}
+
+func TestClaudeBuildArgsStripsProxySuffix(t *testing.T) {
+	a := NewClaudeAgent("claude").WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
+	args := a.buildArgs(false, false)
+
+	idx := slices.Index(args, "--model")
+	require.NotEqual(t, -1, idx)
+	require.Less(t, idx+1, len(args))
+	assert.Equal(t, "glm-5.1:cloud", args[idx+1])
+
+	for _, a := range args {
+		assert.NotContains(t, a, "@")
+		assert.NotContains(t, a, "http://")
+	}
+}
+
+func TestClaudeBuildArgsFallsBackToRawModelOnParseError(t *testing.T) {
+	// CommandLine() is used for logs/display. When the spec is malformed
+	// (e.g. trailing '@'), buildArgs should still surface the raw configured
+	// model so operators can see what they typed; Review() rejects the spec
+	// before execution.
+	a := NewClaudeAgent("claude").WithModel("sonnet@").(*ClaudeAgent)
+	args := a.buildArgs(false, false)
+
+	idx := slices.Index(args, "--model")
+	require.NotEqual(t, -1, idx, "--model should be present with raw model fallback")
+	require.Less(t, idx+1, len(args))
+	assert.Equal(t, "sonnet@", args[idx+1])
+}
+
+func TestClaudeReviewProxyEnv(t *testing.T) {
+	// Clear host env and package state so the proxy auth-token assertion is
+	// deterministic regardless of the operator's shell or prior tests.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", "")
+	SetAnthropicAPIKey("")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	assert.Contains(env, "ANTHROPIC_BASE_URL=http://127.0.0.1:11434")
+	assert.Contains(env, "ANTHROPIC_AUTH_TOKEN=proxy")
+	assert.Contains(env, "ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.1:cloud")
+	assert.Contains(env, "ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.1:cloud")
+	assert.Contains(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.1:cloud")
+	assert.Contains(env, "CLAUDE_CODE_SUBAGENT_MODEL=glm-5.1:cloud")
+	// No ANTHROPIC_API_KEY in proxy mode
+	for _, e := range env {
+		assert.False(strings.HasPrefix(e, "ANTHROPIC_API_KEY="), "unexpected ANTHROPIC_API_KEY in proxy mode: %s", e)
+	}
+}
+
+func TestClaudeReviewProxyTokenOptIn(t *testing.T) {
+	// ROBOREV_CLAUDE_PROXY_TOKEN is the only way to forward a real bearer
+	// token to a proxy. Verifies the strip-then-inject ordering in Review()
+	// doesn't accidentally reintroduce ANTHROPIC_API_KEY as
+	// ANTHROPIC_AUTH_TOKEN — defense-in-depth against a future refactor
+	// that might try to reuse the configured Anthropic key.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-real-anthropic-key")
+	SetAnthropicAPIKey("sk-real-anthropic-key")
+	t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", "sk-proxy-only")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@https://proxy.example.com").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	assert.Contains(env, "ANTHROPIC_AUTH_TOKEN=sk-proxy-only")
+	for _, e := range env {
+		assert.NotEqual("ANTHROPIC_AUTH_TOKEN=sk-real-anthropic-key", e, "ANTHROPIC_API_KEY must not be forwarded as proxy auth token")
+		assert.False(strings.HasPrefix(e, "ANTHROPIC_API_KEY="), "ANTHROPIC_API_KEY must not be set in proxy mode")
+	}
+}
+
+func TestClaudeReviewProxyDoesNotForwardAPIKey(t *testing.T) {
+	// Even when a real ANTHROPIC_API_KEY is configured and no explicit proxy
+	// token is set, roborev must NOT fall back to forwarding the API key.
+	// It should use the "proxy" placeholder instead.
+	t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", "")
+	SetAnthropicAPIKey("sk-real-anthropic-key")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	assert.Contains(env, "ANTHROPIC_AUTH_TOKEN=proxy")
+	for _, e := range env {
+		assert.NotContains(e, "sk-real-anthropic-key", "real API key leaked into proxy env: %s", e)
+	}
+}
+
+func TestClaudeReviewStripsInheritedProxyEnv(t *testing.T) {
+	// If the user has ANTHROPIC_BASE_URL or tier-alias vars exported in their
+	// shell, native-mode Claude must not inherit them — otherwise roborev
+	// silently routes through someone else's proxy. Covers every key in
+	// the strip list so a future refactor that drops one trips this test.
+	t.Setenv("ANTHROPIC_API_KEY", "stale-api-key")
+	SetAnthropicAPIKey("")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+	t.Setenv("ANTHROPIC_BASE_URL", "http://stale.example")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "stale-token")
+	t.Setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "stale-opus")
+	t.Setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "stale-sonnet")
+	t.Setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "stale-haiku")
+	t.Setenv("CLAUDE_CODE_SUBAGENT_MODEL", "stale-subagent")
+	t.Setenv("CLAUDECODE", "1")
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("sonnet").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	leakyPrefixes := []string{
+		"ANTHROPIC_API_KEY=",
+		"ANTHROPIC_BASE_URL=",
+		"ANTHROPIC_AUTH_TOKEN=",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=",
+		"CLAUDE_CODE_SUBAGENT_MODEL=",
+		"CLAUDECODE=",
+	}
+	for _, e := range env {
+		for _, p := range leakyPrefixes {
+			assert.False(strings.HasPrefix(e, p), "inherited %s leaked: %s", p, e)
+		}
+	}
+}
+
+func TestClaudeReviewProxyModeOverridesInheritedEnv(t *testing.T) {
+	// Even if the parent env has stale proxy vars, proxy mode must end up
+	// with exactly one entry per key, set to roborev's values.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", "")
+	SetAnthropicAPIKey("")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+	t.Setenv("ANTHROPIC_BASE_URL", "http://stale.example")
+	t.Setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "stale-opus")
+	t.Setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "stale-sonnet")
+	t.Setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "stale-haiku")
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	countBaseURL, countSonnet := 0, 0
+	for _, e := range env {
+		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
+			countBaseURL++
+			assert.Equal("ANTHROPIC_BASE_URL=http://127.0.0.1:11434", e)
+		}
+		if strings.HasPrefix(e, "ANTHROPIC_DEFAULT_SONNET_MODEL=") {
+			countSonnet++
+			assert.Equal("ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.1:cloud", e)
+		}
+	}
+	assert.Equal(1, countBaseURL, "expected exactly one ANTHROPIC_BASE_URL")
+	assert.Equal(1, countSonnet, "expected exactly one ANTHROPIC_DEFAULT_SONNET_MODEL")
+}
+
+func TestClaudeReviewProxyTokenRejectsControlChars(t *testing.T) {
+	// Tokens containing embedded control characters would either be rejected
+	// by exec (NUL) or produce malformed HTTP headers. Fail fast with a clear
+	// error rather than passing them through to the proxy.
+	SetAnthropicAPIKey("")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+
+	// NUL is rejected by os.Setenv itself so it's unreachable via the env-var
+	// path, but the validation defends against it for completeness.
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{"EmbeddedNewline", "sk-proxy\nbad"},
+		{"EmbeddedCarriageReturn", "sk-proxy\rbad"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", tt.token)
+			a := NewClaudeAgent("claude").WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
+			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "control characters")
+		})
+	}
+}
+
+func TestClaudeReviewProxyOnlyRejected(t *testing.T) {
+	a := NewClaudeAgent("claude").WithModel("@http://localhost:4000").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no model")
+}
+
+func TestClaudeReviewRejectsInvalidSpecs(t *testing.T) {
+	// Review must surface parser errors so malformed specs fail fast instead
+	// of silently falling back to native routing or leaking credentials.
+	tests := []struct {
+		name      string
+		model     string
+		errSubstr string
+	}{
+		{"TrailingAt", "sonnet@", "trailing '@'"},
+		{"UserinfoInURL", "foo@http://user:pass@proxy.example.com", "must not embed credentials"},
+		{"HTTPNonLoopback", "foo@http://proxy.example.com", "non-loopback"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewClaudeAgent("claude").WithModel(tt.model).(*ClaudeAgent)
+			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errSubstr)
+		})
+	}
+}
+
+func TestClaudeReviewNonProxyDoesNotSetProxyEnv(t *testing.T) {
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("sonnet").(*ClaudeAgent)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	assert := assert.New(t)
+	for _, e := range env {
+		assert.False(strings.HasPrefix(e, "ANTHROPIC_BASE_URL="), "unexpected ANTHROPIC_BASE_URL: %s", e)
+		assert.False(strings.HasPrefix(e, "ANTHROPIC_AUTH_TOKEN="), "unexpected ANTHROPIC_AUTH_TOKEN: %s", e)
+		assert.False(strings.HasPrefix(e, "ANTHROPIC_DEFAULT_SONNET_MODEL="), "unexpected ANTHROPIC_DEFAULT_SONNET_MODEL: %s", e)
+	}
+}
+
 func TestClaudeDangerousFlagSupport(t *testing.T) {
 	assert := assert.New(t)
 

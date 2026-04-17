@@ -85,6 +85,7 @@ type MockCLIOpts struct {
 	ExitCode     int
 	CaptureArgs  bool
 	CaptureStdin bool
+	CaptureEnv   bool
 	StdoutLines  []string
 	StderrLines  []string
 }
@@ -94,6 +95,7 @@ type MockCLIResult struct {
 	CmdPath   string
 	ArgsFile  string
 	StdinFile string
+	EnvFile   string
 }
 
 // readMockArgs reads the captured arguments from a mock CLI's ArgsFile and splits them into a slice.
@@ -104,6 +106,21 @@ func readMockArgs(t *testing.T, path string) []string {
 		t.Fatalf("failed to read args file %s: %v", path, err)
 	}
 	return strings.Split(strings.TrimSpace(string(content)), " ")
+}
+
+// readMockEnv reads the captured env from a mock CLI's EnvFile.
+// Returns each env var as a "KEY=VALUE" string.
+func readMockEnv(t *testing.T, path string) []string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read env file %s: %v", path, err)
+	}
+	trimmed := strings.TrimRight(string(content), "\n")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
 }
 
 // assertContainsArg checks that args contains target, failing with a descriptive message.
@@ -150,6 +167,11 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 	if opts.CaptureStdin {
 		result.StdinFile = filepath.Join(tmpDir, "stdin.txt")
 		fmt.Fprintf(&script, "cat > %q\n", result.StdinFile)
+	}
+
+	if opts.CaptureEnv {
+		result.EnvFile = filepath.Join(tmpDir, "env.txt")
+		fmt.Fprintf(&script, "env > %q\n", result.EnvFile)
 	}
 
 	if len(opts.StdoutLines) > 0 {
