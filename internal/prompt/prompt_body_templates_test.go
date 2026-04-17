@@ -119,11 +119,12 @@ func TestRenderAddressPromptUsesNestedSections(t *testing.T) {
 			Heading: "## Project Guidelines",
 			Body:    "Keep it simple.",
 		},
-		PreviousAttempts: []addressAttemptView{{Responder: "developer", Response: "Tried a narrow fix", When: "2026-04-04 12:00"}},
-		SeverityFilter:   "Only address medium and higher findings.\n\n",
-		ReviewFindings:   "- medium: do the thing",
-		OriginalDiff:     "diff --git a/a b/a\n+line\n",
-		JobID:            42,
+		ToolAttempts:   []addressAttemptView{{Responder: "roborev-fix", Response: "Tried a narrow fix", When: "2026-04-04 12:00"}},
+		UserComments:   []addressAttemptView{{Responder: "alice", Response: "This is a false positive", When: "2026-04-04 13:00"}},
+		SeverityFilter: "Only address medium and higher findings.\n\n",
+		ReviewFindings: "- medium: do the thing",
+		OriginalDiff:   "diff --git a/a b/a\n+line\n",
+		JobID:          42,
 	}
 
 	body, err := renderAddressPrompt(view)
@@ -131,6 +132,10 @@ func TestRenderAddressPromptUsesNestedSections(t *testing.T) {
 
 	assert.Contains(t, body, "## Project Guidelines")
 	assert.Contains(t, body, "## Previous Addressing Attempts")
+	assert.Contains(t, body, "roborev-fix")
+	assert.Contains(t, body, "## User Comments")
+	assert.Contains(t, body, "alice")
+	assert.Contains(t, body, "false positive")
 	assert.Contains(t, body, "## Review Findings to Address (Job 42)")
 	assert.Contains(t, body, "## Original Commit Diff (for context)")
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -1625,7 +1626,7 @@ func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) 
 		Output: "Found issue: check custom.dat",
 		Job:    &storage.ReviewJob{GitRef: sha},
 	}
-	attempts := []storage.Response{{Responder: "developer", Response: "Tried a narrow fix"}}
+	attempts := []storage.Response{{Responder: "roborev-fix", Response: "Tried a narrow fix"}}
 
 	prompt, err := b.BuildAddressPrompt(repoPath, review, attempts, "medium")
 	require.NoError(t, err)
@@ -1634,4 +1635,92 @@ func TestBuildAddressPromptRendersPreviousAttemptsAndOriginalDiff(t *testing.T) 
 	assert.Contains(t, prompt, "Tried a narrow fix")
 	assert.Contains(t, prompt, "## Review Findings to Address")
 	assert.Contains(t, prompt, "## Original Commit Diff")
+}
+
+func TestBuildAddressPromptSplitsResponses(t *testing.T) {
+	r := newTestRepo(t)
+
+	b := NewBuilder(nil)
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Fix applied", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+		{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+	}
+
+	review := &storage.Review{
+		JobID:  1,
+		Agent:  "test",
+		Output: "Found bug in foo.go",
+	}
+
+	p, err := b.BuildAddressPrompt(r.dir, review, responses, "")
+	require.NoError(t, err)
+
+	assert.Contains(t, p, "## Previous Addressing Attempts")
+	assert.Contains(t, p, "roborev-fix")
+	assert.Contains(t, p, "Fix applied")
+
+	assert.Contains(t, p, "## User Comments")
+	assert.Contains(t, p, "alice")
+	assert.Contains(t, p, "false positive")
+}
+
+func TestBuildRangePrompt_IncludesInRangeReviews(t *testing.T) {
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("base\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+	baseSHA := r.git("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change1\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "first feature commit")
+	commit1 := r.git("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change2\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "second feature commit")
+	commit2 := r.git("rev-parse", "HEAD")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, commit1, "test",
+		"Found bug: missing null check in handler\n\nVerdict: FAIL")
+	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
+		"No issues found.\n\nVerdict: PASS")
+
+	rangeRef := baseSHA + ".." + commit2
+	builder := NewBuilder(db)
+	prompt, err := builder.Build(r.dir, rangeRef, repo.ID, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertContains := assert.New(t)
+	assertContains.Contains(prompt, "Per-Commit Reviews in This Range")
+	assertContains.Contains(prompt, "Do not re-raise issues")
+	assertContains.Contains(prompt, "missing null check in handler")
+	assertContains.Contains(prompt, "No issues found.")
+	assertContains.Contains(prompt, "failed")
+	assertContains.Contains(prompt, "passed")
+}
+
+func TestBuildRangePrompt_NoInRangeReviewsWithoutDB(t *testing.T) {
+	r := newTestRepo(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("base\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "initial")
+	baseSHA := r.git("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(r.dir, "base.txt"), []byte("change\n"), 0o644))
+	r.git("add", "base.txt")
+	r.git("commit", "-m", "feature")
+	headSHA := r.git("rev-parse", "HEAD")
+
+	builder := NewBuilder(nil)
+	prompt, err := builder.Build(r.dir, baseSHA+".."+headSHA, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assert.NotContains(t, prompt, "Per-Commit Reviews in This Range")
 }

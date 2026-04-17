@@ -56,7 +56,8 @@ type addressAttemptView = AddressAttemptTemplateContext
 
 type addressPromptView struct {
 	ProjectGuidelines *markdownSectionView
-	PreviousAttempts  []addressAttemptView
+	ToolAttempts      []addressAttemptView
+	UserComments      []addressAttemptView
 	SeverityFilter    string
 	ReviewFindings    string
 	OriginalDiff      string
@@ -130,8 +131,23 @@ func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalCont
 		ProjectGuidelines: markdownSectionFromView(view.ProjectGuidelines),
 		AdditionalContext: view.AdditionalContext,
 		PreviousReviews:   previousReviewsFromView(view.PreviousReviews),
+		InRangeReviews:    inRangeReviewsFromView(view.InRangeReviews),
 		PreviousAttempts:  reviewAttemptsFromView(view.PreviousAttempts),
 	}
+}
+
+func inRangeReviewsFromView(views []InRangeReviewTemplateContext) []InRangeReviewTemplateContext {
+	reviews := make([]InRangeReviewTemplateContext, 0, len(views))
+	for _, view := range views {
+		reviews = append(reviews, InRangeReviewTemplateContext{
+			Commit:   view.Commit,
+			Agent:    view.Agent,
+			Verdict:  view.Verdict,
+			Output:   view.Output,
+			Comments: reviewCommentsFromView(view.Comments),
+		})
+	}
+	return reviews
 }
 
 type commitInspectionFallbackView struct {
@@ -214,14 +230,19 @@ func templateContextFromDirtyView(view dirtyPromptView) TemplateContext {
 }
 
 func templateContextFromAddressView(view addressPromptView) TemplateContext {
-	attempts := make([]AddressAttemptTemplateContext, 0, len(view.PreviousAttempts))
-	for _, attempt := range view.PreviousAttempts {
-		attempts = append(attempts, AddressAttemptTemplateContext(attempt))
+	toolAttempts := make([]AddressAttemptTemplateContext, 0, len(view.ToolAttempts))
+	for _, attempt := range view.ToolAttempts {
+		toolAttempts = append(toolAttempts, AddressAttemptTemplateContext(attempt))
+	}
+	userComments := make([]AddressAttemptTemplateContext, 0, len(view.UserComments))
+	for _, comment := range view.UserComments {
+		userComments = append(userComments, AddressAttemptTemplateContext(comment))
 	}
 	return TemplateContext{
 		Address: &AddressTemplateContext{
 			ProjectGuidelines: markdownSectionFromView(view.ProjectGuidelines),
-			PreviousAttempts:  attempts,
+			ToolAttempts:      toolAttempts,
+			UserComments:      userComments,
 			SeverityFilter:    view.SeverityFilter,
 			ReviewFindings:    view.ReviewFindings,
 			OriginalDiff:      view.OriginalDiff,
@@ -515,6 +536,36 @@ func previousReviewViews(contexts []HistoricalReviewContext) []previousReviewVie
 		if ctx.Review != nil {
 			view.Available = true
 			view.Output = ctx.Review.Output
+		}
+		if len(ctx.Responses) > 0 {
+			view.Comments = make([]reviewCommentView, 0, len(ctx.Responses))
+			for _, resp := range ctx.Responses {
+				view.Comments = append(view.Comments, reviewCommentView{Responder: resp.Responder, Response: resp.Response})
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func inRangeReviewViews(contexts []HistoricalReviewContext) []InRangeReviewTemplateContext {
+	views := make([]InRangeReviewTemplateContext, 0, len(contexts))
+	for _, ctx := range contexts {
+		if ctx.Review == nil {
+			continue
+		}
+		verdictLabel := "unknown"
+		switch storage.ParseVerdict(ctx.Review.Output) {
+		case "P":
+			verdictLabel = "passed"
+		case "F":
+			verdictLabel = "failed"
+		}
+		view := InRangeReviewTemplateContext{
+			Commit:  git.ShortSHA(ctx.SHA),
+			Agent:   ctx.Review.Agent,
+			Verdict: verdictLabel,
+			Output:  ctx.Review.Output,
 		}
 		if len(ctx.Responses) > 0 {
 			view.Comments = make([]reviewCommentView, 0, len(ctx.Responses))

@@ -61,6 +61,7 @@ type ReviewOptionalContext struct {
 	ProjectGuidelines *MarkdownSection
 	AdditionalContext string
 	PreviousReviews   []PreviousReviewTemplateContext
+	InRangeReviews    []InRangeReviewTemplateContext
 	PreviousAttempts  []ReviewAttemptTemplateContext
 }
 
@@ -74,6 +75,10 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 	for i := range cloned.PreviousReviews {
 		cloned.PreviousReviews[i].Comments = slices.Clone(cloned.PreviousReviews[i].Comments)
 	}
+	cloned.InRangeReviews = slices.Clone(o.InRangeReviews)
+	for i := range cloned.InRangeReviews {
+		cloned.InRangeReviews[i].Comments = slices.Clone(cloned.InRangeReviews[i].Comments)
+	}
 	cloned.PreviousAttempts = slices.Clone(o.PreviousAttempts)
 	for i := range cloned.PreviousAttempts {
 		cloned.PreviousAttempts[i].Comments = slices.Clone(cloned.PreviousAttempts[i].Comments)
@@ -85,6 +90,7 @@ func (o ReviewOptionalContext) IsEmpty() bool {
 	return o.ProjectGuidelines == nil &&
 		o.AdditionalContext == "" &&
 		len(o.PreviousReviews) == 0 &&
+		len(o.InRangeReviews) == 0 &&
 		len(o.PreviousAttempts) == 0
 }
 
@@ -102,6 +108,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 	switch {
 	case len(o.PreviousAttempts) > 0:
 		o.PreviousAttempts = nil
+	case len(o.InRangeReviews) > 0:
+		o.InRangeReviews = nil
 	case len(o.PreviousReviews) > 0:
 		o.PreviousReviews = nil
 	case o.AdditionalContext != "":
@@ -308,7 +316,8 @@ type GenericFallbackContext struct {
 
 type AddressTemplateContext struct {
 	ProjectGuidelines *MarkdownSection
-	PreviousAttempts  []AddressAttemptTemplateContext
+	ToolAttempts      []AddressAttemptTemplateContext
+	UserComments      []AddressAttemptTemplateContext
 	SeverityFilter    string
 	ReviewFindings    string
 	OriginalDiff      string
@@ -321,7 +330,8 @@ func (c AddressTemplateContext) Clone() AddressTemplateContext {
 		section := *c.ProjectGuidelines
 		cloned.ProjectGuidelines = &section
 	}
-	cloned.PreviousAttempts = slices.Clone(c.PreviousAttempts)
+	cloned.ToolAttempts = slices.Clone(c.ToolAttempts)
+	cloned.UserComments = slices.Clone(c.UserComments)
 	return cloned
 }
 
@@ -345,6 +355,14 @@ type PreviousReviewTemplateContext struct {
 	Output    string
 	Comments  []ReviewCommentTemplateContext
 	Available bool
+}
+
+type InRangeReviewTemplateContext struct {
+	Commit   string
+	Agent    string
+	Verdict  string
+	Output   string
+	Comments []ReviewCommentTemplateContext
 }
 
 type ReviewAttemptTemplateContext struct {

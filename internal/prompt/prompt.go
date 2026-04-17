@@ -836,6 +836,10 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 
+	// Include per-commit reviews for commits inside the range so the agent
+	// can avoid re-raising issues that were already surfaced.
+	ctx.optional.InRangeReviews = inRangeReviewViews(b.lookupReviewContexts(commits, true))
+
 	entries := make([]commitRangeEntryView, 0, len(commits))
 	for _, commitSHA := range commits {
 		short := git.ShortSHA(commitSHA)
@@ -1027,30 +1031,35 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("get parent commits: %w", err)
 	}
+	return b.lookupReviewContexts(parentSHAs, false), nil
+}
 
+// lookupReviewContexts looks up reviews and responses for each SHA.
+// When skipMissing is true, SHAs with no stored review are omitted from the
+// result; otherwise a placeholder context (Review nil) is returned for them.
+func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []HistoricalReviewContext {
+	if b.db == nil {
+		return nil
+	}
 	var contexts []HistoricalReviewContext
-	for _, parentSHA := range parentSHAs {
-		ctx := HistoricalReviewContext{SHA: parentSHA}
-
-		// Try to look up review for this commit
-		review, err := b.db.GetReviewByCommitSHA(parentSHA)
-		if err == nil {
-			ctx.Review = review
-
-			// Also fetch comments for this review's job
-			if review.JobID > 0 {
-				responses, err := b.db.GetCommentsForJob(review.JobID)
-				if err == nil {
-					ctx.Responses = responses
-				}
+	for _, sha := range shas {
+		review, err := b.db.GetReviewByCommitSHA(sha)
+		if err != nil {
+			if skipMissing {
+				continue
+			}
+			contexts = append(contexts, HistoricalReviewContext{SHA: sha})
+			continue
+		}
+		ctx := HistoricalReviewContext{SHA: sha, Review: review}
+		if review.JobID > 0 {
+			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
+				ctx.Responses = responses
 			}
 		}
-		// If no review found, ctx.Review stays nil
-
 		contexts = append(contexts, ctx)
 	}
-
-	return contexts, nil
+	return contexts
 }
 
 // BuildSimple constructs a simpler prompt without database context
@@ -1133,17 +1142,34 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	}
 
 	if len(previousAttempts) > 0 {
-		view.PreviousAttempts = make([]addressAttemptView, 0, len(previousAttempts))
-		for _, attempt := range previousAttempts {
-			when := ""
-			if !attempt.CreatedAt.IsZero() {
-				when = attempt.CreatedAt.Format("2006-01-02 15:04")
+		toolAttempts, userComments := SplitResponses(previousAttempts)
+		if len(toolAttempts) > 0 {
+			view.ToolAttempts = make([]addressAttemptView, 0, len(toolAttempts))
+			for _, attempt := range toolAttempts {
+				when := ""
+				if !attempt.CreatedAt.IsZero() {
+					when = attempt.CreatedAt.Format("2006-01-02 15:04")
+				}
+				view.ToolAttempts = append(view.ToolAttempts, addressAttemptView{
+					Responder: attempt.Responder,
+					Response:  attempt.Response,
+					When:      when,
+				})
 			}
-			view.PreviousAttempts = append(view.PreviousAttempts, addressAttemptView{
-				Responder: attempt.Responder,
-				Response:  attempt.Response,
-				When:      when,
-			})
+		}
+		if len(userComments) > 0 {
+			view.UserComments = make([]addressAttemptView, 0, len(userComments))
+			for _, comment := range userComments {
+				when := ""
+				if !comment.CreatedAt.IsZero() {
+					when = comment.CreatedAt.Format("2006-01-02 15:04")
+				}
+				view.UserComments = append(view.UserComments, addressAttemptView{
+					Responder: comment.Responder,
+					Response:  comment.Response,
+					When:      when,
+				})
+			}
 		}
 	}
 
