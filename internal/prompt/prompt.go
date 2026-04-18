@@ -628,6 +628,9 @@ func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
 	if len(original.PreviousAttempts) > 0 && len(trimmed.PreviousAttempts) == 0 {
 		loss++
 	}
+	if len(original.InRangeReviews) > 0 && len(trimmed.InRangeReviews) == 0 {
+		loss++
+	}
 	if len(original.PreviousReviews) > 0 && len(trimmed.PreviousReviews) == 0 {
 		loss++
 	}
@@ -899,12 +902,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 				return "", err
 			}
 			if selectedCtx.Review != nil {
-				ctx.optional = optionalSectionsView{
-					ProjectGuidelines: buildProjectGuidelinesSectionView(selectedCtx.Review.Optional.ProjectGuidelinesBody()),
-					AdditionalContext: selectedCtx.Review.Optional.AdditionalContext,
-					PreviousReviews:   previousReviewViewsFromTemplateContext(selectedCtx.Review.Optional.PreviousReviews),
-					PreviousAttempts:  reviewAttemptViewsFromTemplateContext(selectedCtx.Review.Optional.PreviousAttempts),
-				}
+				ctx.optional = selectedCtx.Review.Optional.Clone()
 				if selectedCtx.Review.Subject.Range != nil {
 					entries := make([]commitRangeEntryView, 0, len(selectedCtx.Review.Subject.Range.Entries))
 					for _, entry := range selectedCtx.Review.Subject.Range.Entries {

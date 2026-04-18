@@ -425,10 +425,7 @@ func trimOptionalSections(view *optionalSectionsView) bool {
 	if !ctx.TrimNext() {
 		return false
 	}
-	view.ProjectGuidelines = buildProjectGuidelinesSectionView(ctx.ProjectGuidelinesBody())
-	view.AdditionalContext = ctx.AdditionalContext
-	view.PreviousReviews = previousReviewViewsFromTemplateContext(ctx.PreviousReviews)
-	view.PreviousAttempts = reviewAttemptViewsFromTemplateContext(ctx.PreviousAttempts)
+	*view = ctx
 	return true
 }
 
@@ -514,21 +511,6 @@ func renderDirtyTruncatedDiffFallback(body string) (string, error) {
 	return executePromptTemplate("dirty_truncated_diff_fallback", dirtyTruncatedDiffFallbackView{Body: body})
 }
 
-func previousReviewViewsFromTemplateContext(contexts []PreviousReviewTemplateContext) []previousReviewView {
-	views := make([]previousReviewView, 0, len(contexts))
-	for _, ctx := range contexts {
-		view := previousReviewView{Commit: ctx.Commit, Available: ctx.Available, Output: ctx.Output}
-		if len(ctx.Comments) > 0 {
-			view.Comments = make([]reviewCommentView, 0, len(ctx.Comments))
-			for _, comment := range ctx.Comments {
-				view.Comments = append(view.Comments, reviewCommentView(comment))
-			}
-		}
-		views = append(views, view)
-	}
-	return views
-}
-
 func previousReviewViews(contexts []HistoricalReviewContext) []previousReviewView {
 	views := make([]previousReviewView, 0, len(contexts))
 	for _, ctx := range contexts {
@@ -601,21 +583,6 @@ func reviewAttemptViews(reviews []storage.Review) []reviewAttemptView {
 
 func renderPreviousAttemptsFromReviews(reviews []storage.Review) (string, error) {
 	return renderOptionalSectionsFromView(optionalSectionsView{PreviousAttempts: reviewAttemptViews(reviews)})
-}
-
-func reviewAttemptViewsFromTemplateContext(attempts []ReviewAttemptTemplateContext) []reviewAttemptView {
-	views := make([]reviewAttemptView, 0, len(attempts))
-	for _, attempt := range attempts {
-		view := reviewAttemptView{Label: attempt.Label, Agent: attempt.Agent, When: attempt.When, Output: attempt.Output}
-		if len(attempt.Comments) > 0 {
-			view.Comments = make([]reviewCommentView, 0, len(attempt.Comments))
-			for _, comment := range attempt.Comments {
-				view.Comments = append(view.Comments, reviewCommentView(comment))
-			}
-		}
-		views = append(views, view)
-	}
-	return views
 }
 
 func previousAttemptViewsFromContexts(attempts []reviewAttemptContext) []reviewAttemptView {
