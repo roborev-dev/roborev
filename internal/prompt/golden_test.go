@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -179,4 +181,107 @@ func TestGoldenPrompt_DesignReview(t *testing.T) {
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "design_review.golden")
+}
+
+func TestGoldenPrompt_SingleReviewClaudeCode(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "claude-code", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_review_claude_code.golden")
+}
+
+func TestGoldenPrompt_SingleReviewGemini(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "gemini", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_review_gemini.golden")
+}
+
+func TestGoldenPrompt_SingleWithPreviousReviews(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	parent1 := r.commitFile("a.txt", "a1\n", "alpha 1")
+	parent2 := r.commitFile("a.txt", "a2\n", "alpha 2")
+	target := r.commitFile("a.txt", "a3\n", "alpha 3")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, parent1, "test",
+		"No issues found.\n\nVerdict: PASS")
+	testutil.CreateCompletedReview(t, db, repo.ID, parent2, "test",
+		"Found unused variable in a.txt\n\nVerdict: FAIL")
+
+	b := NewBuilder(db)
+	prompt, err := b.Build(r.dir, target, repo.ID, 2, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_with_previous_reviews.golden")
+}
+
+func TestGoldenPrompt_SingleWithGuidelines(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	guidelines := `review_guidelines = """
+- Always prefer table-driven tests for Go.
+- No new dependencies without justification.
+"""
+`
+	r.writeFile(".roborev.toml", guidelines)
+	r.git("add", ".roborev.toml")
+	r.git("commit", "-m", "add review guidelines")
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_with_guidelines.golden")
+}
+
+func TestGoldenPrompt_SingleWithAdditionalContext(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	additional := "## Pull Request Discussion\n\nReviewer noted the greeting should support i18n in a later PR.\n"
+	b := NewBuilder(nil)
+	prompt, err := b.BuildWithAdditionalContext(r.dir, sha, 0, 0, "test", "", "", additional)
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_with_additional_context.golden")
+}
+
+func TestGoldenPrompt_SingleWithSeverityFilter(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "medium")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_with_severity_filter.golden")
+}
+
+func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.commitFile("base.txt", "base\n", "initial")
+
+	// A large change that will exceed the tiny prompt cap and trigger
+	// the commit fallback rendering.
+	large := strings.Repeat("line of content added\n", 800)
+	sha := r.commitFile("big.txt", large, "huge change")
+
+	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff.golden")
 }
