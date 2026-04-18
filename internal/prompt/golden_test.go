@@ -285,3 +285,71 @@ func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
 
 	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff.golden")
 }
+
+func TestGoldenPrompt_SingleTruncatedDiffCodex(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.commitFile("base.txt", "base\n", "initial")
+
+	large := strings.Repeat("line of content added\n", 800)
+	sha := r.commitFile("big.txt", large, "huge change")
+
+	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "codex", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff_codex.golden")
+}
+
+func TestGoldenPrompt_RangeTruncated(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	baseSHA := r.commitFile("base.txt", "base\n", "initial")
+
+	large := strings.Repeat("a content line\n", 500)
+	r.commitFile("big1.txt", large, "first large addition")
+	headSHA := r.commitFile("big2.txt", large, "second large addition")
+
+	cfg := &config.Config{DefaultMaxPromptSize: 5000}
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.Build(r.dir, baseSHA+".."+headSHA, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "range_truncated.golden")
+}
+
+func TestGoldenPrompt_DirtyTruncated(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.commitFile("base.txt", "base\n", "initial")
+
+	diff := "diff --git a/big.txt b/big.txt\nnew file mode 100644\n" +
+		"index 0000000..1111111\n--- /dev/null\n+++ b/big.txt\n@@ -0,0 +1,500 @@\n" +
+		strings.Repeat("+a line of content\n", 500)
+
+	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.BuildDirty(r.dir, diff, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "dirty_truncated.golden")
+}
+
+func TestGoldenPrompt_AddressWithoutSeverity(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("foo.go", "package foo\n", "add foo")
+
+	b := NewBuilder(nil)
+	review := &storage.Review{
+		JobID:  99,
+		Agent:  "test",
+		Output: "- Medium: foo.go:1 missing doc comment",
+		Job:    &storage.ReviewJob{GitRef: sha},
+	}
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Added doc comment", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+	}
+
+	prompt, err := b.BuildAddressPrompt(r.dir, review, responses, "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "address_without_severity.golden")
+}

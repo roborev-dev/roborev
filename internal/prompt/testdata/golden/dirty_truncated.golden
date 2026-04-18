@@ -1,0 +1,165 @@
+You are a code reviewer. Review the following uncommitted changes for:
+
+1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
+2. **Security**: Injection vulnerabilities, auth issues, data exposure
+3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
+4. **Regressions**: Changes that might break existing functionality
+5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
+
+After reviewing, provide:
+
+1. A brief summary of what the changes do
+2. Any issues found, listed with:
+   - Severity (high/medium/low)
+   - File and line reference where possible
+   - A brief explanation of the problem and suggested fix
+
+If you find no issues, state "No issues found." after the summary.
+
+IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.
+
+Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
+If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.
+
+Current date: GOLDEN_DATE (UTC)
+
+## Uncommitted Changes
+
+The following changes have not yet been committed.
+
+### Diff
+
+(Diff too large to include in full)
+```diff
+diff --git a/big.txt b/big.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,500 @@
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line 
+... (truncated)
+```
