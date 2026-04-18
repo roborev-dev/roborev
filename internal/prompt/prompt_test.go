@@ -1724,3 +1724,33 @@ func TestBuildRangePrompt_NoInRangeReviewsWithoutDB(t *testing.T) {
 
 	assert.NotContains(t, prompt, "Per-Commit Reviews in This Range")
 }
+
+// TestRenderShellCommandStripsInlineCodeBreakers locks in that characters
+// which would escape or corrupt a surrounding Markdown inline code span
+// (backticks and control characters) are dropped before the command string
+// is emitted. The rendered commands are only shown to the model inside
+// backtick-delimited code spans — sanitization keeps the enclosing prompt
+// structure intact if a git ref ever contains hostile bytes.
+func TestRenderShellCommandStripsInlineCodeBreakers(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"plain_command", []string{"git", "diff", "abc1234"}, "git diff abc1234"},
+		{"backtick_in_arg", []string{"git", "show", "ref`injection"}, "git show 'refinjection'"},
+		{"control_char_in_arg", []string{"git", "show", "ref\x00null"}, "git show 'refnull'"},
+		{"escape_char_in_arg", []string{"git", "show", "ref\x1bescape"}, "git show 'refescape'"},
+		{"delete_char_in_arg", []string{"git", "show", "ref\x7fdel"}, "git show 'refdel'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderShellCommand(tc.in...)
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "`", "backticks must never survive rendering")
+			for _, r := range got {
+				assert.False(t, r < 0x20 || r == 0x7f, "control char 0x%x leaked into rendered command %q", r, got)
+			}
+		})
+	}
+}

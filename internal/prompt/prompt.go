@@ -515,7 +515,28 @@ func renderShellCommand(args ...string) string {
 		}
 		quoted = append(quoted, arg)
 	}
-	return strings.Join(quoted, " ")
+	return stripInlineCodeBreakers(strings.Join(quoted, " "))
+}
+
+// stripInlineCodeBreakers removes characters that would break an enclosing
+// Markdown inline code span. Command strings produced here are only used
+// for display inside prompts (never executed), so dropping a backtick or
+// control character from a rare git ref is preferable to letting
+// user-controlled input escape the code span and inject text into the
+// surrounding prompt.
+func stripInlineCodeBreakers(s string) string {
+	if !strings.ContainsAny(s, "`\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '`' || r < 0x20 || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func needsShellQuoting(s string) bool {

@@ -245,11 +245,14 @@ func TestReviewOptionalContextTrimNextPreservesPriority(t *testing.T) {
 		ProjectGuidelines: &MarkdownSection{Heading: "## Project Guidelines", Body: "Keep it simple."},
 		AdditionalContext: "## Pull Request Discussion\n\ncontext\n\n",
 		PreviousReviews:   []PreviousReviewTemplateContext{{Commit: "abc1234", Output: "review", Available: true}},
+		InRangeReviews:    []InRangeReviewTemplateContext{{Commit: "def5678", Output: "in-range"}},
 		PreviousAttempts:  []ReviewAttemptTemplateContext{{Label: "Review Attempt 1", Output: "attempt"}},
 	}
 
 	require.True(t, ctx.TrimNext())
 	assert.Empty(t, ctx.PreviousAttempts)
+	require.True(t, ctx.TrimNext())
+	assert.Empty(t, ctx.InRangeReviews)
 	require.True(t, ctx.TrimNext())
 	assert.Empty(t, ctx.PreviousReviews)
 	require.True(t, ctx.TrimNext())
@@ -257,6 +260,43 @@ func TestReviewOptionalContextTrimNextPreservesPriority(t *testing.T) {
 	require.True(t, ctx.TrimNext())
 	assert.Nil(t, ctx.ProjectGuidelines)
 	assert.False(t, ctx.TrimNext())
+}
+
+// TestTrimOptionalSectionsPropagatesInRangeReviewsClear guards against a
+// regression where trimOptionalSections ran TrimNext on a local copy but
+// then rebuilt the caller's view field-by-field, omitting InRangeReviews
+// so the cleared slice never made it back to the caller.
+func TestTrimOptionalSectionsPropagatesInRangeReviewsClear(t *testing.T) {
+	view := optionalSectionsView{
+		PreviousReviews: []PreviousReviewTemplateContext{{Commit: "abc1234", Output: "prev", Available: true}},
+		InRangeReviews:  []InRangeReviewTemplateContext{{Commit: "def5678", Output: "in-range"}},
+	}
+
+	require.True(t, trimOptionalSections(&view))
+	assert.Empty(t, view.InRangeReviews, "TrimNext cleared InRangeReviews; the view must reflect the clear")
+	assert.NotEmpty(t, view.PreviousReviews, "only one section should be trimmed per call")
+
+	require.True(t, trimOptionalSections(&view))
+	assert.Empty(t, view.PreviousReviews)
+
+	assert.False(t, trimOptionalSections(&view))
+}
+
+// TestMeasureOptionalSectionsLossCountsInRangeReviews guards against the
+// prior bug where selectRichestRangePromptView treated "kept in-range
+// reviews" and "dropped in-range reviews" as equally good, so a richer diff
+// fallback could silently discard the per-commit review context.
+func TestMeasureOptionalSectionsLossCountsInRangeReviews(t *testing.T) {
+	original := ReviewOptionalContext{
+		InRangeReviews: []InRangeReviewTemplateContext{{Commit: "abc1234", Output: "in-range"}},
+	}
+	kept := original
+	dropped := ReviewOptionalContext{}
+
+	assert.Zero(t, measureOptionalSectionsLoss(original, kept),
+		"keeping InRangeReviews must score zero loss")
+	assert.Equal(t, 1, measureOptionalSectionsLoss(original, dropped),
+		"dropping InRangeReviews must register as a loss")
 }
 
 func TestTemplateContextCloneIsolatesNestedState(t *testing.T) {

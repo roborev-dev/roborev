@@ -227,6 +227,43 @@ func TestGoldenPrompt_SingleWithPreviousReviews(t *testing.T) {
 	assertGolden(t, scrubDynamic(prompt), "single_with_previous_reviews.golden")
 }
 
+// TestGoldenPrompt_PreviousReviewsWithComments exercises the review_comments
+// rendering path. Prior versions trimmed the separator after a comment block,
+// causing the next `--- Review ... ---` header to butt against the last
+// comment line. This snapshot locks in the expected blank line between items
+// when any entry has comments.
+func TestGoldenPrompt_PreviousReviewsWithComments(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	parent1 := r.commitFile("a.txt", "a1\n", "alpha 1")
+	parent2 := r.commitFile("a.txt", "a2\n", "alpha 2")
+	target := r.commitFile("a.txt", "a3\n", "alpha 3")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateReviewWithComments(t, db, repo.ID, parent1,
+		"Found unused variable in a.txt\n\nVerdict: FAIL",
+		[]testutil.ReviewComment{
+			{User: "alice", Text: "False positive; we use this field via reflection."},
+			{User: "bob", Text: "Agree with alice."},
+		})
+	testutil.CreateCompletedReview(t, db, repo.ID, parent2, "test",
+		"No issues found.\n\nVerdict: PASS")
+
+	b := NewBuilder(db)
+	prompt, err := b.Build(r.dir, target, repo.ID, 2, "test", "", "")
+	require.NoError(t, err)
+
+	// The separator between comment-bearing entries and the next entry
+	// must still contain a blank line; otherwise the `--- Review ... ---`
+	// header butts against the last comment line.
+	assert.Contains(t, prompt, "Comments on this review:\n- alice: ")
+	assert.Contains(t, prompt, `"Agree with alice."`+"\n\n--- Review for commit ")
+
+	assertGolden(t, scrubDynamic(prompt), "previous_reviews_with_comments.golden")
+}
+
 func TestGoldenPrompt_SingleWithGuidelines(t *testing.T) {
 	r := newGoldenTestRepo(t)
 	guidelines := `review_guidelines = """
@@ -331,6 +368,38 @@ func TestGoldenPrompt_DirtyTruncated(t *testing.T) {
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "dirty_truncated.golden")
+}
+
+func TestGoldenPrompt_RangeTruncatedCodexPreservesInRangeReviews(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	baseSHA := r.commitFile("base.txt", "base\n", "initial")
+
+	large := strings.Repeat("a content line\n", 500)
+	commit1 := r.commitFile("big1.txt", large, "first large addition")
+	commit2 := r.commitFile("big2.txt", large, "second large addition")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, commit1, "test",
+		"Found null-deref in big1.txt\n\nVerdict: FAIL")
+	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
+		"No issues found.\n\nVerdict: PASS")
+
+	cfg := &config.Config{DefaultMaxPromptSize: 6000}
+	b := NewBuilderWithConfig(db, cfg)
+	prompt, err := b.Build(r.dir, baseSHA+".."+commit2, repo.ID, 0, "codex", "", "")
+	require.NoError(t, err)
+
+	// Narrow invariant checks first — these are the regression we just
+	// fixed: the truncated codex range path must not drop InRangeReviews,
+	// and it must still select the codex-specific inspection fallback.
+	assert.Contains(t, prompt, "Per-Commit Reviews in This Range")
+	assert.Contains(t, prompt, "Found null-deref in big1.txt")
+	assert.Contains(t, prompt, "For Codex in read-only review mode, inspect the commit range locally")
+
+	assertGolden(t, scrubDynamic(prompt), "range_truncated_codex_in_range.golden")
 }
 
 func TestGoldenPrompt_AddressWithoutSeverity(t *testing.T) {

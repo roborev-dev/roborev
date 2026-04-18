@@ -6,10 +6,10 @@ These guidelines supplement the default review criteria and may add repo-specifi
 
 {{end}}{{end}}
 {{define "additional_context"}}{{- .AdditionalContext -}}{{end}}
-{{define "review_comments"}}{{if .}}
-Comments on this review:
+{{define "review_comments"}}{{if .}}Comments on this review:
 {{range .}}- {{.Responder}}: {{printf "%q" .Response}}
-{{end}}{{end}}{{end}}
+{{end}}
+{{end}}{{end}}
 {{define "previous_reviews"}}{{if .PreviousReviews}}## Previous Reviews
 
 The following are reviews of recent commits in this repository. Use them as context
