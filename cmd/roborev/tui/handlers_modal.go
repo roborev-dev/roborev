@@ -55,15 +55,15 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "q":
+	case "esc":
 		m.currentView = viewQueue
 		m.filterSearch = ""
 		m.filterBranchMode = false
 		return m, nil
-	case "up", "k":
+	case "up":
 		m.filterNavigateUp()
 		return m, nil
-	case "down", "j":
+	case "down":
 		m.filterNavigateDown()
 		return m, nil
 	case "right":

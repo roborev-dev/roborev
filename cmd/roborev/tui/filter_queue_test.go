@@ -11,14 +11,14 @@ import (
 func TestTUIFilterNavigation(t *testing.T) {
 	cases := []struct {
 		startIdx    int
-		key         rune
+		key         tea.KeyType
 		expectedIdx int
 		description string
 	}{
-		{0, 'j', 1, "Navigate down from 0"},
-		{1, 'j', 2, "Navigate down from 1"},
-		{2, 'j', 2, "Navigate down at boundary"},
-		{2, 'k', 1, "Navigate up from 2"},
+		{0, tea.KeyDown, 1, "Navigate down from 0"},
+		{1, tea.KeyDown, 2, "Navigate down from 1"},
+		{2, tea.KeyDown, 2, "Navigate down at boundary"},
+		{2, tea.KeyUp, 1, "Navigate up from 2"},
 	}
 
 	for _, tc := range cases {
@@ -29,7 +29,7 @@ func TestTUIFilterNavigation(t *testing.T) {
 			})
 			m.filterSelectedIdx = tc.startIdx
 
-			m2, _ := pressKey(m, tc.key)
+			m2, _ := pressSpecial(m, tc.key)
 			assert.Equal(t, tc.expectedIdx, m2.filterSelectedIdx)
 		})
 	}
@@ -42,11 +42,11 @@ func TestTUIFilterNavigationSequential(t *testing.T) {
 		makeNode("repo-c", 1),
 	})
 
-	keys := []rune{'j', 'j', 'j', 'k'}
+	keys := []tea.KeyType{tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyUp}
 
 	m2 := m
 	for _, k := range keys {
-		m2, _ = pressKey(m2, k)
+		m2, _ = pressSpecial(m2, k)
 	}
 
 	assert.Equal(t, 2, m2.filterSelectedIdx)

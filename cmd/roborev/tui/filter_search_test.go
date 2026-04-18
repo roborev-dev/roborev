@@ -119,6 +119,28 @@ func TestTUIFilterTypingHAndL(t *testing.T) {
 	assert.Equal(t, "hl", m3.filterSearch)
 }
 
+// Regression test for issue #654: j, k, and q were swallowed by
+// vim-style navigation/quit shortcuts instead of being appended to
+// the search text.
+func TestTUIFilterTypingJKQ(t *testing.T) {
+	for _, r := range []rune{'j', 'k', 'q'} {
+		t.Run(string(r), func(t *testing.T) {
+			m := initFilterModel([]treeFilterNode{
+				makeNode("kubernetes", 3),
+				makeNode("jenkins", 2),
+				makeNode("queue-worker", 1),
+			})
+			m.filterSelectedIdx = 1
+
+			m2, _ := pressKey(m, r)
+			assert.Equal(t, string(r), m2.filterSearch,
+				"key %q should be appended to search", r)
+			assert.Equal(t, viewFilter, m2.currentView,
+				"key %q must not close the filter modal", r)
+		})
+	}
+}
+
 func TestTUIFilterSearchByRepoPath(t *testing.T) {
 	m := initFilterModel([]treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
