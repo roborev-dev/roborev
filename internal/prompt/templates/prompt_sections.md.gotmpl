@@ -9,8 +9,7 @@ These guidelines supplement the default review criteria and may add repo-specifi
 {{define "review_comments"}}{{if .}}
 Comments on this review:
 {{range .}}- {{.Responder}}: {{printf "%q" .Response}}
-{{end}}{{end}}
-{{end}}
+{{end}}{{end}}{{end}}
 {{define "previous_reviews"}}{{if .PreviousReviews}}## Previous Reviews
 
 The following are reviews of recent commits in this repository. Use them as context
@@ -24,8 +23,7 @@ or provide context that affects how you should evaluate similar code in the curr
 {{if .Available}}{{.Output}}{{else}}No review available.{{end}}
 
 {{template "review_comments" .Comments}}
-{{end}}{{end}}
-{{end}}
+{{- end}}{{end}}{{end}}
 {{define "in_range_reviews"}}{{if .InRangeReviews}}## Per-Commit Reviews in This Range
 
 The following commits in this range have already been individually reviewed.
@@ -38,8 +36,7 @@ Focus on cross-commit interactions and problems not caught by per-commit reviews
 {{.Output}}
 
 {{template "review_comments" .Comments}}
-{{end}}{{end}}
-{{end}}
+{{- end}}{{end}}{{end}}
 {{define "previous_review_attempts"}}{{if .PreviousAttempts}}## Previous Review Attempts
 
 This commit has been reviewed before. The following are previous review results and any
@@ -52,8 +49,7 @@ responses from developers. Use this context to:
 {{.Output}}
 
 {{template "review_comments" .Comments}}
-{{end}}{{end}}
-{{end}}
+{{- end}}{{end}}{{end}}
 {{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
 {{define "current_commit_required"}}## Current Commit
 
@@ -148,6 +144,11 @@ View with: {{.ViewCmd}}
 {{end}}{{end}}
 {{define "address_tool_attempts"}}{{if .ToolAttempts}}## Previous Addressing Attempts
 
+The following are previous attempts to address this or related reviews.
+Learn from these to avoid repeating approaches that didn't fully resolve the issues.
+Be pragmatic - if previous attempts were rejected for being too minor, make more substantive fixes.
+If they were rejected for being over-engineered, keep it simpler.
+
 {{range .ToolAttempts}}--- Attempt by {{.Responder}}{{if .When}} at {{.When}}{{end}} ---
 {{.Response}}
 
@@ -162,7 +163,8 @@ positives, provide additional context, or request specific approaches.
 {{.Response}}
 
 {{end}}{{end}}{{end}}
-{{define "address_findings"}}{{if .SeverityFilter}}{{.SeverityFilter}}{{end}}## Review Findings to Address (Job {{.JobID}})
+{{define "address_findings"}}{{if .SeverityFilter}}{{.SeverityFilter}}
+{{end}}## Review Findings to Address (Job {{.JobID}})
 
 {{.ReviewFindings}}
 

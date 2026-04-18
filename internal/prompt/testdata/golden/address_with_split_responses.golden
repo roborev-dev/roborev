@@ -1,0 +1,71 @@
+You are a code assistant. Your task is to address the findings from a code review.
+
+Make the minimal changes necessary to address these findings:
+- Be pragmatic and simple - don't over-engineer
+- Focus on the specific issues mentioned
+- Don't refactor unrelated code
+- Don't add unnecessary abstractions or comments
+- Don't make cosmetic changes
+
+After making changes:
+1. Run the build command to verify the code compiles
+2. Run tests to verify nothing is broken
+3. Fix any build errors or test failures before finishing
+
+For Go projects, use: GOCACHE=/tmp/go-build go build ./... and GOCACHE=/tmp/go-build go test ./...
+(The GOCACHE override is needed for sandbox compatibility)
+
+IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
+
+When finished, provide a brief summary in this format (this will be used in the commit message):
+
+Changes:
+- <first change>
+- <second change>
+...
+
+Keep the summary concise (under 10 bullet points). Put the most important changes first.
+
+IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.
+
+Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
+If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.
+
+Current date: GOLDEN_DATE (UTC)
+
+## Previous Addressing Attempts
+
+The following are previous attempts to address this or related reviews.
+Learn from these to avoid repeating approaches that didn't fully resolve the issues.
+Be pragmatic - if previous attempts were rejected for being too minor, make more substantive fixes.
+If they were rejected for being over-engineered, keep it simpler.
+
+--- Attempt by roborev-fix at GOLDEN_TIMESTAMP ---
+Added doc comment
+
+## User Comments
+
+The following comments were left by the developer on this review.
+Take them into account when applying fixes — they may flag false
+positives, provide additional context, or request specific approaches.
+
+**alice** (GOLDEN_TIMESTAMP):
+Doc comments are optional here
+
+Severity filter: Only include Medium, High, and Critical findings. Ignore any findings below medium severity. If ALL findings in the review are below medium severity, output the exact text SEVERITY_THRESHOLD_MET and make no code changes.
+
+## Review Findings to Address (Job 42)
+
+- Medium: foo.go:1 missing doc comment
+
+## Original Commit Diff (for context)
+
+```diff
+diff --git a/foo.go b/foo.go
+new file mode 100644
+index 0000000..f52652b
+--- /dev/null
++++ b/foo.go
+@@ -0,0 +1 @@
++package foo
+```

@@ -1,0 +1,182 @@
+package prompt
+
+import (
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var updateGolden = flag.Bool("update-golden", false, "regenerate golden files under internal/prompt/testdata/golden")
+
+// goldenCommitDate is applied to every commit in golden-test repos so SHAs
+// are stable across machines and re-runs.
+const goldenCommitDate = "2026-04-01T12:00:00Z"
+
+var (
+	dateScrubber = regexp.MustCompile(`Current date: \d{4}-\d{2}-\d{2} \(UTC\)`)
+	tsScrubber   = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}`)
+)
+
+// scrubDynamic normalizes values that vary across runs (the current calendar
+// day the test happens to run, CreatedAt timestamps) so goldens only encode
+// structural differences.
+func scrubDynamic(s string) string {
+	s = dateScrubber.ReplaceAllString(s, "Current date: GOLDEN_DATE (UTC)")
+	s = tsScrubber.ReplaceAllString(s, "GOLDEN_TIMESTAMP")
+	return s
+}
+
+// assertGolden compares got against testdata/golden/<name>, or rewrites the
+// golden when -update-golden is passed.
+func assertGolden(t *testing.T, got, name string) {
+	t.Helper()
+	path := filepath.Join("testdata", "golden", name)
+	if *updateGolden {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "missing golden %s (run: go test -update-golden ./internal/prompt/)", path)
+	assert.Equal(t, string(want), got, "golden %s drifted; review and re-run with -update-golden if intended", path)
+}
+
+// newGoldenTestRepo builds a test repo with fixed author/committer dates so
+// commit SHAs are deterministic across runs.
+func newGoldenTestRepo(t *testing.T) *testRepo {
+	t.Helper()
+	t.Setenv("GIT_AUTHOR_DATE", goldenCommitDate)
+	t.Setenv("GIT_COMMITTER_DATE", goldenCommitDate)
+	return newTestRepo(t)
+}
+
+// writeFile is a small helper for golden scenarios.
+func (r *testRepo) writeFile(name, content string) {
+	r.t.Helper()
+	require.NoError(r.t, os.WriteFile(filepath.Join(r.dir, name), []byte(content), 0o644))
+}
+
+// commitFile stages a single file and commits with the supplied message,
+// returning the resulting SHA.
+func (r *testRepo) commitFile(name, content, message string) string {
+	r.t.Helper()
+	r.writeFile(name, content)
+	r.git("add", name)
+	r.git("commit", "-m", message)
+	return r.git("rev-parse", "HEAD")
+}
+
+func TestGoldenPrompt_SingleReviewDefault(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_review_default.golden")
+}
+
+func TestGoldenPrompt_SingleReviewCodex(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "codex", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "single_review_codex.golden")
+}
+
+func TestGoldenPrompt_RangeWithInRangeReviews(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	baseSHA := r.commitFile("base.txt", "base\n", "initial")
+	commit1 := r.commitFile("base.txt", "change1\n", "first feature commit")
+	commit2 := r.commitFile("base.txt", "change2\n", "second feature commit")
+
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(r.dir)
+	require.NoError(t, err)
+
+	testutil.CreateCompletedReview(t, db, repo.ID, commit1, "test",
+		"Found bug: missing null check in handler\n\nVerdict: FAIL")
+	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
+		"No issues found.\n\nVerdict: PASS")
+
+	b := NewBuilder(db)
+	prompt, err := b.Build(r.dir, baseSHA+".."+commit2, repo.ID, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "range_with_in_range_reviews.golden")
+}
+
+func TestGoldenPrompt_DirtyReview(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	r.commitFile("base.txt", "base\n", "initial")
+
+	diff := "diff --git a/base.txt b/base.txt\n" +
+		"index 0000000..1111111 100644\n" +
+		"--- a/base.txt\n" +
+		"+++ b/base.txt\n" +
+		"@@ -1 +1,2 @@\n" +
+		" base\n" +
+		"+added line\n"
+
+	b := NewBuilder(nil)
+	prompt, err := b.BuildDirty(r.dir, diff, 0, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "dirty_review.golden")
+}
+
+func TestGoldenPrompt_AddressWithSplitResponses(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("foo.go", "package foo\n", "add foo")
+
+	b := NewBuilder(nil)
+	review := &storage.Review{
+		JobID:  42,
+		Agent:  "test",
+		Output: "- Medium: foo.go:1 missing doc comment",
+		Job:    &storage.ReviewJob{GitRef: sha},
+	}
+	responses := []storage.Response{
+		{Responder: "roborev-fix", Response: "Added doc comment", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
+		{Responder: "alice", Response: "Doc comments are optional here", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+	}
+
+	prompt, err := b.BuildAddressPrompt(r.dir, review, responses, "medium")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "address_with_split_responses.golden")
+}
+
+func TestGoldenPrompt_SecurityReview(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "security", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "security_review.golden")
+}
+
+func TestGoldenPrompt_DesignReview(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "design", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "design_review.golden")
+}
