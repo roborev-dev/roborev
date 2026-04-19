@@ -73,16 +73,16 @@ update_nix_flake() {
         if NIX_OUTPUT=$(nix build "$REPO_ROOT" 2>&1); then
             # Build succeeded with empty hash - dependencies might be empty or cached
             echo "Build succeeded, keeping existing vendorHash"
-            sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$OLD_HASH\"/" "$FLAKE_FILE"
+            sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$OLD_HASH\"|" "$FLAKE_FILE"
         else
             # Extract the expected hash from the error message
             local NEW_HASH=$(echo "$NIX_OUTPUT" | grep -o 'sha256-[A-Za-z0-9+/=]*' | tail -1)
             if [ -n "$NEW_HASH" ]; then
                 echo "Updating vendorHash to $NEW_HASH"
-                sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$NEW_HASH\"/" "$FLAKE_FILE"
+                sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$NEW_HASH\"|" "$FLAKE_FILE"
             else
                 echo "Warning: Could not determine new vendorHash, restoring old value"
-                sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$OLD_HASH\"/" "$FLAKE_FILE"
+                sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$OLD_HASH\"|" "$FLAKE_FILE"
             fi
         fi
         rm -f "$FLAKE_FILE.bak"
