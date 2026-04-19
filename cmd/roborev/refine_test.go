@@ -619,6 +619,69 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 	assert.Contains(t, err.Error(), "not an ancestor of HEAD")
 }
 
+func TestValidateRefineContext_PrefersNonOriginUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Fork workflow: origin (stale fork) lags behind upstream (real repo).
+	// Feature branch tracks upstream/main. validateRefineContext must
+	// pick upstream/main as the base so commits already merged upstream
+	// are not refined.
+	repo := testutil.InitTestRepo(t)
+	repo.CommitFile("upstream_c2.go", "package main", "upstream c2")
+	upstreamSHA := repo.RevParse("HEAD")
+
+	bareRemote := t.TempDir()
+	bareStale := t.TempDir()
+	repo.Run("init", "--bare", bareRemote)
+	repo.Run("init", "--bare", bareStale)
+	repo.Run("remote", "add", "upstream", bareRemote)
+	repo.Run("push", "-u", "upstream", "main")
+
+	repo.Run("remote", "add", "origin", bareStale)
+	repo.Run("push", "origin", "HEAD~1:refs/heads/main")
+	repo.Run("fetch", "origin")
+	repo.Run("remote", "set-head", "origin", "main")
+
+	repo.RunGit("checkout", "-b", "feature", "--track", "upstream/main")
+	repo.CommitFile("feature.go", "package main", "feature commit")
+
+	chdirForTest(t, repo.Root)
+
+	repoPath, currentBranch, base, mergeBase, err := validateRefineContext("", "", "")
+	require.NoError(t, err, "validation should pass on feature tracking upstream/main")
+
+	assert.NotEmpty(t, repoPath)
+	assert.Equal(t, "feature", currentBranch)
+	assert.Equal(t, "upstream/main", base,
+		"base must resolve to the branch's upstream, not origin/main")
+	assert.Equal(t, upstreamSHA, mergeBase,
+		"merge-base must be upstream/main's tip so already-merged commits aren't refined")
+}
+
+func TestValidateRefineContext_RefusesLocalMainTrackingNonOriginUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Local main tracking upstream/main must still hit the "refusing to
+	// refine on main" guardrail even though base is "upstream/main"
+	// (not "origin/main"). Regression for IsOnBaseBranch's non-origin
+	// remote handling.
+	repo := testutil.InitTestRepo(t)
+	bareRemote := t.TempDir()
+	repo.Run("init", "--bare", bareRemote)
+	repo.Run("remote", "add", "upstream", bareRemote)
+	repo.Run("push", "-u", "upstream", "main")
+
+	chdirForTest(t, repo.Root)
+
+	_, _, _, _, err := validateRefineContext("", "", "")
+	require.Error(t, err, "expected refuse-on-base error for main tracking upstream/main")
+	assert.Contains(t, err.Error(), "refusing to refine on main")
+}
+
 func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
