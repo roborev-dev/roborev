@@ -1360,7 +1360,7 @@ func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
 		"classifier retry: timeout", jobID)
 	require.NoError(t, err)
 
-	require.NoError(t, db.PromoteClassifyToDesignReview(jobID, "w1"))
+	require.NoError(t, db.PromoteClassifyToDesignReview(jobID, "w1", "claude-code", ""))
 
 	j, err := db.GetJobByID(jobID)
 	require.NoError(t, err)
@@ -1379,7 +1379,7 @@ func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {
 
 	jobID := seedRunningClassify(t, db, "/tmp/repo-promote-stale", "abc", "w1")
 
-	err := db.PromoteClassifyToDesignReview(jobID, "w2")
+	err := db.PromoteClassifyToDesignReview(jobID, "w2", "claude-code", "")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	j, err := db.GetJobByID(jobID)
@@ -1402,7 +1402,7 @@ func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
 		RETURNING id
 	`, repo.ID, commit.ID).Scan(&jobID))
 
-	err := db.PromoteClassifyToDesignReview(jobID, "w1")
+	err := db.PromoteClassifyToDesignReview(jobID, "w1", "claude-code", "")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 

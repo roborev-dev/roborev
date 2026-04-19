@@ -698,8 +698,21 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 	if !hasDesignInMatrix {
-		if err := p.maybeDispatchAutoDesignForCI(ctx, repo, pr.HeadRefOid, batch.ID); err != nil {
-			log.Printf("CI poller: auto-design dispatch failed for %s@%s: %v", ghRepo, headShort, err)
+		// Iterate every commit in the PR range so each commit gets its
+		// own auto-design outcome — earlier commits with qualifying
+		// changes don't get silently dropped just because the head
+		// commit's heuristic disagreed.
+		shas, err := listCommitsInRange(repo.RootPath, mergeBase, pr.HeadRefOid)
+		if err != nil {
+			// Fall back to head-only on git failure rather than dropping
+			// the whole feature.
+			log.Printf("CI poller: list commits in range failed (%v); falling back to head SHA only", err)
+			shas = []string{pr.HeadRefOid}
+		}
+		for _, sha := range shas {
+			if err := p.maybeDispatchAutoDesignForCI(ctx, repo, sha, batch.ID); err != nil {
+				log.Printf("CI poller: auto-design dispatch failed for %s@%s: %v", ghRepo, gitpkg.ShortSHA(sha), err)
+			}
 		}
 	}
 
@@ -725,7 +738,15 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 		return nil
 	}
 	if has, _ := p.db.HasAutoDesignSlotForCommit(repo.ID, headSHA); has {
-		return nil
+		// An auto_design row already exists for this commit (from a
+		// prior PR head, an earlier batch, or a local enqueue). Don't
+		// re-decide, but DO attach the existing row to this batch so
+		// synthesis waits for it instead of completing without it.
+		existingID, err := p.lookupAutoDesignJobID(repo.ID, headSHA)
+		if err != nil {
+			return nil
+		}
+		return p.attachAutoDesignToBatch(batchID, existingID, headSHA, repo.ID)
 	}
 
 	h := config.ResolveAutoDesignHeuristics(repo.RootPath, cfg)
@@ -763,10 +784,13 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 	switch {
 	case err == nil && d.Run:
 		autoDesignMetrics.RecordHeuristic(true)
+		designAgent, designModel := resolveDesignAgent(repo.RootPath, cfg)
 		jobID, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			CommitID:   commitID,
 			GitRef:     headSHA,
+			Agent:      designAgent,
+			Model:      designModel,
 			JobType:    storage.JobTypeReview,
 			ReviewType: "design",
 		})
@@ -840,8 +864,33 @@ func (p *CIPoller) attachAutoDesignToBatch(batchID, jobID int64, headSHA string,
 	return nil
 }
 
+// listCommitsInRange returns the commit SHAs reachable from head but not
+// from base, oldest-first. Wraps `git rev-list base..head --reverse`.
+func listCommitsInRange(repoPath, base, head string) ([]string, error) {
+	cmd := exec.Command("git", "rev-list", "--reverse", base+".."+head)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-list: %w", err)
+	}
+	var shas []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			shas = append(shas, line)
+		}
+	}
+	if len(shas) == 0 {
+		// Fall back to head — the range may be empty when head == base
+		// or when git is unable to resolve the range cleanly.
+		shas = []string{head}
+	}
+	return shas, nil
+}
+
 // lookupAutoDesignJobID resolves the auto_design row id for a commit.
-// Used after InsertSkippedDesignJob (which doesn't return the id).
+// Used after InsertSkippedDesignJob (which doesn't return the id) and
+// when an existing auto_design row needs to be attached to a new batch.
 func (p *CIPoller) lookupAutoDesignJobID(repoID int64, sha string) (int64, error) {
 	var id int64
 	err := p.db.QueryRow(`

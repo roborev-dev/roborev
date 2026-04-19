@@ -115,11 +115,15 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 
 // applyClassifyVerdict converts the classify row in place — a separate
 // INSERT for the follow-up design/skipped row would conflict with the
-// auto-design partial unique index.
+// auto-design partial unique index. On promote, the row's agent/model
+// must be rewritten from the auto-design sentinel to a real
+// design-workflow agent so the worker that picks the row up next can
+// actually run the review.
 func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJob, yes bool, reason string) {
 	autoDesignMetrics.RecordClassifier(yes, false)
 	if yes {
-		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID); err != nil {
+		designAgent, designModel := wp.resolveDesignFollowUp(job.RepoPath)
+		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID, designAgent, designModel); err != nil {
 			log.Printf("[%s] PromoteClassifyToDesignReview for %d: %v", workerID, job.ID, err)
 		}
 		return
@@ -127,6 +131,19 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason); err != nil {
 		log.Printf("[%s] MarkClassifyAsSkippedDesign for %d: %v", workerID, job.ID, err)
 	}
+}
+
+// resolveDesignFollowUp returns the (agent, model) pair to persist on a
+// promoted design review. Falls back to the configured default agent
+// when no design-specific override is set.
+func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
+	cfg := wp.cfgGetter.Config()
+	resolution, err := agent.ResolveWorkflowConfig(
+		"" /* no CLI override */, repoPath, cfg, "design", "" /* default reasoning */)
+	if err != nil || resolution.PreferredAgent == "" {
+		return config.ResolveAgent("", repoPath, cfg), ""
+	}
+	return resolution.PreferredAgent, resolution.ModelForSelectedAgent(resolution.PreferredAgent, "")
 }
 
 // completeClassifyAsSkip is the failure path: the classifier couldn't

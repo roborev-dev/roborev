@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync/atomic"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/review/autotype"
@@ -182,15 +183,31 @@ func (s *Server) enqueueClassifyJob(parent *storage.ReviewJob) error {
 }
 
 func (s *Server) enqueueDesignFollowUp(parent *storage.ReviewJob) error {
+	cfg, _ := config.LoadGlobal()
+	designAgent, designModel := resolveDesignAgent(parent.RepoPath, cfg)
 	_, err := s.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
 		RepoID:     parent.RepoID,
 		CommitID:   parent.CommitIDValue(),
 		GitRef:     parent.GitRef,
 		Branch:     parent.Branch,
+		Agent:      designAgent,
+		Model:      designModel,
 		JobType:    storage.JobTypeReview,
 		ReviewType: "design",
 	})
 	return err
+}
+
+// resolveDesignAgent returns the (agent, model) pair the auto-design
+// follow-up should persist for execution. Falls back to the global
+// default agent when no design-specific override is set.
+func resolveDesignAgent(repoPath string, cfg *config.Config) (string, string) {
+	resolution, err := agent.ResolveWorkflowConfig(
+		"", repoPath, cfg, "design", "")
+	if err != nil || resolution.PreferredAgent == "" {
+		return config.ResolveAgent("", repoPath, cfg), ""
+	}
+	return resolution.PreferredAgent, resolution.ModelForSelectedAgent(resolution.PreferredAgent, "")
 }
 
 func (s *Server) insertSkippedDesign(parent *storage.ReviewJob, reason string) error {

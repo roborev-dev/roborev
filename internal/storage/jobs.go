@@ -1145,14 +1145,22 @@ func (db *DB) EnqueueAutoDesignJob(p EnqueueOpts) (int64, error) {
 // design review via UPDATE (not INSERT), so the follow-up does not collide
 // with the partial unique index that already covers the classify row's slot.
 //
+// agent and model must resolve to a real registered agent at the moment
+// of promotion: the row was inserted with the AutoDesignAgentSentinel,
+// and the worker that picks it up next looks up agent.Get(job.Agent),
+// which would fail on the sentinel. The caller is expected to resolve
+// the design-workflow agent/model via config before calling.
+//
 // The WHERE clause pins this to the active execution attempt
 // (status='running' AND worker_id=?). A stale worker whose job was canceled,
 // reclaimed, or retried will affect zero rows and receive sql.ErrNoRows.
-func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID string) error {
+func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent, model string) error {
 	res, err := db.ExecContext(context.Background(), `
 		UPDATE review_jobs
 		SET job_type = 'review',
 		    status = 'queued',
+		    agent = ?,
+		    model = ?,
 		    worker_id = NULL,
 		    started_at = NULL,
 		    finished_at = NULL,
@@ -1165,7 +1173,7 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID string
 		  AND source = 'auto_design'
 		  AND status = 'running'
 		  AND worker_id = ?
-	`, time.Now().Format(time.RFC3339), classifyJobID, workerID)
+	`, agent, nullString(model), time.Now().Format(time.RFC3339), classifyJobID, workerID)
 	if err != nil {
 		return err
 	}
