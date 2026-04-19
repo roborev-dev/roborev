@@ -697,6 +697,23 @@ func TestGetUpstream(t *testing.T) {
 		assert.Equal(t, "origin/main", upstream)
 	})
 
+	t.Run("accepts local-branch upstream", func(t *testing.T) {
+		// `git branch -u <local-branch>` sets tracking against a local ref
+		// under refs/heads/... (no remote involved). GetUpstream must not
+		// reject this as "missing" just because refs/remotes/<upstream>
+		// doesn't exist.
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "dev")
+		repo.Run("branch", "-u", "main", "dev")
+
+		upstream, err := GetUpstream(repo.Dir, "HEAD")
+		require.NoError(t, err)
+		assert.Equal(t, "main", upstream,
+			"local-branch upstream should be returned, not dropped")
+	})
+
 	t.Run("returns empty when tracking ref is missing locally", func(t *testing.T) {
 		// Tracking config set but refs/remotes/<upstream> does not resolve
 		// (e.g., never fetched, or was manually removed). Callers must fall
@@ -1259,6 +1276,25 @@ func TestIsOnBaseBranch(t *testing.T) {
 	t.Run("empty current branch does not match", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		assert.False(t, IsOnBaseBranch(repo.Dir, "", "main"))
+	})
+
+	t.Run("multi-slash remote name strips full prefix", func(t *testing.T) {
+		// A remote named "company/fork" produces tracking refs under
+		// refs/remotes/company/fork/<branch>. Stripping only the first
+		// slash ("company/") would leave "fork/main" and wrongly match
+		// a local branch of that name. The full remote prefix
+		// "company/fork/" must be stripped to yield "main".
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "company/fork", remote.Dir)
+		repo.Run("push", "-u", "company/fork", "main")
+
+		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "company/fork/main"),
+			"current=main on base=company/fork/main must strip full remote prefix")
+		assert.False(t, IsOnBaseBranch(repo.Dir, "fork/main", "company/fork/main"),
+			"current=fork/main must not falsely match after a single-slash strip")
 	})
 
 	t.Run("ambiguous slash-containing base is treated as local branch", func(t *testing.T) {

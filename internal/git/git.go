@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -103,10 +104,12 @@ func LocalBranchName(branch string) string {
 // IsOnBaseBranch returns true if currentBranch is equivalent to base for the
 // purpose of "already on the base branch" guardrails. Handles bare local names
 // ("main"), the legacy origin/ shortcut, and any other remote-tracking ref
-// (e.g. "upstream/main"). A base that contains a slash is only treated as a
-// remote-tracking ref when refs/remotes/<base> resolves AND no local branch of
-// the same name exists, so ordinary local branches like "feature/foo" are not
-// misclassified even if a remote named "feature" happens to share the suffix.
+// (e.g. "upstream/main" or the multi-slash "company/fork/main"). A slash-
+// containing base is only treated as a remote-tracking ref when refs/remotes/
+// <base> resolves AND the prefix matches one of the repository's configured
+// remotes AND no local branch of the same name exists, so ordinary local
+// branches like "feature/foo" are not misclassified even if a remote name
+// shares the suffix.
 func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 	if currentBranch == "" {
 		return false
@@ -114,8 +117,7 @@ func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 	if currentBranch == base || currentBranch == LocalBranchName(base) {
 		return true
 	}
-	idx := strings.IndexByte(base, '/')
-	if idx < 0 {
+	if !strings.Contains(base, "/") {
 		return false
 	}
 	if !refExists(repoPath, "refs/remotes/"+base) {
@@ -123,11 +125,23 @@ func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 	}
 	if refExists(repoPath, "refs/heads/"+base) {
 		// Ambiguous: both a local branch and a remote-tracking ref exist with
-		// the exact name "<prefix>/<rest>". Don't strip — fall through to an
-		// exact-name comparison, which already failed above.
+		// the exact name "<prefix>/<rest>". Don't strip.
 		return false
 	}
-	return currentBranch == base[idx+1:]
+	remotes, err := listRemotes(repoPath)
+	if err != nil {
+		return false
+	}
+	// Longest match first so multi-slash remote names (e.g. "company/fork") are
+	// tested before shorter prefixes that happen to be substrings.
+	sort.Slice(remotes, func(i, j int) bool { return len(remotes[i]) > len(remotes[j]) })
+	for _, remote := range remotes {
+		prefix := remote + "/"
+		if strings.HasPrefix(base, prefix) {
+			return currentBranch == base[len(prefix):]
+		}
+	}
+	return false
 }
 
 // refExists reports whether the given fully-qualified ref resolves in the repo.
@@ -135,6 +149,21 @@ func refExists(repoPath, fullRef string) bool {
 	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", fullRef)
 	cmd.Dir = repoPath
 	return cmd.Run() == nil
+}
+
+// listRemotes returns the names of configured remotes (e.g. ["origin", "upstream"]).
+func listRemotes(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git remote: %w", err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
 }
 
 // GetDiff returns the full diff for a commit, excluding generated
@@ -1186,7 +1215,9 @@ func GetUpstream(repoPath, ref string) (string, error) {
 	}
 	// Defense in depth: confirm the resolved ref actually exists locally so
 	// downstream merge-base calls don't fail with an unknown-revision error.
-	if !refExists(repoPath, "refs/remotes/"+upstream) {
+	// Use an unqualified rev-parse so both refs/remotes/<upstream> (remote
+	// tracking) and refs/heads/<upstream> (local-branch tracking) are accepted.
+	if !refExists(repoPath, upstream) {
 		return "", nil
 	}
 	return upstream, nil
