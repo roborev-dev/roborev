@@ -874,7 +874,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 		return nil, fmt.Errorf("git rev-list: %w", err)
 	}
 	var shas []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			shas = append(shas, line)
