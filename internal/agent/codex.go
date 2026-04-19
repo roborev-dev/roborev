@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -397,7 +396,20 @@ func init() {
 	Register(NewCodexAgent(""))
 }
 
-// classifyArgs builds argv for `codex exec` in schema mode.
+// CodexAgent does NOT implement SchemaAgent on purpose.
+//
+// codex's --sandbox read-only blocks writes but still allows reads, and
+// codex exec has no equivalent to claude --tools "" that disables the
+// shell/file tool entirely. Allowing codex to classify untrusted commit
+// text would let a prompt-injected commit read local secrets and
+// exfiltrate them via the JSON `reason` field.
+//
+// Re-enable when codex exposes a true no-tools mode. The supporting
+// helpers below (classifyArgs, readCodexLastMessage) are kept so tests
+// can exercise the would-be implementation in isolation.
+
+// classifyArgs builds argv for `codex exec` in schema mode. Currently
+// unused — kept for the future when codex offers a no-tools sandbox.
 func (a *CodexAgent) classifyArgs(schemaPath, outPath string) []string {
 	args := []string{"exec",
 		"--output-schema", schemaPath,
@@ -411,7 +423,7 @@ func (a *CodexAgent) classifyArgs(schemaPath, outPath string) []string {
 }
 
 // readCodexLastMessage reads codex's last-message output file and validates
-// that it contains valid JSON.
+// that it contains valid JSON. Currently unused (see classifyArgs note).
 func readCodexLastMessage(path string) (json.RawMessage, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -426,42 +438,3 @@ func readCodexLastMessage(path string) (json.RawMessage, error) {
 	}
 	return json.RawMessage(trimmed), nil
 }
-
-// ClassifyWithSchema runs a single constrained codex exec invocation.
-func (a *CodexAgent) ClassifyWithSchema(
-	ctx context.Context,
-	repoPath, gitRef, prompt string,
-	schema json.RawMessage,
-	out io.Writer,
-) (json.RawMessage, error) {
-	tmp, err := os.MkdirTemp("", "roborev-classify-*")
-	if err != nil {
-		return nil, fmt.Errorf("mkdir temp: %w", err)
-	}
-	defer os.RemoveAll(tmp)
-
-	schemaPath := filepath.Join(tmp, "schema.json")
-	outPath := filepath.Join(tmp, "result.json")
-	if err := os.WriteFile(schemaPath, schema, 0o600); err != nil {
-		return nil, fmt.Errorf("write schema: %w", err)
-	}
-
-	args := a.classifyArgs(schemaPath, outPath)
-	cmd := exec.CommandContext(ctx, a.Command, args...)
-	cmd.Dir = repoPath
-	cmd.Stdin = strings.NewReader(prompt)
-
-	if out != nil {
-		cmd.Stdout = out
-	}
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("codex exited: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
-	}
-	return readCodexLastMessage(outPath)
-}
-
-// Compile-time assertion that CodexAgent implements SchemaAgent.
-var _ SchemaAgent = (*CodexAgent)(nil)

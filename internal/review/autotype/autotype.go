@@ -6,7 +6,60 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 )
+
+// reasonMaxLen caps Decision.Reason. The reason interpolates filenames
+// and commit-subject regex matches — both untrusted strings from a
+// shared repo. Length cap + control-char strip prevents terminal
+// escape injection in the TUI and PR comments.
+const reasonMaxLen = 200
+
+// sanitizeReason strips control characters (folding newlines/tabs to
+// spaces) and caps length. Use on every reason string built from
+// untrusted file paths or commit text.
+func sanitizeReason(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// Drop other control characters entirely.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if reasonRuneCount(cleaned) > reasonMaxLen {
+		cleaned = truncateReasonRunes(cleaned, reasonMaxLen)
+	}
+	return cleaned
+}
+
+func reasonRuneCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func truncateReasonRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
 
 // ErrNeedsClassifier is returned by Classify when heuristics are inconclusive
 // and the provided Classifier is ErrOnClassifier (used by callers that want
@@ -63,52 +116,44 @@ type Classifier interface {
 //     skip_message_patterns match → Run=false.
 //  3. CLASSIFIER — ambiguous → delegate to cls.Decide.
 func Classify(ctx context.Context, in Input, h Heuristics, cls Classifier) (Decision, error) {
+	// All Reason strings flow into TUI cells and PR comments. Heuristic
+	// reasons interpolate untrusted file paths and commit-subject
+	// regex matches, so every constructed reason is run through
+	// sanitizeReason before being placed in a Decision.
+	heuristic := func(run bool, format string, a ...any) Decision {
+		return Decision{
+			Run:    run,
+			Method: MethodHeuristic,
+			Reason: sanitizeReason(fmt.Sprintf(format, a...)),
+		}
+	}
+
 	for _, f := range in.ChangedFiles {
 		ok, err := AnyMatch(h.TriggerPaths, f)
 		if err != nil {
 			return Decision{}, err
 		}
 		if ok {
-			return Decision{
-				Run:    true,
-				Method: MethodHeuristic,
-				Reason: fmt.Sprintf("touches %s (design-relevant)", f),
-			}, nil
+			return heuristic(true, "touches %s (design-relevant)", f), nil
 		}
 	}
 
 	lines := CountChangedLines(in.Diff)
 	if h.LargeDiffLines > 0 && lines >= h.LargeDiffLines {
-		return Decision{
-			Run:    true,
-			Method: MethodHeuristic,
-			Reason: fmt.Sprintf("large change (%d lines)", lines),
-		}, nil
+		return heuristic(true, "large change (%d lines)", lines), nil
 	}
 	if h.LargeFileCount > 0 && len(in.ChangedFiles) >= h.LargeFileCount {
-		return Decision{
-			Run:    true,
-			Method: MethodHeuristic,
-			Reason: fmt.Sprintf("wide-reaching change (%d files)", len(in.ChangedFiles)),
-		}, nil
+		return heuristic(true, "wide-reaching change (%d files)", len(in.ChangedFiles)), nil
 	}
 
 	if m, err := MatchMessage(h.TriggerMessagePatterns, in.Message); err != nil {
 		return Decision{}, err
 	} else if m != "" {
-		return Decision{
-			Run:    true,
-			Method: MethodHeuristic,
-			Reason: fmt.Sprintf("commit message mentions %q", m),
-		}, nil
+		return heuristic(true, "commit message mentions %q", m), nil
 	}
 
 	if h.MinDiffLines > 0 && lines < h.MinDiffLines {
-		return Decision{
-			Run:    false,
-			Method: MethodHeuristic,
-			Reason: fmt.Sprintf("trivial diff (%d lines)", lines),
-		}, nil
+		return heuristic(false, "trivial diff (%d lines)", lines), nil
 	}
 
 	allSkipped, err := AllMatch(h.SkipPaths, in.ChangedFiles)
@@ -116,21 +161,13 @@ func Classify(ctx context.Context, in Input, h Heuristics, cls Classifier) (Deci
 		return Decision{}, err
 	}
 	if allSkipped {
-		return Decision{
-			Run:    false,
-			Method: MethodHeuristic,
-			Reason: "doc/test-only change",
-		}, nil
+		return heuristic(false, "doc/test-only change"), nil
 	}
 
 	if m, err := MatchMessage(h.SkipMessagePatterns, in.Message); err != nil {
 		return Decision{}, err
 	} else if m != "" {
-		return Decision{
-			Run:    false,
-			Method: MethodHeuristic,
-			Reason: fmt.Sprintf("conventional marker: %q", m),
-		}, nil
+		return heuristic(false, "conventional marker: %q", m), nil
 	}
 
 	if cls == nil {
@@ -140,9 +177,12 @@ func Classify(ctx context.Context, in Input, h Heuristics, cls Classifier) (Deci
 	if err != nil {
 		return Decision{}, err
 	}
+	// The classifier path also runs through sanitization, even though
+	// classifier.go already sanitizes — defense in depth so any future
+	// Classifier implementation that bypasses that path is still safe.
 	return Decision{
 		Run:    yes,
 		Method: MethodClassifier,
-		Reason: reason,
+		Reason: sanitizeReason(reason),
 	}, nil
 }

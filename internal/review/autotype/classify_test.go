@@ -150,6 +150,31 @@ func TestClassify_ClassifierNilWhenAmbiguous(t *testing.T) {
 	assert.ErrorContains(t, err, "classifier required")
 }
 
+func TestClassify_HeuristicReasonSanitized(t *testing.T) {
+	// File path with control chars + newline — must not survive into Reason.
+	d, err := Classify(context.Background(), Input{
+		ChangedFiles: []string{"db/migrations/001\x07evil\nfoo.sql"},
+		Diff:         "+x\n",
+		Message:      "feat: x",
+	}, newTestHeuristics(), nil)
+	require.NoError(t, err)
+	assert.True(t, d.Run)
+	assert.NotContains(t, d.Reason, "\x07")
+	assert.NotContains(t, d.Reason, "\n")
+}
+
+func TestClassify_HeuristicReasonCappedLength(t *testing.T) {
+	huge := "db/migrations/" + strings.Repeat("a", 1000) + ".sql"
+	d, err := Classify(context.Background(), Input{
+		ChangedFiles: []string{huge},
+		Diff:         "+x\n",
+		Message:      "feat: x",
+	}, newTestHeuristics(), nil)
+	require.NoError(t, err)
+	assert.True(t, d.Run)
+	assert.LessOrEqual(t, len(d.Reason), reasonMaxLen)
+}
+
 func TestClassify_ClassifierError(t *testing.T) {
 	_, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
