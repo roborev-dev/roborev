@@ -1086,6 +1086,13 @@ func nullableCommitID(id int64) any {
 	return id
 }
 
+// AutoDesignAgentSentinel is the agent name used for auto-design rows
+// where no specific agent has been bound yet (skipped rows, queued
+// follow-up reviews/classify jobs). The Postgres schema requires
+// agent NOT NULL; downstream resolvers replace this with the real
+// classify_agent / design_agent at execution time.
+const AutoDesignAgentSentinel = "auto-design"
+
 // InsertSkippedDesignJob inserts a review_job row with status=skipped,
 // review_type='design', and source='auto_design'. The auto_design source
 // means it participates in the partial unique dedup index; ON CONFLICT
@@ -1095,11 +1102,11 @@ func (db *DB) InsertSkippedDesignJob(p InsertSkippedDesignJobParams) error {
 	now := time.Now().Format(time.RFC3339)
 	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO review_jobs
-		  (repo_id, commit_id, git_ref, branch, status, review_type,
+		  (repo_id, commit_id, git_ref, branch, agent, status, review_type,
 		   skip_reason, job_type, source, enqueued_at, finished_at, updated_at)
-		VALUES (?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design', ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design', ?, ?, ?)
 		ON CONFLICT DO NOTHING
-	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, p.SkipReason, now, now, now)
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, AutoDesignAgentSentinel, p.SkipReason, now, now, now)
 	if err != nil {
 		return fmt.Errorf("insert skipped design row: %w", err)
 	}
@@ -1114,16 +1121,20 @@ func (db *DB) EnqueueAutoDesignJob(p EnqueueOpts) (int64, error) {
 	if jobType == "" {
 		jobType = JobTypeReview
 	}
+	agentName := p.Agent
+	if agentName == "" {
+		agentName = AutoDesignAgentSentinel
+	}
 	now := time.Now().Format(time.RFC3339)
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO review_jobs
-		  (repo_id, commit_id, git_ref, branch, status, job_type,
+		  (repo_id, commit_id, git_ref, branch, agent, status, job_type,
 		   review_type, source, enqueued_at, updated_at)
-		VALUES (?, ?, ?, ?, 'queued', ?, ?, 'auto_design', ?, ?)
+		VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, 'auto_design', ?, ?)
 		ON CONFLICT DO NOTHING
 		RETURNING id
-	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, jobType, p.ReviewType, now, now).Scan(&id)
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, agentName, jobType, p.ReviewType, now, now).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}

@@ -698,7 +698,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 	if !hasDesignInMatrix {
-		if err := p.maybeDispatchAutoDesignForCI(ctx, repo, pr.HeadRefOid); err != nil {
+		if err := p.maybeDispatchAutoDesignForCI(ctx, repo, pr.HeadRefOid, batch.ID); err != nil {
 			log.Printf("CI poller: auto-design dispatch failed for %s@%s: %v", ghRepo, headShort, err)
 		}
 	}
@@ -712,8 +712,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 // maybeDispatchAutoDesignForCI runs the auto-design heuristics for a PR's
 // head SHA and enqueues either a design review, a classify job, or a
-// skipped row. Returns nil when auto-design is disabled.
-func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *storage.Repo, headSHA string) error {
+// skipped row. Each enqueued/inserted row is attached to the supplied
+// CI batch so synthesis waits for the auto-design outcome instead of
+// finishing on just the matrix jobs.
+//
+// Note: only the head SHA is evaluated. The existing CI matrix already
+// reviews the PR as a single range; per-commit auto-design would require
+// a deeper rework of the CI flow and is tracked as a follow-up.
+func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *storage.Repo, headSHA string, batchID int64) error {
 	cfg, _ := config.LoadGlobal()
 	if !config.ResolveAutoDesignEnabled(repo.RootPath, cfg) {
 		return nil
@@ -757,43 +763,98 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 	switch {
 	case err == nil && d.Run:
 		autoDesignMetrics.RecordHeuristic(true)
-		_, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		jobID, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			CommitID:   commitID,
 			GitRef:     headSHA,
 			JobType:    storage.JobTypeReview,
 			ReviewType: "design",
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return p.attachAutoDesignToBatch(batchID, jobID, headSHA, repo.ID)
 	case err == nil && !d.Run:
 		autoDesignMetrics.RecordHeuristic(false)
-		return p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
+		if err := p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
 			RepoID:     repo.ID,
 			CommitID:   commitID,
 			GitRef:     headSHA,
 			SkipReason: d.Reason,
-		})
+		}); err != nil {
+			return err
+		}
+		// The skipped row is the auto_design row for this commit;
+		// resolve its id so we can attach it to the batch.
+		skippedID, lookupErr := p.lookupAutoDesignJobID(repo.ID, headSHA)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		return p.attachAutoDesignToBatch(batchID, skippedID, headSHA, repo.ID)
 	case errors.Is(err, autotype.ErrNeedsClassifier):
-		_, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		jobID, err := p.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			CommitID:   commitID,
 			GitRef:     headSHA,
 			JobType:    storage.JobTypeClassify,
 			ReviewType: "design",
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return p.attachAutoDesignToBatch(batchID, jobID, headSHA, repo.ID)
 	default:
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		log.Printf("CI poller: auto-design Classify error: %v", err)
-		return p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
+		if err := p.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
 			RepoID:     repo.ID,
 			CommitID:   commitID,
 			GitRef:     headSHA,
 			SkipReason: "auto-design: heuristic error",
-		})
+		}); err != nil {
+			return err
+		}
+		skippedID, lookupErr := p.lookupAutoDesignJobID(repo.ID, headSHA)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		return p.attachAutoDesignToBatch(batchID, skippedID, headSHA, repo.ID)
 	}
+}
+
+// attachAutoDesignToBatch links the new auto_design row (or returns nil
+// when the dedup index made the insert a no-op and we got a sentinel 0
+// id back).
+func (p *CIPoller) attachAutoDesignToBatch(batchID, jobID int64, headSHA string, repoID int64) error {
+	if jobID == 0 {
+		return nil
+	}
+	_, err := p.db.AttachJobAndBumpTotal(batchID, jobID)
+	if err != nil {
+		log.Printf("CI poller: attach auto-design job %d to batch %d (%s): %v",
+			jobID, batchID, headSHA, err)
+		return err
+	}
+	return nil
+}
+
+// lookupAutoDesignJobID resolves the auto_design row id for a commit.
+// Used after InsertSkippedDesignJob (which doesn't return the id).
+func (p *CIPoller) lookupAutoDesignJobID(repoID int64, sha string) (int64, error) {
+	var id int64
+	err := p.db.QueryRow(`
+		SELECT rj.id FROM review_jobs rj
+		JOIN commits c ON rj.commit_id = c.id
+		WHERE rj.repo_id = ? AND c.sha = ?
+		  AND rj.review_type = 'design' AND rj.source = 'auto_design'
+		ORDER BY rj.id DESC LIMIT 1
+	`, repoID, sha).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("look up auto_design job id: %w", err)
+	}
+	return id, nil
 }
 
 // findOrCloneRepo finds the local repo that corresponds to a GitHub

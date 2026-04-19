@@ -190,6 +190,33 @@ func (db *DB) RecordBatchJob(batchID, jobID int64) error {
 	return err
 }
 
+// AttachJobAndBumpTotal links a job to an existing batch and bumps
+// total_jobs atomically. Use this for jobs added AFTER the initial
+// CreateBatchWithJobs (e.g. auto-design follow-ups discovered after the
+// matrix was constructed). Returns the new total.
+func (db *DB) AttachJobAndBumpTotal(batchID, jobID int64) (int, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE ci_pr_batches SET total_jobs = total_jobs + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID); err != nil {
+		return 0, err
+	}
+	var total int
+	if err := tx.QueryRow(`SELECT total_jobs FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&total); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // IncrementBatchCompleted atomically increments completed_jobs and returns the updated batch.
 // The increment is conditional on synthesized=0 so late events arriving after
 // the batch has been posted don't corrupt counters. Returns nil batch (no error)

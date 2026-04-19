@@ -884,7 +884,7 @@ func TestClaudeClassify_BuildsArgs(t *testing.T) {
 	}
 	require.NotEqual(t, -1, idx)
 	require.Less(t, idx+1, len(got))
-	assert.Equal("", got[idx+1], "classify must pass --tools \"\" to disable file/tool access")
+	assert.Empty(got[idx+1], "classify must pass --tools \"\" to disable file/tool access")
 }
 
 func TestClaudeClassify_ParseResult(t *testing.T) {
