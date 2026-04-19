@@ -5,11 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review/autotype"
 )
+
+// classifyReasonMaxLen caps the classifier reason at storage time. Even
+// with file-tool access disabled, a tightly bounded reason field limits
+// how much an unexpected exfiltration vector could leak.
+const classifyReasonMaxLen = 200
 
 // classifySchema is embedded in every classify call.
 var classifySchema = json.RawMessage(`{
@@ -63,7 +70,53 @@ func (c *classifierAdapter) Decide(ctx context.Context, in autotype.Input) (bool
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return false, "", fmt.Errorf("invalid classifier output: %w (%q)", err, string(raw))
 	}
-	return out.DesignReview, out.Reason, nil
+	return out.DesignReview, sanitizeClassifierReason(out.Reason), nil
+}
+
+// sanitizeClassifierReason caps length and strips control characters from
+// the reason field. The classifier ingests untrusted commit text and the
+// result flows into PR comments and TUI output; treat it as untrusted
+// regardless of the model's compliance with the schema.
+func sanitizeClassifierReason(reason string) string {
+	var b strings.Builder
+	b.Grow(len(reason))
+	for _, r := range reason {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// Drop other control characters entirely.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if utf8RuneCount(cleaned) > classifyReasonMaxLen {
+		cleaned = truncateRunes(cleaned, classifyReasonMaxLen)
+	}
+	return cleaned
+}
+
+func utf8RuneCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }
 
 // splitMessage returns (subject, body) from a commit message.

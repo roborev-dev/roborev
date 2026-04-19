@@ -65,6 +65,29 @@ func TestClassifierAdapter_InvalidJSON(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid")
 }
 
+func TestClassifierAdapter_SanitizesReason_Length(t *testing.T) {
+	long := strings.Repeat("a", 1000)
+	ad := newClassifierAdapter(&fakeSchemaAgent{
+		result: []byte(`{"design_review":false,"reason":"` + long + `"}`),
+	}, 20*1024)
+	_, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(reason), classifyReasonMaxLen)
+}
+
+func TestClassifierAdapter_SanitizesReason_StripsControlChars(t *testing.T) {
+	ad := newClassifierAdapter(&fakeSchemaAgent{
+		result: []byte(`{"design_review":false,"reason":"hello\u0007world\nlocal"}`),
+	}, 20*1024)
+	_, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	require.NoError(t, err)
+	// BEL control char dropped; \n folded to space.
+	assert.NotContains(t, reason, "\x07")
+	assert.NotContains(t, reason, "\n")
+	assert.Contains(t, reason, "hello")
+	assert.Contains(t, reason, "world")
+}
+
 func TestClassifierAdapter_RespectsMaxBytes(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review": false, "reason": "ok"}`),

@@ -68,9 +68,19 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	backup := config.ResolveBackupClassifyAgent(job.RepoPath, cfg)
 
 	tryAgent := func(name, model string) (bool, string, error) {
-		ag, err := agent.GetAvailable(name)
+		// Use Get (NOT GetAvailable). GetAvailable falls back to a
+		// hardcoded chain of installed agents when the requested name is
+		// missing — for the classifier, that would silently route
+		// untrusted commit text through a different model than the user
+		// configured. Classify must fail closed when the configured
+		// agent isn't usable; the explicit classify_backup_agent is the
+		// only acceptable fallback.
+		ag, err := agent.Get(name)
 		if err != nil {
-			return false, "", fmt.Errorf("classifier %q unavailable: %w", name, err)
+			return false, "", fmt.Errorf("classifier %q not registered: %w", name, err)
+		}
+		if !agent.IsAvailable(name) {
+			return false, "", fmt.Errorf("classifier %q not installed (CLI not on PATH)", name)
 		}
 		sa, ok := ag.(agent.SchemaAgent)
 		if !ok {

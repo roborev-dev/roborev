@@ -870,12 +870,21 @@ func TestClaudeClassify_BuildsArgs(t *testing.T) {
 	require.NotEqual(t, -1, idx)
 	require.Less(t, idx+1, len(got))
 	assert.JSONEq(`{"type":"object"}`, got[idx+1])
-	// Security: classify must run with read-only tools and never with
-	// --dangerously-skip-permissions, since commit messages and diffs
-	// are untrusted input.
+	// Security: classify must disable ALL tools (so prompt-injected
+	// commits cannot read ~/.ssh, ~/.roborev, etc. and stuff secrets
+	// into the JSON reason field). Never pass --dangerously-skip-permissions.
 	assert.NotContains(got, "--dangerously-skip-permissions")
-	tools := toolsArgValue(t, got)
-	assert.Equal("Read,Glob,Grep", tools)
+	assert.NotContains(got, "--allowedTools")
+	idx = -1
+	for i, arg := range got {
+		if arg == "--tools" {
+			idx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, idx)
+	require.Less(t, idx+1, len(got))
+	assert.Equal("", got[idx+1], "classify must pass --tools \"\" to disable file/tool access")
 }
 
 func TestClaudeClassify_ParseResult(t *testing.T) {

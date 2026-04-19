@@ -519,14 +519,15 @@ func init() {
 // classifyArgs builds the argv for a schema-constrained one-shot classify call.
 func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
 	// Classify is a routing decision over commit messages and diffs from
-	// shared repos — never trust that input. Restrict tools to read-only,
-	// and never pass --dangerously-skip-permissions: the schema
-	// constraint already pins output to a JSON object, so the agent
-	// cannot meaningfully use Bash/Write/Edit even if a prompt-injected
-	// commit asked for them.
+	// shared repos — never trust that input. Disable ALL tools (including
+	// Read/Glob/Grep) so a prompt-injected commit cannot exfiltrate
+	// secrets via the JSON `reason` field by reading ~/.ssh, ~/.roborev,
+	// or any other local file. The schema constraint pins output to
+	// {design_review, reason} regardless. Never pass
+	// --dangerously-skip-permissions.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose",
 		"--json-schema", string(schema),
-		"--allowedTools", "Read,Glob,Grep",
+		"--tools", "",
 	}
 	// parseModel returns model + optional baseURL; we only need the model
 	// name on the CLI here. baseURL is wired via env in ClassifyWithSchema.
