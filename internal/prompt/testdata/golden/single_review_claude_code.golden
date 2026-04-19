@@ -37,8 +37,10 @@ Current date: GOLDEN_DATE (UTC)
 
 **Commit:** fde21d1
 
+<commit-message context-only="true">
 **Subject:** add greeting
 **Author:** Test User
+</commit-message>
 
 ### Diff
 

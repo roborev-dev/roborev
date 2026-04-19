@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"bytes"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +19,18 @@ import (
 // inline and no snapshot file path was provided. Callers should write
 // the diff to a file and retry with BuildWithDiffFile.
 var ErrDiffTruncatedNoFile = errors.New("diff too large to inline and no snapshot file available")
+
+// escapeXML escapes XML special characters so untrusted commit metadata
+// (subject, author, body) cannot break out of the <commit-message> /
+// <commit-messages> wrapper tags and inject synthetic structure into the
+// prompt.
+func escapeXML(s string) string {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
+		return "--unescapable-xml--"
+	}
+	return buf.String()
+}
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
 // New code should use Builder.maxPromptSize() which respects config.
@@ -747,9 +761,9 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	currentView := currentCommitSectionView{
 		Commit:  shortSHA,
-		Subject: info.Subject,
-		Author:  info.Author,
-		Message: info.Body,
+		Subject: escapeXML(info.Subject),
+		Author:  escapeXML(info.Author),
+		Message: escapeXML(info.Body),
 	}
 	currentRequired, err := renderCurrentCommitRequired(currentView)
 	if err != nil {
@@ -869,7 +883,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		short := git.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfo(repoPath, commitSHA)
 		if err == nil {
-			entries = append(entries, commitRangeEntryView{Commit: short, Subject: info.Subject})
+			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
 			continue
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})

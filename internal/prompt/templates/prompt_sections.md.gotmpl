@@ -56,11 +56,12 @@ responses from developers. Use this context to:
 **Commit:** {{.Commit}}
 
 {{end}}
-{{define "current_commit_overflow"}}{{if .Subject}}**Subject:** {{.Subject}}
+{{define "current_commit_overflow"}}{{if or .Subject .Author .Message}}<commit-message context-only="true">
+{{if .Subject}}**Subject:** {{.Subject}}
 {{end}}{{if .Author}}**Author:** {{.Author}}
-{{end}}
-{{if .Message}}**Message:**
+{{end}}{{if .Message}}**Message:**
 {{.Message}}
+{{end}}</commit-message>
 
 {{end}}{{end}}
 {{define "current_commit"}}{{template "current_commit_required" .}}{{template "current_commit_overflow" .}}{{end}}
@@ -69,9 +70,11 @@ responses from developers. Use this context to:
 Reviewing {{if gt .Count 0}}{{.Count}}{{else}}{{len .Entries}}{{end}} commits:
 
 {{end}}
-{{define "commit_range_overflow"}}{{range .Entries}}- {{.Commit}}{{if .Subject}} {{.Subject}}{{end}}
-{{end}}
-{{end}}
+{{define "commit_range_overflow"}}{{if .Entries}}<commit-messages context-only="true">
+{{range .Entries}}- {{.Commit}}{{if .Subject}} {{.Subject}}{{end}}
+{{end}}</commit-messages>
+
+{{end}}{{end}}
 {{define "commit_range"}}{{template "commit_range_required" .}}{{template "commit_range_overflow" .}}{{end}}
 {{define "dirty_changes"}}## Uncommitted Changes
 

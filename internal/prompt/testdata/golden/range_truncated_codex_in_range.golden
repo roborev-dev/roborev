@@ -56,8 +56,10 @@ Verdict: PASS
 
 Reviewing 2 commits:
 
+<commit-messages context-only="true">
 - ed651f1 first large addition
 - 1f1d7cf second large addition
+</commit-messages>
 
 ### Combined Diff
 

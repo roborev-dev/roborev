@@ -13,10 +13,12 @@ After reviewing, provide:
 1. A brief summary of what the design proposes
 2. PRD findings, listed with:
    - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
+   - What specifically goes wrong during implementation if this gap is not addressed
+   - Suggested improvement
 3. Task list findings, listed with:
    - Severity (high/medium/low)
-   - A brief explanation of the issue and suggested improvement
+   - What specifically goes wrong during implementation if this gap is not addressed
+   - Suggested improvement
 4. Any missing considerations not covered by the design
 5. A verdict: Pass or Fail with brief justification
 
@@ -33,8 +35,10 @@ Current date: GOLDEN_DATE (UTC)
 
 **Commit:** fde21d1
 
+<commit-message context-only="true">
 **Subject:** add greeting
 **Author:** Test User
+</commit-message>
 
 ### Diff
 
