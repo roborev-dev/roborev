@@ -2,9 +2,11 @@ package tui
 
 import (
 	"errors"
+	"io"
 	"time"
 
 	"github.com/atotto/clipboard"
+	osc52 "github.com/aymanbagabas/go-osc52/v2"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
@@ -273,6 +275,18 @@ type realClipboard struct{}
 
 func (r *realClipboard) WriteText(text string) error {
 	return clipboard.WriteAll(text)
+}
+
+// osc52Clipboard implements ClipboardWriter using OSC52 terminal escape sequences.
+// It writes clipboard data through the terminal emulator, which makes it work
+// correctly over SSH without requiring X11 forwarding.
+type osc52Clipboard struct {
+	output io.Writer
+}
+
+func (c *osc52Clipboard) WriteText(text string) error {
+	_, err := osc52.New(text).WriteTo(c.output)
+	return err
 }
 
 // option func(*options) is a functional option for TUI.

@@ -447,6 +447,18 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
+// newClipboard returns the appropriate ClipboardWriter for the current environment.
+// When running over SSH (detected via SSH_TTY, SSH_CLIENT, or SSH_CONNECTION env vars),
+// it returns an osc52Clipboard that writes clipboard data through OSC52 terminal escape
+// sequences — this works without X11 forwarding and is supported by all modern terminals.
+// Otherwise, it falls back to realClipboard which uses the local system clipboard tools.
+func newClipboard() ClipboardWriter {
+	if os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_CONNECTION") != "" {
+		return &osc52Clipboard{output: os.Stderr}
+	}
+	return &realClipboard{}
+}
+
 func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var opt options
 	for _, o := range opts {
@@ -584,7 +596,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		branchNames:         make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingClosed:       make(map[int64]pendingState), // Track pending closed changes (by job ID)
 		pendingReviewClosed: make(map[int64]pendingState), // Track pending closed changes (by review ID)
-		clipboard:           &realClipboard{},
+		clipboard:           newClipboard(),
 		mdCache:             newMarkdownCache(tabWidth),
 		tasksEnabled:        tasksEnabled,
 		mouseEnabled:        mouseEnabled,

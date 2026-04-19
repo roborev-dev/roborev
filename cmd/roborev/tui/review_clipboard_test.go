@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"testing"
@@ -467,4 +468,74 @@ func TestFormatClipboardContentNoResponses(t *testing.T) {
 	assert.Equal(t, withEmpty, withNil, "nil and empty responses should produce same output")
 
 	assert.NotContains(t, withNil, "Comments")
+}
+
+func TestOSC52ClipboardWritesEscapeSequence(t *testing.T) {
+	var buf bytes.Buffer
+	cb := &osc52Clipboard{output: &buf}
+
+	err := cb.WriteText("hello clipboard")
+	require.NoError(t, err)
+
+	output := buf.String()
+	// OSC52 sequences begin with ESC ] 52 ; and end with BEL or ST
+	assert.Contains(t, output, "\x1b]52;")
+	// The base64-encoded content of "hello clipboard" is aGVsbG8gY2xpcGJvYXJk
+	assert.Contains(t, output, "aGVsbG8gY2xpcGJvYXJk")
+}
+
+func TestOSC52ClipboardEmptyText(t *testing.T) {
+	var buf bytes.Buffer
+	cb := &osc52Clipboard{output: &buf}
+
+	err := cb.WriteText("")
+	require.NoError(t, err)
+	// An empty string still produces a valid OSC52 sequence (clears clipboard)
+	assert.Contains(t, buf.String(), "\x1b]52;")
+}
+
+func TestNewClipboardReturnsOSC52OverSSH(t *testing.T) {
+	tests := []struct {
+		name    string
+		envVars map[string]string
+		wantOSC bool
+	}{
+		{
+			name:    "SSH_TTY set",
+			envVars: map[string]string{"SSH_TTY": "/dev/pts/0"},
+			wantOSC: true,
+		},
+		{
+			name:    "SSH_CLIENT set",
+			envVars: map[string]string{"SSH_CLIENT": "192.168.1.1 50000 22"},
+			wantOSC: true,
+		},
+		{
+			name:    "SSH_CONNECTION set",
+			envVars: map[string]string{"SSH_CONNECTION": "192.168.1.1 50000 10.0.0.1 22"},
+			wantOSC: true,
+		},
+		{
+			name:    "no SSH env vars",
+			envVars: map[string]string{},
+			wantOSC: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear SSH env vars before each sub-test
+			for _, key := range []string{"SSH_TTY", "SSH_CLIENT", "SSH_CONNECTION"} {
+				t.Setenv(key, "")
+			}
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+
+			cb := newClipboard()
+			_, isOSC52 := cb.(*osc52Clipboard)
+			assert.Equal(t, tt.wantOSC, isOSC52,
+				"expected osc52Clipboard=%v for env %v", tt.wantOSC, tt.envVars)
+		})
+	}
 }
