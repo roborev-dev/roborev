@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -968,6 +969,19 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 	// Determine base branch
 	base := opts.baseBranch
 	if base == "" {
+		// Prefer the branch's upstream tracking ref so "ahead of upstream"
+		// semantics match `git status` and avoid pulling in commits that
+		// were merged to the parent branch upstream of this one.
+		upstream, uerr := git.GetUpstream(repoRoot, targetRef)
+		var missing *git.UpstreamMissingError
+		if errors.As(uerr, &missing) {
+			return nil, fmt.Errorf("%w (or pass --base <ref>)", missing)
+		}
+		if uerr == nil && upstream != "" {
+			base = upstream
+		}
+	}
+	if base == "" {
 		var err error
 		base, err = git.GetDefaultBranch(repoRoot)
 		if err != nil {
@@ -978,8 +992,8 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 	// Validate not on base branch (only when analyzing current branch)
 	if targetRef == "HEAD" {
 		currentBranch := git.GetCurrentBranch(repoRoot)
-		if currentBranch == git.LocalBranchName(base) {
-			return nil, fmt.Errorf("already on %s - switch to a feature branch first", git.LocalBranchName(base))
+		if git.IsOnBaseBranch(repoRoot, currentBranch, base) {
+			return nil, fmt.Errorf("already on %s - switch to a feature branch first", currentBranch)
 		}
 	}
 

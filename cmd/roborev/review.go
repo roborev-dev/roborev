@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,6 +162,19 @@ Examples:
 
 				base := baseBranch
 				if base == "" {
+					// Prefer the branch's upstream tracking ref so "ahead of upstream"
+					// semantics match `git status` and avoid pulling in commits that
+					// were merged to the parent branch upstream of this one.
+					upstream, uerr := git.GetUpstream(root, targetRef)
+					var missing *git.UpstreamMissingError
+					if errors.As(uerr, &missing) {
+						return fmt.Errorf("%w (or pass --base <ref>)", missing)
+					}
+					if uerr == nil && upstream != "" {
+						base = upstream
+					}
+				}
+				if base == "" {
 					var err error
 					base, err = git.GetDefaultBranch(root)
 					if err != nil {
@@ -171,8 +185,8 @@ Examples:
 				// Validate not on base branch (only when reviewing current branch)
 				if targetRef == "HEAD" {
 					currentBranch := git.GetCurrentBranch(root)
-					if currentBranch == git.LocalBranchName(base) {
-						return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+					if git.IsOnBaseBranch(root, currentBranch, base) {
+						return fmt.Errorf("already on %s - create a feature branch first", currentBranch)
 					}
 				}
 
@@ -505,6 +519,21 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	base := baseBranchOverride
 	if base == "" {
+		// Prefer the branch's upstream tracking ref — matches `git status`
+		// semantics. Hooks must never block commits, but a configured-yet-
+		// unresolvable upstream means we cannot confidently pick a base;
+		// falling back to the default branch here would enqueue a review
+		// against the wrong commit range in fork workflows. Skip instead.
+		upstream, err := git.GetUpstream(root, "HEAD")
+		var missing *git.UpstreamMissingError
+		if errors.As(err, &missing) {
+			return "", false
+		}
+		if err == nil && upstream != "" {
+			base = upstream
+		}
+	}
+	if base == "" {
 		var err error
 		base, err = git.GetDefaultBranch(root)
 		if err != nil {
@@ -514,7 +543,7 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	// Don't branch-review in detached HEAD or on the base branch
 	current := git.GetCurrentBranch(root)
-	if current == "" || current == git.LocalBranchName(base) {
+	if current == "" || git.IsOnBaseBranch(root, current, base) {
 		return "", false
 	}
 

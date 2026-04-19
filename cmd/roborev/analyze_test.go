@@ -570,6 +570,51 @@ func TestGetBranchFiles(t *testing.T) {
 		require.Error(t, err, "expected error when on base branch")
 		assert.Contains(t, err.Error(), "already on main", "unexpected error")
 	})
+
+	t.Run("prefers non-origin upstream as base", func(t *testing.T) {
+		// Fork workflow: origin (stale fork) and upstream (real repo).
+		// Feature branch tracks upstream/main; merge-base must be taken
+		// against upstream/main, not origin/main, so commits already
+		// merged upstream aren't re-analyzed.
+		remote := newBareTestGitRepo(t)
+		stale := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("a.go", "package main", "u1")
+		repo.CommitFile("b.go", "package main", "u2")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+
+		// origin lags upstream by 1 commit.
+		repo.Run("remote", "add", "origin", stale.Dir)
+		repo.Run("push", "origin", "HEAD~1:refs/heads/main")
+		repo.Run("fetch", "origin")
+		repo.Run("remote", "set-head", "origin", "main")
+
+		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+		repo.CommitFile("only-new.go", "package main\nfunc New() {}", "feature work")
+
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		require.NoError(t, err)
+		// b.go was already merged to upstream/main; must not be analyzed.
+		assert.NotContains(t, files, "b.go",
+			"already-merged upstream commit must not be analyzed")
+		assert.Contains(t, files, "only-new.go",
+			"new feature file should be analyzed")
+	})
+
+	t.Run("blocks local main tracking non-origin upstream", func(t *testing.T) {
+		remote := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("a.go", "package main", "initial")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+
+		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		require.Error(t, err, "expected error when on base branch")
+		assert.Contains(t, err.Error(), "already on main", "unexpected error")
+	})
 }
 
 func TestAnalyzeBranchSpaceSeparated(t *testing.T) {

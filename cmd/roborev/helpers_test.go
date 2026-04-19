@@ -43,6 +43,21 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 	return r
 }
 
+// newBareTestGitRepo creates a bare git repository for use as a remote.
+func newBareTestGitRepo(t *testing.T) *TestGitRepo {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err, "Failed to resolve symlinks: %v")
+
+	r := &TestGitRepo{Dir: resolved, t: t}
+	r.Run("init", "--bare")
+	return r
+}
+
 // chdir changes to dir and registers a t.Cleanup to restore the original directory.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
