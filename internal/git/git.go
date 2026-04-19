@@ -100,6 +100,37 @@ func LocalBranchName(branch string) string {
 	return strings.TrimPrefix(branch, "origin/")
 }
 
+// IsOnBaseBranch returns true if currentBranch is equivalent to base for the
+// purpose of "already on the base branch" guardrails. Handles bare local names
+// ("main"), the legacy origin/ shortcut, and any other configured remote
+// prefix (e.g. "upstream/main") by resolving the prefix against `git remote`.
+func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
+	if currentBranch == "" {
+		return false
+	}
+	if currentBranch == base || currentBranch == LocalBranchName(base) {
+		return true
+	}
+	idx := strings.IndexByte(base, '/')
+	if idx < 0 {
+		return false
+	}
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	prefix := base[:idx]
+	rest := base[idx+1:]
+	for _, remote := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if remote == prefix {
+			return currentBranch == rest
+		}
+	}
+	return false
+}
+
 // GetDiff returns the full diff for a commit, excluding generated
 // files like lock files. Extra exclude patterns (filenames or globs)
 // are appended to the built-in exclusion list.

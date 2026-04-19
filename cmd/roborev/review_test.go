@@ -611,6 +611,22 @@ func TestTryBranchReview(t *testing.T) {
 		assert.False(t, ok)
 	})
 
+	t.Run("blocks local main tracking non-origin upstream", func(t *testing.T) {
+		// Regression: LocalBranchName only stripped "origin/", so
+		// current="main" vs base="upstream/main" missed the guardrail
+		// and produced a branch review on the base branch itself.
+		remote := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, ok := tryBranchReview(repo.Dir, "")
+		assert.False(t, ok, "local main tracking upstream/main must be treated as base branch")
+	})
+
 	t.Run("prefers branch upstream over default branch", func(t *testing.T) {
 		// Reproduces the "single commit past upstream" bug: when the default
 		// branch (e.g., origin/main) lags behind the tip the branch actually

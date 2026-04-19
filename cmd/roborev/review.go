@@ -178,8 +178,8 @@ Examples:
 				// Validate not on base branch (only when reviewing current branch)
 				if targetRef == "HEAD" {
 					currentBranch := git.GetCurrentBranch(root)
-					if currentBranch == git.LocalBranchName(base) {
-						return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+					if git.IsOnBaseBranch(root, currentBranch, base) {
+						return fmt.Errorf("already on %s - create a feature branch first", currentBranch)
 					}
 				}
 
@@ -502,7 +502,7 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	// Don't branch-review in detached HEAD or on the base branch
 	current := git.GetCurrentBranch(root)
-	if current == "" || current == git.LocalBranchName(base) {
+	if current == "" || git.IsOnBaseBranch(root, current, base) {
 		return "", false
 	}
 
