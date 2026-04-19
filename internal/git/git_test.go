@@ -638,6 +638,66 @@ func TestGetCurrentBranch(t *testing.T) {
 	})
 }
 
+func TestGetUpstream(t *testing.T) {
+	t.Run("returns empty when no upstream configured", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+
+		upstream, err := GetUpstream(repo.Dir, "HEAD")
+		require.NoError(t, err)
+		assert.Empty(t, upstream)
+	})
+
+	t.Run("returns upstream tracking branch", func(t *testing.T) {
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+
+		// Name the remote "upstream" to match the user's fork-style setup.
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+
+		upstream, err := GetUpstream(repo.Dir, "HEAD")
+		require.NoError(t, err)
+		assert.Equal(t, "upstream/main", upstream)
+	})
+
+	t.Run("returns upstream for named ref", func(t *testing.T) {
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+
+		repo.Run("remote", "add", "origin", remote.Dir)
+		repo.Run("push", "-u", "origin", "main")
+		repo.Run("checkout", "-b", "feature")
+
+		// feature has no upstream, but main does.
+		upstream, err := GetUpstream(repo.Dir, "main")
+		require.NoError(t, err)
+		assert.Equal(t, "origin/main", upstream)
+
+		upstream, err = GetUpstream(repo.Dir, "feature")
+		require.NoError(t, err)
+		assert.Empty(t, upstream)
+	})
+
+	t.Run("empty ref defaults to HEAD", func(t *testing.T) {
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+
+		repo.Run("remote", "add", "origin", remote.Dir)
+		repo.Run("push", "-u", "origin", "main")
+
+		upstream, err := GetUpstream(repo.Dir, "")
+		require.NoError(t, err)
+		assert.Equal(t, "origin/main", upstream)
+	})
+}
+
 func TestHasUncommittedChanges(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)

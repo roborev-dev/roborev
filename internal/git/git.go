@@ -1121,6 +1121,27 @@ func GetDefaultBranch(repoPath string) (string, error) {
 	return "", fmt.Errorf("could not detect default branch (tried origin/HEAD, main, master)")
 }
 
+// GetUpstream returns the upstream tracking branch for a ref (e.g., "upstream/main")
+// or an empty string if no upstream is configured. Passing an empty ref is equivalent to HEAD.
+func GetUpstream(repoPath, ref string) (string, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", ref+"@{upstream}")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 128 means "no upstream configured" — surface as empty, not an error.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
+			return "", nil
+		}
+		return "", fmt.Errorf("git rev-parse @{upstream}: %w", err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
 // GetMergeBase returns the merge-base (common ancestor) between two refs
 func GetMergeBase(repoPath, ref1, ref2 string) (string, error) {
 	cmd := exec.Command("git", "merge-base", ref1, ref2)

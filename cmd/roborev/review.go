@@ -160,6 +160,14 @@ Examples:
 
 				base := baseBranch
 				if base == "" {
+					// Prefer the branch's upstream tracking ref so "ahead of upstream"
+					// semantics match `git status` and avoid pulling in commits that
+					// were merged to the parent branch upstream of this one.
+					if upstream, err := git.GetUpstream(root, targetRef); err == nil && upstream != "" {
+						base = upstream
+					}
+				}
+				if base == "" {
 					var err error
 					base, err = git.GetDefaultBranch(root)
 					if err != nil {
@@ -478,6 +486,12 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 	}
 
 	base := baseBranchOverride
+	if base == "" {
+		// Prefer the branch's upstream tracking ref — matches `git status` semantics.
+		if upstream, err := git.GetUpstream(root, "HEAD"); err == nil && upstream != "" {
+			base = upstream
+		}
+	}
 	if base == "" {
 		var err error
 		base, err = git.GetDefaultBranch(root)
