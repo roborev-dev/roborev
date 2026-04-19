@@ -611,6 +611,27 @@ func TestTryBranchReview(t *testing.T) {
 		assert.False(t, ok)
 	})
 
+	t.Run("skips when upstream is configured but unresolvable", func(t *testing.T) {
+		// Regression: when @{upstream} is configured but the remote-tracking
+		// ref has not been fetched, tryBranchReview must skip rather than
+		// silently fall back to origin/main or local main — that fallback
+		// would enqueue a review against the wrong commit range in fork
+		// workflows.
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		// Configure tracking against an upstream that never resolves locally.
+		repo.Run("config", "branch.feature.remote", "upstream")
+		repo.Run("config", "branch.feature.merge", "refs/heads/main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		assert.False(t, ok, "must skip when upstream is configured but missing")
+		assert.Empty(t, ref)
+	})
+
 	t.Run("blocks local main tracking non-origin upstream", func(t *testing.T) {
 		// Regression: LocalBranchName only stripped "origin/", so
 		// current="main" vs base="upstream/main" missed the guardrail

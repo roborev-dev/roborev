@@ -11,6 +11,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -561,6 +562,54 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	assert.NotEmpty(t, repoPath)
 	assert.Equal(t, "main", currentBranch)
 	assert.Equal(t, mergeBase, baseSHA)
+}
+
+func TestValidateRefineContext_SinceIgnoresUpstreamMissing(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// --since provides the merge base explicitly, so an unfetched or
+	// missing @{upstream} must not block a valid --since invocation.
+	repo := testutil.InitTestRepo(t)
+	baseSHA := repo.RevParse("HEAD")
+	repo.CommitFile("second.txt", "second", "second commit")
+
+	// Configure tracking against an upstream that never resolves locally.
+	repo.Run("config", "branch.main.remote", "upstream")
+	repo.Run("config", "branch.main.merge", "refs/heads/main")
+
+	chdirForTest(t, repo.Root)
+
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
+	require.NoError(t, err, "--since should bypass upstream resolution: %v", err)
+
+	assert.NotEmpty(t, repoPath)
+	assert.Equal(t, "main", currentBranch)
+	assert.Equal(t, baseSHA, mergeBase)
+}
+
+func TestValidateRefineContext_UpstreamMissingErrorsWithoutSince(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Without --since, a configured-but-unfetched upstream must surface
+	// as UpstreamMissingError rather than silently falling back to the
+	// repository default branch (which could yield the wrong range).
+	repo := testutil.InitTestRepo(t)
+	repo.RunGit("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
+	repo.Run("config", "branch.feature.remote", "upstream")
+	repo.Run("config", "branch.feature.merge", "refs/heads/main")
+
+	chdirForTest(t, repo.Root)
+
+	_, _, _, _, err := validateRefineContext("", "", "")
+	require.Error(t, err, "expected missing-upstream error without --since")
+
+	var missing *git.UpstreamMissingError
+	assert.ErrorAs(t, err, &missing, "expected UpstreamMissingError, got: %v", err)
 }
 
 func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {

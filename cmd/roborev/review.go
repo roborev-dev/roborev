@@ -494,10 +494,16 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 	base := baseBranchOverride
 	if base == "" {
 		// Prefer the branch's upstream tracking ref — matches `git status`
-		// semantics. Hooks must never block commits, so any error here —
-		// including an unresolvable @{upstream} — falls through silently to
-		// the default-branch lookup.
-		if upstream, err := git.GetUpstream(root, "HEAD"); err == nil && upstream != "" {
+		// semantics. Hooks must never block commits, but a configured-yet-
+		// unresolvable upstream means we cannot confidently pick a base;
+		// falling back to the default branch here would enqueue a review
+		// against the wrong commit range in fork workflows. Skip instead.
+		upstream, err := git.GetUpstream(root, "HEAD")
+		var missing *git.UpstreamMissingError
+		if errors.As(err, &missing) {
+			return "", false
+		}
+		if err == nil && upstream != "" {
 			base = upstream
 		}
 	}

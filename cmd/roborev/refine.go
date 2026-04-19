@@ -237,30 +237,6 @@ func validateRefineContext(
 			)
 	}
 
-	// Prefer the current branch's upstream tracking ref (matches
-	// `git status` "ahead of upstream" semantics); fall back to the
-	// repository default branch when no upstream is configured.
-	upstream, uerr := git.GetUpstream(repoPath, "HEAD")
-	var missing *git.UpstreamMissingError
-	if errors.As(uerr, &missing) {
-		return "", "", "", "",
-			fmt.Errorf(
-				"%w (run 'git fetch' or pass --since)", missing,
-			)
-	}
-	if uerr == nil && upstream != "" {
-		base = upstream
-	}
-	if base == "" {
-		base, err = git.GetDefaultBranch(repoPath)
-		if err != nil {
-			return "", "", "", "",
-				fmt.Errorf(
-					"cannot determine default branch: %w", err,
-				)
-		}
-	}
-
 	currentBranch = git.GetCurrentBranch(repoPath)
 
 	// --branch: validate the user is on the expected branch
@@ -273,6 +249,9 @@ func validateRefineContext(
 	}
 
 	if since != "" {
+		// --since provides an explicit merge base, so upstream/default-branch
+		// resolution is unnecessary. Skip it so a misconfigured or unfetched
+		// upstream doesn't block an otherwise-valid --since invocation.
 		mergeBase, err = git.ResolveSHA(repoPath, since)
 		if err != nil {
 			return "", "", "", "",
@@ -299,6 +278,30 @@ func validateRefineContext(
 				)
 		}
 	} else {
+		// Prefer the current branch's upstream tracking ref (matches
+		// `git status` "ahead of upstream" semantics); fall back to the
+		// repository default branch when no upstream is configured.
+		upstream, uerr := git.GetUpstream(repoPath, "HEAD")
+		var missing *git.UpstreamMissingError
+		if errors.As(uerr, &missing) {
+			return "", "", "", "",
+				fmt.Errorf(
+					"%w (run 'git fetch' or pass --since)", missing,
+				)
+		}
+		if uerr == nil && upstream != "" {
+			base = upstream
+		}
+		if base == "" {
+			base, err = git.GetDefaultBranch(repoPath)
+			if err != nil {
+				return "", "", "", "",
+					fmt.Errorf(
+						"cannot determine default branch: %w", err,
+					)
+			}
+		}
+
 		if git.IsOnBaseBranch(repoPath, currentBranch, base) {
 			return "", "", "", "", fmt.Errorf(
 				"refusing to refine on %s branch "+
