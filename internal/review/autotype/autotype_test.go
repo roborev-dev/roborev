@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDecisionZeroValue(t *testing.T) {
@@ -42,7 +43,7 @@ func TestAnyMatch(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := AnyMatch(c.patterns, c.path)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, c.want, got)
 		})
 	}
@@ -52,20 +53,20 @@ func TestAllMatch(t *testing.T) {
 	assert := assert.New(t)
 	got, err := AllMatch([]string{"**/*.md", "**/testdata/**"},
 		[]string{"README.md", "internal/testdata/x.json"})
-	assert.NoError(err)
+	require.NoError(t, err)
 	assert.True(got)
 
 	got, err = AllMatch([]string{"**/*.md"},
 		[]string{"README.md", "foo.go"})
-	assert.NoError(err)
+	require.NoError(t, err)
 	assert.False(got)
 
 	got, err = AllMatch([]string{"**/*.md"}, nil)
-	assert.NoError(err)
+	require.NoError(t, err)
 	assert.False(got)
 }
 
 func TestAnyMatchInvalidPattern(t *testing.T) {
 	_, err := AnyMatch([]string{"["}, "foo")
-	assert.Error(t, err)
+	require.Error(t, err)
 }

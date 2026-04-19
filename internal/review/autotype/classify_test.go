@@ -3,6 +3,7 @@ package autotype
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,13 +35,9 @@ func TestClassify_TriggerPath(t *testing.T) {
 }
 
 func TestClassify_TriggerLargeDiff(t *testing.T) {
-	bigDiff := make([]byte, 0, 10000)
-	for i := 0; i < 600; i++ {
-		bigDiff = append(bigDiff, "+newline\n"...)
-	}
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff:         string(bigDiff),
+		Diff:         strings.Repeat("+newline\n", 600),
 		Message:      "feat: expand",
 	}, newTestHeuristics(), nil)
 	require.NoError(t, err)
@@ -90,14 +87,8 @@ func TestClassify_SkipTrivialDiff(t *testing.T) {
 func TestClassify_SkipAllMatchPaths(t *testing.T) {
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"README.md", "CHANGELOG.md"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 30; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "feat: new section",
+		Diff:         strings.Repeat("+line\n", 30),
+		Message:      "feat: new section",
 	}, newTestHeuristics(), nil)
 	require.NoError(t, err)
 	assert.False(t, d.Run)
@@ -107,14 +98,8 @@ func TestClassify_SkipAllMatchPaths(t *testing.T) {
 func TestClassify_SkipMessage(t *testing.T) {
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 30; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "chore: bump go.mod",
+		Diff:         strings.Repeat("+line\n", 30),
+		Message:      "chore: bump go.mod",
 	}, newTestHeuristics(), nil)
 	require.NoError(t, err)
 	assert.False(t, d.Run)
@@ -135,14 +120,8 @@ func TestClassify_TriggerPathBeatsSkipMessage(t *testing.T) {
 func TestClassify_ClassifierYes(t *testing.T) {
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 50; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "feat: revise API",
+		Diff:         strings.Repeat("+line\n", 50),
+		Message:      "feat: revise API",
 	}, newTestHeuristics(), stubClassifier{yes: true, reason: "public API change"})
 	require.NoError(t, err)
 	assert.True(t, d.Run)
@@ -153,14 +132,8 @@ func TestClassify_ClassifierYes(t *testing.T) {
 func TestClassify_ClassifierNo(t *testing.T) {
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 50; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "feat: rename var",
+		Diff:         strings.Repeat("+line\n", 50),
+		Message:      "feat: rename var",
 	}, newTestHeuristics(), stubClassifier{yes: false, reason: "local rename"})
 	require.NoError(t, err)
 	assert.False(t, d.Run)
@@ -171,14 +144,8 @@ func TestClassify_ClassifierNo(t *testing.T) {
 func TestClassify_ClassifierNilWhenAmbiguous(t *testing.T) {
 	_, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 50; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "feat: rename var",
+		Diff:         strings.Repeat("+line\n", 50),
+		Message:      "feat: rename var",
 	}, newTestHeuristics(), nil)
 	assert.ErrorContains(t, err, "classifier required")
 }
@@ -186,14 +153,8 @@ func TestClassify_ClassifierNilWhenAmbiguous(t *testing.T) {
 func TestClassify_ClassifierError(t *testing.T) {
 	_, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},
-		Diff: func() string {
-			s := ""
-			for i := 0; i < 50; i++ {
-				s += "+line\n"
-			}
-			return s
-		}(),
-		Message: "feat: rename var",
+		Diff:         strings.Repeat("+line\n", 50),
+		Message:      "feat: rename var",
 	}, newTestHeuristics(), stubClassifier{err: errors.New("boom")})
 	assert.ErrorContains(t, err, "boom")
 }

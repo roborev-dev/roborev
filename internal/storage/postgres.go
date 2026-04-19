@@ -186,6 +186,20 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("create patch_id index: %w", err)
 		}
+		// Auto-design dedup indexes — fresh DBs create them here; v12
+		// migration creates them inside the migration block.
+		_, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+			ON review_jobs(repo_id, commit_id, review_type)
+			WHERE source = 'auto_design'`)
+		if err != nil {
+			return fmt.Errorf("create auto-design dedup index: %w", err)
+		}
+		_, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design' AND commit_id IS NULL`)
+		if err != nil {
+			return fmt.Errorf("create auto-design dedup ref index: %w", err)
+		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
 	} else if currentVersion < pgSchemaVersion {

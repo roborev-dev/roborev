@@ -102,12 +102,10 @@ CREATE INDEX IF NOT EXISTS idx_reviews_job_uuid ON roborev.reviews(job_uuid);
 CREATE INDEX IF NOT EXISTS idx_reviews_updated ON roborev.reviews(updated_at);
 CREATE INDEX IF NOT EXISTS idx_responses_job_uuid ON roborev.responses(job_uuid);
 CREATE INDEX IF NOT EXISTS idx_responses_id ON roborev.responses(id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
-  ON roborev.review_jobs(repo_id, commit_id, review_type)
-  WHERE source = 'auto_design';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
-  ON roborev.review_jobs(repo_id, git_ref, review_type)
-  WHERE source = 'auto_design' AND commit_id IS NULL;
+-- Partial unique indexes for auto-design dedup are created by EnsureSchema
+-- (fresh-init block + v12 migration step) — placing them here would break
+-- v1→v12 migrations where the source column doesn't yet exist when this
+-- schema is replayed.
 
 CREATE TABLE IF NOT EXISTS roborev.sync_metadata (
   key TEXT PRIMARY KEY,

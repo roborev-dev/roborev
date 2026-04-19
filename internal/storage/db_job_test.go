@@ -1380,7 +1380,7 @@ func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {
 	jobID := seedRunningClassify(t, db, "/tmp/repo-promote-stale", "abc", "w1")
 
 	err := db.PromoteClassifyToDesignReview(jobID, "w2")
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	j, err := db.GetJobByID(jobID)
 	require.NoError(t, err)
@@ -1403,7 +1403,7 @@ func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
 	`, repo.ID, commit.ID).Scan(&jobID))
 
 	err := db.PromoteClassifyToDesignReview(jobID, "w1")
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestMarkClassifyAsSkippedDesign_HappyPath(t *testing.T) {
@@ -1427,7 +1427,7 @@ func TestMarkClassifyAsSkippedDesign_StaleWorkerNoOps(t *testing.T) {
 	jobID := seedRunningClassify(t, db, "/tmp/repo-skip-stale", "abc", "w1")
 
 	err := db.MarkClassifyAsSkippedDesign(jobID, "w-other", "some reason")
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	j, err := db.GetJobByID(jobID)
 	require.NoError(t, err)
@@ -1450,7 +1450,7 @@ func TestMarkClassifyAsSkippedDesign_CanceledNoOps(t *testing.T) {
 	`, repo.ID, commit.ID).Scan(&jobID))
 
 	err := db.MarkClassifyAsSkippedDesign(jobID, "w1", "some reason")
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 
 	j, err := db.GetJobByID(jobID)
 	require.NoError(t, err)

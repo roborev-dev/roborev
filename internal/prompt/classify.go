@@ -58,10 +58,7 @@ func BuildClassifyPrompt(in ClassifyInput) (string, error) {
 	b.WriteString("```diff\n")
 	diff := in.Diff
 	if in.MaxBytes > 0 && b.Len()+len(diff)+20 > in.MaxBytes {
-		avail := in.MaxBytes - b.Len() - 40
-		if avail < 0 {
-			avail = 0
-		}
+		avail := max(in.MaxBytes-b.Len()-40, 0)
 		if avail < len(diff) {
 			diff = diff[:avail]
 			diff += "\n... (truncated)\n"

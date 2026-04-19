@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultHeuristics(t *testing.T) {
@@ -22,13 +23,13 @@ func TestDefaultHeuristics(t *testing.T) {
 
 func TestHeuristicsValidate(t *testing.T) {
 	h := DefaultHeuristics()
-	assert.NoError(t, h.Validate())
+	require.NoError(t, h.Validate())
 
 	bad := h
 	bad.TriggerPaths = append([]string{"["}, bad.TriggerPaths...)
-	assert.Error(t, bad.Validate())
+	require.Error(t, bad.Validate())
 
 	bad2 := h
 	bad2.TriggerMessagePatterns = []string{"["}
-	assert.Error(t, bad2.Validate())
+	require.Error(t, bad2.Validate())
 }

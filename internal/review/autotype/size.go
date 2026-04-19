@@ -10,7 +10,7 @@ func CountChangedLines(diff string) int {
 		return 0
 	}
 	n := 0
-	for _, line := range strings.Split(diff, "\n") {
+	for line := range strings.SplitSeq(diff, "\n") {
 		if len(line) == 0 {
 			continue
 		}

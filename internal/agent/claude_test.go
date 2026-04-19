@@ -870,6 +870,12 @@ func TestClaudeClassify_BuildsArgs(t *testing.T) {
 	require.NotEqual(t, -1, idx)
 	require.Less(t, idx+1, len(got))
 	assert.JSONEq(`{"type":"object"}`, got[idx+1])
+	// Security: classify must run with read-only tools and never with
+	// --dangerously-skip-permissions, since commit messages and diffs
+	// are untrusted input.
+	assert.NotContains(got, "--dangerously-skip-permissions")
+	tools := toolsArgValue(t, got)
+	assert.Equal("Read,Glob,Grep", tools)
 }
 
 func TestClaudeClassify_ParseResult(t *testing.T) {

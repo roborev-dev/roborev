@@ -163,29 +163,3 @@ func derefString(p *string) string {
 	}
 	return *p
 }
-
-// insertSkippedDesignRow writes a row representing a design review we decided
-// NOT to run. Dedup is enforced atomically by the auto-design unique index.
-func (wp *WorkerPool) insertSkippedDesignRow(parent *storage.ReviewJob, reason string) error {
-	return wp.db.InsertSkippedDesignJob(storage.InsertSkippedDesignJobParams{
-		RepoID:     parent.RepoID,
-		CommitID:   parent.CommitIDValue(),
-		GitRef:     parent.GitRef,
-		Branch:     parent.Branch,
-		SkipReason: reason,
-	})
-}
-
-// enqueueAutoDesignReview enqueues a design review if one does not already
-// exist for this commit.
-func (wp *WorkerPool) enqueueAutoDesignReview(parent *storage.ReviewJob) error {
-	_, err := wp.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
-		RepoID:     parent.RepoID,
-		CommitID:   parent.CommitIDValue(),
-		GitRef:     parent.GitRef,
-		Branch:     parent.Branch,
-		JobType:    storage.JobTypeReview,
-		ReviewType: "design",
-	})
-	return err
-}

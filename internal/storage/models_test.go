@@ -187,11 +187,11 @@ func TestIsReviewJob(t *testing.T) {
 }
 
 func TestJobStatusSkipped(t *testing.T) {
-	assert.Equal(t, storage.JobStatus("skipped"), storage.JobStatusSkipped)
+	assert.Equal(t, storage.JobStatusSkipped, storage.JobStatus("skipped"))
 }
 
 func TestJobTypeClassify(t *testing.T) {
-	assert.Equal(t, "classify", storage.JobTypeClassify)
+	assert.Equal(t, storage.JobTypeClassify, "classify")
 }
 
 func TestReviewJobHasSkipReason(t *testing.T) {

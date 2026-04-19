@@ -1,7 +1,6 @@
 package autotype
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +27,7 @@ func TestMatchMessage_Triggers(t *testing.T) {
 			if c.want == "" {
 				assert.Empty(t, m)
 			} else {
-				assert.True(t, strings.Contains(m, c.want), "got match %q, want contains %q", m, c.want)
+				assert.Contains(t, m, c.want, "got match %q, want contains %q", m, c.want)
 			}
 		})
 	}
@@ -47,7 +46,7 @@ func TestMatchMessage_ConventionalSkip(t *testing.T) {
 		"chore: bump deps",
 	} {
 		m, err := MatchMessage(patterns, msg)
-		assert.NoError(err)
+		require.NoError(t, err)
 		assert.NotEmpty(m, "expected match for %q", msg)
 	}
 
@@ -57,7 +56,7 @@ func TestMatchMessage_ConventionalSkip(t *testing.T) {
 		"docs: fix and docs: too",
 	} {
 		m, err := MatchMessage(patterns, msg)
-		assert.NoError(err)
+		require.NoError(t, err)
 		if msg == "docs: fix and docs: too" {
 			assert.NotEmpty(m)
 		} else {
@@ -68,5 +67,5 @@ func TestMatchMessage_ConventionalSkip(t *testing.T) {
 
 func TestMatchMessage_InvalidRegex(t *testing.T) {
 	_, err := MatchMessage([]string{"["}, "anything")
-	assert.Error(t, err)
+	require.Error(t, err)
 }
