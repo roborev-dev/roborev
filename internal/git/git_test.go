@@ -1185,6 +1185,64 @@ func TestResetWorkingTree(t *testing.T) {
 	})
 }
 
+func TestIsOnBaseBranch(t *testing.T) {
+	t.Run("matches bare local name", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "main"))
+		assert.False(t, IsOnBaseBranch(repo.Dir, "feature", "main"))
+	})
+
+	t.Run("matches origin-prefixed ref", func(t *testing.T) {
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "origin", remote.Dir)
+		repo.Run("push", "-u", "origin", "main")
+
+		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "origin/main"))
+		assert.False(t, IsOnBaseBranch(repo.Dir, "feature", "origin/main"))
+	})
+
+	t.Run("matches non-origin remote prefix", func(t *testing.T) {
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+
+		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "upstream/main"))
+		assert.False(t, IsOnBaseBranch(repo.Dir, "feature", "upstream/main"))
+	})
+
+	t.Run("does not strip slash when no matching remote-tracking ref", func(t *testing.T) {
+		// feature/foo is a local branch, not origin/main style. Even when a
+		// remote named "feature" is configured, we must not treat base
+		// "feature/foo" as if it were a remote-tracking ref and strip the
+		// prefix — that would falsely match a local branch named "foo".
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "feature", remote.Dir)
+		repo.Run("checkout", "-b", "feature/foo")
+		repo.CommitFile("b.txt", "b", "work")
+		repo.Run("checkout", "-b", "foo", "main")
+
+		// Current branch "foo" vs base "feature/foo" — refs/remotes/feature/foo
+		// does not exist, so the prefix must not be stripped.
+		assert.False(t, IsOnBaseBranch(repo.Dir, "foo", "feature/foo"))
+		// And the real "on-base" case for a local branch with a slash still works.
+		assert.True(t, IsOnBaseBranch(repo.Dir, "feature/foo", "feature/foo"))
+	})
+
+	t.Run("empty current branch does not match", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		assert.False(t, IsOnBaseBranch(repo.Dir, "", "main"))
+	})
+}
+
 func TestLocalBranchName(t *testing.T) {
 	tests := []struct {
 		input string
