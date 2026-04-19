@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -163,7 +164,12 @@ Examples:
 					// Prefer the branch's upstream tracking ref so "ahead of upstream"
 					// semantics match `git status` and avoid pulling in commits that
 					// were merged to the parent branch upstream of this one.
-					if upstream, err := git.GetUpstream(root, targetRef); err == nil && upstream != "" {
+					upstream, uerr := git.GetUpstream(root, targetRef)
+					var missing *git.UpstreamMissingError
+					if errors.As(uerr, &missing) {
+						return fmt.Errorf("%w (or pass --base <ref>)", missing)
+					}
+					if uerr == nil && upstream != "" {
 						base = upstream
 					}
 				}
@@ -487,7 +493,10 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	base := baseBranchOverride
 	if base == "" {
-		// Prefer the branch's upstream tracking ref — matches `git status` semantics.
+		// Prefer the branch's upstream tracking ref — matches `git status`
+		// semantics. Hooks must never block commits, so any error here —
+		// including an unresolvable @{upstream} — falls through silently to
+		// the default-branch lookup.
 		if upstream, err := git.GetUpstream(root, "HEAD"); err == nil && upstream != "" {
 			base = upstream
 		}

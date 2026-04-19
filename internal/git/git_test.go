@@ -714,11 +714,12 @@ func TestGetUpstream(t *testing.T) {
 			"local-branch upstream should be returned, not dropped")
 	})
 
-	t.Run("returns empty when tracking ref is missing locally", func(t *testing.T) {
+	t.Run("errors when tracking ref is missing locally", func(t *testing.T) {
 		// Tracking config set but refs/remotes/<upstream> does not resolve
-		// (e.g., never fetched, or was manually removed). Callers must fall
-		// back to GetDefaultBranch rather than return a ref that merge-base
-		// cannot resolve.
+		// (e.g., never fetched, or was manually removed). Callers must be
+		// able to distinguish this from "no upstream configured" so the
+		// user isn't silently switched to a different base branch that
+		// could yield the wrong commit range.
 		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
@@ -729,8 +730,28 @@ func TestGetUpstream(t *testing.T) {
 		repo.Run("update-ref", "-d", "refs/remotes/upstream/main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
-		require.NoError(t, err)
-		assert.Empty(t, upstream, "missing remote-tracking ref must surface as empty")
+		assert.Empty(t, upstream)
+		var missing *UpstreamMissingError
+		require.ErrorAs(t, err, &missing, "expected UpstreamMissingError, got %T: %v", err, err)
+		assert.Equal(t, "upstream/main", missing.Upstream)
+	})
+
+	t.Run("errors when tracking is configured but never fetched", func(t *testing.T) {
+		// Fresh repo with manual tracking config against a ref that has
+		// never been fetched. rev-parse @{upstream} fails with exit 128,
+		// but branch.<name>.remote/merge are set, so callers must still
+		// see UpstreamMissingError, not ("", nil).
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("config", "branch.main.remote", "upstream")
+		repo.Run("config", "branch.main.merge", "refs/heads/main")
+
+		upstream, err := GetUpstream(repo.Dir, "HEAD")
+		assert.Empty(t, upstream)
+		var missing *UpstreamMissingError
+		require.ErrorAs(t, err, &missing, "expected UpstreamMissingError, got %T: %v", err, err)
+		assert.Equal(t, "upstream/main", missing.Upstream)
 	})
 }
 

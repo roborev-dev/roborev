@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -965,7 +966,12 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 		// Prefer the branch's upstream tracking ref so "ahead of upstream"
 		// semantics match `git status` and avoid pulling in commits that
 		// were merged to the parent branch upstream of this one.
-		if upstream, err := git.GetUpstream(repoRoot, targetRef); err == nil && upstream != "" {
+		upstream, uerr := git.GetUpstream(repoRoot, targetRef)
+		var missing *git.UpstreamMissingError
+		if errors.As(uerr, &missing) {
+			return nil, fmt.Errorf("%w (or pass --base <ref>)", missing)
+		}
+		if uerr == nil && upstream != "" {
 			base = upstream
 		}
 	}

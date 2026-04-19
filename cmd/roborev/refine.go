@@ -240,7 +240,15 @@ func validateRefineContext(
 	// Prefer the current branch's upstream tracking ref (matches
 	// `git status` "ahead of upstream" semantics); fall back to the
 	// repository default branch when no upstream is configured.
-	if upstream, uerr := git.GetUpstream(repoPath, "HEAD"); uerr == nil && upstream != "" {
+	upstream, uerr := git.GetUpstream(repoPath, "HEAD")
+	var missing *git.UpstreamMissingError
+	if errors.As(uerr, &missing) {
+		return "", "", "", "",
+			fmt.Errorf(
+				"%w (run 'git fetch' or pass --since)", missing,
+			)
+	}
+	if uerr == nil && upstream != "" {
 		base = upstream
 	}
 	if base == "" {
