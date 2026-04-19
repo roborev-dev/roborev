@@ -37,6 +37,8 @@ type reviewJobScanFields struct {
 	Closed            sql.NullInt64
 	WorktreePath      string
 	MinSeverity       string
+	SkipReason        sql.NullString
+	Source            sql.NullString
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
@@ -125,6 +127,12 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	job.WorktreePath = fields.WorktreePath
 	job.MinSeverity = fields.MinSeverity
+	if fields.SkipReason.Valid {
+		job.SkipReason = fields.SkipReason.String
+	}
+	if fields.Source.Valid {
+		job.Source = fields.Source.String
+	}
 }
 
 type reviewScanFields struct {

@@ -679,9 +679,30 @@ func statusLabel(job storage.ReviewJob) string {
 	case storage.JobStatusDone, storage.JobStatusApplied,
 		storage.JobStatusRebased:
 		return "Done"
+	case storage.JobStatusSkipped:
+		if job.SkipReason != "" {
+			return "skipped: " + truncateReason(job.SkipReason, 40)
+		}
+		return "skipped"
 	default:
 		return string(job.Status)
 	}
+}
+
+// truncateReason returns reason truncated to maxLen runes, with an ellipsis
+// appended when it had to be cut.
+func truncateReason(reason string, maxLen int) string {
+	if maxLen <= 0 {
+		return reason
+	}
+	runes := []rune(reason)
+	if len(runes) <= maxLen {
+		return reason
+	}
+	if maxLen <= 1 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-1]) + "…"
 }
 
 // statusColor returns the foreground color for the Status column.
@@ -699,6 +720,8 @@ func statusColor(
 	case storage.JobStatusFailed:
 		return failedStyle.GetForeground()
 	case storage.JobStatusCanceled:
+		return canceledStyle.GetForeground()
+	case storage.JobStatusSkipped:
 		return canceledStyle.GetForeground()
 	default:
 		return nil

@@ -853,3 +853,60 @@ func TestFilterEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeClassify_BuildsArgs(t *testing.T) {
+	a := NewClaudeAgent("claude")
+	got := a.classifyArgs([]byte(`{"type":"object"}`))
+	assert := assert.New(t)
+	assert.Contains(got, "-p")
+	assert.Contains(got, "--json-schema")
+	idx := -1
+	for i, arg := range got {
+		if arg == "--json-schema" {
+			idx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, idx)
+	require.Less(t, idx+1, len(got))
+	assert.JSONEq(`{"type":"object"}`, got[idx+1])
+	// Security: classify must disable ALL tools (so prompt-injected
+	// commits cannot read ~/.ssh, ~/.roborev, etc. and stuff secrets
+	// into the JSON reason field). Never pass --dangerously-skip-permissions.
+	assert.NotContains(got, "--dangerously-skip-permissions")
+	assert.NotContains(got, "--allowedTools")
+	idx = -1
+	for i, arg := range got {
+		if arg == "--tools" {
+			idx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, idx)
+	require.Less(t, idx+1, len(got))
+	assert.Empty(got[idx+1], "classify must pass --tools \"\" to disable file/tool access")
+}
+
+func TestClaudeClassify_ParseResult(t *testing.T) {
+	stream := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}
+{"type":"result","result":"{\"design_review\":true,\"reason\":\"new package\"}"}
+`
+	out, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"design_review":true,"reason":"new package"}`, string(out))
+}
+
+func TestClaudeClassify_ParseResult_NoResult(t *testing.T) {
+	stream := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
+`
+	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	assert.Error(t, err)
+}
+
+func TestClaudeClassify_ParseResult_InvalidJSON(t *testing.T) {
+	stream := `{"type":"result","result":"not valid json"}` + "\n"
+	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	assert.Error(t, err)
+}

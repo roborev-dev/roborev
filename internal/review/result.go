@@ -10,14 +10,21 @@ type ReviewResult struct {
 	Agent      string
 	ReviewType string
 	Output     string
-	Status     string // ResultDone or ResultFailed
+	Status     string // ResultDone, ResultFailed, or ResultSkipped
 	Error      string
+
+	// Skipped/SkipReason are populated for skipped (auto-design) rows so
+	// synthesis can render them as a distinct short section instead of
+	// crashing on missing Output.
+	Skipped    bool
+	SkipReason string
 }
 
 // Result status values for ReviewResult.Status.
 const (
-	ResultDone   = "done"
-	ResultFailed = "failed"
+	ResultDone    = "done"
+	ResultFailed  = "failed"
+	ResultSkipped = "skipped"
 )
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.

@@ -2536,3 +2536,20 @@ func TestMigratePreV1ConfigWithVisibleNewColumns(t *testing.T) {
 	dirty = migrateColumnConfig(cfg)
 	assert.False(t, dirty)
 }
+
+func TestJobCells_Skipped(t *testing.T) {
+	m := newQueueTestModel()
+	j := storage.ReviewJob{
+		ID:         42,
+		ReviewType: "design",
+		Status:     storage.JobStatusSkipped,
+		SkipReason: "trivial diff",
+		GitRef:     "abc123",
+	}
+	cells := m.jobCells(j)
+	joined := strings.Join(cells, "|")
+	assert := assert.New(t)
+	assert.Contains(joined, "skipped")
+	assert.Contains(joined, "design")
+	assert.Contains(joined, "trivial")
+}

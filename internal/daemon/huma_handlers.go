@@ -299,7 +299,7 @@ func (s *Server) humaGetStatus(
 	ctx context.Context, input *GetStatusInput,
 ) (*GetStatusOutput, error) {
 	queued, running, done, failed, canceled,
-		applied, rebased, err := s.db.GetJobCounts()
+		applied, rebased, skipped, err := s.db.GetJobCounts()
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("get counts: %v", err),
@@ -322,6 +322,8 @@ func (s *Server) humaGetStatus(
 		CanceledJobs:        canceled,
 		AppliedJobs:         applied,
 		RebasedJobs:         rebased,
+		SkippedJobs:         skipped,
+		AutoDesign:          s.autoDesignStatusForResponse(),
 		ActiveWorkers:       s.workerPool.ActiveWorkers(),
 		MaxWorkers:          s.workerPool.MaxWorkers(),
 		MachineID:           s.getMachineID(),

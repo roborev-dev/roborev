@@ -14,12 +14,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 11
+const pgSchemaVersion = 12
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v11.sql
+//go:embed schemas/postgres_v12.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -186,6 +186,20 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("create patch_id index: %w", err)
 		}
+		// Auto-design dedup indexes — fresh DBs create them here; v12
+		// migration creates them inside the migration block.
+		_, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+			ON review_jobs(repo_id, commit_id, review_type)
+			WHERE source = 'auto_design'`)
+		if err != nil {
+			return fmt.Errorf("create auto-design dedup index: %w", err)
+		}
+		_, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design' AND commit_id IS NULL`)
+		if err != nil {
+			return fmt.Errorf("create auto-design dedup ref index: %w", err)
+		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
 	} else if currentVersion < pgSchemaVersion {
@@ -306,6 +320,34 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS min_severity TEXT NOT NULL DEFAULT ''`)
 			if err != nil {
 				return fmt.Errorf("v11 migration (min_severity): %w", err)
+			}
+		}
+		if currentVersion < 12 {
+			// Auto design review support — skip_reason, source columns, and
+			// dedup indexes. (job_type has no CHECK constraint; 'classify'
+			// is accepted as-is.)
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS skip_reason TEXT`); err != nil {
+				return fmt.Errorf("v12 migration (add skip_reason): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS source TEXT`); err != nil {
+				return fmt.Errorf("v12 migration (add source): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs DROP CONSTRAINT IF EXISTS review_jobs_status_check`); err != nil {
+				return fmt.Errorf("v12 migration (drop status check): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD CONSTRAINT review_jobs_status_check
+				CHECK (status IN ('queued','running','done','failed','canceled','applied','rebased','skipped'))`); err != nil {
+				return fmt.Errorf("v12 migration (add status check): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+				ON review_jobs(repo_id, commit_id, review_type)
+				WHERE source = 'auto_design'`); err != nil {
+				return fmt.Errorf("v12 migration (add dedup index): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+				ON review_jobs(repo_id, git_ref, review_type)
+				WHERE source = 'auto_design' AND commit_id IS NULL`); err != nil {
+				return fmt.Errorf("v12 migration (add dedup ref index): %w", err)
 			}
 		}
 		// Update version
