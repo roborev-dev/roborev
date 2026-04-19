@@ -104,9 +104,9 @@ func LocalBranchName(branch string) string {
 // purpose of "already on the base branch" guardrails. Handles bare local names
 // ("main"), the legacy origin/ shortcut, and any other remote-tracking ref
 // (e.g. "upstream/main"). A base that contains a slash is only treated as a
-// remote-tracking ref when refs/remotes/<base> actually exists, so ordinary
-// local branches like "feature/foo" are not misclassified when a remote named
-// "feature" happens to exist.
+// remote-tracking ref when refs/remotes/<base> resolves AND no local branch of
+// the same name exists, so ordinary local branches like "feature/foo" are not
+// misclassified even if a remote named "feature" happens to share the suffix.
 func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 	if currentBranch == "" {
 		return false
@@ -118,12 +118,23 @@ func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
 	if idx < 0 {
 		return false
 	}
-	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/remotes/"+base)
-	cmd.Dir = repoPath
-	if err := cmd.Run(); err != nil {
+	if !refExists(repoPath, "refs/remotes/"+base) {
+		return false
+	}
+	if refExists(repoPath, "refs/heads/"+base) {
+		// Ambiguous: both a local branch and a remote-tracking ref exist with
+		// the exact name "<prefix>/<rest>". Don't strip — fall through to an
+		// exact-name comparison, which already failed above.
 		return false
 	}
 	return currentBranch == base[idx+1:]
+}
+
+// refExists reports whether the given fully-qualified ref resolves in the repo.
+func refExists(repoPath, fullRef string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", fullRef)
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
 }
 
 // GetDiff returns the full diff for a commit, excluding generated
@@ -1148,7 +1159,10 @@ func GetDefaultBranch(repoPath string) (string, error) {
 }
 
 // GetUpstream returns the upstream tracking branch for a ref (e.g., "upstream/main")
-// or an empty string if no upstream is configured. Passing an empty ref is equivalent to HEAD.
+// or an empty string if no upstream is configured or the remote-tracking ref does
+// not resolve locally (e.g., tracking is configured but `git fetch` has not yet
+// pulled down the remote ref). Callers can fall back to GetDefaultBranch in those
+// cases. Passing an empty ref is equivalent to HEAD.
 func GetUpstream(repoPath, ref string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
@@ -1158,14 +1172,24 @@ func GetUpstream(repoPath, ref string) (string, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		// Exit code 128 means "no upstream configured" — surface as empty, not an error.
+		// Exit code 128 means "no upstream configured" or "upstream ref not
+		// found" — surface as empty so callers can fall back to a default.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
 			return "", nil
 		}
 		return "", fmt.Errorf("git rev-parse @{upstream}: %w", err)
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	upstream := strings.TrimSpace(string(out))
+	if upstream == "" {
+		return "", nil
+	}
+	// Defense in depth: confirm the resolved ref actually exists locally so
+	// downstream merge-base calls don't fail with an unknown-revision error.
+	if !refExists(repoPath, "refs/remotes/"+upstream) {
+		return "", nil
+	}
+	return upstream, nil
 }
 
 // GetMergeBase returns the merge-base (common ancestor) between two refs

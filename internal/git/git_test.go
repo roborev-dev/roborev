@@ -696,6 +696,25 @@ func TestGetUpstream(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "origin/main", upstream)
 	})
+
+	t.Run("returns empty when tracking ref is missing locally", func(t *testing.T) {
+		// Tracking config set but refs/remotes/<upstream> does not resolve
+		// (e.g., never fetched, or was manually removed). Callers must fall
+		// back to GetDefaultBranch rather than return a ref that merge-base
+		// cannot resolve.
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+		// Tracking config now points at refs/remotes/upstream/main. Remove it.
+		repo.Run("update-ref", "-d", "refs/remotes/upstream/main")
+
+		upstream, err := GetUpstream(repo.Dir, "HEAD")
+		require.NoError(t, err)
+		assert.Empty(t, upstream, "missing remote-tracking ref must surface as empty")
+	})
 }
 
 func TestHasUncommittedChanges(t *testing.T) {
@@ -1240,6 +1259,29 @@ func TestIsOnBaseBranch(t *testing.T) {
 	t.Run("empty current branch does not match", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		assert.False(t, IsOnBaseBranch(repo.Dir, "", "main"))
+	})
+
+	t.Run("ambiguous slash-containing base is treated as local branch", func(t *testing.T) {
+		// Pathological case: both refs/heads/feature/foo and
+		// refs/remotes/feature/foo exist. A caller asking "is currentBranch
+		// foo already on base feature/foo?" must not blindly strip the
+		// prefix — the local branch feature/foo is distinct from foo, so
+		// the answer is false.
+		remote := NewBareTestRepo(t)
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "feature", remote.Dir)
+		// Create a local branch named feature/foo.
+		repo.Run("branch", "feature/foo")
+		// Manually fabricate refs/remotes/feature/foo pointing at the same commit.
+		head := repo.HeadSHA()
+		repo.Run("update-ref", "refs/remotes/feature/foo", head)
+
+		assert.False(t, IsOnBaseBranch(repo.Dir, "foo", "feature/foo"),
+			"ambiguous ref must not be stripped")
+		assert.True(t, IsOnBaseBranch(repo.Dir, "feature/foo", "feature/foo"),
+			"exact-name match still works")
 	})
 }
 
