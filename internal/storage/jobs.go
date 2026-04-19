@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // parseSQLiteTime parses a time string from SQLite which may be in different formats.
@@ -1093,6 +1094,57 @@ func nullableCommitID(id int64) any {
 // classify_agent / design_agent at execution time.
 const AutoDesignAgentSentinel = "auto-design"
 
+// skipReasonMaxLen caps skip_reason. The reason flows into PR comments
+// and TUI cells; capping length + stripping control characters
+// prevents terminal-escape injection or markdown abuse via failure
+// messages built from raw stderr / model output.
+const skipReasonMaxLen = 200
+
+// sanitizeSkipReason strips control characters (folding newlines/tabs
+// to spaces) and caps length. Applied at every storage entry point
+// that writes to skip_reason so the column is always safe to render.
+func sanitizeSkipReason(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// Drop other control characters entirely.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if skipReasonRuneCount(cleaned) > skipReasonMaxLen {
+		cleaned = truncateSkipReasonRunes(cleaned, skipReasonMaxLen)
+	}
+	return cleaned
+}
+
+func skipReasonRuneCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func truncateSkipReasonRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
 // InsertSkippedDesignJob inserts a review_job row with status=skipped,
 // review_type='design', and source='auto_design'. The auto_design source
 // means it participates in the partial unique dedup index; ON CONFLICT
@@ -1106,7 +1158,7 @@ func (db *DB) InsertSkippedDesignJob(p InsertSkippedDesignJobParams) error {
 		   skip_reason, job_type, source, enqueued_at, finished_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design', ?, ?, ?)
 		ON CONFLICT DO NOTHING
-	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, AutoDesignAgentSentinel, p.SkipReason, now, now, now)
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, AutoDesignAgentSentinel, sanitizeSkipReason(p.SkipReason), now, now, now)
 	if err != nil {
 		return fmt.Errorf("insert skipped design row: %w", err)
 	}
@@ -1204,7 +1256,7 @@ func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason 
 		  AND source = 'auto_design'
 		  AND status = 'running'
 		  AND worker_id = ?
-	`, reason, now, now, classifyJobID, workerID)
+	`, sanitizeSkipReason(reason), now, now, classifyJobID, workerID)
 	if err != nil {
 		return err
 	}

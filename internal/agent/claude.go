@@ -29,6 +29,7 @@ const claudeEffortFlag = "--effort"
 
 var claudeDangerousSupport sync.Map
 var claudeEffortSupport sync.Map
+var claudeToolsSupport sync.Map
 
 // NewClaudeAgent creates a new Claude Code agent
 func NewClaudeAgent(command string) *ClaudeAgent {
@@ -257,6 +258,27 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 	output, _ := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeEffortFlag)
 	claudeEffortSupport.Store(command, supported)
+	return supported
+}
+
+// claudeSupportsToolsFlag reports whether the installed claude binary
+// recognizes the `--tools` flag (used by ClassifyWithSchema with `""`
+// as a deny-all). Older versions do not, and silently passing the flag
+// to a binary that ignores it would leave file/shell tools enabled
+// against untrusted commit text. Errors are treated as "unsupported"
+// so the caller fails closed.
+func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
+	if cached, ok := claudeToolsSupport.Load(command); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Don't cache transient failures.
+		return false
+	}
+	supported := strings.Contains(string(output), "--tools")
+	claudeToolsSupport.Store(command, supported)
 	return supported
 }
 
@@ -585,6 +607,13 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	schema json.RawMessage,
 	out io.Writer,
 ) (json.RawMessage, error) {
+	// Refuse to run if the installed claude binary doesn't recognize
+	// `--tools` — without that flag, classifyArgs's deny-all is silently
+	// dropped and the model would have file/shell access against
+	// untrusted commit text.
+	if !claudeSupportsToolsFlag(ctx, a.Command) {
+		return nil, fmt.Errorf("claude binary does not support --tools flag (required for safe classification — upgrade claude or remove it as classify_agent)")
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return nil, err
