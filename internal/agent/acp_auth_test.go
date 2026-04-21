@@ -78,7 +78,7 @@ func assertPermissionOutcome(t *testing.T, client *acpClient, toolKind *acp.Tool
 	t.Helper()
 	response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
 		Options: authTestPermissionOptions(),
-		ToolCall: acp.RequestPermissionToolCall{
+		ToolCall: acp.ToolCallUpdate{
 			Kind: toolKind,
 		},
 	})

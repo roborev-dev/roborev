@@ -270,7 +270,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	_, err = conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
-			Fs: acp.FileSystemCapability{
+			Fs: acp.FileSystemCapabilities{
 				ReadTextFile:  true,
 				WriteTextFile: true,
 			},
@@ -314,7 +314,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 			return "", err
 		}
 
-		_, err = conn.SetSessionModel(ctx, acp.SetSessionModelRequest{SessionId: sessionResp.SessionId, ModelId: acp.ModelId(a.Model)})
+		_, err = conn.UnstableSetSessionModel(ctx, acp.UnstableSetSessionModelRequest{SessionId: sessionResp.SessionId, ModelId: acp.UnstableModelId(a.Model)})
 		if err != nil {
 			return "", fmt.Errorf("failed to set session model: %w", err)
 		}

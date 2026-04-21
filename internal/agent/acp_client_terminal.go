@@ -424,24 +424,24 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	}, nil
 }
 
-func (c *acpClient) KillTerminalCommand(ctx context.Context, params acp.KillTerminalCommandRequest) (acp.KillTerminalCommandResponse, error) {
+func (c *acpClient) KillTerminal(ctx context.Context, params acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
 
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
-		return acp.KillTerminalCommandResponse{}, err
+		return acp.KillTerminalResponse{}, err
 	}
 
 	// Find and cancel the terminal
 	terminal, exists := c.getTerminal(params.TerminalId)
 
 	if !exists {
-		return acp.KillTerminalCommandResponse{}, fmt.Errorf("terminal %s not found", params.TerminalId)
+		return acp.KillTerminalResponse{}, fmt.Errorf("terminal %s not found", params.TerminalId)
 	}
 
 	// Use context cancellation for graceful termination
 	terminal.cancel()
 
-	return acp.KillTerminalCommandResponse{}, nil
+	return acp.KillTerminalResponse{}, nil
 }
 
 func (c *acpClient) TerminalOutput(ctx context.Context, params acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
