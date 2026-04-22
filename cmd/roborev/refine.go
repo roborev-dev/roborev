@@ -207,12 +207,14 @@ func (t *stepTimer) stopLive() {
 }
 
 // validateRefineContext validates git and branch preconditions for refine.
-// Returns repoPath, currentBranch, defaultBranch, mergeBase, or an error.
+// Returns repoPath, currentBranch, base, mergeBase, or an error.
+// base is the ref that HEAD was diverged from — the branch's upstream
+// tracking ref when configured, otherwise the repository's default branch.
 // If branchFlag is non-empty, validates that the user is on that branch.
 // This validation happens before any daemon interaction.
 func validateRefineContext(
 	cwd, since, branchFlag string,
-) (repoPath, currentBranch, defaultBranch, mergeBase string, err error) {
+) (repoPath, currentBranch, base, mergeBase string, err error) {
 	repoPath, err = git.GetRepoRoot(cwd)
 	if err != nil {
 		return "", "", "", "",
@@ -235,14 +237,6 @@ func validateRefineContext(
 			)
 	}
 
-	defaultBranch, err = git.GetDefaultBranch(repoPath)
-	if err != nil {
-		return "", "", "", "",
-			fmt.Errorf(
-				"cannot determine default branch: %w", err,
-			)
-	}
-
 	currentBranch = git.GetCurrentBranch(repoPath)
 
 	// --branch: validate the user is on the expected branch
@@ -255,6 +249,9 @@ func validateRefineContext(
 	}
 
 	if since != "" {
+		// --since provides an explicit merge base, so upstream/default-branch
+		// resolution is unnecessary. Skip it so a misconfigured or unfetched
+		// upstream doesn't block an otherwise-valid --since invocation.
 		mergeBase, err = git.ResolveSHA(repoPath, since)
 		if err != nil {
 			return "", "", "", "",
@@ -281,27 +278,58 @@ func validateRefineContext(
 				)
 		}
 	} else {
-		if currentBranch == git.LocalBranchName(defaultBranch) {
+		// Prefer the current branch's upstream tracking ref only when it
+		// resolves to a trunk-named branch (e.g., local main tracking
+		// upstream/main in a fork). A branch tracking its own remote
+		// counterpart is not trunk — use GetDefaultBranch instead.
+		upstream, uerr := git.GetUpstream(repoPath, "HEAD")
+		var missing *git.UpstreamMissingError
+		if errors.As(uerr, &missing) {
+			return "", "", "", "",
+				fmt.Errorf(
+					"%w (run 'git fetch' or pass --since)", missing,
+				)
+		}
+		if uerr != nil {
+			return "", "", "", "",
+				fmt.Errorf(
+					"resolve upstream for HEAD: %w (pass --since to skip)", uerr,
+				)
+		}
+		if upstream != "" && git.UpstreamIsTrunk(repoPath, "HEAD") {
+			base = upstream
+		}
+		if base == "" {
+			base, err = git.GetDefaultBranch(repoPath)
+			if err != nil {
+				return "", "", "", "",
+					fmt.Errorf(
+						"cannot determine default branch: %w", err,
+					)
+			}
+		}
+
+		if git.IsOnBaseBranch(repoPath, currentBranch, base) {
 			return "", "", "", "", fmt.Errorf(
 				"refusing to refine on %s branch "+
 					"without --since flag",
-				git.LocalBranchName(defaultBranch),
+				currentBranch,
 			)
 		}
 
 		mergeBase, err = git.GetMergeBase(
-			repoPath, defaultBranch, "HEAD",
+			repoPath, base, "HEAD",
 		)
 		if err != nil {
 			return "", "", "", "",
 				fmt.Errorf(
 					"cannot find merge-base with %s: %w",
-					defaultBranch, err,
+					base, err,
 				)
 		}
 	}
 
-	return repoPath, currentBranch, defaultBranch, mergeBase, nil
+	return repoPath, currentBranch, base, mergeBase, nil
 }
 
 // RunContext encapsulates the runtime context for the refine command,
@@ -314,7 +342,7 @@ type RunContext struct {
 
 func runRefine(ctx RunContext, opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
-	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(
+	repoPath, currentBranch, base, mergeBase, err := validateRefineContext(
 		ctx.WorkingDir, opts.since, opts.branch,
 	)
 	if err != nil {
@@ -368,7 +396,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	if opts.since != "" {
 		fmt.Printf("Refining commits since %s on branch %q\n", git.ShortSHA(mergeBase), currentBranch)
 	} else {
-		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, git.ShortSHA(mergeBase))
+		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, base, git.ShortSHA(mergeBase))
 	}
 
 	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)

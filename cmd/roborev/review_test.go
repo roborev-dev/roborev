@@ -610,6 +610,108 @@ func TestTryBranchReview(t *testing.T) {
 		_, ok := tryBranchReview(repo.Dir, "")
 		assert.False(t, ok)
 	})
+
+	t.Run("allows feature branch tracking its own remote counterpart", func(t *testing.T) {
+		// Regression: using @{upstream} as base for a feature tracking
+		// origin/feature would skip already-pushed feature commits, which
+		// contradicts "--branch reviews all commits since trunk". With
+		// UpstreamIsTrunk gating, origin/feature (not trunk-named) is
+		// rejected and the review falls back to the repository's default
+		// branch for the merge base.
+		remote := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "origin", remote.Dir)
+		repo.Run("push", "-u", "origin", "main")
+		repo.Run("remote", "set-head", "origin", "main")
+		mainSHA := repo.Run("rev-parse", "origin/main")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("first.txt", "first", "first feature commit")
+		repo.Run("push", "-u", "origin", "feature")
+		repo.CommitFile("second.txt", "second", "unpushed commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		require.True(t, ok, "feature tracking origin/feature with unpushed commits must still enqueue a review")
+		// Merge-base range runs from origin/main (trunk), covering BOTH the
+		// pushed and unpushed feature commits — the documented --branch
+		// semantic. Using @{u}=origin/feature would have skipped the pushed
+		// one.
+		assert.Equal(t, mainSHA+"..HEAD", ref)
+	})
+
+	t.Run("skips when upstream is configured but unresolvable", func(t *testing.T) {
+		// Regression: when @{upstream} is configured but the remote-tracking
+		// ref has not been fetched, tryBranchReview must skip rather than
+		// silently fall back to origin/main or local main — that fallback
+		// would enqueue a review against the wrong commit range in fork
+		// workflows.
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		// Configure tracking against an upstream that never resolves locally.
+		repo.Run("config", "branch.feature.remote", "upstream")
+		repo.Run("config", "branch.feature.merge", "refs/heads/main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		assert.False(t, ok, "must skip when upstream is configured but missing")
+		assert.Empty(t, ref)
+	})
+
+	t.Run("blocks local main tracking non-origin upstream", func(t *testing.T) {
+		// Regression: LocalBranchName only stripped "origin/", so
+		// current="main" vs base="upstream/main" missed the guardrail
+		// and produced a branch review on the base branch itself.
+		remote := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		_, ok := tryBranchReview(repo.Dir, "")
+		assert.False(t, ok, "local main tracking upstream/main must be treated as base branch")
+	})
+
+	t.Run("prefers branch upstream over default branch", func(t *testing.T) {
+		// Reproduces the "single commit past upstream" bug: when the default
+		// branch (e.g., origin/main) lags behind the tip the branch actually
+		// diverged from (e.g., upstream/main), the review must use the
+		// upstream tracking ref, not the default branch, so already-merged
+		// commits are not re-reviewed.
+		remote := newBareTestGitRepo(t)
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "u1", "upstream c1")
+		repo.CommitFile("file.txt", "u1\nu2", "upstream c2")
+		repo.CommitFile("file.txt", "u1\nu2\nu3", "upstream c3")
+		repo.Run("remote", "add", "upstream", remote.Dir)
+		repo.Run("push", "-u", "upstream", "main")
+
+		// Simulate origin lagging behind upstream by 2 commits.
+		staleOrigin := newBareTestGitRepo(t)
+		repo.Run("remote", "add", "origin", staleOrigin.Dir)
+		repo.Run("push", "origin", "HEAD~2:refs/heads/main")
+		repo.Run("fetch", "origin")
+		repo.Run("remote", "set-head", "origin", "main")
+
+		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+		repo.CommitFile("feature.txt", "only-new-commit", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		require.True(t, ok, "expected branch review to run")
+
+		upstreamSHA := repo.Run("rev-parse", "upstream/main")
+		want := upstreamSHA + "..HEAD"
+		assert.Equal(t, want, ref,
+			"review must compare against upstream/main, not origin/main")
+	})
 }
 
 func TestReviewIgnoresBranchConfig(t *testing.T) {

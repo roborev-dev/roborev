@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -98,6 +99,109 @@ func GetCurrentBranch(repoPath string) string {
 // "origin/main" while GetCurrentBranch returns "main".
 func LocalBranchName(branch string) string {
 	return strings.TrimPrefix(branch, "origin/")
+}
+
+// IsOnBaseBranch returns true if currentBranch is equivalent to base for the
+// purpose of "already on the base branch" guardrails. Bare local names
+// ("main") match directly. Slash-containing bases are classified by
+// namespace: an unambiguous remote-tracking ref (refs/remotes/<base> exists,
+// refs/heads/<base> does not) is stripped of its configured-remote prefix
+// before comparison; an unambiguous local branch (only refs/heads/<base>
+// exists) is compared verbatim; and an ambiguous name (both exist) is
+// refused so neither the pathological local "origin/main" nor a shadowed
+// remote-tracking ref is treated as "already on base".
+func IsOnBaseBranch(repoPath, currentBranch, base string) bool {
+	if currentBranch == "" {
+		return false
+	}
+	if !strings.Contains(base, "/") {
+		return currentBranch == base
+	}
+	remoteExists := refExists(repoPath, "refs/remotes/"+base)
+	localExists := refExists(repoPath, "refs/heads/"+base)
+	if !remoteExists && !localExists {
+		return false
+	}
+	if localExists && !remoteExists {
+		return currentBranch == base
+	}
+	if localExists && remoteExists {
+		return false
+	}
+	// remoteExists && !localExists — unambiguously remote-tracking.
+	stripped := stripRemotePrefix(repoPath, base)
+	if stripped == base {
+		// The prefix did not match any configured remote name; bail out
+		// rather than matching against an unstripped slashy name.
+		return false
+	}
+	return currentBranch == stripped
+}
+
+// UpstreamIsTrunk reports whether ref's @{upstream} points to the
+// repository's trunk. Only remote-tracking upstreams can be trunk: a
+// local-branch upstream (configured via branch.<name>.remote = ".") is
+// rejected even if its short name coincidentally matches the default
+// branch. For unambiguous remote-tracking upstreams, the branch part
+// after stripping the configured remote prefix must exactly match the
+// branch part of GetDefaultBranch. Returns false if ref has no upstream
+// configured or the default branch cannot be detected.
+func UpstreamIsTrunk(repoPath, ref string) bool {
+	cfg, ok := readUpstreamConfig(repoPath, ref)
+	if !ok {
+		return false
+	}
+	if !strings.HasPrefix(cfg.qualified, "refs/remotes/") {
+		return false
+	}
+	defaultBranch, err := GetDefaultBranch(repoPath)
+	if err != nil {
+		return false
+	}
+	return stripRemotePrefix(repoPath, cfg.short) == stripRemotePrefix(repoPath, defaultBranch)
+}
+
+// stripRemotePrefix removes the longest configured-remote prefix from ref.
+// "origin/main" → "main", "company/fork/main" → "main" (when "company/fork" is
+// a remote), "origin/team/main" → "team/main" (when only "origin" is a remote
+// — "origin/team" is not), and bare "main" → "main".
+func stripRemotePrefix(repoPath, ref string) string {
+	if !strings.Contains(ref, "/") {
+		return ref
+	}
+	remotes, err := listRemotes(repoPath)
+	if err != nil {
+		return ref
+	}
+	// Longest match first so multi-slash remote names (e.g. "company/fork") are
+	// tested before shorter prefixes that happen to overlap.
+	sort.Slice(remotes, func(i, j int) bool { return len(remotes[i]) > len(remotes[j]) })
+	for _, r := range remotes {
+		if stripped, ok := strings.CutPrefix(ref, r+"/"); ok {
+			return stripped
+		}
+	}
+	return ref
+}
+
+// refExists reports whether the given fully-qualified ref resolves in the repo.
+func refExists(repoPath, fullRef string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", fullRef)
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
+}
+
+// listRemotes returns the names of configured remotes (e.g. ["origin", "upstream"]).
+// Uses strings.Fields so CRLF-terminated output on Windows doesn't leave stray
+// "\r" on remote names (which would break prefix matching downstream).
+func listRemotes(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git remote: %w", err)
+	}
+	return strings.Fields(string(out)), nil
 }
 
 // GetDiff returns the full diff for a commit, excluding generated
@@ -1136,6 +1240,119 @@ func GetDefaultBranch(repoPath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("could not detect default branch (tried origin/HEAD, main, master)")
+}
+
+// UpstreamMissingError reports that a branch's @{upstream} is configured but
+// the referenced ref does not resolve locally (e.g., the remote-tracking ref
+// has not been fetched or was deleted). Callers should surface this to the
+// user instead of silently falling back to a different base branch, which
+// could select the wrong commit range in fork workflows.
+type UpstreamMissingError struct {
+	Ref      string // The branch whose upstream was resolved (e.g., "HEAD" or "feature").
+	Upstream string // The configured upstream name (e.g., "upstream/main").
+}
+
+func (e *UpstreamMissingError) Error() string {
+	return fmt.Sprintf("upstream %q for %s does not resolve locally (try 'git fetch')", e.Upstream, e.Ref)
+}
+
+// GetUpstream returns the upstream tracking branch for a ref (e.g., "upstream/main").
+// Returns ("", nil) when no @{upstream} is configured, so callers can fall back
+// to a default base. Returns ("", *UpstreamMissingError) when @{upstream} is
+// configured but the referenced ref does not resolve locally — callers should
+// surface this instead of falling back, because the fallback target may select
+// the wrong commit range. Passing an empty ref is equivalent to HEAD.
+func GetUpstream(repoPath, ref string) (string, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", ref+"@{upstream}")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 128 covers both "no upstream configured" and "upstream
+		// configured but ref not resolvable" (git varies between versions).
+		// Distinguish by re-reading branch.<name>.remote/merge.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
+			if cfg, ok := readUpstreamConfig(repoPath, ref); ok {
+				return "", &UpstreamMissingError{Ref: ref, Upstream: cfg.short}
+			}
+			return "", nil
+		}
+		return "", fmt.Errorf("git rev-parse @{upstream}: %w", err)
+	}
+
+	upstream := strings.TrimSpace(string(out))
+	if upstream == "" {
+		return "", nil
+	}
+	// Verify the exact namespace the tracking config points to so a lookalike
+	// ref with the same short name (local branch, tag) can't shadow a missing
+	// remote-tracking ref. Fall back to an unqualified check if the config
+	// can't be read — e.g., for detached HEAD callers.
+	if cfg, ok := readUpstreamConfig(repoPath, ref); ok {
+		if !refExists(repoPath, cfg.qualified) {
+			return "", &UpstreamMissingError{Ref: ref, Upstream: upstream}
+		}
+	} else if !refExists(repoPath, upstream) {
+		return "", &UpstreamMissingError{Ref: ref, Upstream: upstream}
+	}
+	return upstream, nil
+}
+
+// upstreamConfig captures the resolved short name and fully-qualified ref
+// implied by branch.<name>.remote and branch.<name>.merge.
+type upstreamConfig struct {
+	short     string // e.g. "upstream/main" or "main" for local tracking
+	qualified string // e.g. "refs/remotes/upstream/main" or "refs/heads/main"
+}
+
+// readUpstreamConfig returns the upstream configuration for a ref. Returns
+// (cfg, true) when branch.<name>.remote and branch.<name>.merge are set,
+// indicating @{upstream} is configured even if rev-parse cannot resolve the
+// ref. Returns (zero, false) otherwise.
+func readUpstreamConfig(repoPath, ref string) (upstreamConfig, bool) {
+	branch := ref
+	if branch == "HEAD" || branch == "" {
+		branch = GetCurrentBranch(repoPath)
+		if branch == "" {
+			return upstreamConfig{}, false
+		}
+	} else {
+		// Accept fully-qualified local branch refs (e.g., "refs/heads/feature")
+		// so callers who pass a ResolveSHA-style ref still resolve to the
+		// correct branch.<name>.* config keys.
+		branch = strings.TrimPrefix(branch, "refs/heads/")
+	}
+	remote := readGitConfig(repoPath, "branch."+branch+".remote")
+	merge := readGitConfig(repoPath, "branch."+branch+".merge")
+	if remote == "" || merge == "" {
+		return upstreamConfig{}, false
+	}
+	mergeBranch := strings.TrimPrefix(merge, "refs/heads/")
+	if remote == "." {
+		// Local-branch tracking writes the target verbatim.
+		return upstreamConfig{
+			short:     mergeBranch,
+			qualified: "refs/heads/" + mergeBranch,
+		}, true
+	}
+	return upstreamConfig{
+		short:     remote + "/" + mergeBranch,
+		qualified: "refs/remotes/" + remote + "/" + mergeBranch,
+	}, true
+}
+
+// readGitConfig returns the value of a git config key, or "" if missing.
+func readGitConfig(repoPath, key string) string {
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // GetMergeBase returns the merge-base (common ancestor) between two refs

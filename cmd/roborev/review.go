@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,6 +162,25 @@ Examples:
 
 				base := baseBranch
 				if base == "" {
+					// Prefer the branch's upstream tracking ref only when it resolves
+					// to a trunk-named branch (e.g., local main tracking upstream/main
+					// in a fork). A branch tracking its own remote counterpart
+					// (e.g., feature tracking origin/feature) is not trunk — using it
+					// would skip already-pushed feature commits, contradicting
+					// "--branch reviews all commits since trunk".
+					upstream, uerr := git.GetUpstream(root, targetRef)
+					var missing *git.UpstreamMissingError
+					if errors.As(uerr, &missing) {
+						return fmt.Errorf("%w (or pass --base <ref>)", missing)
+					}
+					if uerr != nil {
+						return fmt.Errorf("resolve upstream for %s: %w (pass --base <ref> to skip)", targetRef, uerr)
+					}
+					if upstream != "" && git.UpstreamIsTrunk(root, targetRef) {
+						base = upstream
+					}
+				}
+				if base == "" {
 					var err error
 					base, err = git.GetDefaultBranch(root)
 					if err != nil {
@@ -168,11 +188,14 @@ Examples:
 					}
 				}
 
-				// Validate not on base branch (only when reviewing current branch)
+				// Validate not on base branch (only when reviewing current branch).
+				// With UpstreamIsTrunk gating, `base` is either the user's --base
+				// override, a trunk-shaped upstream, or GetDefaultBranch — never a
+				// self-counterpart, so this check fires only for true trunk cases.
 				if targetRef == "HEAD" {
 					currentBranch := git.GetCurrentBranch(root)
-					if currentBranch == git.LocalBranchName(base) {
-						return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+					if git.IsOnBaseBranch(root, currentBranch, base) {
+						return fmt.Errorf("already on %s - create a feature branch first", currentBranch)
 					}
 				}
 
@@ -505,6 +528,19 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	base := baseBranchOverride
 	if base == "" {
+		// Prefer the branch's upstream tracking ref only when it resolves to
+		// trunk. Hooks must never block commits, but any GetUpstream failure
+		// (missing ref, corrupt config, subprocess error) means we cannot
+		// confidently pick a base — skip instead of falling back.
+		upstream, err := git.GetUpstream(root, "HEAD")
+		if err != nil {
+			return "", false
+		}
+		if upstream != "" && git.UpstreamIsTrunk(root, "HEAD") {
+			base = upstream
+		}
+	}
+	if base == "" {
 		var err error
 		base, err = git.GetDefaultBranch(root)
 		if err != nil {
@@ -514,7 +550,7 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 
 	// Don't branch-review in detached HEAD or on the base branch
 	current := git.GetCurrentBranch(root)
-	if current == "" || current == git.LocalBranchName(base) {
+	if current == "" || git.IsOnBaseBranch(root, current, base) {
 		return "", false
 	}
 
