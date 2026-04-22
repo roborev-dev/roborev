@@ -41,7 +41,7 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 
 	// Add handlers manually (simulating the server)
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		queued, running, done, failed, canceled, applied, rebased, _ := db.GetJobCounts()
+		queued, running, done, failed, canceled, applied, rebased, _, _ := db.GetJobCounts()
 		status := storage.DaemonStatus{
 			QueuedJobs:    queued,
 			RunningJobs:   running,
@@ -97,7 +97,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		require.NoError(t, err, "EnqueueJob failed")
 
 		// Verify initial state
-		queued, running, done, _, _, _, _, _ := d.GetJobCounts()
+		queued, running, done, _, _, _, _, _, _ := d.GetJobCounts()
 		require.Equal(t, 1, queued, "Expected 1 queued job, got %d", queued)
 		_ = running
 		_ = done
@@ -109,7 +109,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		assert.Equal(t, job.ID, claimed.ID, "Claimed wrong job")
 
 		// Verify running state
-		_, running, _, _, _, _, _, _ = d.GetJobCounts()
+		_, running, _, _, _, _, _, _, _ = d.GetJobCounts()
 		require.Equal(t, 1, running, "Expected 1 running job, got %d", running)
 
 		// Complete the job
@@ -117,7 +117,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		require.NoError(t, err, "CompleteJob failed")
 
 		// Verify completed state
-		queued, running, done, _, _, _, _, _ = d.GetJobCounts()
+		queued, running, done, _, _, _, _, _, _ = d.GetJobCounts()
 		require.Equal(t, 1, done, "Expected 1 completed job, got %d", done)
 		_ = queued
 		_ = running

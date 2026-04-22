@@ -72,8 +72,9 @@ type BatchReviewResult struct {
 	Agent      string `json:"agent"`
 	ReviewType string `json:"review_type"`
 	Output     string `json:"output"`
-	Status     string `json:"status"` // "done" or "failed"
+	Status     string `json:"status"` // "done", "failed", "skipped", etc.
 	Error      string `json:"error"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // HasCIBatch checks if a batch already exists for this PR at this HEAD SHA.
@@ -189,6 +190,75 @@ func (db *DB) RecordBatchJob(batchID, jobID int64) error {
 	return err
 }
 
+// AttachJobAndBumpTotal links a job to an existing batch and bumps
+// total_jobs atomically. Use this for jobs added AFTER the initial
+// CreateBatchWithJobs (e.g. auto-design follow-ups discovered after the
+// matrix was constructed).
+//
+// Idempotent on (batch_id, job_id): if a producer race tries to attach
+// the same job twice, INSERT OR IGNORE no-ops and the counter bump is
+// skipped. Otherwise total_jobs would be inflated and the batch would
+// wait forever on a phantom extra job. Requires the unique index
+// ensured by ensureCIPRBatchJobsUniqueIndex.
+//
+// When the attached job is already in a terminal state (the auto-design
+// skip path inserts rows directly as skipped, and dedup can return
+// previously-completed auto_design rows), the transaction also bumps
+// completed_jobs or failed_jobs so the batch doesn't stay short by one
+// until stale-batch reconciliation runs. Terminal-but-successful
+// outcomes (done, skipped, applied, rebased) count as completed;
+// failed/canceled count as failed. Returns the new total.
+func (db *DB) AttachJobAndBumpTotal(batchID, jobID int64) (int, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	if err := tx.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, jobID).Scan(&status); err != nil {
+		return 0, fmt.Errorf("look up job status for batch attach: %w", err)
+	}
+
+	res, err := tx.Exec(`INSERT OR IGNORE INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`,
+		batchID, jobID)
+	if err != nil {
+		return 0, err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	if inserted > 0 {
+		var completedInc, failedInc int
+		switch JobStatus(status) {
+		case JobStatusDone, JobStatusSkipped, JobStatusApplied, JobStatusRebased:
+			completedInc = 1
+		case JobStatusFailed, JobStatusCanceled:
+			failedInc = 1
+		}
+
+		if _, err := tx.Exec(`UPDATE ci_pr_batches
+			SET total_jobs = total_jobs + 1,
+			    completed_jobs = completed_jobs + ?,
+			    failed_jobs = failed_jobs + ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?`, completedInc, failedInc, batchID); err != nil {
+			return 0, err
+		}
+	}
+
+	var total int
+	if err := tx.QueryRow(`SELECT total_jobs FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&total); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // IncrementBatchCompleted atomically increments completed_jobs and returns the updated batch.
 // The increment is conditional on synthesized=0 so late events arriving after
 // the batch has been posted don't corrupt counters. Returns nil batch (no error)
@@ -267,7 +337,7 @@ func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
 // GetBatchReviews returns all review results for a batch by joining through ci_pr_batch_jobs.
 func (db *DB) GetBatchReviews(batchID int64) ([]BatchReviewResult, error) {
 	rows, err := db.Query(`
-		SELECT bj.job_id, j.agent, j.review_type, COALESCE(rv.output, ''), j.status, COALESCE(j.error, '')
+		SELECT bj.job_id, j.agent, j.review_type, COALESCE(rv.output, ''), j.status, COALESCE(j.error, ''), COALESCE(j.skip_reason, '')
 		FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -281,12 +351,41 @@ func (db *DB) GetBatchReviews(batchID int64) ([]BatchReviewResult, error) {
 	var results []BatchReviewResult
 	for rows.Next() {
 		var r BatchReviewResult
-		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.Output, &r.Status, &r.Error); err != nil {
+		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.Output, &r.Status, &r.Error, &r.SkipReason); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// ListCIBatchesByJobID returns every unsynthesized-or-synthesized batch
+// linked to jobID. Auto-design rows are shared across batches when the
+// same commit recurs (a later batch attaches to the existing auto_design
+// row instead of re-deciding), so a completion event must advance every
+// linked batch — using a single-row lookup would leave later batches
+// stuck until stale reconciliation.
+func (db *DB) ListCIBatchesByJobID(jobID int64) ([]*CIPRBatch, error) {
+	rows, err := db.Query(`
+		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
+		FROM ci_pr_batches b
+		JOIN ci_pr_batch_jobs bj ON bj.batch_id = b.id
+		WHERE bj.job_id = ?`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var batches []*CIPRBatch
+	for rows.Next() {
+		var b CIPRBatch
+		var synthesized int
+		if err := rows.Scan(&b.ID, &b.GithubRepo, &b.PRNumber, &b.HeadSHA, &b.TotalJobs, &b.CompletedJobs, &b.FailedJobs, &synthesized); err != nil {
+			return nil, err
+		}
+		b.Synthesized = synthesized != 0
+		batches = append(batches, &b)
+	}
+	return batches, rows.Err()
 }
 
 // GetCIBatchByJobID looks up the batch that contains a given job ID via ci_pr_batch_jobs.
@@ -421,6 +520,10 @@ func (db *DB) DeleteEmptyBatches() (int, error) {
 // GetStaleBatches returns batches that need synthesis attention. This covers:
 //   - Unclaimed batches where all jobs are terminal (dropped events, canceled jobs)
 //   - Stale claims where the daemon crashed mid-post (claimed_at > 5 minutes ago)
+//
+// The "terminal" set must mirror AttachJobAndBumpTotal/ReconcileBatch so a
+// batch containing only applied/rebased jobs is still recognized as
+// finished and picked up for synthesis.
 func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 	rows, err := db.Query(`
 		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
@@ -433,7 +536,7 @@ func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status NOT IN ('done', 'failed', 'canceled')
+			AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj WHERE bj.batch_id = b.id
@@ -573,13 +676,15 @@ func (db *DB) CancelJobWithError(jobID int64, errMsg string) error {
 }
 
 // GetNonTerminalBatchJobIDs returns job IDs in a batch that are still
-// queued or running (not done, failed, or canceled).
+// queued or running (i.e. not in any terminal state). The terminal set
+// mirrors AttachJobAndBumpTotal/ReconcileBatch so applied/rebased jobs
+// are not misclassified as pending cancellation candidates.
 func (db *DB) GetNonTerminalBatchJobIDs(batchID int64) ([]int64, error) {
 	rows, err := db.Query(`
 		SELECT bj.job_id FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		WHERE bj.batch_id = ?
-		AND j.status NOT IN ('done', 'failed', 'canceled')`,
+		AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')`,
 		batchID)
 	if err != nil {
 		return nil, err
@@ -613,15 +718,16 @@ func (db *DB) IsBatchExpired(batchID int64, timeout time.Duration) (bool, error)
 }
 
 // HasMeaningfulBatchResult reports whether a batch has at least one
-// done or failed job (a result worth posting). User-canceled jobs
-// without review output are excluded.
+// job with a result worth posting — done/failed/skipped review jobs,
+// or applied/rebased fix jobs. User-canceled jobs without review
+// output are excluded.
 func (db *DB) HasMeaningfulBatchResult(batchID int64) (bool, error) {
 	var count int
 	err := db.QueryRow(`
 		SELECT COUNT(*) FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		WHERE bj.batch_id = ?
-		AND j.status IN ('done', 'failed')`,
+		AND j.status IN ('done', 'failed', 'skipped', 'applied', 'rebased')`,
 		batchID).Scan(&count)
 	if err != nil {
 		return false, err
@@ -630,10 +736,11 @@ func (db *DB) HasMeaningfulBatchResult(batchID int64) (bool, error) {
 }
 
 // GetExpiredBatches returns unsynthesized batches that have at least one
-// done or failed job, at least one non-terminal job, and were created more
-// than timeout ago. These batches should post early with available results.
-// Only done/failed jobs qualify — user-canceled jobs are not meaningful
-// results worth posting.
+// meaningful-result job, at least one non-terminal job, and were created
+// more than timeout ago. These batches should post early with available
+// results. User-canceled jobs (no output) don't count as meaningful.
+// The terminal/meaningful sets mirror AttachJobAndBumpTotal/
+// ReconcileBatch so applied/rebased jobs contribute consistently.
 func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 	secs := max(int(timeout.Seconds()), 1)
 	rows, err := db.Query(`
@@ -646,13 +753,13 @@ func (db *DB) GetExpiredBatches(timeout time.Duration) ([]CIPRBatch, error) {
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status IN ('done', 'failed')
+			AND j.status IN ('done', 'failed', 'skipped', 'applied', 'rebased')
 		)
 		AND EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id
 			WHERE bj.batch_id = b.id
-			AND j.status NOT IN ('done', 'failed', 'canceled')
+			AND j.status NOT IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		)`, secs)
 	if err != nil {
 		return nil, err
@@ -683,12 +790,18 @@ func (db *DB) ReconcileBatch(batchID int64) (*CIPRBatch, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Count actual terminal statuses from linked jobs
+	// Count actual terminal statuses from linked jobs. The classification
+	// of each status must mirror AttachJobAndBumpTotal: the sets are the
+	// single source of truth for "which terminal statuses are counted as
+	// completed vs failed for batch accounting." Diverging here would
+	// undo correct counters written at attach time during stale-batch
+	// reconciliation — applied/rebased jobs would be subtracted back out
+	// of completed_jobs and leave the batch short.
 	var completed, failed int
 	err = tx.QueryRow(`
 		SELECT
-			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status IN ('failed', 'canceled') THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN j.status IN ('done','skipped','applied','rebased') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status IN ('failed','canceled') THEN 1 ELSE 0 END), 0)
 		FROM ci_pr_batch_jobs bj
 		JOIN review_jobs j ON j.id = bj.job_id
 		WHERE bj.batch_id = ?`, batchID).Scan(&completed, &failed)

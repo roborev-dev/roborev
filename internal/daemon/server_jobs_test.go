@@ -228,7 +228,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		}
 
 		// Verify no job was created
-		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 0 {
 			assert.Condition(t, func() bool {
 				return false
@@ -259,7 +259,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		}
 
 		// Verify job was created
-		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 1 {
 			assert.Condition(t, func() bool {
 				return false
@@ -329,7 +329,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 		}
 
 		// No job should have been created
-		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 0 {
 			assert.Condition(t, func() bool {
 				return false
@@ -363,7 +363,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				w.Code, w.Body.String())
 		}
 
-		queued, _, _, _, _, _, _, _ := db.GetJobCounts()
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
 		if queued != 1 {
 			assert.Condition(t, func() bool {
 				return false

@@ -384,3 +384,28 @@ func TestSkippedAgentNote(t *testing.T) {
 		assertContainsAll(t, note, []string{"reviews skipped"})
 	})
 }
+
+func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
+	reviews := []ReviewResult{
+		{
+			Agent:      "claude-code",
+			ReviewType: "design",
+			Output:     "## Findings\n\n- Add type for foo\n",
+			Status:     ResultDone,
+		},
+		{
+			Agent:      "auto",
+			ReviewType: "design",
+			Status:     ResultSkipped,
+			Skipped:    true,
+			SkipReason: "trivial diff",
+		},
+	}
+	prompt := BuildSynthesisPrompt(reviews, "")
+	assertContainsAll(t, prompt, []string{
+		"Add type for foo",
+		"Auto-design-review skipped",
+		"trivial diff",
+		"[SKIPPED]",
+	})
+}

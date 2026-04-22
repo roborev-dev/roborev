@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,6 +29,7 @@ const claudeEffortFlag = "--effort"
 
 var claudeDangerousSupport sync.Map
 var claudeEffortSupport sync.Map
+var claudeToolsSupport sync.Map
 
 // NewClaudeAgent creates a new Claude Code agent
 func NewClaudeAgent(command string) *ClaudeAgent {
@@ -259,6 +261,27 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 	return supported
 }
 
+// claudeSupportsToolsFlag reports whether the installed claude binary
+// recognizes the `--tools` flag (used by ClassifyWithSchema with `""`
+// as a deny-all). Older versions do not, and silently passing the flag
+// to a binary that ignores it would leave file/shell tools enabled
+// against untrusted commit text. Errors are treated as "unsupported"
+// so the caller fails closed.
+func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
+	if cached, ok := claudeToolsSupport.Load(command); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Don't cache transient failures.
+		return false
+	}
+	supported := strings.Contains(string(output), "--tools")
+	claudeToolsSupport.Store(command, supported)
+	return supported
+}
+
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
@@ -284,65 +307,12 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	// Build args - always uses stdin piping + stream-json for non-interactive execution
 	args := a.buildArgs(agenticMode, includeEffort)
 
-	// Strip CLAUDECODE to prevent nested-session detection (#270),
-	// and handle API key (configured key or subscription auth).
-	// Use cmd.Environ() (not os.Environ()) so PWD=<cmd.Dir> is
-	// synthesized correctly. Set env before configureSubprocess so
-	// GIT_OPTIONAL_LOCKS=0 is appended to the final environment.
-	// Always strip inherited Anthropic routing env so roborev owns the
-	// routing decision: native mode uses Anthropic defaults, proxy mode
-	// injects its own block below. This prevents silent misrouting when
-	// the user has exported these vars in their shell.
-	stripKeys := []string{
-		"ANTHROPIC_API_KEY",
-		"CLAUDECODE",
-		"ANTHROPIC_BASE_URL",
-		"ANTHROPIC_AUTH_TOKEN",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
-		"CLAUDE_CODE_SUBAGENT_MODEL",
-	}
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	baseEnv := cmd.Environ()
-	env := filterEnv(baseEnv, stripKeys...)
-	if baseURL != "" {
-		// Route Claude Code to an OpenAI/Anthropic-compatible proxy (Ollama,
-		// LiteLLM, etc.). Pin all tier aliases to the same model so Claude's
-		// internal tier-switching stays on the proxy target.
-		//
-		// Proxy auth is opt-in via ROBOREV_CLAUDE_PROXY_TOKEN, read from the
-		// roborev process environment (not the agent's). We deliberately do
-		// NOT reuse ANTHROPIC_API_KEY: forwarding a real Anthropic credential
-		// to an arbitrary third-party proxy is an exfiltration risk. If the
-		// env var is unset, send a placeholder — gateways that don't check
-		// the header (Ollama, most local dev proxies) accept it, and
-		// gateways that do check will reject with a clear 401.
-		// Trim whitespace so a token pasted from a config file with a
-		// trailing newline doesn't fail auth at the proxy with a confusing
-		// 401. Reject embedded control characters (newline, carriage return,
-		// NUL) that survive trimming — these would either be rejected by
-		// exec (NUL) or produce malformed HTTP headers at the proxy.
-		authToken := strings.TrimSpace(os.Getenv("ROBOREV_CLAUDE_PROXY_TOKEN"))
-		if strings.ContainsAny(authToken, "\n\r\x00") {
-			return "", fmt.Errorf("ROBOREV_CLAUDE_PROXY_TOKEN must not contain control characters (newline, carriage return, or NUL)")
-		}
-		if authToken == "" {
-			authToken = "proxy"
-		}
-		env = append(env,
-			"ANTHROPIC_BASE_URL="+baseURL,
-			"ANTHROPIC_AUTH_TOKEN="+authToken,
-			"ANTHROPIC_DEFAULT_OPUS_MODEL="+model,
-			"ANTHROPIC_DEFAULT_SONNET_MODEL="+model,
-			"ANTHROPIC_DEFAULT_HAIKU_MODEL="+model,
-			"CLAUDE_CODE_SUBAGENT_MODEL="+model,
-		)
-	} else if apiKey := AnthropicAPIKey(); apiKey != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
+	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	if err != nil {
+		return "", err
 	}
-	env = append(env, "CLAUDE_NO_SOUND=1")
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "claude",
@@ -513,6 +483,175 @@ func filterEnv(env []string, keys ...string) []string {
 	return result
 }
 
+// claudeStripKeys lists every Anthropic-related env var that roborev
+// strips from the inherited environment before launching Claude. Keeping
+// this in one place means Review and ClassifyWithSchema cannot drift on
+// what they sanitize.
+var claudeStripKeys = []string{
+	"ANTHROPIC_API_KEY",
+	"CLAUDECODE",
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	"CLAUDE_CODE_SUBAGENT_MODEL",
+}
+
+// buildClaudeEnv returns the env Claude should run with, given the
+// process baseEnv (cmd.Environ()), the resolved model, and an optional
+// proxy baseURL. Strips inherited Anthropic routing vars so roborev owns
+// the routing decision: native mode uses Anthropic defaults, proxy mode
+// injects a validated block. Never forwards ANTHROPIC_API_KEY to a
+// third-party proxy.
+func buildClaudeEnv(baseEnv []string, model, baseURL string) ([]string, error) {
+	env := filterEnv(baseEnv, claudeStripKeys...)
+	if baseURL != "" {
+		// Route Claude Code to an OpenAI/Anthropic-compatible proxy
+		// (Ollama, LiteLLM, etc.). Pin all tier aliases to the same
+		// model so Claude's internal tier-switching stays on the proxy
+		// target. Proxy auth is opt-in via ROBOREV_CLAUDE_PROXY_TOKEN.
+		// Trim whitespace; reject embedded control characters.
+		authToken := strings.TrimSpace(os.Getenv("ROBOREV_CLAUDE_PROXY_TOKEN"))
+		if strings.ContainsAny(authToken, "\n\r\x00") {
+			return nil, fmt.Errorf("ROBOREV_CLAUDE_PROXY_TOKEN must not contain control characters (newline, carriage return, or NUL)")
+		}
+		if authToken == "" {
+			authToken = "proxy"
+		}
+		env = append(env,
+			"ANTHROPIC_BASE_URL="+baseURL,
+			"ANTHROPIC_AUTH_TOKEN="+authToken,
+			"ANTHROPIC_DEFAULT_OPUS_MODEL="+model,
+			"ANTHROPIC_DEFAULT_SONNET_MODEL="+model,
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL="+model,
+			"CLAUDE_CODE_SUBAGENT_MODEL="+model,
+		)
+	} else if apiKey := AnthropicAPIKey(); apiKey != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
+	}
+	env = append(env, "CLAUDE_NO_SOUND=1")
+	return env, nil
+}
+
 func init() {
 	Register(NewClaudeAgent(""))
 }
+
+// classifyArgs builds the argv for a schema-constrained one-shot classify call.
+func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
+	// Classify is a routing decision over commit messages and diffs from
+	// shared repos — never trust that input. Disable ALL tools (including
+	// Read/Glob/Grep) so a prompt-injected commit cannot exfiltrate
+	// secrets via the JSON `reason` field by reading ~/.ssh, ~/.roborev,
+	// or any other local file. The schema constraint pins output to
+	// {design_review, reason} regardless. Never pass
+	// --dangerously-skip-permissions.
+	args := []string{"-p", "--output-format", "stream-json", "--verbose",
+		"--json-schema", string(schema),
+		"--tools", "",
+	}
+	// parseModel returns model + optional baseURL; we only need the model
+	// name on the CLI here. baseURL is wired via env in ClassifyWithSchema.
+	model, _, parseErr := parseModel(a.Model)
+	if parseErr != nil {
+		model = a.Model
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if eff := a.claudeEffort(); eff != "" {
+		args = append(args, claudeEffortFlag, eff)
+	}
+	return args
+}
+
+// parseClaudeClassifyStream reads Claude's stream-json output and returns the
+// final `result` field as raw JSON.
+func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
+	var final string
+	var found bool
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var msg claudeStreamMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		if msg.Type == "result" && msg.Result != "" {
+			final = msg.Result
+			found = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read stream: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("no result event in claude stream")
+	}
+	if !json.Valid([]byte(final)) {
+		return nil, fmt.Errorf("claude result is not valid JSON: %q", final)
+	}
+	return json.RawMessage(final), nil
+}
+
+// ClassifyWithSchema runs a single constrained Claude Code invocation and
+// returns the final JSON conforming to schema. Implements SchemaAgent.
+func (a *ClaudeAgent) ClassifyWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	// Refuse to run if the installed claude binary doesn't recognize
+	// `--tools` — without that flag, classifyArgs's deny-all is silently
+	// dropped and the model would have file/shell access against
+	// untrusted commit text.
+	if !claudeSupportsToolsFlag(ctx, a.Command) {
+		return nil, fmt.Errorf("claude binary does not support --tools flag (required for safe classification — upgrade claude or remove it as classify_agent)")
+	}
+	model, baseURL, err := parseModel(a.Model)
+	if err != nil {
+		return nil, err
+	}
+	args := a.classifyArgs(schema)
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(prompt)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start claude: %w", err)
+	}
+
+	buf, readErr := io.ReadAll(stdout)
+	if readErr != nil {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("read stdout: %w", readErr)
+	}
+	if out != nil {
+		_, _ = out.Write(buf)
+	}
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("claude exited: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseClaudeClassifyStream(strings.NewReader(string(buf)))
+}
+
+// Compile-time assertion that ClaudeAgent implements SchemaAgent.
+var _ SchemaAgent = (*ClaudeAgent)(nil)

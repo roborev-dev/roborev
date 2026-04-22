@@ -1,0 +1,314 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/review/autotype"
+	"github.com/roborev-dev/roborev/internal/storage"
+)
+
+// composeClassifyErrorDetail builds the text persisted to job.error
+// when a classify job fails. When the backup agent was invalid at
+// resolve time, both the primary failure AND the backup config error
+// are included so operators can see why failover didn't run. Without
+// this, a silently-ignored invalid backup would look identical to
+// having no backup configured.
+func composeClassifyErrorDetail(primaryErr, backupErr error) string {
+	if primaryErr == nil {
+		return ""
+	}
+	if backupErr != nil {
+		return fmt.Sprintf("primary failed: %v; backup unavailable: %v", primaryErr, backupErr)
+	}
+	return primaryErr.Error()
+}
+
+// publicClassifierSkipReason maps a classifier execution error to one of
+// a small fixed set of public-facing skip reasons. The full err.Error()
+// text is operational data — it can carry local paths, missing-tooling
+// details, or backend/proxy stderr — so it stays in logs and job.Error
+// rather than being rendered into PR comments via skip_reason.
+func publicClassifierSkipReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return "classifier timed out"
+	case isClassifierConfigError(err):
+		return "classifier unavailable"
+	default:
+		return "classifier failed"
+	}
+}
+
+// isClassifierConfigError reports whether err came from one of the
+// setup checks in tryAgent (agent not registered, CLI not on PATH,
+// or the resolved agent doesn't implement SchemaAgent). Those errors
+// carry only config-derived text (agent names), but we still map them
+// to "classifier unavailable" so the public reason is a stable
+// diagnostic category rather than a free-form string.
+func isClassifierConfigError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "not registered") ||
+		strings.Contains(msg, "not installed") ||
+		strings.Contains(msg, "not a SchemaAgent") ||
+		strings.Contains(msg, "lost SchemaAgent capability")
+}
+
+// testClassifierVerdict is an injection point used by tests to force
+// the classifier's outcome without invoking a real agent. Zero value
+// = no override. The setter (SetTestClassifierVerdict) lives in
+// worker_classify_testhook_test.go so it is NOT compiled into the
+// production binary — external code cannot reach this hook.
+var testClassifierVerdict struct {
+	mu     sync.Mutex
+	set    bool
+	yes    bool
+	reason string
+}
+
+func getTestClassifierVerdict() (bool, string, bool) {
+	testClassifierVerdict.mu.Lock()
+	defer testClassifierVerdict.mu.Unlock()
+	return testClassifierVerdict.yes, testClassifierVerdict.reason, testClassifierVerdict.set
+}
+
+// processClassifyJob runs the classifier for an ambiguous design-review
+// decision and converts the same classify row in place via UPDATE.
+func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, job *storage.ReviewJob) {
+	cfg := wp.cfgGetter.Config()
+
+	timeout := config.ResolveClassifierTimeout(job.RepoPath, cfg)
+	classifyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	maxBytes := config.ResolveClassifierMaxPromptSize(job.RepoPath, cfg)
+
+	if yes, reason, set := getTestClassifierVerdict(); set {
+		wp.applyClassifyVerdict(workerID, job, yes, reason)
+		return
+	}
+
+	in := autotype.Input{
+		RepoPath:     job.RepoPath,
+		GitRef:       job.GitRef,
+		Diff:         resolveClassifyDiff(workerID, job),
+		Message:      classifierCommitMessage(job.RepoPath, job.GitRef, job.CommitSubject),
+		ChangedFiles: changedFilesForJob(job),
+	}
+
+	primary, err := config.ResolveClassifyAgent("", job.RepoPath, cfg)
+	if err != nil {
+		log.Printf("[%s] classifier config error for job %d: %v", workerID, job.ID, err)
+		wp.completeClassifyAsSkip(workerID, job, "classifier unavailable", err.Error())
+		return
+	}
+	backup, backupErr := config.ResolveBackupClassifyAgent(job.RepoPath, cfg)
+	if backupErr != nil {
+		log.Printf("[%s] classifier backup agent invalid (%v); ignoring", workerID, backupErr)
+		backup = ""
+	}
+
+	tryAgent := func(name, model string) (bool, string, error) {
+		// Use Get (NOT GetAvailable). GetAvailable falls back to a
+		// hardcoded chain of installed agents when the requested name is
+		// missing — for the classifier, that would silently route
+		// untrusted commit text through a different model than the user
+		// configured. Classify must fail closed when the configured
+		// agent isn't usable; the explicit classify_backup_agent is the
+		// only acceptable fallback.
+		ag, err := agent.Get(name)
+		if err != nil {
+			return false, "", fmt.Errorf("classifier %q not registered: %w", name, err)
+		}
+		if !agent.IsAvailable(name) {
+			return false, "", fmt.Errorf("classifier %q not installed (CLI not on PATH)", name)
+		}
+		sa, ok := ag.(agent.SchemaAgent)
+		if !ok {
+			return false, "", fmt.Errorf("classify_agent %q is not a SchemaAgent", name)
+		}
+		level := agent.ParseReasoningLevel(config.ResolveClassifyReasoning("", job.RepoPath, cfg))
+		ag = sa.WithReasoning(level)
+		if model != "" {
+			ag = ag.WithModel(model)
+		}
+		sa, ok = ag.(agent.SchemaAgent)
+		if !ok {
+			return false, "", fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
+		}
+		return newClassifierAdapter(sa, maxBytes).Decide(classifyCtx, in)
+	}
+
+	primaryModel := config.ResolveClassifyModel("", job.RepoPath, cfg)
+	yes, reason, err := tryAgent(primary, primaryModel)
+	if err != nil && backup != "" && backup != primary {
+		backupModel := config.ResolveBackupClassifyModel(job.RepoPath, cfg)
+		log.Printf("[%s] classifier primary %q (model=%q) failed (%v); trying backup %q (model=%q)",
+			workerID, primary, primaryModel, err, backup, backupModel)
+		yes, reason, err = tryAgent(backup, backupModel)
+	}
+	if err != nil {
+		log.Printf("[%s] classifier error for job %d: %v", workerID, job.ID, err)
+		wp.completeClassifyAsSkip(workerID, job,
+			publicClassifierSkipReason(err),
+			composeClassifyErrorDetail(err, backupErr))
+		return
+	}
+	wp.applyClassifyVerdict(workerID, job, yes, reason)
+}
+
+// applyClassifyVerdict converts the classify row in place — a separate
+// INSERT for the follow-up design/skipped row would conflict with the
+// auto-design partial unique index. On promote, the row's agent/model
+// must be rewritten from the auto-design sentinel to a real
+// design-workflow agent so the worker that picks the row up next can
+// actually run the review.
+func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJob, yes bool, reason string) {
+	autoDesignMetrics.RecordClassifier(yes, false)
+	if yes {
+		designAgent, designModel := wp.resolveDesignFollowUp(job.RepoPath)
+		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID, designAgent, designModel); err != nil {
+			log.Printf("[%s] PromoteClassifyToDesignReview for %d: %v", workerID, job.ID, err)
+		}
+		// No terminal broadcast: the row went back to 'queued' so the
+		// worker will claim it again and the normal design-review path
+		// emits its own review.completed when it finishes.
+		return
+	}
+	// The "no design review" path is a clean verdict, not a failure —
+	// the classifier successfully produced an answer, so no errorDetail.
+	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, ""); err != nil {
+		log.Printf("[%s] MarkClassifyAsSkippedDesign for %d: %v", workerID, job.ID, err)
+		return
+	}
+	wp.broadcastClassifyTerminal(job)
+}
+
+// resolveDesignFollowUp returns the (agent, model) pair to persist on a
+// promoted design review. Resolves to an *installed* agent via
+// agent.GetAvailableWithConfig so the worker that claims the promoted
+// row next can actually run it.
+func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
+	cfg := wp.cfgGetter.Config()
+	resolution, err := agent.ResolveWorkflowConfig(
+		"" /* no CLI override */, repoPath, cfg, "design", "" /* default reasoning */)
+	if err != nil || resolution.PreferredAgent == "" {
+		return config.ResolveAgent("", repoPath, cfg), ""
+	}
+	primary := resolution.PreferredAgent
+	chosen, err := agent.GetAvailableWithConfig(primary, cfg, resolution.BackupAgent)
+	if err != nil {
+		return primary, resolution.ModelForSelectedAgent(primary, "")
+	}
+	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), "")
+}
+
+// completeClassifyAsSkip is the failure path: the classifier couldn't
+// produce a verdict, so we degrade to skip with a reason. Marks the
+// classify row 'skipped' (not 'failed') so CI batch accounting stays
+// accurate.
+//
+// reason is the redacted public-facing skip_reason (rendered in PR
+// comments). errorDetail is the full internal err text persisted to
+// the job's error column so operators can diagnose why the classifier
+// failed even after the daemon log rotates. Pass "" for errorDetail
+// when the skip has no underlying error (setup-time config-missing
+// paths that don't actually raise an err).
+func (wp *WorkerPool) completeClassifyAsSkip(workerID string, job *storage.ReviewJob, reason, errorDetail string) {
+	autoDesignMetrics.RecordClassifier(false, true)
+	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, errorDetail); err != nil {
+		log.Printf("[%s] MarkClassifyAsSkippedDesign for failed classify %d: %v", workerID, job.ID, err)
+		return
+	}
+	wp.broadcastClassifyTerminal(job)
+}
+
+// broadcastClassifyTerminal emits a review.completed event after a
+// classify row transitions to terminal 'skipped'. Without this, CI
+// batches containing the row would stay short on completed_jobs until
+// stale-batch reconciliation; TUI/hook subscribers would also miss the
+// terminal transition. Guarded by caller: only called after a successful
+// MarkClassifyAsSkippedDesign (RowsAffected > 0), so the broadcast never
+// fires for a classify row that was canceled or reclaimed mid-flight.
+func (wp *WorkerPool) broadcastClassifyTerminal(job *storage.ReviewJob) {
+	if wp.broadcaster == nil {
+		return
+	}
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    job.Agent,
+	})
+}
+
+// resolveClassifyDiff returns the diff to feed to the classifier. When
+// the row's DiffContent is empty AND we have a commit-backed git_ref
+// (not "dirty"), fetch the diff via git. Auto-design classify rows are
+// enqueued without diff_content (the dispatcher defers the lookup), so
+// without this fallback the classifier would see an empty diff and a
+// misleading "~0 line changes" stat. A git failure is logged and the
+// classifier proceeds with an empty diff so the worker can still
+// decide via subject/file-list heuristics.
+func resolveClassifyDiff(workerID string, job *storage.ReviewJob) string {
+	diff := derefString(job.DiffContent)
+	if diff != "" {
+		return diff
+	}
+	if job.GitRef == "" || job.GitRef == "dirty" || job.RepoPath == "" {
+		return ""
+	}
+	fetched, err := gitpkg.GetDiff(job.RepoPath, job.GitRef)
+	if err != nil {
+		log.Printf("[%s] classify job %d: git.GetDiff(%s) failed: %v",
+			workerID, job.ID, job.GitRef, err)
+		return ""
+	}
+	return fetched
+}
+
+// classifierCommitMessage returns "subject\n\nbody" for the classifier prompt.
+// Falls back to the provided subject if git is unreachable.
+func classifierCommitMessage(repoPath, ref, fallbackSubject string) string {
+	info, err := gitpkg.GetCommitInfo(repoPath, ref)
+	if err != nil || info == nil {
+		return fallbackSubject
+	}
+	if info.Body == "" {
+		return info.Subject
+	}
+	return info.Subject + "\n\n" + info.Body
+}
+
+// changedFilesForJob returns the changed file paths for the job's commit.
+// Returns nil for non-single-commit jobs (range/dirty/etc.) since the heuristic
+// path-based rules don't apply uniformly.
+func changedFilesForJob(job *storage.ReviewJob) []string {
+	if job.CommitID == nil || job.GitRef == "" || job.GitRef == "dirty" {
+		return nil
+	}
+	files, err := gitpkg.GetFilesChanged(job.RepoPath, job.GitRef)
+	if err != nil {
+		return nil
+	}
+	return files
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}

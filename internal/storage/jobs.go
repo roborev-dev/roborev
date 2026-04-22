@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // parseSQLiteTime parses a time string from SQLite which may be in different formats.
@@ -580,8 +581,9 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
+		    skip_reason = NULL,
 		    updated_at = ?
-		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
+		WHERE id = ? AND status IN ('done', 'failed', 'canceled', 'skipped')
 	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {
 		return err
@@ -905,7 +907,8 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, '')
+		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''),
+		       j.skip_reason, j.source
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -913,7 +916,8 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
-		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity)
+		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity,
+		&fields.SkipReason, &fields.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -923,7 +927,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 }
 
 // GetJobCounts returns counts of jobs by status
-func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, rebased int, err error) {
+func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, rebased, skipped int, err error) {
 	rows, err := db.Query(`SELECT status, COUNT(*) FROM review_jobs GROUP BY status`)
 	if err != nil {
 		return
@@ -951,6 +955,8 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 			applied = count
 		case JobStatusRebased:
 			rebased = count
+		case JobStatusSkipped:
+			skipped = count
 		}
 	}
 	err = rows.Err()
@@ -1063,4 +1069,282 @@ func (db *DB) RemapJob(
 		return 0, fmt.Errorf("commit remap tx: %w", err)
 	}
 	return int(n), nil
+}
+
+// InsertSkippedDesignJobParams describes a row inserted by InsertSkippedDesignJob.
+type InsertSkippedDesignJobParams struct {
+	RepoID     int64
+	CommitID   int64 // 0 means no commit (range/dirty); binds as NULL
+	GitRef     string
+	Branch     string
+	SkipReason string
+}
+
+// nullableCommitID binds a zero CommitID as SQL NULL.
+func nullableCommitID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
+}
+
+// AutoDesignAgentSentinel is the agent name used for auto-design rows
+// where no specific agent has been bound yet (skipped rows, queued
+// follow-up reviews/classify jobs). The Postgres schema requires
+// agent NOT NULL; downstream resolvers replace this with the real
+// classify_agent / design_agent at execution time.
+const AutoDesignAgentSentinel = "auto-design"
+
+// skipReasonMaxLen caps skip_reason. The reason flows into PR comments
+// and TUI cells; capping length + stripping control characters
+// prevents terminal-escape injection or markdown abuse via failure
+// messages built from raw stderr / model output.
+const skipReasonMaxLen = 200
+
+// sanitizeSkipReason strips control characters (folding newlines/tabs
+// to spaces) and caps length. Applied at every storage entry point
+// that writes to skip_reason so the column is always safe to render.
+func sanitizeSkipReason(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// Drop other control characters entirely.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if skipReasonRuneCount(cleaned) > skipReasonMaxLen {
+		cleaned = truncateSkipReasonRunes(cleaned, skipReasonMaxLen)
+	}
+	return cleaned
+}
+
+func skipReasonRuneCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func truncateSkipReasonRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+// InsertSkippedDesignJob inserts a review_job row with status=skipped,
+// review_type='design', and source='auto_design'. The auto_design source
+// means it participates in the partial unique dedup index; ON CONFLICT
+// DO NOTHING makes this a no-op when another auto-design producer already
+// recorded the outcome.
+func (db *DB) InsertSkippedDesignJob(p InsertSkippedDesignJobParams) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := db.ExecContext(context.Background(), `
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, branch, agent, status, review_type,
+		   skip_reason, job_type, source, enqueued_at, finished_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design', ?, ?, ?)
+		ON CONFLICT DO NOTHING
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, AutoDesignAgentSentinel, sanitizeSkipReason(p.SkipReason), now, now, now)
+	if err != nil {
+		return fmt.Errorf("insert skipped design row: %w", err)
+	}
+	return nil
+}
+
+// EnqueueAutoDesignJob creates a job tagged source='auto_design' (either a
+// design review or a classify job). Returns the new row's id, or 0 if
+// another producer won the race (no-op). The caller is expected to
+// resolve the real execution agent/model before calling — the sentinel
+// is only used when Agent is empty.
+func (db *DB) EnqueueAutoDesignJob(p EnqueueOpts) (int64, error) {
+	jobType := p.JobType
+	if jobType == "" {
+		jobType = JobTypeReview
+	}
+	agentName := p.Agent
+	if agentName == "" {
+		agentName = AutoDesignAgentSentinel
+	}
+	now := time.Now().Format(time.RFC3339)
+	var id int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, branch, agent, model, status, job_type,
+		   review_type, source, enqueued_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, 'auto_design', ?, ?)
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, agentName, nullString(p.Model), jobType, p.ReviewType, now, now).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
+// PromoteClassifyToDesignReview converts a classify row into a queued
+// design review via UPDATE (not INSERT), so the follow-up does not collide
+// with the partial unique index that already covers the classify row's slot.
+//
+// agent and model must resolve to a real registered agent at the moment
+// of promotion: the row was inserted with the AutoDesignAgentSentinel,
+// and the worker that picks it up next looks up agent.Get(job.Agent),
+// which would fail on the sentinel. The caller is expected to resolve
+// the design-workflow agent/model via config before calling.
+//
+// The WHERE clause pins this to the active execution attempt
+// (status='running' AND worker_id=?). A stale worker whose job was canceled,
+// reclaimed, or retried will affect zero rows and receive sql.ErrNoRows.
+func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent, model string) error {
+	res, err := db.ExecContext(context.Background(), `
+		UPDATE review_jobs
+		SET job_type = 'review',
+		    status = 'queued',
+		    agent = ?,
+		    model = ?,
+		    worker_id = NULL,
+		    started_at = NULL,
+		    finished_at = NULL,
+		    prompt = NULL,
+		    prompt_prebuilt = 0,
+		    error = NULL,
+		    updated_at = ?
+		WHERE id = ?
+		  AND job_type = 'classify'
+		  AND source = 'auto_design'
+		  AND status = 'running'
+		  AND worker_id = ?
+	`, agent, nullString(model), time.Now().Format(time.RFC3339), classifyJobID, workerID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// MarkClassifyAsSkippedDesign converts a classify row into a terminal
+// skipped design row via UPDATE (not INSERT). Same active-attempt guard as
+// PromoteClassifyToDesignReview.
+//
+// reason is the public-facing skip_reason (rendered in PR comments, so
+// must be redacted at the caller). errorDetail is the full internal error
+// text persisted to the error column for operator debugging when the
+// skip is caused by a classifier failure — pass "" on the clean "no
+// design review needed" path.
+func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason, errorDetail string) error {
+	now := time.Now().Format(time.RFC3339)
+	res, err := db.ExecContext(context.Background(), `
+		UPDATE review_jobs
+		SET job_type = 'review',
+		    status = 'skipped',
+		    skip_reason = ?,
+		    error = ?,
+		    finished_at = ?,
+		    updated_at = ?
+		WHERE id = ?
+		  AND job_type = 'classify'
+		  AND source = 'auto_design'
+		  AND status = 'running'
+		  AND worker_id = ?
+	`, sanitizeSkipReason(reason), nullString(errorDetail), now, now, classifyJobID, workerID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ListJobsByStatus returns review jobs with the given status for a repo.
+// Fields populated: ID, RepoID, CommitID, GitRef, Branch, Status, JobType,
+// ReviewType, SkipReason, Source, EnqueuedAt.
+func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, error) {
+	rows, err := db.Query(`
+		SELECT id, repo_id, COALESCE(commit_id, 0), git_ref, COALESCE(branch, ''),
+		       status, COALESCE(job_type, 'review'), COALESCE(review_type, ''),
+		       COALESCE(skip_reason, ''), COALESCE(source, ''), enqueued_at
+		FROM review_jobs
+		WHERE repo_id = ? AND status = ?
+		ORDER BY enqueued_at DESC
+	`, repoID, string(status))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReviewJob
+	for rows.Next() {
+		var j ReviewJob
+		var commitID int64
+		var enq string
+		if err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Branch,
+			&j.Status, &j.JobType, &j.ReviewType, &j.SkipReason, &j.Source, &enq); err != nil {
+			return nil, err
+		}
+		if commitID != 0 {
+			id := commitID
+			j.CommitID = &id
+		}
+		if t, err := time.Parse(time.RFC3339, enq); err == nil {
+			j.EnqueuedAt = t
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// HasAutoDesignSlotForCommit reports whether the auto-design dedup slot is
+// already occupied for (repo_id, commit_sha). Returns true when any row
+// exists with review_type='design' and source='auto_design' — covering
+// queued classify jobs, queued/running/done design reviews, and skipped
+// design rows.
+//
+// Commitless auto-design rows (commit_id IS NULL, inserted when commit
+// metadata lookup failed at dispatch time) also count as occupying the
+// slot when their git_ref matches the SHA. Otherwise a later dispatch
+// that successfully resolves the commit would create a duplicate row
+// for the same change — the partial unique index on (repo_id, commit_id,
+// review_type) only catches duplicates where commit_id matches, and
+// SQL's NULL != NULL semantics let (NULL, ...) coexist with (123, ...).
+//
+// This is a performance shortcut; the partial unique index enforces
+// correctness for commit-backed inserts.
+func (db *DB) HasAutoDesignSlotForCommit(repoID int64, sha string) (bool, error) {
+	var n int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM review_jobs rj
+		LEFT JOIN commits c ON rj.commit_id = c.id
+		WHERE rj.repo_id = ?
+		  AND rj.review_type = 'design'
+		  AND rj.source = 'auto_design'
+		  AND (c.sha = ? OR (rj.commit_id IS NULL AND rj.git_ref = ?))
+	`, repoID, sha, sha).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("query auto-design slot: %w", err)
+	}
+	return n > 0, nil
 }

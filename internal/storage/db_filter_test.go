@@ -39,7 +39,7 @@ func TestJobCounts(t *testing.T) {
 		db.FailJob(claimed2.ID, "", "err")
 	}
 
-	queued, running, done, failed, _, _, _, err := db.GetJobCounts()
+	queued, running, done, failed, _, _, _, _, err := db.GetJobCounts()
 	require.NoError(t, err, "GetJobCounts failed: %v")
 
 	assert.Equal(t, 0, queued)

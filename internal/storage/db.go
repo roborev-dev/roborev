@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   requested_model TEXT,
   requested_provider TEXT,
   reasoning TEXT NOT NULL DEFAULT 'thorough',
-  status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased')) DEFAULT 'queued',
+  status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased','skipped')) DEFAULT 'queued',
   enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
   started_at TEXT,
   finished_at TEXT,
@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   output_prefix TEXT,
   job_type TEXT NOT NULL DEFAULT 'review',
   review_type TEXT NOT NULL DEFAULT '',
-  provider TEXT
+  provider TEXT,
+  skip_reason TEXT,
+  source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -108,12 +110,19 @@ CREATE TABLE IF NOT EXISTS ci_pr_batch_jobs (
   job_id INTEGER NOT NULL REFERENCES review_jobs(id),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+-- Uniqueness is enforced by idx_ci_pr_batch_jobs_uniq, created by
+-- ensureCIPRBatchJobsUniqueIndex. Keeping the constraint out of the
+-- table definition lets the migration also dedupe pre-existing rows
+-- on upgraded databases before installing the constraint.
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
 CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_batch ON ci_pr_batch_jobs(batch_id);
+-- Partial unique indexes for auto-design dedup are created by
+-- migrateReviewJobsConstraintsForAutoDesign — placing them here would
+-- break legacy-schema migrations where the source column doesn't yet exist.
 CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_job ON ci_pr_batch_jobs(job_id);
 `
 
@@ -804,6 +813,114 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Auto design review support: extends status CHECK constraint,
+	// adds skip_reason column. (job_type has no CHECK constraint;
+	// 'classify' is accepted as-is.)
+	if err := db.migrateReviewJobsConstraintsForAutoDesign(); err != nil {
+		return fmt.Errorf("migrate review_jobs constraints for auto design: %w", err)
+	}
+
+	// Idempotent batch attach: enforce that any (batch_id, job_id)
+	// pair appears at most once. Without this, a race in
+	// AttachJobAndBumpTotal could insert the same link twice and
+	// double-bump total_jobs/completed_jobs/failed_jobs. Skip when
+	// pre-existing duplicates would block index creation.
+	if err := db.ensureCIPRBatchJobsUniqueIndex(); err != nil {
+		return fmt.Errorf("ensure ci_pr_batch_jobs unique index: %w", err)
+	}
+
+	return nil
+}
+
+// ensureCIPRBatchJobsUniqueIndex guarantees that ci_pr_batch_jobs
+// carries a UNIQUE index on (batch_id, job_id). AttachJobAndBumpTotal
+// relies on this to make INSERT OR IGNORE idempotent — without the
+// index, a crashed-then-retried producer could double-link and
+// double-bump batch counters.
+//
+// Any pre-existing duplicate rows are removed before the index is
+// created so the constraint always lands. Duplicates are rare (they
+// only happen on DBs that ran the earlier buggy AttachJobAndBumpTotal
+// concurrently with itself), so the cleanup keeps the oldest row by
+// id and drops the extras — the oldest matches the row the old code
+// would have linked first. ci_pr_batch_jobs has no dependents, so
+// deleting rows here is safe.
+//
+// When duplicates are removed, the affected batches' total_jobs /
+// completed_jobs / failed_jobs counters were previously inflated by
+// the double-attach. Recalculate them from the remaining links so
+// synthesis isn't stuck waiting on a phantom extra job.
+func (db *DB) ensureCIPRBatchJobsUniqueIndex() error {
+	// Capture affected batches BEFORE deletion so we can recalculate
+	// their counters afterward.
+	affectedRows, err := db.Query(`
+		SELECT DISTINCT batch_id FROM ci_pr_batch_jobs
+		WHERE (batch_id, job_id) IN (
+			SELECT batch_id, job_id FROM ci_pr_batch_jobs
+			GROUP BY batch_id, job_id HAVING COUNT(*) > 1
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("query affected batches: %w", err)
+	}
+	var affected []int64
+	for affectedRows.Next() {
+		var id int64
+		if scanErr := affectedRows.Scan(&id); scanErr != nil {
+			affectedRows.Close()
+			return fmt.Errorf("scan affected batch: %w", scanErr)
+		}
+		affected = append(affected, id)
+	}
+	affectedRows.Close()
+	if err := affectedRows.Err(); err != nil {
+		return fmt.Errorf("iterate affected batches: %w", err)
+	}
+
+	res, err := db.Exec(`
+		DELETE FROM ci_pr_batch_jobs
+		WHERE id NOT IN (
+			SELECT MIN(id) FROM ci_pr_batch_jobs GROUP BY batch_id, job_id
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("dedupe ci_pr_batch_jobs: %w", err)
+	}
+	if removed, rowsErr := res.RowsAffected(); rowsErr == nil && removed > 0 {
+		log.Printf("ci_pr_batch_jobs: removed %d duplicate (batch_id, job_id) rows across %d batches",
+			removed, len(affected))
+	}
+
+	// Recalculate counters for each affected batch. The CASE clauses
+	// mirror AttachJobAndBumpTotal/ReconcileBatch so terminal statuses
+	// (done, skipped, applied, rebased) contribute to completed_jobs
+	// and failed/canceled to failed_jobs.
+	for _, batchID := range affected {
+		if _, err := db.Exec(`
+			UPDATE ci_pr_batches SET
+				total_jobs = (
+					SELECT COUNT(*) FROM ci_pr_batch_jobs WHERE batch_id = ?
+				),
+				completed_jobs = (
+					SELECT COALESCE(SUM(CASE WHEN j.status IN ('done','skipped','applied','rebased') THEN 1 ELSE 0 END), 0)
+					FROM ci_pr_batch_jobs bj JOIN review_jobs j ON j.id = bj.job_id
+					WHERE bj.batch_id = ?
+				),
+				failed_jobs = (
+					SELECT COALESCE(SUM(CASE WHEN j.status IN ('failed','canceled') THEN 1 ELSE 0 END), 0)
+					FROM ci_pr_batch_jobs bj JOIN review_jobs j ON j.id = bj.job_id
+					WHERE bj.batch_id = ?
+				)
+			WHERE id = ?
+		`, batchID, batchID, batchID, batchID); err != nil {
+			return fmt.Errorf("recalc counters for batch %d: %w", batchID, err)
+		}
+	}
+
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_uniq
+		ON ci_pr_batch_jobs(batch_id, job_id)`); err != nil {
+		return fmt.Errorf("create unique index: %w", err)
+	}
 	return nil
 }
 
@@ -1322,4 +1439,194 @@ func (db *DB) CountStalledJobs(threshold time.Duration) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// migrateReviewJobsConstraintsForAutoDesign rebuilds review_jobs to:
+//   - Add 'skipped' to the status CHECK constraint
+//   - Add the skip_reason and source TEXT columns
+//   - Create the auto-design dedup partial unique indexes
+//
+// job_type has no CHECK constraint in the existing schema, so 'classify'
+// is accepted without a rebuild.
+// Per-feature idempotency: every step probes for its own presence so a
+// partially-migrated DB still converges. CREATE INDEX IF NOT EXISTS is
+// naturally idempotent.
+func (db *DB) migrateReviewJobsConstraintsForAutoDesign() error {
+	ctx := context.Background()
+
+	var origSQL string
+	if err := db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
+	).Scan(&origSQL); err != nil {
+		return fmt.Errorf("read review_jobs schema: %w", err)
+	}
+	needsRebuild := !strings.Contains(origSQL, "'skipped'") ||
+		!strings.Contains(origSQL, "skip_reason")
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("get connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+			return
+		}
+	}()
+
+	if needsRebuild {
+		if _, err := tx.Exec(`DROP TABLE IF EXISTS review_jobs_new`); err != nil {
+			return fmt.Errorf("cleanup stale temp table: %w", err)
+		}
+
+		rows, err := tx.Query(`SELECT name FROM pragma_table_info('review_jobs')`)
+		if err != nil {
+			return fmt.Errorf("read columns: %w", err)
+		}
+		var cols []string
+		hasSkipReason := false
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return err
+			}
+			cols = append(cols, name)
+			if name == "skip_reason" {
+				hasSkipReason = true
+			}
+		}
+		rows.Close()
+
+		newSQL := strings.Replace(origSQL,
+			"CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased'))",
+			"CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased','skipped'))",
+			1)
+		if !hasSkipReason {
+			lastParen := strings.LastIndex(newSQL, ")")
+			if lastParen < 0 {
+				return fmt.Errorf("malformed review_jobs schema")
+			}
+			newSQL = newSQL[:lastParen] + ",\n  skip_reason TEXT" + newSQL[lastParen:]
+		}
+
+		replaced := false
+		for _, pattern := range []string{
+			`CREATE TABLE "review_jobs"`,
+			`CREATE TABLE review_jobs`,
+		} {
+			if strings.Contains(newSQL, pattern) {
+				newSQL = strings.Replace(newSQL, pattern, `CREATE TABLE review_jobs_new`, 1)
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			return fmt.Errorf("cannot find CREATE TABLE statement in schema: %s",
+				origSQL[:min(len(origSQL), 80)])
+		}
+
+		if _, err := tx.Exec(newSQL); err != nil {
+			return fmt.Errorf("create new table: %w", err)
+		}
+
+		colList := strings.Join(cols, ", ")
+		copySQL := fmt.Sprintf(`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`,
+			colList, colList)
+		if _, err := tx.Exec(copySQL); err != nil {
+			return fmt.Errorf("copy data: %w", err)
+		}
+
+		if _, err := tx.Exec(`DROP TABLE review_jobs`); err != nil {
+			return fmt.Errorf("drop old table: %w", err)
+		}
+		if _, err := tx.Exec(`ALTER TABLE review_jobs_new RENAME TO review_jobs`); err != nil {
+			return fmt.Errorf("rename table: %w", err)
+		}
+
+		for _, idx := range []string{
+			`CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status)`,
+			`CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref)`,
+			`CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_uuid ON review_jobs(uuid)`,
+		} {
+			if _, err := tx.Exec(idx); err != nil {
+				return fmt.Errorf("recreate index: %w", err)
+			}
+		}
+	}
+
+	var hasSource int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name='source'`,
+	).Scan(&hasSource); err != nil {
+		return fmt.Errorf("probe source column: %w", err)
+	}
+	if hasSource == 0 {
+		if _, err := tx.Exec(`ALTER TABLE review_jobs ADD COLUMN source TEXT`); err != nil {
+			return fmt.Errorf("add source column: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+		ON review_jobs(repo_id, commit_id, review_type)
+		WHERE source = 'auto_design'
+	`); err != nil {
+		return fmt.Errorf("create auto-design dedup index: %w", err)
+	}
+
+	// The narrow form (commit_id IS NULL only) prevents two commitless
+	// rows but lets a commitless row coexist with a commit-backed row
+	// for the same git_ref. Widen to cover ALL auto_design rows so
+	// the cross-case race is enforced at the storage layer instead of
+	// only via the read-side HasAutoDesignSlotForCommit pre-check.
+	//
+	// If existing duplicates would block the wider index, log and skip;
+	// the narrow index keeps current correctness guarantees and the
+	// LEFT JOIN in HasAutoDesignSlotForCommit catches the common case.
+	var dupes int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM review_jobs WHERE source = 'auto_design'
+			GROUP BY repo_id, git_ref, review_type HAVING COUNT(*) > 1
+		)
+	`).Scan(&dupes); err != nil {
+		return fmt.Errorf("count auto-design duplicates: %w", err)
+	}
+	if dupes == 0 {
+		if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_review_jobs_auto_design_dedup_ref`); err != nil {
+			return fmt.Errorf("drop narrow auto-design dedup ref index: %w", err)
+		}
+		if _, err := tx.Exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design'
+		`); err != nil {
+			return fmt.Errorf("create wider auto-design dedup ref index: %w", err)
+		}
+	} else {
+		log.Printf("auto-design: %d duplicate (repo, git_ref, review_type) groups exist; "+
+			"keeping narrow dedup_ref index until cleaned up", dupes)
+		if _, err := tx.Exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design' AND commit_id IS NULL
+		`); err != nil {
+			return fmt.Errorf("create narrow auto-design dedup ref index: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

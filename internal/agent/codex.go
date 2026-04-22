@@ -393,3 +393,11 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 func init() {
 	Register(NewCodexAgent(""))
 }
+
+// CodexAgent does NOT implement SchemaAgent on purpose.
+//
+// codex's --sandbox read-only blocks writes but still allows reads, and
+// codex exec has no equivalent to claude --tools "" that disables the
+// shell/file tool entirely. Allowing codex to classify untrusted commit
+// text would let a prompt-injected commit read local secrets and
+// exfiltrate them via the JSON `reason` field.

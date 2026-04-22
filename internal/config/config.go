@@ -130,6 +130,13 @@ type Config struct {
 	DesignModelThorough   string `toml:"design_model_thorough"`
 	DesignModelMaximum    string `toml:"design_model_maximum"`
 
+	// Classify workflow (routing classifier for auto design review)
+	ClassifyAgent       string `toml:"classify_agent" comment:"Agent for the design-review routing classifier. Must implement SchemaAgent capability."`
+	ClassifyModel       string `toml:"classify_model" comment:"Model for the classifier agent. Empty = agent default."`
+	ClassifyReasoning   string `toml:"classify_reasoning" comment:"Reasoning level for the classifier: fast, standard, medium, thorough, or maximum."`
+	ClassifyBackupAgent string `toml:"classify_backup_agent" comment:"Fallback classifier agent on quota exhaustion / failure."`
+	ClassifyBackupModel string `toml:"classify_backup_model" comment:"Fallback classifier model."`
+
 	// Backup agents for failover
 	ReviewBackupAgent   string `toml:"review_backup_agent"`
 	RefineBackupAgent   string `toml:"refine_backup_agent"`
@@ -171,6 +178,9 @@ type Config struct {
 
 	// CI poller configuration
 	CI CIConfig `toml:"ci"`
+
+	// Auto design review configuration (opt-in)
+	AutoDesignReview AutoDesignReviewConfig `toml:"auto_design_review"`
 
 	// Diff exclusion patterns (filenames or glob patterns to exclude from review diffs)
 	ExcludePatterns []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs globally."`
@@ -299,6 +309,313 @@ func (c *GitHubAppConfig) GitHubAppPrivateKeyResolved() (string, error) {
 type AgentReviewType struct {
 	Agent      string
 	ReviewType string
+}
+
+// AutoDesignReviewConfig holds settings for the automatic design-review
+// decision. Opt-in; when Enabled is false (default), the decision is never
+// consulted and behavior matches pre-auto-design-review.
+type AutoDesignReviewConfig struct {
+	Enabled bool `toml:"enabled" comment:"Enable the automatic design review decider. Off by default."`
+
+	MinDiffLines   int `toml:"min_diff_lines" comment:"Diffs below this line count skip design review automatically."`
+	LargeDiffLines int `toml:"large_diff_lines" comment:"Diffs at or above this line count trigger a design review automatically."`
+	LargeFileCount int `toml:"large_file_count" comment:"Commits touching at least this many files trigger a design review automatically."`
+
+	TriggerPaths []string `toml:"trigger_paths" comment:"Doublestar globs; any changed file matching triggers a design review."`
+	SkipPaths    []string `toml:"skip_paths" comment:"Doublestar globs; a commit whose changed files all match is skipped."`
+
+	TriggerMessagePatterns []string `toml:"trigger_message_patterns" comment:"Regexes over the commit subject; a match triggers a design review."`
+	SkipMessagePatterns    []string `toml:"skip_message_patterns" comment:"Regexes over the commit subject; a match skips the design review."`
+
+	ClassifierTimeoutSeconds int `toml:"classifier_timeout_seconds" comment:"Per-classify-job timeout."`
+	ClassifierMaxPromptSize  int `toml:"classifier_max_prompt_size" comment:"Cap on classifier prompt size in bytes."`
+}
+
+// AutoDesignReviewRepoConfig is the per-repo variant. Identical to the
+// global struct except Enabled is *bool, distinguishing "not set" from
+// "explicitly false" so a repo can disable a globally-enabled default.
+type AutoDesignReviewRepoConfig struct {
+	Enabled *bool `toml:"enabled" comment:"Override the global auto design review setting for this repo. Omit to inherit."`
+
+	MinDiffLines   int `toml:"min_diff_lines"`
+	LargeDiffLines int `toml:"large_diff_lines"`
+	LargeFileCount int `toml:"large_file_count"`
+
+	TriggerPaths []string `toml:"trigger_paths"`
+	SkipPaths    []string `toml:"skip_paths"`
+
+	TriggerMessagePatterns []string `toml:"trigger_message_patterns"`
+	SkipMessagePatterns    []string `toml:"skip_message_patterns"`
+
+	ClassifierTimeoutSeconds int `toml:"classifier_timeout_seconds"`
+	ClassifierMaxPromptSize  int `toml:"classifier_max_prompt_size"`
+}
+
+// AutoDesignHeuristics is the resolved heuristic configuration returned by
+// ResolveAutoDesignHeuristics. Matches internal/review/autotype.Heuristics
+// field-for-field so callers can construct one from the other; keeping the
+// type here avoids a circular import.
+type AutoDesignHeuristics struct {
+	MinDiffLines   int
+	LargeDiffLines int
+	LargeFileCount int
+
+	TriggerPaths []string
+	SkipPaths    []string
+
+	TriggerMessagePatterns []string
+	SkipMessagePatterns    []string
+}
+
+// DefaultAutoDesignHeuristics returns the embedded fallback values. Keep in
+// sync with autotype.DefaultHeuristics.
+func DefaultAutoDesignHeuristics() AutoDesignHeuristics {
+	return AutoDesignHeuristics{
+		MinDiffLines:   10,
+		LargeDiffLines: 500,
+		LargeFileCount: 10,
+		TriggerPaths: []string{
+			"**/migrations/**",
+			"**/schema/**",
+			"**/*.sql",
+			"docs/superpowers/specs/**",
+			"docs/design/**",
+			"docs/plans/**",
+			"**/*-design.md",
+			"**/*-plan.md",
+		},
+		SkipPaths: []string{
+			"**/*.md",
+			"**/*_test.go",
+			"**/*.spec.*",
+			"**/testdata/**",
+		},
+		TriggerMessagePatterns: []string{
+			`\b(refactor|redesign|rewrite|architect|breaking)\b`,
+		},
+		SkipMessagePatterns: []string{
+			`^(docs|test|style|chore)(\(.+\))?:`,
+		},
+	}
+}
+
+// ResolveAutoDesignEnabled returns true if auto design review is enabled for
+// the given repo path. Tri-state: a per-repo explicit `enabled = false`
+// overrides a globally-enabled default, and a per-repo `enabled = true`
+// overrides a globally-disabled default. An unset per-repo field falls
+// through to the global value.
+func ResolveAutoDesignEnabled(repoPath string, globalCfg *Config) bool {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.AutoDesignReview.Enabled != nil {
+		return *repoCfg.AutoDesignReview.Enabled
+	}
+	if globalCfg != nil && globalCfg.AutoDesignReview.Enabled {
+		return true
+	}
+	return false
+}
+
+// ResolveAutoDesignHeuristics merges defaults, global, and per-repo config.
+// List fields replace wholesale; scalar fields fall through when zero.
+func ResolveAutoDesignHeuristics(repoPath string, globalCfg *Config) AutoDesignHeuristics {
+	h := DefaultAutoDesignHeuristics()
+	if globalCfg != nil {
+		h = overlayAutoDesignGlobal(h, globalCfg.AutoDesignReview)
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		h = overlayAutoDesignRepo(h, repoCfg.AutoDesignReview)
+	}
+	return h
+}
+
+func overlayAutoDesignGlobal(base AutoDesignHeuristics, over AutoDesignReviewConfig) AutoDesignHeuristics {
+	if over.MinDiffLines > 0 {
+		base.MinDiffLines = over.MinDiffLines
+	}
+	if over.LargeDiffLines > 0 {
+		base.LargeDiffLines = over.LargeDiffLines
+	}
+	if over.LargeFileCount > 0 {
+		base.LargeFileCount = over.LargeFileCount
+	}
+	// nil vs non-nil empty is distinguishable: unset keeps the base
+	// defaults; an explicit empty TOML list (e.g. trigger_paths = [])
+	// clears them. Using len(...) > 0 would silently conflate the two
+	// and prevent users from disabling a heuristic family.
+	if over.TriggerPaths != nil {
+		base.TriggerPaths = over.TriggerPaths
+	}
+	if over.SkipPaths != nil {
+		base.SkipPaths = over.SkipPaths
+	}
+	if over.TriggerMessagePatterns != nil {
+		base.TriggerMessagePatterns = over.TriggerMessagePatterns
+	}
+	if over.SkipMessagePatterns != nil {
+		base.SkipMessagePatterns = over.SkipMessagePatterns
+	}
+	return base
+}
+
+// ClassifyAgentValidator is an injection point the agent package fills in
+// via RegisterClassifyAgentValidator. It returns an error when the named
+// agent does not implement structured-output (SchemaAgent) capability.
+//
+// If nil, validation is skipped (useful in tests and at the lowest layer).
+var classifyAgentValidator func(name string) error
+
+// RegisterClassifyAgentValidator is called by the agent package during init
+// to provide SchemaAgent support verification.
+func RegisterClassifyAgentValidator(fn func(name string) error) {
+	classifyAgentValidator = fn
+}
+
+const DefaultClassifyAgent = "claude-code"
+const DefaultClassifyReasoning = "fast"
+
+// ResolveClassifyAgent returns the agent name to use for classification.
+// Priority: CLI flag > per-repo classify_agent > global classify_agent > default.
+// Validates via the registered validator (SchemaAgent capability check).
+func ResolveClassifyAgent(cliAgent, repoPath string, globalCfg *Config) (string, error) {
+	name := cliAgent
+	if name == "" {
+		if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyAgent != "" {
+			name = repoCfg.ClassifyAgent
+		}
+	}
+	if name == "" && globalCfg != nil && globalCfg.ClassifyAgent != "" {
+		name = globalCfg.ClassifyAgent
+	}
+	if name == "" {
+		name = DefaultClassifyAgent
+	}
+	if classifyAgentValidator != nil {
+		if err := classifyAgentValidator(name); err != nil {
+			return "", err
+		}
+	}
+	return name, nil
+}
+
+// ResolveClassifyModel returns the model string for the classifier. Priority
+// same as ResolveClassifyAgent. Empty is a valid value (agent uses its default).
+func ResolveClassifyModel(cliModel, repoPath string, globalCfg *Config) string {
+	if cliModel != "" {
+		return cliModel
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyModel != "" {
+		return repoCfg.ClassifyModel
+	}
+	if globalCfg != nil && globalCfg.ClassifyModel != "" {
+		return globalCfg.ClassifyModel
+	}
+	return ""
+}
+
+// ResolveClassifyReasoning returns the reasoning level for the classifier.
+// Defaults to "fast" since the classifier is a routing decision, not a review.
+func ResolveClassifyReasoning(cliReasoning, repoPath string, globalCfg *Config) string {
+	if cliReasoning != "" {
+		return cliReasoning
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyReasoning != "" {
+		return repoCfg.ClassifyReasoning
+	}
+	if globalCfg != nil && globalCfg.ClassifyReasoning != "" {
+		return globalCfg.ClassifyReasoning
+	}
+	return DefaultClassifyReasoning
+}
+
+// ResolveBackupClassifyAgent returns the backup classify agent (no
+// default). Like ResolveClassifyAgent, it validates the configured name
+// via the registered SchemaAgent-capability hook — a backup that can't
+// actually run the classify workflow would silently cause skips instead
+// of a real failover. An unconfigured backup (empty result) is not an
+// error; callers treat empty as "no backup".
+func ResolveBackupClassifyAgent(repoPath string, globalCfg *Config) (string, error) {
+	var name string
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyBackupAgent != "" {
+		name = repoCfg.ClassifyBackupAgent
+	}
+	if name == "" && globalCfg != nil && globalCfg.ClassifyBackupAgent != "" {
+		name = globalCfg.ClassifyBackupAgent
+	}
+	if name == "" {
+		return "", nil
+	}
+	if classifyAgentValidator != nil {
+		if err := classifyAgentValidator(name); err != nil {
+			return "", err
+		}
+	}
+	return name, nil
+}
+
+// ResolveBackupClassifyModel returns the backup classify model (no default).
+func ResolveBackupClassifyModel(repoPath string, globalCfg *Config) string {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyBackupModel != "" {
+		return repoCfg.ClassifyBackupModel
+	}
+	if globalCfg != nil && globalCfg.ClassifyBackupModel != "" {
+		return globalCfg.ClassifyBackupModel
+	}
+	return ""
+}
+
+const (
+	defaultClassifierTimeoutSeconds = 60
+	defaultClassifierMaxPromptSize  = 20 * 1024
+)
+
+// ResolveClassifierTimeout returns the per-classify-job timeout.
+func ResolveClassifierTimeout(repoPath string, globalCfg *Config) time.Duration {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.AutoDesignReview.ClassifierTimeoutSeconds > 0 {
+		return time.Duration(repoCfg.AutoDesignReview.ClassifierTimeoutSeconds) * time.Second
+	}
+	if globalCfg != nil && globalCfg.AutoDesignReview.ClassifierTimeoutSeconds > 0 {
+		return time.Duration(globalCfg.AutoDesignReview.ClassifierTimeoutSeconds) * time.Second
+	}
+	return defaultClassifierTimeoutSeconds * time.Second
+}
+
+// ResolveClassifierMaxPromptSize returns the cap on classify-prompt bytes.
+func ResolveClassifierMaxPromptSize(repoPath string, globalCfg *Config) int {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.AutoDesignReview.ClassifierMaxPromptSize > 0 {
+		return repoCfg.AutoDesignReview.ClassifierMaxPromptSize
+	}
+	if globalCfg != nil && globalCfg.AutoDesignReview.ClassifierMaxPromptSize > 0 {
+		return globalCfg.AutoDesignReview.ClassifierMaxPromptSize
+	}
+	return defaultClassifierMaxPromptSize
+}
+
+func overlayAutoDesignRepo(base AutoDesignHeuristics, over AutoDesignReviewRepoConfig) AutoDesignHeuristics {
+	if over.MinDiffLines > 0 {
+		base.MinDiffLines = over.MinDiffLines
+	}
+	if over.LargeDiffLines > 0 {
+		base.LargeDiffLines = over.LargeDiffLines
+	}
+	if over.LargeFileCount > 0 {
+		base.LargeFileCount = over.LargeFileCount
+	}
+	// nil vs non-nil empty is distinguishable: unset keeps the base
+	// defaults; an explicit empty TOML list (e.g. trigger_paths = [])
+	// clears them. Using len(...) > 0 would silently conflate the two
+	// and prevent users from disabling a heuristic family.
+	if over.TriggerPaths != nil {
+		base.TriggerPaths = over.TriggerPaths
+	}
+	if over.SkipPaths != nil {
+		base.SkipPaths = over.SkipPaths
+	}
+	if over.TriggerMessagePatterns != nil {
+		base.TriggerMessagePatterns = over.TriggerMessagePatterns
+	}
+	if over.SkipMessagePatterns != nil {
+		base.SkipMessagePatterns = over.SkipMessagePatterns
+	}
+	return base
 }
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
@@ -637,6 +954,9 @@ type RepoConfig struct {
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
 
+	// Auto design review overrides for this repo (opt-in)
+	AutoDesignReview AutoDesignReviewRepoConfig `toml:"auto_design_review"`
+
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
 	ReviewAgentFast       string `toml:"review_agent_fast" comment:"Agent override for fast review in this repo."`
@@ -698,6 +1018,13 @@ type RepoConfig struct {
 	DesignModelMedium     string `toml:"design_model_medium" comment:"Model override for medium design review in this repo."`
 	DesignModelThorough   string `toml:"design_model_thorough" comment:"Model override for thorough design review in this repo."`
 	DesignModelMaximum    string `toml:"design_model_maximum" comment:"Model override for maximum design review in this repo."`
+
+	// Classify workflow (per-repo overrides)
+	ClassifyAgent       string `toml:"classify_agent" comment:"Override classifier agent for this repo."`
+	ClassifyModel       string `toml:"classify_model" comment:"Override classifier model for this repo."`
+	ClassifyReasoning   string `toml:"classify_reasoning" comment:"Override classifier reasoning for this repo."`
+	ClassifyBackupAgent string `toml:"classify_backup_agent" comment:"Override classifier backup agent for this repo."`
+	ClassifyBackupModel string `toml:"classify_backup_model" comment:"Override classifier backup model for this repo."`
 
 	// Backup agents for failover
 	ReviewBackupAgent   string `toml:"review_backup_agent" comment:"Backup agent for review in this repo."`

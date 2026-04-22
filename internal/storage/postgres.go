@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -14,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 11
+const pgSchemaVersion = 12
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v11.sql
+//go:embed schemas/postgres_v12.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -308,10 +309,85 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v11 migration (min_severity): %w", err)
 			}
 		}
+		if currentVersion < 12 {
+			// Auto design review support — skip_reason, source columns, and
+			// dedup indexes. (job_type has no CHECK constraint; 'classify'
+			// is accepted as-is.)
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS skip_reason TEXT`); err != nil {
+				return fmt.Errorf("v12 migration (add skip_reason): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS source TEXT`); err != nil {
+				return fmt.Errorf("v12 migration (add source): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs DROP CONSTRAINT IF EXISTS review_jobs_status_check`); err != nil {
+				return fmt.Errorf("v12 migration (drop status check): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD CONSTRAINT review_jobs_status_check
+				CHECK (status IN ('queued','running','done','failed','canceled','applied','rebased','skipped'))`); err != nil {
+				return fmt.Errorf("v12 migration (add status check): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+				ON review_jobs(repo_id, commit_id, review_type)
+				WHERE source = 'auto_design'`); err != nil {
+				return fmt.Errorf("v12 migration (add dedup index): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+				ON review_jobs(repo_id, git_ref, review_type)
+				WHERE source = 'auto_design' AND commit_id IS NULL`); err != nil {
+				return fmt.Errorf("v12 migration (add dedup ref index): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
 			return fmt.Errorf("update schema version: %w", err)
+		}
+	}
+
+	// Auto-design dedup indexes are created unconditionally (with IF
+	// NOT EXISTS) on every startup so a DB that was interrupted
+	// between the schema_version insert and a prior attempt to create
+	// these indexes still self-heals — otherwise currentVersion==12
+	// would skip both the fresh-init block and the v12 migration on
+	// the next run and the uniqueness guarantee would be permanently
+	// lost.
+	if _, err := p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup
+		ON review_jobs(repo_id, commit_id, review_type)
+		WHERE source = 'auto_design'`); err != nil {
+		return fmt.Errorf("ensure auto-design dedup index: %w", err)
+	}
+	// Widen the dedup_ref index to cover ALL auto_design rows (not
+	// just commitless). The narrow form lets a (NULL, ref) row coexist
+	// with a (resolved_id, ref) row for the same git_ref because
+	// SQL's NULL != NULL semantics defeat the (repo_id, commit_id,
+	// review_type) index. Widening enforces the cross-case dedup at
+	// the storage layer. If duplicates already exist, fall back to
+	// the narrow form so the daemon still starts.
+	var dupes int
+	if err := p.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM review_jobs WHERE source = 'auto_design'
+			GROUP BY repo_id, git_ref, review_type HAVING COUNT(*) > 1
+		) t
+	`).Scan(&dupes); err != nil {
+		return fmt.Errorf("count auto-design duplicates: %w", err)
+	}
+	if dupes == 0 {
+		if _, err := p.pool.Exec(ctx, `DROP INDEX IF EXISTS idx_review_jobs_auto_design_dedup_ref`); err != nil {
+			return fmt.Errorf("drop narrow auto-design dedup ref index: %w", err)
+		}
+		if _, err := p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design'`); err != nil {
+			return fmt.Errorf("ensure wider auto-design dedup ref index: %w", err)
+		}
+	} else {
+		log.Printf("auto-design (postgres): %d duplicate (repo, git_ref, review_type) groups exist; "+
+			"keeping narrow dedup_ref index until cleaned up", dupes)
+		if _, err := p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_auto_design_dedup_ref
+			ON review_jobs(repo_id, git_ref, review_type)
+			WHERE source = 'auto_design' AND commit_id IS NULL`); err != nil {
+			return fmt.Errorf("ensure narrow auto-design dedup ref index: %w", err)
 		}
 	}
 

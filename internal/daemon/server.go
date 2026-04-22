@@ -1195,6 +1195,30 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	job.RepoPath = repo.RootPath
 	job.RepoName = repo.Name
 
+	// Auto-design-review integration: opportunistic, never fails the request.
+	// Only fires for explicit single-commit review jobs whose review_type
+	// is the default ("review"); explicit --type design from the caller
+	// is left alone, and so are fix/task/compact/classify rows.
+	//
+	// Range jobs are excluded because maybeDispatchAutoDesign's
+	// git.GetDiff(sha) path does not produce a meaningful diff for a
+	// "base..head" ref, so routing them through auto-design would always
+	// hit MinDiffLines and record a bogus "trivial" skip.
+	//
+	// Dirty jobs are excluded because the heuristic layer's path-based
+	// rules need a ChangedFiles list, and dirty reviews don't carry one
+	// (the diff is inline but there's no git ref to name-only against,
+	// and parsing file paths out of the diff body would re-implement
+	// `git diff --name-only` from scratch). Without ChangedFiles, a
+	// small dirty change that touches a migration or API-surface file
+	// bypasses the TriggerPaths rule and can be silently skipped as
+	// trivial. Re-enable when dirty file-list extraction lands.
+	if job.JobType == storage.JobTypeReview && config.IsDefaultReviewType(req.ReviewType) {
+		if err := s.maybeDispatchAutoDesign(r.Context(), job); err != nil {
+			log.Printf("auto-design dispatch failed: %v", err)
+		}
+	}
+
 	// Log the enqueue activity
 	if s.activityLog != nil {
 		s.activityLog.Log(

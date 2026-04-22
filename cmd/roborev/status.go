@@ -64,8 +64,8 @@ func statusCmd() *cobra.Command {
 			}
 			fmt.Println(daemonLine)
 			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
-			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed\n",
-				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs)
+			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed, %d skipped\n",
+				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs, status.SkippedJobs)
 			fmt.Println()
 
 			// Display health status

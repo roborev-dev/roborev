@@ -51,13 +51,21 @@ func BuildSynthesisPrompt(
 		fmt.Fprintf(&b,
 			"---\n### Review %d: Agent=%s, Type=%s",
 			i+1, r.Agent, r.ReviewType)
-		if IsQuotaFailure(r) {
+		if r.Skipped || r.Status == ResultSkipped {
+			b.WriteString(" [SKIPPED]")
+		} else if IsQuotaFailure(r) {
 			b.WriteString(" [SKIPPED]")
 		} else if r.Status == ResultFailed {
 			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
-		if IsQuotaFailure(r) {
+		if r.Skipped || r.Status == ResultSkipped {
+			reason := r.SkipReason
+			if reason == "" {
+				reason = "no reason recorded"
+			}
+			b.WriteString("Auto-design-review skipped: " + reason)
+		} else if IsQuotaFailure(r) {
 			b.WriteString(
 				"(review skipped — agent quota exhausted)")
 		} else if r.Output != "" {
@@ -137,11 +145,19 @@ func FormatRawBatchComment(
 		status := r.Status
 		if IsQuotaFailure(r) {
 			status = "skipped (quota)"
+		} else if r.Skipped || r.Status == ResultSkipped {
+			status = "skipped (auto-design)"
 		}
 		fmt.Fprintf(&b, "### %s — %s (%s)\n\n",
 			r.Agent, r.ReviewType, status)
 
-		if IsQuotaFailure(r) {
+		if r.Skipped || r.Status == ResultSkipped {
+			reason := r.SkipReason
+			if reason == "" {
+				reason = "no reason recorded"
+			}
+			b.WriteString("Auto-design-review skipped: " + reason + "\n\n")
+		} else if IsQuotaFailure(r) {
 			b.WriteString(
 				"Review skipped — agent quota exhausted.\n\n")
 		} else if r.Status == ResultFailed {

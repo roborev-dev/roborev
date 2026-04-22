@@ -363,6 +363,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
+	// Classify jobs route through their own handler — no prompt building,
+	// no review path; the row gets converted in place.
+	if job.JobType == storage.JobTypeClassify {
+		wp.processClassifyJob(ctx, workerID, job)
+		return
+	}
+
 	// Resolve effective repo path: use worktree if available, still exists,
 	// and is a valid git checkout for the same repository.
 	effectiveRepoPath := job.RepoPath

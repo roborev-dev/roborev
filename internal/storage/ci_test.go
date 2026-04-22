@@ -201,6 +201,188 @@ func TestRecordBatchJob(t *testing.T) {
 	assert.Equalf(t, batch.ID, found2.ID, "expected batch ID %d, got %v", batch.ID, found2.ID)
 }
 
+func TestAttachJobAndBumpTotal_TerminalJobBumpsCounters(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-attachbump")
+	require.NoError(t, err)
+
+	cases := []struct {
+		status        JobStatus
+		wantCompleted int
+		wantFailed    int
+	}{
+		{JobStatusQueued, 0, 0},
+		{JobStatusRunning, 0, 0},
+		{JobStatusDone, 1, 0},
+		{JobStatusSkipped, 1, 0},
+		{JobStatusApplied, 1, 0},
+		{JobStatusRebased, 1, 0},
+		{JobStatusFailed, 0, 1},
+		{JobStatusCanceled, 0, 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			batch := mustCreateCIBatch(t, db, testRepo, 1, "sha-"+string(tc.status), 0)
+			job := mustEnqueueReviewJob(t, db, repo.ID, "ref-"+string(tc.status), testAgent, testReview)
+			_, err := db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, string(tc.status), job.ID)
+			require.NoError(t, err)
+
+			total, err := db.AttachJobAndBumpTotal(batch.ID, job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, 1, total, "total_jobs")
+
+			got := getBatch(t, db, batch.ID)
+			assert.Equal(t, 1, got.TotalJobs, "TotalJobs")
+			assert.Equal(t, tc.wantCompleted, got.CompletedJobs, "CompletedJobs")
+			assert.Equal(t, tc.wantFailed, got.FailedJobs, "FailedJobs")
+		})
+	}
+}
+
+func TestAttachJobAndBumpTotal_Idempotent(t *testing.T) {
+	// A producer race must not double-bump the batch counters.
+	// The unique index on (batch_id, job_id) + INSERT OR IGNORE
+	// keeps the second attach a no-op so total_jobs (and any
+	// terminal-status counter) only increment once.
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-attach-idem")
+	require.NoError(t, err)
+
+	batch := mustCreateCIBatch(t, db, testRepo, 1, "sha-idem", 0)
+	job := mustEnqueueReviewJob(t, db, repo.ID, "ref-idem", testAgent, testReview)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+
+	total1, err := db.AttachJobAndBumpTotal(batch.ID, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total1)
+
+	total2, err := db.AttachJobAndBumpTotal(batch.ID, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total2, "duplicate attach must not bump total_jobs")
+
+	got := getBatch(t, db, batch.ID)
+	assert.Equal(t, 1, got.TotalJobs, "TotalJobs stays at 1")
+	assert.Equal(t, 1, got.CompletedJobs, "CompletedJobs stays at 1")
+	assert.Equal(t, 0, got.FailedJobs)
+
+	var linkCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batch_jobs WHERE batch_id=? AND job_id=?`,
+		batch.ID, job.ID).Scan(&linkCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, linkCount, "only one link row exists for the (batch, job) pair")
+}
+
+func TestEnsureCIPRBatchJobsUniqueIndex_DedupesExistingRows(t *testing.T) {
+	// Simulates an upgraded DB where an earlier version of
+	// AttachJobAndBumpTotal inserted duplicate (batch_id, job_id)
+	// rows before the unique index was introduced. The migration
+	// must clean them up AND create the index so the idempotency
+	// guarantee that INSERT OR IGNORE relies on actually holds.
+	// It also has to repair counters on affected batches —
+	// duplicate attaches inflated total_jobs/completed_jobs at the
+	// time of insertion, and those must match the post-dedup row
+	// count or synthesis stays stuck.
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Drop the index that the initial migration created, simulating
+	// the pre-migration state.
+	_, err := db.Exec(`DROP INDEX IF EXISTS idx_ci_pr_batch_jobs_uniq`)
+	require.NoError(t, err)
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-dedup-attach-mig")
+	require.NoError(t, err)
+	batch := mustCreateCIBatch(t, db, testRepo, 1, "sha-mig", 0)
+	job := mustEnqueueReviewJob(t, db, repo.ID, "ref-mig", testAgent, testReview)
+	_, err = db.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, job.ID)
+	require.NoError(t, err)
+
+	// Insert three duplicate link rows (could not happen with the
+	// unique index in place, but our "upgraded DB" doesn't have it)
+	// and artificially inflate the batch's counters to match what
+	// the earlier buggy AttachJobAndBumpTotal would have left
+	// behind: 3 attaches × (+1 total, +1 completed for a done job).
+	for range 3 {
+		_, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`,
+			batch.ID, job.ID)
+		require.NoError(t, err)
+	}
+	_, err = db.Exec(`UPDATE ci_pr_batches
+		SET total_jobs = 3, completed_jobs = 3 WHERE id = ?`, batch.ID)
+	require.NoError(t, err)
+
+	var before int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batch_jobs
+		WHERE batch_id = ? AND job_id = ?`, batch.ID, job.ID).Scan(&before))
+	require.Equal(t, 3, before)
+
+	require.NoError(t, db.ensureCIPRBatchJobsUniqueIndex())
+
+	var after int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batch_jobs
+		WHERE batch_id = ? AND job_id = ?`, batch.ID, job.ID).Scan(&after))
+	assert.Equal(t, 1, after, "duplicates must be collapsed to a single link row")
+
+	got := getBatch(t, db, batch.ID)
+	assert.Equal(t, 1, got.TotalJobs,
+		"total_jobs must match remaining link count, not pre-dedup inflated value")
+	assert.Equal(t, 1, got.CompletedJobs,
+		"completed_jobs must be recalculated from the remaining done job")
+	assert.Equal(t, 0, got.FailedJobs)
+
+	// With the unique index in place, a further attempt to re-insert
+	// the duplicate is rejected, so INSERT OR IGNORE makes
+	// AttachJobAndBumpTotal truly idempotent.
+	res, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`,
+		batch.ID, job.ID)
+	require.NoError(t, err)
+	inserted, err := res.RowsAffected()
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, inserted,
+		"unique index must make re-insert a no-op")
+}
+
+func TestEnsureCIPRBatchJobsUniqueIndex_RepairsFailedCount(t *testing.T) {
+	// Companion to *_DedupesExistingRows — covers the failed_jobs
+	// CASE branch in the counter-repair UPDATE so a future refactor
+	// of the failed/canceled status list can't silently regress
+	// upgraded databases with duplicated failed jobs.
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, err := db.Exec(`DROP INDEX IF EXISTS idx_ci_pr_batch_jobs_uniq`)
+	require.NoError(t, err)
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-dedup-failed")
+	require.NoError(t, err)
+	batch := mustCreateCIBatch(t, db, testRepo, 2, "sha-failed-mig", 0)
+	job := mustEnqueueReviewJob(t, db, repo.ID, "ref-failed-mig", testAgent, testReview)
+	_, err = db.Exec(`UPDATE review_jobs SET status='failed' WHERE id=?`, job.ID)
+	require.NoError(t, err)
+
+	for range 3 {
+		_, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`,
+			batch.ID, job.ID)
+		require.NoError(t, err)
+	}
+	_, err = db.Exec(`UPDATE ci_pr_batches SET total_jobs = 3, failed_jobs = 3 WHERE id = ?`, batch.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, db.ensureCIPRBatchJobsUniqueIndex())
+
+	got := getBatch(t, db, batch.ID)
+	assert.Equal(t, 1, got.TotalJobs)
+	assert.Equal(t, 0, got.CompletedJobs)
+	assert.Equal(t, 1, got.FailedJobs,
+		"failed_jobs must be recalculated from remaining failed links")
+}
+
 func TestIncrementBatchCompleted(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -311,6 +493,36 @@ func TestGetCIBatchByJobID(t *testing.T) {
 	require.NoError(t, err, "GetCIBatchByJobID: %v")
 	assert.Nil(t, notFound, "expected nil for unknown job ID")
 
+}
+
+func TestListCIBatchesByJobID_Multiple(t *testing.T) {
+	// A shared auto-design row links to every batch that dedup'd onto it.
+	// The completion event handler must advance every linked batch; if
+	// ListCIBatchesByJobID returned only one, later batches would stay
+	// short on completed_jobs until stale reconciliation.
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-shared-job")
+	require.NoError(t, err)
+
+	batchA := mustCreateCIBatch(t, db, testRepo, 1, testSHA, 1)
+	batchB := mustCreateCIBatch(t, db, testRepo, 2, testSHA, 1)
+	shared := mustEnqueueReviewJob(t, db, repo.ID, testSHA, testAgent, testReview)
+	mustRecordBatchJob(t, db, batchA.ID, shared.ID)
+	mustRecordBatchJob(t, db, batchB.ID, shared.ID)
+
+	got, err := db.ListCIBatchesByJobID(shared.ID)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	ids := []int64{got[0].ID, got[1].ID}
+	assert.Contains(t, ids, batchA.ID)
+	assert.Contains(t, ids, batchB.ID)
+
+	empty, err := db.ListCIBatchesByJobID(99999)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 }
 
 func TestClaimBatchForSynthesis(t *testing.T) {
@@ -890,4 +1102,182 @@ func TestGetExpiredBatches(t *testing.T) {
 	_ = b2
 	_ = b3
 	_ = b4
+}
+
+func TestGetStaleBatches_TreatsSkippedAsTerminal(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-skipped-batch").ID
+	commitID := createCommit(t, db, repoID, "abc123").ID
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'abc123', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs, completed_jobs)
+		VALUES ('x/y', 1, 'abc123', 1, 0) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	batches, err := db.GetStaleBatches()
+	require.NoError(t, err)
+
+	found := false
+	for _, b := range batches {
+		if b.ID == batchID {
+			found = true
+		}
+	}
+	assert.True(t, found, "skipped-only batch must be considered terminal")
+}
+
+func TestReconcileBatch_CountsSkippedAsCompleted(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-recon").ID
+	commitID := createCommit(t, db, repoID, "cafef00d").ID
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'cafef00d', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
+		VALUES ('x/y', 2, 'cafef00d', 1) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	batch, err := db.ReconcileBatch(batchID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, batch.CompletedJobs)
+	assert.Equal(t, 0, batch.FailedJobs)
+}
+
+func TestReconcileBatch_CountsAppliedAndRebasedAsCompleted(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// AttachJobAndBumpTotal and ReconcileBatch must classify the same
+	// statuses the same way — otherwise reconciliation would subtract
+	// applied/rebased jobs back out of completed_jobs after a correct
+	// attach-time bump.
+	repoID := createRepo(t, db, "/tmp/repo-recon-fix").ID
+	commitID := createCommit(t, db, repoID, "f1xeddeed").ID
+
+	var batchID int64
+	err := db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
+		VALUES ('x/y', 3, 'f1xeddeed', 2) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+
+	for _, status := range []JobStatus{JobStatusApplied, JobStatusRebased} {
+		var jobID int64
+		err := db.QueryRow(`
+			INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+			VALUES (?, ?, ?, ?, 'design') RETURNING id
+		`, repoID, commitID, "ref-"+string(status), string(status)).Scan(&jobID)
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+		require.NoError(t, err)
+	}
+
+	batch, err := db.ReconcileBatch(batchID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, batch.CompletedJobs, "applied and rebased must count as completed")
+	assert.Equal(t, 0, batch.FailedJobs)
+}
+
+func TestStaleAndMeaningfulQueries_IncludeAppliedRebased(t *testing.T) {
+	// Regression: terminal/meaningful sets across GetStaleBatches,
+	// GetNonTerminalBatchJobIDs, HasMeaningfulBatchResult, and
+	// GetExpiredBatches must mirror AttachJobAndBumpTotal/
+	// ReconcileBatch. If they diverged, a batch containing only
+	// applied/rebased jobs could stay pending forever.
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-terminal-sets").ID
+	commitID := createCommit(t, db, repoID, "f00dbabe").ID
+
+	for _, status := range []JobStatus{JobStatusApplied, JobStatusRebased} {
+		t.Run(string(status), func(t *testing.T) {
+			var batchID int64
+			err := db.QueryRow(`
+				INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs, created_at)
+				VALUES ('x/y', 7, ?, 1, datetime('now', '-10 minutes'))
+				RETURNING id
+			`, "sha-"+string(status)).Scan(&batchID)
+			require.NoError(t, err)
+
+			var jobID int64
+			err = db.QueryRow(`
+				INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+				VALUES (?, ?, ?, ?, 'design') RETURNING id
+			`, repoID, commitID, "gitref-"+string(status), string(status)).Scan(&jobID)
+			require.NoError(t, err)
+			_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+			require.NoError(t, err)
+
+			nonTerm, err := db.GetNonTerminalBatchJobIDs(batchID)
+			require.NoError(t, err)
+			assert.Empty(t, nonTerm, "%s must count as terminal", status)
+
+			meaningful, err := db.HasMeaningfulBatchResult(batchID)
+			require.NoError(t, err)
+			assert.True(t, meaningful, "%s must count as meaningful", status)
+
+			stale, err := db.GetStaleBatches()
+			require.NoError(t, err)
+			found := false
+			for _, b := range stale {
+				if b.ID == batchID {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "batch with only %s must be stale-recoverable", status)
+		})
+	}
+}
+
+func TestHasMeaningfulBatchResult_CountsSkipped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repoID := createRepo(t, db, "/tmp/repo-meaningful").ID
+	commitID := createCommit(t, db, repoID, "dead").ID
+
+	var jobID int64
+	err := db.QueryRow(`
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
+		VALUES (?, ?, 'dead', 'skipped', 'design') RETURNING id
+	`, repoID, commitID).Scan(&jobID)
+	require.NoError(t, err)
+
+	var batchID int64
+	err = db.QueryRow(`
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
+		VALUES ('x/y', 3, 'dead', 1) RETURNING id
+	`).Scan(&batchID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	require.NoError(t, err)
+
+	meaningful, err := db.HasMeaningfulBatchResult(batchID)
+	require.NoError(t, err)
+	assert.True(t, meaningful, "batch with a skipped auto-design row has a meaningful terminal outcome")
 }
