@@ -220,3 +220,126 @@ func TestCompleteClassifyAsSkip_BroadcastsTerminalEvent(t *testing.T) {
 	assert.Equal(t, "review.completed", ev.Type)
 	assert.Equal(t, claimed.ID, ev.JobID)
 }
+
+// breakClassifySource mutates the `source` column so the WHERE clause
+// in PromoteClassifyToDesignReview / MarkClassifyAsSkippedDesign no
+// longer matches (they pin source='auto_design'). FailJob doesn't gate
+// on source, so it can still recover the stuck row. This simulates a
+// real transient DB failure of the classify-row UPDATE without making
+// the recovery path also fail.
+func breakClassifySource(t *testing.T, tc *workerTestContext, jobID int64) {
+	t.Helper()
+	res, err := tc.DB.Exec("UPDATE review_jobs SET source = 'manual' WHERE id = ?", jobID)
+	require.NoError(t, err)
+	rows, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows, "test setup: expected to mutate one row")
+}
+
+func TestApplyClassifyVerdict_PromoteFailureMarksJobFailed(t *testing.T) {
+	// If PromoteClassifyToDesignReview returns an error, the row must
+	// not stay stuck in 'running'. The recovery path marks it 'failed'
+	// and broadcasts review.failed so any linked CI batch advances
+	// instead of waiting for stale-batch reconciliation.
+	tc := newWorkerTestContext(t, 1)
+
+	_, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "dddd", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		GitRef:     "dddd",
+		JobType:    storage.JobTypeClassify,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob("worker-promote-fail")
+	require.NoError(t, err)
+	require.Equal(t, jobID, claimed.ID)
+
+	breakClassifySource(t, tc, claimed.ID)
+
+	_, ch := tc.Broadcaster.Subscribe("")
+
+	tc.Pool.applyClassifyVerdict("worker-promote-fail", claimed, true, "")
+
+	ev, ok := waitForEvent(t, ch, 1*time.Second)
+	require.True(t, ok, "expected review.failed broadcast after promote DB failure")
+	assert.Equal(t, "review.failed", ev.Type)
+	assert.Equal(t, claimed.ID, ev.JobID)
+	assert.Contains(t, ev.Error, "promote classify to design review",
+		"error message must identify the failing op for operators")
+
+	got, err := tc.DB.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusFailed, got.Status,
+		"job must transition out of running to failed")
+}
+
+func TestApplyClassifyVerdict_SkipMarkFailureMarksJobFailed(t *testing.T) {
+	// Same recovery contract on the clean-skip path: if
+	// MarkClassifyAsSkippedDesign fails, the row is marked 'failed'
+	// rather than left stranded in 'running'.
+	tc := newWorkerTestContext(t, 1)
+
+	_, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "eeee", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		GitRef:     "eeee",
+		JobType:    storage.JobTypeClassify,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob("worker-skip-fail")
+	require.NoError(t, err)
+
+	breakClassifySource(t, tc, claimed.ID)
+
+	_, ch := tc.Broadcaster.Subscribe("")
+
+	tc.Pool.applyClassifyVerdict("worker-skip-fail", claimed, false, "trivial diff")
+
+	ev, ok := waitForEvent(t, ch, 1*time.Second)
+	require.True(t, ok, "expected review.failed broadcast after skip-mark DB failure")
+	assert.Equal(t, "review.failed", ev.Type)
+	assert.Contains(t, ev.Error, "mark classify as skipped")
+
+	got, err := tc.DB.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusFailed, got.Status)
+}
+
+func TestCompleteClassifyAsSkip_MarkFailureMarksJobFailed(t *testing.T) {
+	// The classifier-failure skip path must also recover from a DB
+	// failure on Mark — otherwise a transient error during the
+	// degrade-to-skip step strands the row.
+	tc := newWorkerTestContext(t, 1)
+
+	_, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "ffff", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		GitRef:     "ffff",
+		JobType:    storage.JobTypeClassify,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob("worker-classifier-fail")
+	require.NoError(t, err)
+
+	breakClassifySource(t, tc, claimed.ID)
+
+	_, ch := tc.Broadcaster.Subscribe("")
+
+	tc.Pool.completeClassifyAsSkip("worker-classifier-fail", claimed,
+		"classifier timed out", "exec: timeout after 30s")
+
+	ev, ok := waitForEvent(t, ch, 1*time.Second)
+	require.True(t, ok, "expected review.failed broadcast after failure-skip DB failure")
+	assert.Equal(t, "review.failed", ev.Type)
+	assert.Contains(t, ev.Error, "mark classify as skipped (failure path)")
+
+	got, err := tc.DB.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusFailed, got.Status)
+}

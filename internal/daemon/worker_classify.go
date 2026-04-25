@@ -178,16 +178,18 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 		designAgent, designModel := wp.resolveDesignFollowUp(job.RepoPath)
 		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID, designAgent, designModel); err != nil {
 			log.Printf("[%s] PromoteClassifyToDesignReview for %d: %v", workerID, job.ID, err)
+			wp.failClassifyOnDBError(workerID, job, "promote classify to design review", err)
 		}
-		// No terminal broadcast: the row went back to 'queued' so the
-		// worker will claim it again and the normal design-review path
-		// emits its own review.completed when it finishes.
+		// On success: no terminal broadcast — the row went back to
+		// 'queued' and the normal design-review path emits its own
+		// review.completed when it finishes.
 		return
 	}
 	// The "no design review" path is a clean verdict, not a failure —
 	// the classifier successfully produced an answer, so no errorDetail.
 	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, ""); err != nil {
 		log.Printf("[%s] MarkClassifyAsSkippedDesign for %d: %v", workerID, job.ID, err)
+		wp.failClassifyOnDBError(workerID, job, "mark classify as skipped", err)
 		return
 	}
 	wp.broadcastClassifyTerminal(job)
@@ -227,9 +229,48 @@ func (wp *WorkerPool) completeClassifyAsSkip(workerID string, job *storage.Revie
 	autoDesignMetrics.RecordClassifier(false, true)
 	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, errorDetail); err != nil {
 		log.Printf("[%s] MarkClassifyAsSkippedDesign for failed classify %d: %v", workerID, job.ID, err)
+		wp.failClassifyOnDBError(workerID, job, "mark classify as skipped (failure path)", err)
 		return
 	}
 	wp.broadcastClassifyTerminal(job)
+}
+
+// failClassifyOnDBError is the recovery path when a classify-row DB
+// transition (PromoteClassifyToDesignReview / MarkClassifyAsSkippedDesign)
+// fails. The classify row is still in 'running' — leaving it there
+// would block worker quota and stall any CI batch waiting on the row.
+// Mark it 'failed' and broadcast review.failed so subscribers advance.
+func (wp *WorkerPool) failClassifyOnDBError(workerID string, job *storage.ReviewJob, op string, dbErr error) {
+	errMsg := fmt.Sprintf("classify %s: %v", op, dbErr)
+	updated, fErr := wp.db.FailJob(job.ID, workerID, errMsg)
+	if fErr != nil {
+		log.Printf("[%s] FailJob for stuck classify %d: %v", workerID, job.ID, fErr)
+		return
+	}
+	if updated {
+		wp.broadcastClassifyFailed(job, errMsg)
+	}
+}
+
+// broadcastClassifyFailed mirrors broadcastClassifyTerminal but emits
+// review.failed instead of review.completed, used when a classify row
+// can't transition to a terminal verdict cleanly. Without this, CI
+// batches counting failed_jobs would stay short until stale-batch
+// reconciliation.
+func (wp *WorkerPool) broadcastClassifyFailed(job *storage.ReviewJob, errMsg string) {
+	if wp.broadcaster == nil {
+		return
+	}
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.failed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    job.Agent,
+		Error:    errMsg,
+	})
 }
 
 // broadcastClassifyTerminal emits a review.completed event after a
