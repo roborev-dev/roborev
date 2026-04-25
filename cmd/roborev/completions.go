@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -24,5 +25,15 @@ func registerReasoningCompletion(cmd *cobra.Command) {
 		return agent.ReasoningLevels(), cobra.ShellCompDirectiveNoFileComp
 	}); err != nil {
 		panic(fmt.Sprintf("registering reasoning completion for %s: %v", cmd.Name(), err))
+	}
+}
+
+// registerReviewTypeCompletion registers shell completion for the --type flag.
+// Panics if the flag doesn't exist on the command (programming error).
+func registerReviewTypeCompletion(cmd *cobra.Command) {
+	if err := cmd.RegisterFlagCompletionFunc("type", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		return []cobra.Completion{config.ReviewTypeSecurity, config.ReviewTypeDesign}, cobra.ShellCompDirectiveNoFileComp
+	}); err != nil {
+		panic(fmt.Sprintf("registering review type completion for %s: %v", cmd.Name(), err))
 	}
 }
