@@ -42,6 +42,8 @@ REPORT.md
 # Claude Code
 .claude/worktrees/
 .claude/settings.local.json
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
 
 # Dolt database files (added by bd init)
 .dolt/
