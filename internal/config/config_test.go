@@ -3492,6 +3492,55 @@ func TestResolveAutoDesignHeuristics_GlobalOverride(t *testing.T) {
 	assert.Equal([]string{"foo/**"}, h.TriggerPaths)
 }
 
+func TestAutoDesignHeuristics_Validate_Defaults(t *testing.T) {
+	require.NoError(t, DefaultAutoDesignHeuristics().Validate())
+}
+
+func TestAutoDesignHeuristics_Validate_InvalidTriggerGlob(t *testing.T) {
+	h := DefaultAutoDesignHeuristics()
+	h.TriggerPaths = []string{"["}
+	err := h.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trigger_paths")
+}
+
+func TestAutoDesignHeuristics_Validate_InvalidSkipGlob(t *testing.T) {
+	h := DefaultAutoDesignHeuristics()
+	h.SkipPaths = []string{"["}
+	err := h.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skip_paths")
+}
+
+func TestAutoDesignHeuristics_Validate_InvalidTriggerRegex(t *testing.T) {
+	h := DefaultAutoDesignHeuristics()
+	h.TriggerMessagePatterns = []string{"(unclosed"}
+	err := h.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trigger_message_patterns")
+}
+
+func TestAutoDesignHeuristics_Validate_InvalidSkipRegex(t *testing.T) {
+	h := DefaultAutoDesignHeuristics()
+	h.SkipMessagePatterns = []string{"(unclosed"}
+	err := h.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skip_message_patterns")
+}
+
+func TestResolveGlobalAutoDesignHeuristics_IgnoresPerRepo(t *testing.T) {
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, ".roborev.toml"),
+		[]byte("[auto_design_review]\ntrigger_paths = [\"[\"]\n"), 0o644))
+	cfg := &Config{AutoDesignReview: AutoDesignReviewConfig{
+		TriggerPaths: []string{"foo/**"},
+	}}
+	h := ResolveGlobalAutoDesignHeuristics(cfg)
+	assert.Equal(t, []string{"foo/**"}, h.TriggerPaths,
+		"ResolveGlobalAutoDesignHeuristics must ignore per-repo overlays from cwd")
+	require.NoError(t, h.Validate())
+}
+
 func TestResolveClassifyAgent_Default(t *testing.T) {
 	RegisterClassifyAgentValidator(nil)
 	name, err := ResolveClassifyAgent("", t.TempDir(), &Config{})

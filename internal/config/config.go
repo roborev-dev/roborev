@@ -15,6 +15,7 @@ import (
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/review/autotype"
 )
 
 // ConfigParseError is returned when .roborev.toml exists but
@@ -425,6 +426,33 @@ func ResolveAutoDesignHeuristics(repoPath string, globalCfg *Config) AutoDesignH
 		h = overlayAutoDesignRepo(h, repoCfg.AutoDesignReview)
 	}
 	return h
+}
+
+// ResolveGlobalAutoDesignHeuristics merges defaults with the global overlay
+// only. Used at daemon startup where no specific repo context applies and
+// per-repo validation would require an open DB to enumerate repos.
+func ResolveGlobalAutoDesignHeuristics(globalCfg *Config) AutoDesignHeuristics {
+	h := DefaultAutoDesignHeuristics()
+	if globalCfg != nil {
+		h = overlayAutoDesignGlobal(h, globalCfg.AutoDesignReview)
+	}
+	return h
+}
+
+// Validate compiles each regex and checks each glob, surfacing invalid
+// trigger/skip patterns so config typos fail loudly instead of silently
+// suppressing every auto-design dispatch at runtime. Delegates to
+// autotype.Heuristics.Validate so the pattern checks live in one place.
+func (h AutoDesignHeuristics) Validate() error {
+	return autotype.Heuristics{
+		MinDiffLines:           h.MinDiffLines,
+		LargeDiffLines:         h.LargeDiffLines,
+		LargeFileCount:         h.LargeFileCount,
+		TriggerPaths:           h.TriggerPaths,
+		SkipPaths:              h.SkipPaths,
+		TriggerMessagePatterns: h.TriggerMessagePatterns,
+		SkipMessagePatterns:    h.SkipMessagePatterns,
+	}.Validate()
 }
 
 func overlayAutoDesignGlobal(base AutoDesignHeuristics, over AutoDesignReviewConfig) AutoDesignHeuristics {

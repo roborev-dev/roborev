@@ -119,6 +119,18 @@ func daemonRunCmd() *cobra.Command {
 				cfg = config.DefaultConfig()
 			}
 
+			// Fail fast on invalid auto-design heuristic config. An
+			// unchecked typo in trigger_paths/skip_paths or in one of
+			// the message-pattern regexes would otherwise surface only
+			// at dispatch time as a "heuristic error" skipped row,
+			// silently suppressing every automatic design review.
+			if cfg.AutoDesignReview.Enabled {
+				globalHeuristics := config.ResolveGlobalAutoDesignHeuristics(cfg)
+				if err := globalHeuristics.Validate(); err != nil {
+					return fmt.Errorf("invalid [auto_design_review] config in %s: %w", configPath, err)
+				}
+			}
+
 			// Apply flag overrides
 			if addr != "" {
 				cfg.ServerAddr = addr

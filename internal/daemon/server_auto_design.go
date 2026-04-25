@@ -122,6 +122,10 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 	}
 
 	h := config.ResolveAutoDesignHeuristics(parent.RepoPath, cfg)
+	if err := h.Validate(); err != nil {
+		log.Printf("auto-design: invalid heuristics config for %s, skipping dispatch: %v", parent.RepoPath, err)
+		return nil
+	}
 	hh := autotype.Heuristics{
 		MinDiffLines:           h.MinDiffLines,
 		LargeDiffLines:         h.LargeDiffLines,

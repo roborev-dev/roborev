@@ -748,6 +748,10 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 	}
 
 	h := config.ResolveAutoDesignHeuristics(repo.RootPath, cfg)
+	if err := h.Validate(); err != nil {
+		log.Printf("CI poller: invalid auto-design heuristics for %s, skipping dispatch: %v", repo.RootPath, err)
+		return nil
+	}
 	hh := autotype.Heuristics{
 		MinDiffLines:           h.MinDiffLines,
 		LargeDiffLines:         h.LargeDiffLines,

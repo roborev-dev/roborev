@@ -154,6 +154,38 @@ func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {
 	assert.True(t, got.Enabled)
 }
 
+func TestMaybeDispatchAutoDesign_InvalidConfig_NoRow(t *testing.T) {
+	srv, repo := newAutoDesignTestServer(t)
+	// Enable auto-design but poison the heuristics with an invalid glob.
+	// An unvalidated typo previously silently inserted a skipped row with
+	// reason "auto-design: heuristic error" — this confirms the new
+	// validation path logs and no-ops instead.
+	require.NoError(t, os.WriteFile(filepath.Join(repo.RootPath, ".roborev.toml"),
+		[]byte("[auto_design_review]\nenabled = true\ntrigger_paths = [\"[\"]\n"), 0o644))
+
+	commit, err := srv.db.GetOrCreateCommit(repo.ID, "deadbeef", "Author", "feat: x", time.Now())
+	require.NoError(t, err)
+	d := "+x\n+y\n+a\n+b\n+c\n+d\n+e\n+f\n+g\n+h\n+i\n+j\n"
+	parent := &storage.ReviewJob{
+		RepoID: repo.ID, CommitID: &commit.ID, GitRef: "deadbeef",
+		JobType: storage.JobTypeReview, Status: storage.JobStatusQueued,
+		EnqueuedAt: time.Now(), RepoPath: repo.RootPath,
+		CommitSubject: "feat: x", DiffContent: &d,
+	}
+
+	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+
+	for _, s := range []storage.JobStatus{storage.JobStatusQueued, storage.JobStatusSkipped} {
+		jobs, err := srv.db.ListJobsByStatus(repo.ID, s)
+		require.NoError(t, err)
+		for _, j := range jobs {
+			assert.NotEqual(t, "auto_design", j.Source,
+				"invalid config must not create an auto_design row (status=%s, reason=%q)",
+				s, j.SkipReason)
+		}
+	}
+}
+
 func TestMaybeDispatchAutoDesign_Disabled_NoOp(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	// Don't enable.
