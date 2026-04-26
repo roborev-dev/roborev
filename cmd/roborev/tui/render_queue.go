@@ -154,6 +154,7 @@ func (m model) renderQueueView() string {
 		// fall back to client-side counting for multi-repo filters (which load all jobs)
 		var statusLine string
 		var done, closed, open int
+		var aggH, aggM, aggL int
 		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
 			// Client-side filtered views load all jobs, so count locally
 			for _, job := range m.jobs {
@@ -173,11 +174,19 @@ func (m model) renderQueueView() string {
 						}
 					}
 				}
+				if job.HighFindings != nil {
+					aggH += *job.HighFindings
+					aggM += *job.MediumFindings
+					aggL += *job.LowFindings
+				}
 			}
 		} else {
 			done = m.jobStats.Done
 			closed = m.jobStats.Closed
 			open = m.jobStats.Open
+			aggH = m.jobStats.HighFindings
+			aggM = m.jobStats.MediumFindings
+			aggL = m.jobStats.LowFindings
 		}
 		b.WriteString(m.renderDaemonStatus())
 		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
@@ -189,6 +198,11 @@ func (m model) renderQueueView() string {
 				done, closed, open)
 		}
 		b.WriteString(statusStyle.Render(statusLine))
+		if aggH+aggM+aggL > 0 {
+			b.WriteString(statusStyle.Render(" |"))
+			b.WriteString(" Findings: ")
+			b.WriteString(renderSeverityBadge(aggH, aggM, aggL))
+		}
 		b.WriteString("\x1b[K\n") // Clear status line
 
 		// Update notification on line 3 (above the table)
