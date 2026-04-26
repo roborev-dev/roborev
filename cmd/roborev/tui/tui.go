@@ -21,6 +21,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
+	daemonclient "github.com/roborev-dev/roborev/internal/daemon_client"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
@@ -257,6 +258,7 @@ type model struct {
 	endpoint         daemon.DaemonEndpoint
 	daemonVersion    string
 	client           *http.Client
+	api              *daemonclient.ClientWithResponses
 	glamourStyle     gansi.StyleConfig // detected once at init
 	jobs             []storage.ReviewJob
 	jobStats         storage.JobStats // aggregate done/closed/open from server
@@ -573,10 +575,12 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		}
 	}
 
+	httpClient := ep.HTTPClient(10 * time.Second)
 	return model{
 		endpoint:            ep,
 		daemonVersion:       daemonVersion,
-		client:              ep.HTTPClient(10 * time.Second),
+		client:              httpClient,
+		api:                 newDaemonAPI(ep, httpClient),
 		glamourStyle:        streamfmt.GlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,

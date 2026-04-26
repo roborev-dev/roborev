@@ -791,6 +791,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
+		m.api = newDaemonAPI(msg.endpoint, m.client)
 		// Update runtime metadata so external tools see the
 		// new daemon address after reconnect.
 		if m.controlSocket != "" {

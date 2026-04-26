@@ -20,7 +20,7 @@ func requestActivity(server *Server, method, query string) *httptest.ResponseRec
 	}
 	req := httptest.NewRequest(method, url, nil)
 	w := httptest.NewRecorder()
-	server.handleActivity(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	return w
 }
 

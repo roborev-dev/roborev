@@ -601,7 +601,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		rt := entry.ReviewType
 		ag := entry.Agent
 
-		// Map review_type to workflow name (same as handleEnqueue).
+		// Map review_type to the same workflow name used by the enqueue API.
 		workflow := "review"
 		if !config.IsDefaultReviewType(rt) {
 			workflow = rt

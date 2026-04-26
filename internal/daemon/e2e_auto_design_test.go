@@ -552,7 +552,7 @@ func TestE2EAutoDesign_HTTP_ExplicitDesignBypasses(t *testing.T) {
 		ReviewType: "design",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
 
 	// The only row for this commit should be the explicit design review
@@ -608,7 +608,7 @@ func TestE2EAutoDesign_HTTP_RangeReviewBypasses(t *testing.T) {
 		Agent:    "test",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
 
 	repo, err := db.GetOrCreateRepo(repoDir)
@@ -642,7 +642,7 @@ func TestE2EAutoDesign_HTTP_SecurityReviewBypasses(t *testing.T) {
 		ReviewType: "security",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
 
 	repo, err := db.GetOrCreateRepo(repoDir)

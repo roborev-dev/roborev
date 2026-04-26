@@ -1,8 +1,50 @@
 package daemon
 
-import (
-	"github.com/roborev-dev/roborev/internal/storage"
-)
+import "github.com/roborev-dev/roborev/internal/storage"
+
+type EnqueueRequest struct {
+	RepoPath     string `json:"repo_path"`
+	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
+	Since        string `json:"since,omitempty"`      // RFC3339 lower bound for insights datasets
+	Agent        string `json:"agent,omitempty"`
+	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
+	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
+	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
+	ReviewType   string `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
+	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
+	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
+	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
+	MinSeverity  string `json:"min_severity,omitempty"`  // Minimum severity filter: critical, high, medium, low
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+type EnqueueSkippedResponse struct {
+	Skipped bool   `json:"skipped"`
+	Reason  string `json:"reason"`
+}
+
+// RemapRequest is the request body for POST /api/remap.
+type RemapRequest struct {
+	RepoPath string         `json:"repo_path"`
+	Mappings []RemapMapping `json:"mappings"`
+}
+
+// RemapMapping maps a pre-rewrite SHA to its post-rewrite replacement.
+type RemapMapping struct {
+	OldSHA    string `json:"old_sha"`
+	NewSHA    string `json:"new_sha"`
+	PatchID   string `json:"patch_id"`
+	Author    string `json:"author"`
+	Subject   string `json:"subject"`
+	Timestamp string `json:"timestamp"` // RFC3339
+}
 
 // -- GET /api/jobs --
 
@@ -210,4 +252,165 @@ type GetSummaryInput struct {
 // GetSummaryOutput is the response for GET /api/summary.
 type GetSummaryOutput struct {
 	Body *storage.Summary
+}
+
+// RawJSONOutput is used by endpoints with union response shapes while their
+// core behavior is represented by Huma request types.
+type RawJSONOutput struct {
+	Status int
+	Body   any
+}
+
+// EnqueueInput is the request body for POST /api/enqueue.
+type EnqueueInput struct {
+	Body EnqueueRequest
+}
+
+// BatchJobsRequest is the request body for POST /api/jobs/batch.
+type BatchJobsRequest struct {
+	JobIDs []int64 `json:"job_ids"`
+}
+
+// BatchJobsInput is the request body for POST /api/jobs/batch.
+type BatchJobsInput struct {
+	Body BatchJobsRequest
+}
+
+// BatchJobsOutput is the response for POST /api/jobs/batch.
+type BatchJobsOutput struct {
+	Body struct {
+		Results map[int64]storage.JobWithReview `json:"results"`
+	}
+}
+
+// RegisterRepoRequest is the request body for POST /api/repos/register.
+type RegisterRepoRequest struct {
+	RepoPath string `json:"repo_path"`
+}
+
+// RegisterRepoInput is the request body for POST /api/repos/register.
+type RegisterRepoInput struct {
+	Body RegisterRepoRequest
+}
+
+// RegisterRepoOutput is the response for POST /api/repos/register.
+type RegisterRepoOutput struct {
+	Body *storage.Repo
+}
+
+// UpdateJobBranchRequest is the request body for POST /api/job/update-branch.
+type UpdateJobBranchRequest struct {
+	JobID  int64  `json:"job_id"`
+	Branch string `json:"branch"`
+}
+
+// UpdateJobBranchInput is the request body for POST /api/job/update-branch.
+type UpdateJobBranchInput struct {
+	Body UpdateJobBranchRequest
+}
+
+// UpdateJobBranchOutput is the response for POST /api/job/update-branch.
+type UpdateJobBranchOutput struct {
+	Body struct {
+		Success bool `json:"success"`
+		Updated bool `json:"updated"`
+	}
+}
+
+// RemapInput is the request body for POST /api/remap.
+type RemapInput struct {
+	Body RemapRequest
+}
+
+// RemapOutput is the response for POST /api/remap.
+type RemapOutput struct {
+	Body RemapResult
+}
+
+// FixJobRequest is the request body for POST /api/job/fix.
+type FixJobRequest struct {
+	ParentJobID int64  `json:"parent_job_id"`
+	Prompt      string `json:"prompt,omitempty"`
+	GitRef      string `json:"git_ref,omitempty"`
+	StaleJobID  int64  `json:"stale_job_id,omitempty"`
+}
+
+// FixJobInput is the request body for POST /api/job/fix.
+type FixJobInput struct {
+	Body FixJobRequest
+}
+
+// JobIDRequest is used by job state transition endpoints.
+type JobIDRequest struct {
+	JobID int64 `json:"job_id"`
+}
+
+// JobIDInput is the request body for job state transition endpoints.
+type JobIDInput struct {
+	Body JobIDRequest
+}
+
+// JobStatusOutput is the response for job state transition endpoints.
+type JobStatusOutput struct {
+	Body struct {
+		Status string `json:"status"`
+	}
+}
+
+// ActivityInput holds query parameters for GET /api/activity.
+type ActivityInput struct {
+	Limit string `query:"limit" doc:"Maximum entries to return"`
+}
+
+// ActivityOutput is the response for GET /api/activity.
+type ActivityOutput struct {
+	Body struct {
+		Entries []ActivityEntry `json:"entries"`
+	}
+}
+
+// HealthOutput is the response for GET /api/health.
+type HealthOutput struct {
+	Body storage.HealthStatus
+}
+
+// PingOutput is the response for GET /api/ping.
+type PingOutput struct {
+	Body PingInfo
+}
+
+// SyncStatusOutput is the response for GET /api/sync/status.
+type SyncStatusOutput struct {
+	Body struct {
+		Enabled   bool   `json:"enabled"`
+		Connected bool   `json:"connected"`
+		Message   string `json:"message"`
+	}
+}
+
+// JobOutputInput holds query parameters for GET /api/job/output.
+type JobOutputInput struct {
+	JobID  string `query:"job_id" doc:"Job ID"`
+	Stream string `query:"stream" doc:"Stream output as NDJSON when set to 1"`
+}
+
+// JobLogInput holds query parameters for GET /api/job/log.
+type JobLogInput struct {
+	JobID  string `query:"job_id" doc:"Job ID"`
+	Offset string `query:"offset" doc:"Byte offset into the log file"`
+}
+
+// JobPatchInput holds query parameters for GET /api/job/patch.
+type JobPatchInput struct {
+	JobID string `query:"job_id" doc:"Job ID"`
+}
+
+// SyncNowInput holds query parameters for POST /api/sync/now.
+type SyncNowInput struct {
+	Stream string `query:"stream" doc:"Stream sync progress as NDJSON when set to 1"`
+}
+
+// StreamEventsInput holds query parameters for GET /api/stream/events.
+type StreamEventsInput struct {
+	Repo string `query:"repo" doc:"Filter events by repo root path"`
 }

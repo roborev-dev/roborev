@@ -126,7 +126,7 @@ func executeRemapRequest(t *testing.T, ctx *remapContext, newSHA string) remapRe
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
 	w := httptest.NewRecorder()
-	ctx.server.handleRemap(w, req)
+	ctx.server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		require.Condition(t, func() bool {
