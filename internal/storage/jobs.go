@@ -350,9 +350,13 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	}
 
 	verdictBool := verdictToBool(ParseVerdict(finalOutput))
+	highCount, mediumCount, lowCount := CountFindings(finalOutput)
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now)
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at,
+		                      high_count, medium_count, low_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now,
+		highCount, mediumCount, lowCount)
 	if err != nil {
 		return err
 	}
@@ -425,13 +429,19 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		return nil
 	}
 
-	// Insert review with sync columns
+	// Insert review with sync columns and finding counts
 	var verdictBoolVal any
+	var highCount, mediumCount, lowCount int
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+		highCount, mediumCount, lowCount = CountFindings(finalOutput)
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at,
+		                      high_count, medium_count, low_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now,
+		highCount, mediumCount, lowCount)
 	if err != nil {
 		return err
 	}
