@@ -39,6 +39,13 @@ type reviewJobScanFields struct {
 	MinSeverity       string
 	SkipReason        sql.NullString
 	Source            sql.NullString
+
+	HighFindings         sql.NullInt64
+	MediumFindings       sql.NullInt64
+	LowFindings          sql.NullInt64
+	ParentHighFindings   sql.NullInt64
+	ParentMediumFindings sql.NullInt64
+	ParentLowFindings    sql.NullInt64
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
@@ -132,6 +139,30 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	if fields.Source.Valid {
 		job.Source = fields.Source.String
+	}
+	if fields.HighFindings.Valid {
+		v := int(fields.HighFindings.Int64)
+		job.HighFindings = &v
+	}
+	if fields.MediumFindings.Valid {
+		v := int(fields.MediumFindings.Int64)
+		job.MediumFindings = &v
+	}
+	if fields.LowFindings.Valid {
+		v := int(fields.LowFindings.Int64)
+		job.LowFindings = &v
+	}
+	if fields.ParentHighFindings.Valid {
+		v := int(fields.ParentHighFindings.Int64)
+		job.ParentHighFindings = &v
+	}
+	if fields.ParentMediumFindings.Valid {
+		v := int(fields.ParentMediumFindings.Int64)
+		job.ParentMediumFindings = &v
+	}
+	if fields.ParentLowFindings.Valid {
+		v := int(fields.ParentLowFindings.Int64)
+		job.ParentLowFindings = &v
 	}
 }
 
