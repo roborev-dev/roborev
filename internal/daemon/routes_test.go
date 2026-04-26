@@ -284,19 +284,34 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	require.True(t, ok, "spec must have paths object")
 
 	wantPaths := map[string]string{
-		"/api/jobs":         "get",
-		"/api/review":       "get",
-		"/api/comments":     "get",
-		"/api/repos":        "get",
-		"/api/branches":     "get",
-		"/api/status":       "get",
-		"/api/summary":      "get",
-		"/api/job/cancel":   "post",
-		"/api/job/rerun":    "post",
-		"/api/review/close": "post",
-		"/api/comment":      "post",
-		// /api/job/output is a plain HandleFunc (supports
-		// NDJSON streaming) so it is not in the OpenAPI spec.
+		"/api/jobs":              "get",
+		"/api/review":            "get",
+		"/api/comments":          "get",
+		"/api/repos":             "get",
+		"/api/branches":          "get",
+		"/api/status":            "get",
+		"/api/summary":           "get",
+		"/api/health":            "get",
+		"/api/ping":              "get",
+		"/api/sync/status":       "get",
+		"/api/activity":          "get",
+		"/api/job/output":        "get",
+		"/api/job/log":           "get",
+		"/api/job/patch":         "get",
+		"/api/stream/events":     "get",
+		"/api/job/cancel":        "post",
+		"/api/job/rerun":         "post",
+		"/api/review/close":      "post",
+		"/api/comment":           "post",
+		"/api/enqueue":           "post",
+		"/api/jobs/batch":        "post",
+		"/api/repos/register":    "post",
+		"/api/job/update-branch": "post",
+		"/api/remap":             "post",
+		"/api/sync/now":          "post",
+		"/api/job/fix":           "post",
+		"/api/job/applied":       "post",
+		"/api/job/rebased":       "post",
 	}
 	for p, method := range wantPaths {
 		pathObj, exists := paths[p]
@@ -311,6 +326,24 @@ func TestHumaOpenAPISpec(t *testing.T) {
 				"path %s should have method %s", p, method)
 		}
 	}
+
+	enqueuePath, ok := paths["/api/enqueue"].(map[string]any)
+	require.True(t, ok, "enqueue path should be an object")
+	enqueuePost, ok := enqueuePath["post"].(map[string]any)
+	require.True(t, ok, "enqueue post should be an object")
+	responses, ok := enqueuePost["responses"].(map[string]any)
+	require.True(t, ok, "enqueue responses should be an object")
+	statusOK, ok := responses["200"].(map[string]any)
+	require.True(t, ok, "enqueue should document skipped response")
+	content, ok := statusOK["content"].(map[string]any)
+	require.True(t, ok, "enqueue 200 response should have content")
+	jsonContent, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "enqueue 200 response should document JSON")
+	schema, ok := jsonContent["schema"].(map[string]any)
+	require.True(t, ok, "enqueue 200 response should have a schema")
+	oneOf, ok := schema["oneOf"].([]any)
+	require.True(t, ok, "enqueue 200 response should use oneOf")
+	assert.Len(t, oneOf, 2)
 }
 
 func TestHumaListRepos(t *testing.T) {

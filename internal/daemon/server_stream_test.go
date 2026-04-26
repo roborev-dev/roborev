@@ -28,7 +28,7 @@ func startStreamHandler(t *testing.T, server *Server, url string) (context.Cance
 	// Run handler in goroutine
 	done := make(chan struct{})
 	go func() {
-		server.handleStreamEvents(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		close(done)
 	}()
 
@@ -76,7 +76,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/stream/events", nil)
 		w := httptest.NewRecorder()
 
-		server.handleStreamEvents(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {

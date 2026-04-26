@@ -49,7 +49,7 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 			w := httptest.NewRecorder()
 
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != tt.wantCode {
 				require.Condition(t, func() bool {

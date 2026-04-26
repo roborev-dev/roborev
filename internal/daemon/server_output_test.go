@@ -148,7 +148,7 @@ func TestHandleJobLog(t *testing.T) {
 	t.Run("missing job_id returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/log", nil)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
 			assert.Condition(t, func() bool {
 				return false
@@ -161,7 +161,7 @@ func TestHandleJobLog(t *testing.T) {
 			http.MethodGet, "/api/job/log?job_id=99999", nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusNotFound {
 			assert.Condition(t, func() bool {
 				return false
@@ -176,7 +176,7 @@ func TestHandleJobLog(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusNotFound {
 			assert.Condition(t, func() bool {
 				return false
@@ -207,7 +207,7 @@ func TestHandleJobLog(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -250,7 +250,7 @@ func TestHandleJobLog(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -276,7 +276,7 @@ func TestHandleJobLog(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {
 				return false
@@ -336,7 +336,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -379,7 +379,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -406,7 +406,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -431,7 +431,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			assert.Condition(t, func() bool {
@@ -450,7 +450,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -515,7 +515,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			nil,
 		)
 		w := httptest.NewRecorder()
-		server.handleJobLog(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
