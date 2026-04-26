@@ -110,6 +110,7 @@ const (
 	colElapsed                  // Elapsed time
 	colStatus                   // Job status
 	colPF                       // Pass/Fail verdict
+	colFindings                 // Severity finding counts (H3 M2 L5)
 	colHandled                  // Done status
 	colSessionID                // Session ID
 	colRequestedModel           // Explicitly requested model
@@ -153,6 +154,7 @@ func (m model) renderQueueView() string {
 		// fall back to client-side counting for multi-repo filters (which load all jobs)
 		var statusLine string
 		var done, closed, open int
+		var aggH, aggM, aggL int
 		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
 			// Client-side filtered views load all jobs, so count locally
 			for _, job := range m.jobs {
@@ -172,11 +174,17 @@ func (m model) renderQueueView() string {
 						}
 					}
 				}
+				aggH += derefOrZero(job.HighFindings)
+				aggM += derefOrZero(job.MediumFindings)
+				aggL += derefOrZero(job.LowFindings)
 			}
 		} else {
 			done = m.jobStats.Done
 			closed = m.jobStats.Closed
 			open = m.jobStats.Open
+			aggH = m.jobStats.HighFindings
+			aggM = m.jobStats.MediumFindings
+			aggL = m.jobStats.LowFindings
 		}
 		b.WriteString(m.renderDaemonStatus())
 		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
@@ -188,6 +196,11 @@ func (m model) renderQueueView() string {
 				done, closed, open)
 		}
 		b.WriteString(statusStyle.Render(statusLine))
+		if aggH+aggM+aggL > 0 {
+			b.WriteString(statusStyle.Render(" |"))
+			b.WriteString(" Findings: ")
+			b.WriteString(renderSeverityBadge(aggH, aggM, aggL))
+		}
 		b.WriteString("\x1b[K\n") // Clear status line
 
 		// Update notification on line 3 (above the table)
@@ -263,7 +276,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Findings", "Closed", "Session", "Req Model", "Req Provider"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -317,6 +330,7 @@ func (m model) renderQueueView() string {
 			colQueued:            12,
 			colElapsed:           8,
 			colPF:                3,                                                    // "P/F" header = 3
+			colFindings:          8,                                                    // "Findings" header = 8 (badge "3/2/5" = 5; header dominates)
 			colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
 			colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
 			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
@@ -662,7 +676,16 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	requestedModel := stripControlChars(job.RequestedModel)
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider}
+	findings := ""
+	if job.HighFindings != nil || job.MediumFindings != nil || job.LowFindings != nil {
+		findings = renderSeverityBadge(
+			derefOrZero(job.HighFindings),
+			derefOrZero(job.MediumFindings),
+			derefOrZero(job.LowFindings),
+		)
+	}
+
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, findings, handled, sessionID, requestedModel, requestedProvider}
 }
 
 // statusLabel returns a capitalized display label for the job status.
@@ -830,12 +853,38 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		dirty = true
 	}
 
+	// Backfill "findings" into custom queue and task column orders so users
+	// with pre-existing customisation see the new column next to its sibling
+	// (after "pf" for queue, after "parent" for tasks). Missing entries would
+	// otherwise be appended at the end by resolveColumnOrder.
+	if len(cfg.ColumnOrder) > 0 && !slices.Contains(cfg.ColumnOrder, "findings") {
+		insertAt := len(cfg.ColumnOrder)
+		for i, name := range cfg.ColumnOrder {
+			if name == "pf" {
+				insertAt = i + 1
+				break
+			}
+		}
+		cfg.ColumnOrder = slices.Insert(cfg.ColumnOrder, insertAt, "findings")
+		dirty = true
+	}
+	if len(cfg.TaskColumnOrder) > 0 && !slices.Contains(cfg.TaskColumnOrder, "findings") {
+		insertAt := len(cfg.TaskColumnOrder)
+		for i, name := range cfg.TaskColumnOrder {
+			if name == "parent" {
+				insertAt = i + 1
+				break
+			}
+		}
+		cfg.TaskColumnOrder = slices.Insert(cfg.TaskColumnOrder, insertAt, "findings")
+		dirty = true
+	}
 	return dirty
 }
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colSessionID, colRequestedModel, colRequestedProvider}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colFindings, colHandled, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -847,6 +896,7 @@ var columnNames = map[int]string{
 	colQueued:            "Queued",
 	colElapsed:           "Elapsed",
 	colPF:                "P/F",
+	colFindings:          "Findings",
 	colHandled:           "Closed",
 	colSessionID:         "Session",
 	colRequestedModel:    "Req Model",
@@ -863,6 +913,7 @@ var columnConfigNames = map[int]string{
 	colQueued:            "queued",
 	colElapsed:           "elapsed",
 	colPF:                "pf",
+	colFindings:          "findings",
 	colHandled:           "closed",
 	colSessionID:         "session_id",
 	colRequestedModel:    "requested_model",

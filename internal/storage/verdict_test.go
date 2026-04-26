@@ -715,3 +715,78 @@ var verdictTests = []verdictTestCase{
 func TestParseVerdict(t *testing.T) {
 	runVerdictTests(t, verdictTests)
 }
+
+func TestCountFindings(t *testing.T) {
+	tests := []struct {
+		name                string
+		output              string
+		wantH, wantM, wantL int
+	}{
+		{
+			name:   "empty output",
+			output: "",
+		},
+		{
+			name:   "no issues found",
+			output: "No issues found.",
+		},
+		{
+			name: "single high",
+			output: `Findings:
+- High — sql injection in handler.go:42`,
+			wantH: 1,
+		},
+		{
+			name: "critical collapses into high",
+			output: `- Critical: missing auth check
+- High — race in cache lookup`,
+			wantH: 2,
+		},
+		{
+			name: "info collapses into low",
+			output: `- Low: typo in comment
+- Info: consider extracting helper`,
+			wantL: 2,
+		},
+		{
+			name: "mixed severities",
+			output: `Review Findings:
+1. High - data race in worker pool
+2. Medium — missing context cancellation
+3. Medium: error swallowed
+4. Low - unused import`,
+			wantH: 1, wantM: 2, wantL: 1,
+		},
+		{
+			name: "severity field label form",
+			output: `Issue: connection leak
+**Severity**: High
+File: db.go`,
+			wantH: 1,
+		},
+		{
+			name: "legend block is excluded",
+			output: `Severity levels:
+- Critical: blocking issue
+- High: ship-blocking
+- Medium: should fix
+- Low: nice to have
+
+Findings:
+- High — actual finding here`,
+			wantH: 1,
+		},
+		{
+			name:   "high-level is not a severity",
+			output: `This provides a high-level overview of the changes.`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, m, l := CountFindings(tt.output)
+			assert.Equal(t, tt.wantH, h, "high count")
+			assert.Equal(t, tt.wantM, m, "medium count")
+			assert.Equal(t, tt.wantL, l, "low count")
+		})
+	}
+}

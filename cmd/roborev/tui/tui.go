@@ -74,6 +74,18 @@ var (
 
 	updateStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
+
+	// Severity styles for finding count badges (high / medium / low).
+	// The dim style renders zero counts so the badge keeps a stable width
+	// without drawing the eye.
+	severityHighStyle = lipgloss.NewStyle().Bold(true).
+				Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
+	severityMediumStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "130", Dark: "226"}) // Yellow
+	severityLowStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "27", Dark: "39"}) // Blue
+	severityZeroStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "240"}) // Dim grey
 )
 
 // reflowHelpRows redistributes items across rows so that when rendered

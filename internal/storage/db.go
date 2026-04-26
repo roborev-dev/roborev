@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS reviews (
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  closed INTEGER NOT NULL DEFAULT 0
+  closed INTEGER NOT NULL DEFAULT 0,
+  high_count INTEGER,
+  medium_count INTEGER,
+  low_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -827,6 +830,33 @@ func (db *DB) migrate() error {
 	// pre-existing duplicates would block index creation.
 	if err := db.ensureCIPRBatchJobsUniqueIndex(); err != nil {
 		return fmt.Errorf("ensure ci_pr_batch_jobs unique index: %w", err)
+	}
+
+	// Migration: add nullable high_count, medium_count, low_count columns to
+	// reviews if missing. NULL means "not yet parsed"; 0 means "parsed and
+	// no findings". The backfill below converts every NULL to a concrete
+	// value, after which it has nothing to do on subsequent startups.
+	for _, col := range []string{"high_count", "medium_count", "low_count"} {
+		err = db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = ?`, col,
+		).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column in reviews: %w", col, err)
+		}
+		if count == 0 {
+			_, err = db.Exec(
+				fmt.Sprintf(`ALTER TABLE reviews ADD COLUMN %s INTEGER`, col),
+			)
+			if err != nil {
+				return fmt.Errorf("add %s column: %w", col, err)
+			}
+		}
+	}
+	// Backfill counts for rows whose columns are NULL (not yet parsed).
+	// Idempotent: once every row has been processed, the predicate matches
+	// nothing and the call is a no-op.
+	if _, err := db.BackfillFindingCounts(); err != nil {
+		return fmt.Errorf("backfill finding counts: %w", err)
 	}
 
 	return nil

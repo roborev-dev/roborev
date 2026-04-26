@@ -767,6 +767,9 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				UpdatedByMachineID: r.UpdatedByMachineID,
 				CreatedAt:          r.CreatedAt,
 				UpdatedAt:          r.UpdatedAt,
+				HighCount:          r.HighCount,
+				MediumCount:        r.MediumCount,
+				LowCount:           r.LowCount,
 			}
 			if err := w.db.UpsertPulledReview(pr); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
