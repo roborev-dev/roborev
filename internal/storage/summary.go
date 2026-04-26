@@ -585,8 +585,14 @@ func (db *DB) BackfillFindingCounts() (int, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Clearing synced_at re-queues the row for sync so PostgreSQL receives
+	// the backfilled counts; without it, GetReviewsToSync would still consider
+	// the row "synced" and the remote (possibly pre-v11 PG) would keep
+	// returning zeros to other clients pulling the same review.
 	stmt, err := tx.Prepare(
-		`UPDATE reviews SET high_count = ?, medium_count = ?, low_count = ? WHERE id = ?`,
+		`UPDATE reviews
+		 SET high_count = ?, medium_count = ?, low_count = ?, synced_at = NULL
+		 WHERE id = ?`,
 	)
 	if err != nil {
 		return 0, err
