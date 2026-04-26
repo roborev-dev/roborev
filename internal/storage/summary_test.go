@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -517,6 +518,116 @@ func TestBackfillFindingCounts(t *testing.T) {
 	updated, err = db.BackfillFindingCounts()
 	require.NoError(t, err)
 	assert.Equal(t, 0, updated, "second run should be no-op")
+}
+
+// TestBackfillFindingCounts_PartialNull covers the case where only some of
+// the three columns are NULL. The predicate uses OR, so any column being
+// NULL flags the row for re-parsing — the write then sets all three to
+// concrete values from CountFindings.
+func TestBackfillFindingCounts_PartialNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/partialrepo", "partialrepo")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "p1", "alice", "msg", time.Now())
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "p1", Agent: "test",
+	})
+	require.NoError(t, err)
+
+	output := "- Medium: leaky goroutine\n- Low: typo"
+
+	// Only high_count is NULL — medium and low were already populated
+	// (e.g. by a partial backfill run that was interrupted, or by a
+	// future migration that added columns piecemeal). The predicate
+	// still picks this up via the OR branch.
+	_, err = db.Exec(
+		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
+		 VALUES (?, 'test', 'p', ?, NULL, 99, 99)`,
+		job.ID, output,
+	)
+	require.NoError(t, err)
+
+	updated, err := db.BackfillFindingCounts()
+	require.NoError(t, err)
+	assert.Equal(t, 1, updated)
+
+	// All three columns now reflect the parsed counts (medium=1, low=1),
+	// overwriting the stale 99s.
+	var h, m, l int
+	require.NoError(t, db.QueryRow(
+		`SELECT high_count, medium_count, low_count FROM reviews WHERE job_id = ?`,
+		job.ID).Scan(&h, &m, &l))
+	assert.Equal(t, 0, h)
+	assert.Equal(t, 1, m)
+	assert.Equal(t, 1, l)
+}
+
+// TestBackfillFindingCounts_SkipsEmptyOutput confirms the predicate's
+// `output != ''` guard. A NULL-counts row whose output is empty stays
+// untouched — there's nothing to parse, and writing 0/0/0 would obscure
+// the fact that the review never ran.
+func TestBackfillFindingCounts_SkipsEmptyOutput(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/emptyrepo", "emptyrepo")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "e1", "alice", "msg", time.Now())
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "e1", Agent: "test",
+	})
+	require.NoError(t, err)
+
+	_, err = db.Exec(
+		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
+		 VALUES (?, 'test', 'p', '', NULL, NULL, NULL)`,
+		job.ID,
+	)
+	require.NoError(t, err)
+
+	updated, err := db.BackfillFindingCounts()
+	require.NoError(t, err)
+	assert.Equal(t, 0, updated, "empty-output rows should not be backfilled")
+
+	// Columns remain NULL.
+	var h, m, l sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT high_count, medium_count, low_count FROM reviews WHERE job_id = ?`,
+		job.ID).Scan(&h, &m, &l))
+	assert.False(t, h.Valid)
+	assert.False(t, m.Valid)
+	assert.False(t, l.Valid)
+}
+
+// TestBackfillFindingCounts_ClearsSyncedAt confirms backfilled rows are
+// re-queued for sync. Without this, a remote PostgreSQL with stale 0/0/0
+// rows (or NULL rows) would never receive the corrected counts.
+func TestBackfillFindingCounts_ClearsSyncedAt(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/syncrepo", "syncrepo")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "s1", "alice", "msg", time.Now())
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "s1", Agent: "test",
+	})
+	require.NoError(t, err)
+
+	_, err = db.Exec(
+		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count, synced_at)
+		 VALUES (?, 'test', 'p', '- High: bug', NULL, NULL, NULL, '2026-04-01T00:00:00Z')`,
+		job.ID,
+	)
+	require.NoError(t, err)
+
+	_, err = db.BackfillFindingCounts()
+	require.NoError(t, err)
+
+	var syncedAt sql.NullString
+	require.NoError(t, db.QueryRow(
+		`SELECT synced_at FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&syncedAt))
+	assert.False(t, syncedAt.Valid, "synced_at must be cleared so the row re-syncs")
 }
 
 func TestPercentile(t *testing.T) {
