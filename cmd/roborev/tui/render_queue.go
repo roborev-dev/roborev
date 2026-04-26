@@ -330,7 +330,7 @@ func (m model) renderQueueView() string {
 			colQueued:            12,
 			colElapsed:           8,
 			colPF:                3,                                                    // "P/F" header = 3
-			colFindings:          8,                                                    // "Findings" header = 8, badge "H3 M2 L5" = 8
+			colFindings:          8,                                                    // "Findings" header = 8 (badge "3/2/5" = 5; header dominates)
 			colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
 			colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
 			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12

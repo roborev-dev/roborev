@@ -16,38 +16,30 @@ func TestDerefOrZero(t *testing.T) {
 
 func TestRenderSeverityBadge(t *testing.T) {
 	tests := []struct {
-		name             string
-		h, m, l          int
-		wantContains     []string
-		wantPlainTextLen int
+		name      string
+		h, m, l   int
+		wantPlain string
 	}{
 		{
-			name:             "all zero",
-			wantContains:     []string{"H0", "M0", "L0"},
-			wantPlainTextLen: 8, // "H0 M0 L0"
+			name:      "all zero",
+			wantPlain: "0/0/0",
 		},
 		{
-			name: "single digits",
-			h:    3, m: 2, l: 5,
-			wantContains:     []string{"H3", "M2", "L5"},
-			wantPlainTextLen: 8,
+			name:      "single digits",
+			h:         3, m: 2, l: 5,
+			wantPlain: "3/2/5",
 		},
 		{
-			name: "double digits",
-			h:    12, m: 3, l: 8,
-			wantContains:     []string{"H12", "M3", "L8"},
-			wantPlainTextLen: 9,
+			name:      "double digits",
+			h:         12, m: 3, l: 8,
+			wantPlain: "12/3/8",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := renderSeverityBadge(tt.h, tt.m, tt.l)
 			plain := stripANSI(out)
-			assert.Len(t, plain, tt.wantPlainTextLen, "plain text length: got %q", plain)
-			for _, want := range tt.wantContains {
-				assert.Contains(t, plain, want,
-					"want %q in %q", want, plain)
-			}
+			assert.Equal(t, tt.wantPlain, plain)
 		})
 	}
 }

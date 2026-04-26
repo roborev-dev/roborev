@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -15,17 +15,18 @@ func derefOrZero(p *int) int {
 	return *p
 }
 
-// renderSeverityBadge formats finding counts as "H3 M2 L5" with severity-
-// colored letters/numbers. Zero counts render in dim grey so columns stay
-// visually stable but de-emphasised. Plain-text width is always at least
-// 8 characters (single digits) and grows by one per extra digit per slot.
+// renderSeverityBadge formats finding counts as "3/2/5" with severity-
+// colored numbers (red high, yellow medium, blue low) and dim slashes.
+// Zero counts render in the same dim grey as the slashes so non-zero
+// values pop visually. Plain-text width is 5 for all-single-digit
+// counts (e.g. "3/2/5") and grows by one per extra digit per slot.
 func renderSeverityBadge(h, m, l int) string {
 	parts := []string{
-		formatSeveritySlot("H", h, severityHighStyle),
-		formatSeveritySlot("M", m, severityMediumStyle),
-		formatSeveritySlot("L", l, severityLowStyle),
+		formatSeveritySlot(h, severityHighStyle),
+		formatSeveritySlot(m, severityMediumStyle),
+		formatSeveritySlot(l, severityLowStyle),
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, severityZeroStyle.Render("/"))
 }
 
 // lipglossStyleRenderer is the minimal interface from lipgloss.Style that
@@ -34,8 +35,8 @@ type lipglossStyleRenderer interface {
 	Render(strs ...string) string
 }
 
-func formatSeveritySlot(letter string, count int, active lipglossStyleRenderer) string {
-	text := fmt.Sprintf("%s%d", letter, count)
+func formatSeveritySlot(count int, active lipglossStyleRenderer) string {
+	text := strconv.Itoa(count)
 	if count == 0 {
 		return severityZeroStyle.Render(text)
 	}
