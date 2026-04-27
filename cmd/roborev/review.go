@@ -386,6 +386,7 @@ Examples:
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum severity threshold: critical, high, medium, low")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
+	registerReviewTypeCompletion(cmd)
 
 	return cmd
 }
