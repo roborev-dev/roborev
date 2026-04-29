@@ -3036,10 +3036,14 @@ func TestFilterReachableJobs(t *testing.T) {
 
 func TestFilterReachableJobsDetachedHead(t *testing.T) {
 	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("a.txt", "a", "initial")
+	baseSHA := repo.CommitFile("a.txt", "a", "initial")
+	defaultBranch := strings.TrimSpace(
+		repo.Run("rev-parse", "--abbrev-ref", "HEAD"),
+	)
 
-	// Detach HEAD
-	repo.Run("checkout", "--detach", sha)
+	repo.Run("checkout", "--detach", baseSHA)
+	parentSHA := repo.CommitFile("b.txt", "b", "detached parent")
+	headSHA := repo.CommitFile("c.txt", "c", "detached head")
 
 	tests := []struct {
 		name    string
@@ -3047,23 +3051,33 @@ func TestFilterReachableJobsDetachedHead(t *testing.T) {
 		wantIDs []int64
 	}{
 		{
-			name: "no branch matches detached HEAD",
+			name: "detached head includes commits back to first branch commit",
 			jobs: []storage.ReviewJob{
-				{ID: 1, GitRef: sha},
+				{ID: 1, GitRef: headSHA},
+				{ID: 2, GitRef: parentSHA},
+				{ID: 3, GitRef: baseSHA, Branch: defaultBranch},
+			},
+			wantIDs: []int64{1, 2, 3},
+		},
+		{
+			name: "detached head includes range ending in detached commit",
+			jobs: []storage.ReviewJob{
+				{ID: 4, GitRef: baseSHA + "..HEAD"},
+			},
+			wantIDs: []int64{4},
+		},
+		{
+			name: "dirty refs stay excluded on detached HEAD",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: "dirty", Branch: "some-branch"},
+				{ID: 6, GitRef: "dirty"},
 			},
 			wantIDs: nil,
 		},
 		{
-			name: "branch excluded on detached HEAD",
+			name: "unrelated refs are excluded on detached HEAD",
 			jobs: []storage.ReviewJob{
-				{ID: 2, GitRef: "dirty", Branch: "some-branch"},
-			},
-			wantIDs: nil,
-		},
-		{
-			name: "branchless excluded on detached HEAD",
-			jobs: []storage.ReviewJob{
-				{ID: 3, GitRef: "dirty"},
+				{ID: 7, GitRef: "does-not-resolve"},
 			},
 			wantIDs: nil,
 		},
