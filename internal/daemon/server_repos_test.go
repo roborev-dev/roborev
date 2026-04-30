@@ -497,7 +497,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		server, _, _ := newTestServer(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/repos/register", nil)
 		w := httptest.NewRecorder()
-		server.handleRegisterRepo(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
 			assert.Condition(t, func() bool {
 				return false
@@ -509,7 +509,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		server, _, _ := newTestServer(t)
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{})
 		w := httptest.NewRecorder()
-		server.handleRegisterRepo(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
 			assert.Condition(t, func() bool {
 				return false
@@ -524,7 +524,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 			"repo_path": plainDir,
 		})
 		w := httptest.NewRecorder()
-		server.handleRegisterRepo(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
 			assert.Condition(t, func() bool {
 				return false
@@ -549,7 +549,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 			"repo_path": repoDir,
 		})
 		w := httptest.NewRecorder()
-		server.handleRegisterRepo(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -594,7 +594,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		// First call
 		req1 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
 		w1 := httptest.NewRecorder()
-		server.handleRegisterRepo(w1, req1)
+		server.httpServer.Handler.ServeHTTP(w1, req1)
 		if w1.Code != http.StatusOK {
 			require.Condition(t, func() bool {
 				return false
@@ -604,7 +604,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		// Second call
 		req2 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
 		w2 := httptest.NewRecorder()
-		server.handleRegisterRepo(w2, req2)
+		server.httpServer.Handler.ServeHTTP(w2, req2)
 		if w2.Code != http.StatusOK {
 			require.Condition(t, func() bool {
 				return false

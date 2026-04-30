@@ -125,7 +125,7 @@ func TestHandlePing(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 		w := httptest.NewRecorder()
 
-		server.handlePing(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -156,7 +156,7 @@ func TestHandlePing(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/ping", nil)
 		w := httptest.NewRecorder()
 
-		server.handlePing(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			require.Condition(t, func() bool {
@@ -975,7 +975,7 @@ func TestHandleEnqueue_BroadcastsEvent(t *testing.T) {
 		Agent:    "test",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	assert.Equal(http.StatusCreated, w.Code)
 

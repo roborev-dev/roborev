@@ -202,7 +202,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			assert.Condition(t, func() bool {
@@ -250,7 +250,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			assert.Condition(t, func() bool {
@@ -301,7 +301,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			t, http.MethodPost, "/api/enqueue", reqData,
 		)
 		w := httptest.NewRecorder()
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			assert.Condition(t, func() bool {
@@ -354,7 +354,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			t, http.MethodPost, "/api/enqueue", reqData,
 		)
 		w := httptest.NewRecorder()
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			assert.Condition(t, func() bool {
@@ -402,7 +402,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				t, http.MethodPost, "/api/enqueue", reqData,
 			)
 			w := httptest.NewRecorder()
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusOK {
 				assert.Condition(t, func() bool {
@@ -456,7 +456,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				t, http.MethodPost, "/api/enqueue", reqData,
 			)
 			w := httptest.NewRecorder()
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusCreated {
 				assert.Condition(t, func() bool {
@@ -534,7 +534,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				t, http.MethodPost, "/api/enqueue", reqData,
 			)
 			w := httptest.NewRecorder()
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusCreated {
 				assert.Condition(t, func() bool {
@@ -636,7 +636,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -1436,7 +1436,7 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -1479,7 +1479,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusRequestEntityTooLarge {
 			assert.Condition(t, func() bool {
@@ -1510,7 +1510,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			assert.Condition(t, func() bool {
@@ -1542,7 +1542,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			assert.Condition(t, func() bool {
@@ -1707,7 +1707,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			require.Condition(t, func() bool {
@@ -1748,7 +1748,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		// Should fail because there's no branch named "prompt", not because
 		// custom_prompt is missing
@@ -1781,7 +1781,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			require.Condition(t, func() bool {
@@ -1810,7 +1810,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			require.Condition(t, func() bool {
@@ -1838,7 +1838,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusCreated {
 			require.Condition(t, func() bool {
@@ -2001,7 +2001,7 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 			w := httptest.NewRecorder()
 
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != tt.expectedCode {
 				require.Condition(t, func() bool {
@@ -2082,7 +2082,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusCreated {
 			require.Condition(t, func() bool {
 				return false
@@ -2180,7 +2180,7 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -2235,7 +2235,7 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		assert.Condition(t, func() bool {
@@ -2558,7 +2558,7 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 				t, http.MethodPost, "/api/enqueue", reqData,
 			)
 			w := httptest.NewRecorder()
-			server.handleEnqueue(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusCreated {
 				require.Condition(t, func() bool {
@@ -2630,7 +2630,7 @@ func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) 
 		t, http.MethodPost, "/api/enqueue", reqData,
 	)
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -2677,7 +2677,7 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 		t, http.MethodPost, "/api/enqueue", reqData,
 	)
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -2729,7 +2729,7 @@ func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {
 		t, http.MethodPost, "/api/enqueue", reqData,
 	)
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated {
 		require.Condition(t, func() bool {
@@ -2767,7 +2767,7 @@ func TestHandleEnqueueRejectsMalformedRepoConfigWithExplicitReasoning(t *testing
 		Reasoning: "fast",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "resolve workflow config:")
@@ -2817,7 +2817,7 @@ func TestHandleEnqueueUsesWorktreeConfigWhenPresent(t *testing.T) {
 		Agent:    "test",
 	})
 	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
@@ -2884,7 +2884,7 @@ func TestHandleEnqueueMinSeverity(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
 		jobs, err := db.ListJobs("", "", 0, 0)
@@ -2905,7 +2905,7 @@ func TestHandleEnqueueMinSeverity(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
-		server.handleEnqueue(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "invalid min_severity")
 	})

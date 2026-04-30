@@ -3,12 +3,14 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	daemonclient "github.com/roborev-dev/roborev/internal/daemon_client"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/worktree"
@@ -90,10 +92,16 @@ func (m model) copyToClipboard(
 // postClosed sends a closed state change to the server.
 // Translates "not found" to a context-specific error message.
 func (m model) postClosed(jobID int64, newState bool, notFoundMsg string) error {
-	err := m.postJSON("/api/review/close", map[string]any{
-		"job_id": jobID,
-		"closed": newState,
-	}, nil)
+	resp, err := m.api.CloseReviewWithResponse(
+		m.apiContext(),
+		daemonclient.CloseReviewRequest{JobId: jobID, Closed: newState},
+	)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode() != http.StatusOK {
+		err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	}
 	if errors.Is(err, errNotFound) {
 		return fmt.Errorf("%s", notFoundMsg)
 	}
@@ -150,10 +158,13 @@ func (m model) cancelJob(
 	oldFinishedAt *time.Time, restoreSelection bool,
 ) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON(
-			"/api/job/cancel",
-			map[string]any{"job_id": jobID}, nil,
+		resp, err := m.api.CancelJobWithResponse(
+			m.apiContext(),
+			daemonclient.CancelJobRequest{JobId: jobID},
 		)
+		if err == nil && resp.StatusCode() != http.StatusOK {
+			err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+		}
 		return cancelResultMsg{
 			jobID:            jobID,
 			oldState:         oldStatus,
@@ -167,10 +178,13 @@ func (m model) cancelJob(
 // rerunJob sends a rerun request to the server for failed/canceled jobs.
 func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON(
-			"/api/job/rerun",
-			map[string]any{"job_id": snap.jobID}, nil,
+		resp, err := m.api.RerunJobWithResponse(
+			m.apiContext(),
+			daemonclient.RerunJobRequest{JobId: snap.jobID},
 		)
+		if err == nil && resp.StatusCode() != http.StatusOK {
+			err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+		}
 		return rerunResultMsg{
 			jobID:         snap.jobID,
 			oldState:      snap.oldStatus,
@@ -202,12 +216,17 @@ func (m model) submitComment(jobID int64, text string) tea.Cmd {
 		if commenter == "" {
 			commenter = "anonymous"
 		}
-
-		err := m.postJSON("/api/comment", map[string]any{
-			"job_id":    jobID,
-			"commenter": commenter,
-			"comment":   strings.TrimSpace(text),
-		}, nil)
+		resp, err := m.api.AddCommentWithResponse(
+			m.apiContext(),
+			daemonclient.AddCommentRequest{
+				JobId:     &jobID,
+				Commenter: commenter,
+				Comment:   strings.TrimSpace(text),
+			},
+		)
+		if err == nil && resp.StatusCode() != http.StatusCreated {
+			err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+		}
 		if err != nil {
 			return commentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
 		}
@@ -219,18 +238,26 @@ func (m model) submitComment(jobID int64, text string) tea.Cmd {
 // triggerFix triggers a background fix job for a parent review.
 func (m model) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
 	return func() tea.Msg {
-		req := map[string]any{
-			"parent_job_id": parentJobID,
+		req := daemonclient.FixJobRequest{
+			ParentJobId: parentJobID,
 		}
 		if prompt != "" {
-			req["prompt"] = prompt
+			req.Prompt = &prompt
 		}
 		if gitRef != "" {
-			req["git_ref"] = gitRef
+			req.GitRef = &gitRef
+		}
+		resp, err := m.api.CreateFixJobWithResponse(m.apiContext(), req)
+		if err != nil {
+			return fixTriggerResultMsg{err: err}
+		}
+		if resp.StatusCode() != http.StatusCreated {
+			return fixTriggerResultMsg{
+				err: apiStatusError(resp.StatusCode(), resp.Status(), resp.Body),
+			}
 		}
 		var job storage.ReviewJob
-		err := m.postJSON("/api/job/fix", req, &job)
-		if err != nil {
+		if err := decodeAPIBody(resp.Body, &job); err != nil {
 			return fixTriggerResultMsg{err: err}
 		}
 		return fixTriggerResultMsg{job: &job}
@@ -371,7 +398,14 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 	}
 
 	// Mark the fix job as applied on the server
-	if err := m.postJSON("/api/job/applied", map[string]any{"job_id": jobID}, nil); err != nil {
+	resp, err := m.api.MarkJobAppliedWithResponse(
+		m.apiContext(),
+		daemonclient.JobIDRequest{JobId: jobID},
+	)
+	if err == nil && resp.StatusCode() != http.StatusOK {
+		err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	}
+	if err != nil {
 		return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
 			err: fmt.Errorf("patch applied and committed but failed to mark applied: %w", err)}
 	}
@@ -470,23 +504,36 @@ func (m model) triggerRebase(staleJobID int64) tea.Cmd {
 		}
 
 		// Let the server build the rebase prompt from the stale job's patch
-		req := map[string]any{
-			"parent_job_id": parentJobID,
-			"stale_job_id":  staleJobID,
+		req := daemonclient.FixJobRequest{
+			ParentJobId: parentJobID,
+			StaleJobId:  &staleJobID,
+		}
+		resp, err := m.api.CreateFixJobWithResponse(m.apiContext(), req)
+		if err != nil {
+			return fixTriggerResultMsg{err: fmt.Errorf("trigger rebase: %w", err)}
+		}
+		if resp.StatusCode() != http.StatusCreated {
+			return fixTriggerResultMsg{err: fmt.Errorf(
+				"trigger rebase: %w",
+				apiStatusError(resp.StatusCode(), resp.Status(), resp.Body),
+			)}
 		}
 		var newJob storage.ReviewJob
-		if err := m.postJSON("/api/job/fix", req, &newJob); err != nil {
+		if err := decodeAPIBody(resp.Body, &newJob); err != nil {
 			return fixTriggerResultMsg{err: fmt.Errorf("trigger rebase: %w", err)}
 		}
 		// Mark the stale job as rebased now that the new job exists.
 		// Skip if already rebased (e.g. retry via R on a rebased job).
 		var warning string
 		if staleJob.Status != storage.JobStatusRebased {
-			if err := m.postJSON(
-				"/api/job/rebased",
-				map[string]any{"job_id": staleJobID},
-				nil,
-			); err != nil {
+			resp, err := m.api.MarkJobRebasedWithResponse(
+				m.apiContext(),
+				daemonclient.JobIDRequest{JobId: staleJobID},
+			)
+			if err == nil && resp.StatusCode() != http.StatusOK {
+				err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+			}
+			if err != nil {
 				warning = fmt.Sprintf(
 					"rebase job #%d enqueued but failed to mark #%d as rebased: %v",
 					newJob.ID, staleJobID, err,

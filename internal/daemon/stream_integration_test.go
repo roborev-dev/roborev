@@ -50,7 +50,7 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/stream/events", nil)
 	rec := httptest.NewRecorder()
 
-	server.handleStreamEvents(rec, req)
+	server.httpServer.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		assert.Condition(t, func() bool {

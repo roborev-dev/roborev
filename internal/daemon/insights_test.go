@@ -52,7 +52,7 @@ func TestHandleEnqueueInsightsBuildsPromptServerSide(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
@@ -87,7 +87,7 @@ func TestHandleEnqueueInsightsSkipsWhenNoFailingReviewsMatch(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
@@ -135,7 +135,7 @@ func TestHandleEnqueueInsightsNoBranchIncludesAllBranches(t *testing.T) {
 		})
 	w := httptest.NewRecorder()
 
-	server.handleEnqueue(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 

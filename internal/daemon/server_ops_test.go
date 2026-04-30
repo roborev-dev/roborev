@@ -60,7 +60,7 @@ func TestHandleBatchJobs(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", reqBody)
 		w := httptest.NewRecorder()
 
-		server.handleBatchJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
@@ -109,21 +109,21 @@ func TestHandleBatchJobs(t *testing.T) {
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs/batch", nil)
 		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
 	})
 
 	t.Run("empty job_ids fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string][]int64{"job_ids": {}})
 		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("missing job_ids fails", func(t *testing.T) {
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string]string{})
 		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 	})
 
@@ -134,7 +134,7 @@ func TestHandleBatchJobs(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/jobs/batch", map[string][]int64{"job_ids": ids})
 		w := httptest.NewRecorder()
-		server.handleBatchJobs(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusBadRequest)
 		if !strings.Contains(w.Body.String(), "too many job IDs") {
 			assert.Condition(t, func() bool {
@@ -147,7 +147,7 @@ func TestHandleBatchJobs(t *testing.T) {
 func TestHandleRemap(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
-	// Set up a git repo so handleRemap can resolve paths
+	// Set up a git repo so the remap route can resolve paths.
 	repoDir := filepath.Join(tmpDir, "remap-repo")
 	if err := os.MkdirAll(repoDir, 0755); err != nil {
 		require.Condition(t, func() bool {
@@ -216,7 +216,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			require.Condition(t, func() bool {
@@ -244,7 +244,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			require.Condition(t, func() bool {
@@ -277,7 +277,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusNotFound {
 			require.Condition(t, func() bool {
@@ -302,7 +302,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			require.Condition(t, func() bool {
@@ -329,7 +329,7 @@ func TestHandleRemap(t *testing.T) {
 			t, http.MethodPost, "/api/remap", reqData,
 		)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			require.Condition(t, func() bool {
@@ -356,7 +356,7 @@ func TestHandleRemap(t *testing.T) {
 			t, http.MethodPost, "/api/remap", reqData,
 		)
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			require.Condition(t, func() bool {
@@ -383,7 +383,7 @@ func TestHandleRemap(t *testing.T) {
 		)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		server.handleRemap(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusRequestEntityTooLarge {
 			require.Condition(t, func() bool {
@@ -497,7 +497,7 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 	}
 }
 
-// fixJobRequest mirrors the anonymous request struct in handleFixJob.
+// fixJobRequest mirrors FixJobRequest for test payloads.
 type fixJobRequest struct {
 	ParentJobID int64  `json:"parent_job_id"`
 	Prompt      string `json:"prompt,omitempty"`
@@ -582,7 +582,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -610,7 +610,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -660,7 +660,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: wtJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -712,7 +712,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: wtJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -763,7 +763,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: wtJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 
 		var resp ErrorResponse
@@ -780,7 +780,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -812,7 +812,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: fixJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -823,7 +823,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: reviewJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -856,7 +856,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: wrongParentFix.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -879,7 +879,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: noPatchFix.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -939,7 +939,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: fixJob.ID},
 				)
 				w := httptest.NewRecorder()
-				server.handleFixJob(w, req)
+				server.httpServer.Handler.ServeHTTP(w, req)
 				assertHandlerStatus(t, w, http.StatusBadRequest)
 			})
 		}
@@ -967,7 +967,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: compactJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -1002,7 +1002,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: rangeJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -1026,7 +1026,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "--option-injection"},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -1036,7 +1036,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "main\x00injected"},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -1046,7 +1046,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: " --option-injection"},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 
@@ -1056,7 +1056,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "   "},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 
 		// Whitespace-only trims to empty, so it's treated as
 		// no user-provided ref — the server falls through to
@@ -1070,7 +1070,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "feature/my-branch"},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -1113,7 +1113,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: otherFix.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusBadRequest)
 	})
 }
@@ -1195,7 +1195,7 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 				fixJobRequest{ParentJobID: reviewJob.ID},
 			)
 			w := httptest.NewRecorder()
-			server.handleFixJob(w, req)
+			server.httpServer.Handler.ServeHTTP(w, req)
 			assertHandlerStatus(t, w, tt.expectedCode)
 		})
 	}
@@ -1219,7 +1219,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 			fixJobRequest{ParentJobID: fixture.reviewJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -1270,7 +1270,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 			fixJobRequest{ParentJobID: taskJob.ID},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
@@ -1328,7 +1328,7 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 			},
 		)
 		w := httptest.NewRecorder()
-		server.handleFixJob(w, req)
+		server.httpServer.Handler.ServeHTTP(w, req)
 		assertHandlerStatus(t, w, http.StatusCreated)
 
 		var fixJob storage.ReviewJob
