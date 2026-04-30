@@ -312,6 +312,7 @@ type model struct {
 
 	// Active filter (applied to queue view)
 	activeRepoFilter   []string // Empty = show all, otherwise repo root_paths to filter by
+	autoRepoFilter     bool     // true when activeRepoFilter came from auto_filter_repo
 	activeBranchFilter string   // Empty = show all, otherwise branch name to filter by
 	filterStack        []string // Order of applied filters: "repo", "branch" - for escape to pop in order
 	hideClosed         bool     // When true, hide jobs with closed reviews
@@ -537,6 +538,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	// Determine active filters: CLI flags take priority over auto-filter config
 	var activeRepoFilter []string
 	var filterStack []string
+	var autoRepoFilterActive bool
 	var lockedRepo, lockedBranch bool
 
 	if opt.repoFilter != "" {
@@ -546,6 +548,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	} else if autoFilterRepo && cwdRepoRoot != "" {
 		activeRepoFilter = []string{cwdRepoRoot}
 		filterStack = append(filterStack, filterTypeRepo)
+		autoRepoFilterActive = true
 	}
 
 	var activeBranchFilter string
@@ -590,6 +593,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
 		hideClosed:          hideClosed,
 		activeRepoFilter:    activeRepoFilter,
+		autoRepoFilter:      autoRepoFilterActive,
 		activeBranchFilter:  activeBranchFilter,
 		filterStack:         filterStack,
 		lockedRepoFilter:    lockedRepo,

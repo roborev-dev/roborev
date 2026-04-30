@@ -303,6 +303,88 @@ func TestRenameRepo(t *testing.T) {
 	})
 }
 
+func TestMoveRepo(t *testing.T) {
+	t.Run("updates root_path", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "move-test")
+		newPath := filepath.Join(t.TempDir(), "new-location")
+
+		err := db.MoveRepo(repo.ID, newPath, "")
+		require.NoError(t, err)
+
+		updated, err := db.GetRepoByID(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.ToSlash(newPath), updated.RootPath)
+	})
+
+	t.Run("updates identity when provided", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "move-identity-test")
+		newPath := filepath.Join(t.TempDir(), "new-location")
+		newIdentity := "local://" + filepath.ToSlash(newPath)
+
+		err := db.MoveRepo(repo.ID, newPath, newIdentity)
+		require.NoError(t, err)
+
+		updated, err := db.GetRepoByID(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.ToSlash(newPath), updated.RootPath)
+
+		// Verify identity was updated
+		fetched, err := db.GetRepoByIdentity(newIdentity)
+		require.NoError(t, err)
+		require.NotNil(t, fetched)
+		assert.Equal(t, repo.ID, fetched.ID)
+	})
+
+	t.Run("preserves jobs after move", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "move-jobs-test")
+		commit := createCommit(t, db, repo.ID, "abc123")
+		_ = commit
+
+		// Verify a job exists for this repo
+		var beforeCount int
+		err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
+		require.NoError(t, err)
+		assert.Equal(t, 1, beforeCount)
+
+		newPath := filepath.Join(t.TempDir(), "moved-repo")
+		err = db.MoveRepo(repo.ID, newPath, "")
+		require.NoError(t, err)
+
+		// Commits remain associated by repo_id
+		var afterCount int
+		err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
+		require.NoError(t, err)
+		assert.Equal(t, 1, afterCount)
+	})
+
+	t.Run("returns ErrRepoPathConflict when another repo has the target path", func(t *testing.T) {
+		db := openTestDB(t)
+		t.Cleanup(func() { db.Close() })
+
+		repoA := createRepo(t, db, filepath.Join(t.TempDir(), "repo-a"))
+		repoB := createRepo(t, db, filepath.Join(t.TempDir(), "repo-b"))
+
+		err := db.MoveRepo(repoA.ID, repoB.RootPath, "")
+		require.ErrorIs(t, err, ErrRepoPathConflict)
+
+		// Verify repo-a was not modified
+		unchanged, err := db.GetRepoByID(repoA.ID)
+		require.NoError(t, err)
+		assert.Equal(t, repoA.RootPath, unchanged.RootPath)
+	})
+
+	t.Run("moving to same path is a no-op", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "move-same-path-test")
+
+		err := db.MoveRepo(repo.ID, repo.RootPath, "")
+		require.NoError(t, err)
+
+		updated, err := db.GetRepoByID(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, repo.RootPath, updated.RootPath)
+	})
+}
+
 func TestListRepos(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

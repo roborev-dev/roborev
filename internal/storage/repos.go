@@ -315,6 +315,43 @@ func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
 	return affected, nil
 }
 
+// ErrRepoPathConflict is returned when MoveRepo would create a duplicate root_path.
+var ErrRepoPathConflict = errors.New("a different repository already has the target path; use 'roborev repo merge' instead")
+
+// MoveRepo updates the root_path of an existing repo. The newPath is normalized
+// to an absolute path with forward slashes. Optionally updates the identity if
+// newIdentity is non-empty.
+//
+// Returns ErrRepoPathConflict if another repo (different ID) already has the
+// target path - users should `repo merge` in that case.
+func (db *DB) MoveRepo(repoID int64, newPath, newIdentity string) error {
+	absPath, err := filepath.Abs(newPath)
+	if err != nil {
+		return fmt.Errorf("resolve new path: %w", err)
+	}
+	absPath = filepath.ToSlash(absPath)
+
+	// Detect conflict: another repo already at this path
+	var existingID int64
+	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ?`, absPath).Scan(&existingID)
+	if err == nil && existingID != repoID {
+		return ErrRepoPathConflict
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check path conflict: %w", err)
+	}
+
+	if newIdentity != "" {
+		_, err = db.Exec(`UPDATE repos SET root_path = ?, identity = ? WHERE id = ?`, absPath, newIdentity, repoID)
+	} else {
+		_, err = db.Exec(`UPDATE repos SET root_path = ? WHERE id = ?`, absPath, repoID)
+	}
+	if err != nil {
+		return fmt.Errorf("update repo path: %w", err)
+	}
+	return nil
+}
+
 // ListRepos returns all repos in the database
 func (db *DB) ListRepos() ([]Repo, error) {
 	rows, err := db.Query(`SELECT id, root_path, name, created_at FROM repos ORDER BY name`)

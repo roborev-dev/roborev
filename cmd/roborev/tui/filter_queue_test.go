@@ -415,6 +415,23 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 	assert.Equal(t, "repo-c", m2.filterTree[2].name)
 }
 
+func TestTUIAutoRepoFilterUsesRenamedRepoDisplayName(t *testing.T) {
+	oldRoot := "/workspace/vibekata"
+	newRoot := "/workspace/kata"
+	m := newModel(localhostEndpoint, withExternalIODisabled(), withAutoFilterRepo(newRoot))
+	m.currentView = viewQueue
+	m.loadingJobs = false
+
+	m2, cmd := updateModel(t, m, repoNamesMsg{
+		names: map[string][]string{
+			"kata": []string{oldRoot},
+		},
+	})
+
+	assert.Equal(t, []string{oldRoot}, m2.activeRepoFilter)
+	assert.NotNil(t, cmd)
+}
+
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview

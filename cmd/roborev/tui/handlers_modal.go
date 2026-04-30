@@ -130,6 +130,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// "All" -- clear unlocked filters only
 			if !m.lockedRepoFilter {
 				m.activeRepoFilter = nil
+				m.autoRepoFilter = false
 				m.removeFilterFromStack(filterTypeRepo)
 			}
 			if !m.lockedBranchFilter {
@@ -141,6 +142,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			node := m.filterTree[entry.repoIdx]
 			if !m.lockedRepoFilter {
 				m.activeRepoFilter = node.rootPaths
+				m.autoRepoFilter = false
 				m.pushFilter(filterTypeRepo)
 			}
 			if !m.lockedBranchFilter {
@@ -153,6 +155,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			branch := node.children[entry.branchIdx]
 			if !m.lockedRepoFilter {
 				m.activeRepoFilter = node.rootPaths
+				m.autoRepoFilter = false
 				m.pushFilter(filterTypeRepo)
 			}
 			if !m.lockedBranchFilter {

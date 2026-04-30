@@ -245,6 +245,21 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 	assert.LessOrEqual(t, bIdx, fIdx)
 }
 
+func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.activeRepoFilter = []string{"/workspace/vibekata"}
+	m.filterStack = []string{"repo"}
+	m.repoNames = map[string][]string{
+		"kata": []string{"/workspace/vibekata"},
+	}
+
+	output := m.View()
+
+	assert.Contains(t, output, "[f: kata]")
+	assert.NotContains(t, output, "[f: vibekata]")
+}
+
 func TestTUIFilterStackReverseOrder(t *testing.T) {
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())

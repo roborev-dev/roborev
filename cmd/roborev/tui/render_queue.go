@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"maps"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -128,7 +127,7 @@ func (m model) renderQueueView() string {
 		switch filterType {
 		case filterTypeRepo:
 			if len(m.activeRepoFilter) > 0 {
-				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
+				filterName := m.repoFilterDisplayName()
 				fmt.Fprintf(&title, " [f: %s]", filterName)
 			}
 		case filterTypeBranch:

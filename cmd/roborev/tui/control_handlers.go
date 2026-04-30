@@ -229,6 +229,7 @@ func (m model) handleCtrlSetFilter(
 	}
 
 	if params.Repo != nil {
+		m.autoRepoFilter = false
 		if *params.Repo == "" {
 			m.activeRepoFilter = nil
 			m.removeFilterFromStack(filterTypeRepo)
@@ -282,6 +283,7 @@ func (m model) handleCtrlClearFilter(
 	}
 
 	if params.Repo {
+		m.autoRepoFilter = false
 		m.activeRepoFilter = nil
 		m.removeFilterFromStack(filterTypeRepo)
 	}

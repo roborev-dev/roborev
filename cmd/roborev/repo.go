@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
@@ -104,6 +105,7 @@ Subcommands:
   list    - List all repositories with their review counts
   show    - Show details about a specific repository
   rename  - Rename a repository's display name
+  move    - Update a repository's root path (after directory rename)
   delete  - Remove a repository from tracking
   merge   - Merge reviews from one repository into another
 `,
@@ -112,6 +114,7 @@ Subcommands:
 	cmd.AddCommand(repoListCmd())
 	cmd.AddCommand(repoShowCmd())
 	cmd.AddCommand(repoRenameCmd())
+	cmd.AddCommand(repoMoveCmd())
 	cmd.AddCommand(repoDeleteCmd())
 	cmd.AddCommand(repoMergeCmd())
 
@@ -239,8 +242,9 @@ NOTE: This is different from the display_name setting in .roborev.toml.
 The database name is set once when a repo is first tracked (from the
 directory name). Use this command to change it after the fact.
 
-When to use rename vs merge:
+When to use rename vs move vs merge:
   - Use RENAME when you have ONE repo entry and want a different name
+  - Use MOVE when you renamed/moved the directory on disk
   - Use MERGE when you have TWO repo entries that should be combined
     (e.g., after renaming a directory, you'll have both old and new entries)
 
@@ -288,9 +292,114 @@ Examples:
 			}
 
 			fmt.Printf("Renamed repository to %q\n", newName)
+
+			// If the renamed repo's stored root_path no longer exists on disk,
+			// hint the user about `repo move` so they know how to recover.
+			if repo, err := db.GetRepoByName(newName); err == nil {
+				if _, statErr := os.Stat(repo.RootPath); os.IsNotExist(statErr) {
+					fmt.Fprintf(os.Stderr,
+						"\nNote: %s no longer exists on disk.\n"+
+							"If the directory was moved, run:\n"+
+							"  roborev repo move %q <new-path>\n",
+						repo.RootPath, newName)
+				}
+			}
 			return nil
 		},
 	}
+}
+
+func repoMoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "move <name-or-path> <new-path>",
+		Short: "Update a repository's root path",
+		Long: `Update the root_path stored for a repository in the roborev database.
+
+Use this when a repository's directory has been renamed or moved on disk.
+After moving, jobs continue to be associated with the same repo entry,
+so reviews remain visible.
+
+When to use move vs rename vs merge:
+  - Use MOVE when the directory was renamed/moved on disk
+  - Use RENAME to change the display name only
+  - Use MERGE when you have TWO repo entries that should be combined
+
+The first argument can be either:
+  - The current database name
+  - The current (or stale) repository path
+The second argument is the new path. "." resolves to the current
+directory's git repository root.
+
+Examples:
+  # After 'mv old-project new-project', update the database from inside the new directory
+  roborev repo move old-project .
+
+  # Specify an explicit new path
+  roborev repo move my-repo /Users/me/code/my-repo
+
+  # Identify the source by its old (now stale) path
+  roborev repo move /old/path /new/path
+`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			identifier := resolveRepoIdentifier(args[0])
+			newPathArg := args[1]
+
+			newPath, err := resolveMoveTargetPath(newPathArg)
+			if err != nil {
+				return err
+			}
+
+			dbPath := storage.DefaultDBPath()
+			if dbPath == "" {
+				return fmt.Errorf("cannot determine database path")
+			}
+
+			db, err := storage.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer db.Close()
+
+			repo, err := db.FindRepo(identifier)
+			if err != nil {
+				return fmt.Errorf("repository not found: %s", identifier)
+			}
+
+			// Recompute identity for the new location. For repos with a git remote
+			// the identity stays stable; for local-only repos it changes to
+			// local://<new-path>.
+			newIdentity := config.ResolveRepoIdentity(newPath, nil)
+
+			if err := db.MoveRepo(repo.ID, newPath, newIdentity); err != nil {
+				if errors.Is(err, storage.ErrRepoPathConflict) {
+					return fmt.Errorf("another repository is already at %s; consider 'roborev repo merge' to combine them", newPath)
+				}
+				return fmt.Errorf("move repo: %w", err)
+			}
+
+			fmt.Printf("Moved repository %q to %s\n", repo.Name, newPath)
+			return nil
+		},
+	}
+}
+
+// resolveMoveTargetPath resolves the second argument to roborev repo move.
+// It accepts:
+//   - "." or relative paths starting with ./ or ../
+//   - absolute paths
+//   - bare identifiers (treated as relative to cwd)
+//
+// If the resolved path is inside a git repository, the repo root is returned.
+func resolveMoveTargetPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if root, err := git.GetRepoRoot(abs); err == nil && root != "" {
+		return filepath.ToSlash(root), nil
+	}
+	return filepath.ToSlash(abs), nil
 }
 
 func repoDeleteCmd() *cobra.Command {
