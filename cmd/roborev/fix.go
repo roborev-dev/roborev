@@ -549,16 +549,23 @@ func detachedHeadReviewRefs(worktreeRoot string) map[string]struct{} {
 	}
 
 	refs := make(map[string]struct{})
-	for sha := head; sha != ""; {
+	seen := make(map[string]struct{})
+	stack := []string{head}
+	for len(stack) > 0 {
+		sha := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[sha]; ok {
+			continue
+		}
+		seen[sha] = struct{}{}
 		refs[sha] = struct{}{}
 		if git.GetBranchName(worktreeRoot, sha) != "" {
-			break
+			continue
 		}
-		parent, err := git.ResolveSHA(worktreeRoot, sha+"^")
-		if err != nil {
-			break
+		parents, err := git.GetCommitParents(worktreeRoot, sha)
+		if err == nil {
+			stack = append(stack, parents...)
 		}
-		sha = parent
 	}
 	return refs
 }

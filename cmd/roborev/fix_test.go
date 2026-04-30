@@ -3095,6 +3095,29 @@ func TestFilterReachableJobsDetachedHead(t *testing.T) {
 	}
 }
 
+func TestFilterReachableJobsDetachedMergeHead(t *testing.T) {
+	repo := newTestGitRepo(t)
+	baseSHA := repo.CommitFile("base.txt", "base", "base")
+
+	repo.Run("checkout", "-b", "feature-side")
+	featureSHA := repo.CommitFile("feature.txt", "feature", "feature")
+
+	repo.Run("checkout", "--detach", baseSHA)
+	repo.Run("merge", "--no-ff", "feature-side", "-m", "detached merge")
+
+	jobs := []storage.ReviewJob{
+		{ID: 1, GitRef: featureSHA},
+		{ID: 2, GitRef: baseSHA + ".." + featureSHA},
+	}
+	got := filterReachableJobs(repo.Dir, "", jobs)
+
+	var gotIDs []int64
+	for _, j := range got {
+		gotIDs = append(gotIDs, j.ID)
+	}
+	assert.Equal(t, []int64{1, 2}, gotIDs)
+}
+
 func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 	repo, worktreeDir := setupWorktree(t)
 

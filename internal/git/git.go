@@ -490,6 +490,19 @@ func GetParentCommits(repoPath, sha string, count int) ([]string, error) {
 	return commits, nil
 }
 
+// GetCommitParents returns the direct parent commits for sha.
+func GetCommitParents(repoPath, sha string) ([]string, error) {
+	cmd := exec.Command("git", "show", "-s", "--format=%P", sha)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show parents: %w", err)
+	}
+
+	return strings.Fields(string(out)), nil
+}
+
 // IsRange returns true if the ref is a range (contains "..")
 func IsRange(ref string) bool {
 	return strings.Contains(ref, "..")
