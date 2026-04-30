@@ -517,6 +517,10 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 
 	repo1 := createRepo(t, db, "/tmp/repo1")
 	repo2 := createRepo(t, db, "/tmp/repo2")
+	repo1Identity := "https://github.com/test/repo1.git"
+	repo2Identity := "https://github.com/test/repo2.git"
+	require.NoError(t, db.SetRepoIdentity(repo1.ID, repo1Identity))
+	require.NoError(t, db.SetRepoIdentity(repo2.ID, repo2Identity))
 
 	commit1 := createCommit(t, db, repo1.ID, "abc123")
 	commit2 := createCommit(t, db, repo1.ID, "def456")
@@ -536,6 +540,12 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 
 		assert.Len(t, repos, 2)
 		assert.Equal(t, 2, totalCount)
+		identities := map[string]string{}
+		for _, repo := range repos {
+			identities[repo.Name] = repo.Identity
+		}
+		assert.Equal(t, repo1Identity, identities["repo1"])
+		assert.Equal(t, repo2Identity, identities["repo2"])
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
@@ -544,6 +554,7 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 
 		assert.Len(t, repos, 1)
 		assert.Equal(t, 1, totalCount)
+		assert.Equal(t, repo1Identity, repos[0].Identity)
 	})
 
 	t.Run("filter by (none) branch", func(t *testing.T) {
