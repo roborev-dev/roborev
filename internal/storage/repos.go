@@ -111,6 +111,7 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 type RepoWithCount struct {
 	Name     string `json:"name"`
 	RootPath string `json:"root_path"`
+	Identity string `json:"identity,omitempty"`
 	Count    int    `json:"count"`
 }
 
@@ -151,7 +152,7 @@ func (db *DB) ListReposWithReviewCounts(opts ...ListReposOption) ([]RepoWithCoun
 	}
 
 	query := fmt.Sprintf(`
-		SELECT r.name, r.root_path, COUNT(rj.id) as job_count
+		SELECT r.name, r.root_path, COALESCE(r.identity, ''), COUNT(rj.id) as job_count
 		FROM repos r
 		%s JOIN review_jobs rj ON rj.repo_id = r.id
 	`, joinType)
@@ -200,7 +201,7 @@ func (db *DB) ListReposWithReviewCounts(opts ...ListReposOption) ([]RepoWithCoun
 	totalCount := 0
 	for rows.Next() {
 		var rc RepoWithCount
-		if err := rows.Scan(&rc.Name, &rc.RootPath, &rc.Count); err != nil {
+		if err := rows.Scan(&rc.Name, &rc.RootPath, &rc.Identity, &rc.Count); err != nil {
 			return nil, 0, err
 		}
 		repos = append(repos, rc)

@@ -258,6 +258,7 @@ func (m model) handleRepoNamesMsg(
 ) (tea.Model, tea.Cmd) {
 	if msg.names != nil {
 		m.repoNames = msg.names
+		m.repoIdentities = msg.identities
 		if m.reconcileAutoRepoFilter() {
 			return m, m.fetchJobs()
 		}
@@ -282,6 +283,7 @@ func (m model) handleReposMsg(
 			names[r.name] = r.rootPaths
 		}
 		m.repoNames = names
+		m.repoIdentities = msg.identities
 		refetchJobs = m.reconcileAutoRepoFilter()
 	}
 

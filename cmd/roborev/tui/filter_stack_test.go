@@ -248,16 +248,16 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
-	m.activeRepoFilter = []string{"/workspace/vibekata"}
+	m.activeRepoFilter = []string{"/workspace/old-service"}
 	m.filterStack = []string{"repo"}
 	m.repoNames = map[string][]string{
-		"kata": []string{"/workspace/vibekata"},
+		"new-service": []string{"/workspace/old-service"},
 	}
 
 	output := m.View()
 
-	assert.Contains(t, output, "[f: kata]")
-	assert.NotContains(t, output, "[f: vibekata]")
+	assert.Contains(t, output, "[f: new-service]")
+	assert.NotContains(t, output, "[f: old-service]")
 }
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {

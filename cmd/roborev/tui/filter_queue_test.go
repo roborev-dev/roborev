@@ -416,15 +416,41 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 }
 
 func TestTUIAutoRepoFilterUsesRenamedRepoDisplayName(t *testing.T) {
-	oldRoot := "/workspace/vibekata"
-	newRoot := "/workspace/kata"
+	oldRoot := "/workspace/old-service"
+	newRoot := "/workspace/new-service"
 	m := newModel(localhostEndpoint, withExternalIODisabled(), withAutoFilterRepo(newRoot))
 	m.currentView = viewQueue
 	m.loadingJobs = false
 
 	m2, cmd := updateModel(t, m, repoNamesMsg{
 		names: map[string][]string{
-			"kata": []string{oldRoot},
+			"new-service": []string{oldRoot},
+		},
+	})
+
+	assert.Equal(t, []string{oldRoot}, m2.activeRepoFilter)
+	assert.NotNil(t, cmd)
+}
+
+func TestTUIAutoRepoFilterFallsBackToIdentity(t *testing.T) {
+	oldRoot := "/workspace/old-service"
+	newRoot := "/workspace/cool-rebrand"
+	identity := "https://github.com/test/service.git"
+	m := newModel(
+		localhostEndpoint,
+		withExternalIODisabled(),
+		withAutoFilterRepo(newRoot),
+		withCwdRepoIdentity(identity),
+	)
+	m.currentView = viewQueue
+	m.loadingJobs = false
+
+	m2, cmd := updateModel(t, m, repoNamesMsg{
+		names: map[string][]string{
+			"old-service": []string{oldRoot},
+		},
+		identities: map[string][]string{
+			identity: []string{oldRoot},
 		},
 	})
 

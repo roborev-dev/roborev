@@ -48,6 +48,7 @@ type repoListResult struct {
 	Repos []struct {
 		Name     string `json:"name"`
 		RootPath string `json:"root_path"`
+		Identity string `json:"identity"`
 		Count    int    `json:"count"`
 	} `json:"repos"`
 	TotalCount int `json:"total_count"`
@@ -326,14 +327,18 @@ func (m model) fetchRepoNames() tea.Cmd {
 		}
 
 		names := make(map[string][]string)
+		identities := make(map[string][]string)
 		for _, r := range result.Repos {
 			displayName := config.GetDisplayName(r.RootPath)
 			if displayName == "" {
 				displayName = r.Name
 			}
 			names[displayName] = append(names[displayName], r.RootPath)
+			if r.Identity != "" {
+				identities[r.Identity] = append(identities[r.Identity], r.RootPath)
+			}
 		}
-		return repoNamesMsg{names: names}
+		return repoNamesMsg{names: names, identities: identities}
 	}
 }
 
@@ -348,11 +353,15 @@ func (m model) fetchRepos() tea.Cmd {
 
 		// Aggregate repos by display name
 		displayNameMap := make(map[string]*repoFilterItem)
+		identities := make(map[string][]string)
 		var displayNameOrder []string // Preserve order for stable display
 		for _, r := range reposResult.Repos {
 			displayName := config.GetDisplayName(r.RootPath)
 			if displayName == "" {
 				displayName = r.Name
+			}
+			if r.Identity != "" {
+				identities[r.Identity] = append(identities[r.Identity], r.RootPath)
 			}
 			if item, ok := displayNameMap[displayName]; ok {
 				item.rootPaths = append(item.rootPaths, r.RootPath)
@@ -370,7 +379,7 @@ func (m model) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return reposMsg{repos: repos, branchFiltered: filtered}
+		return reposMsg{repos: repos, identities: identities, branchFiltered: filtered}
 	}
 }
 

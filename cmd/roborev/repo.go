@@ -296,7 +296,7 @@ Examples:
 			// If the renamed repo's stored root_path no longer exists on disk,
 			// hint the user about `repo move` so they know how to recover.
 			if repo, err := db.GetRepoByName(newName); err == nil {
-				if _, statErr := os.Stat(repo.RootPath); os.IsNotExist(statErr) {
+				if _, statErr := os.Stat(repo.RootPath); errors.Is(statErr, os.ErrNotExist) {
 					fmt.Fprintf(os.Stderr,
 						"\nNote: %s no longer exists on disk.\n"+
 							"If the directory was moved, run:\n"+

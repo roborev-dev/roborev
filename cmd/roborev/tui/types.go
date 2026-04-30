@@ -191,6 +191,7 @@ type updateCheckMsg struct {
 }
 type reposMsg struct {
 	repos          []repoFilterItem
+	identities     map[string][]string
 	branchFiltered bool // true if fetched with a branch constraint
 }
 
@@ -198,7 +199,8 @@ type reposMsg struct {
 // /api/repos, used by the control socket to resolve display names in
 // set-filter commands. Fetched once at init.
 type repoNamesMsg struct {
-	names map[string][]string // display name → root paths
+	names      map[string][]string // display name → root paths
+	identities map[string][]string // repo identity → root paths
 }
 type branchesMsg struct {
 	backfillCount int // Number of branches successfully backfilled to the database
@@ -323,6 +325,10 @@ func withAutoFilterRepo(repo string) option {
 	}
 }
 
+func withCwdRepoIdentity(identity string) option {
+	return func(o *options) { o.cwdRepoIdentity = identity }
+}
+
 // options holds optional overrides for the TUI model, set from CLI flags.
 type options struct {
 	repoFilter        string // --repo flag: lock filter to this repo path
@@ -332,6 +338,7 @@ type options struct {
 	autoFilterRepo    bool   // tests: simulate auto_filter_repo config
 	autoFilterBranch  bool   // tests: simulate auto_filter_branch config
 	cwdRepoRoot       string // tests: simulate detected repo root
+	cwdRepoIdentity   string // tests: simulate detected repo identity
 	cwdBranch         string // tests: simulate detected branch
 }
 

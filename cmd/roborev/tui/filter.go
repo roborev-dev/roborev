@@ -161,8 +161,13 @@ func (m model) repoMatchesFilter(repoPath string) bool {
 }
 
 func (m model) displayNameForRootPaths(rootPaths []string) string {
-	for name, paths := range m.repoNames {
-		if rootPathsMatch(paths, rootPaths) {
+	names := make([]string, 0, len(m.repoNames))
+	for name := range m.repoNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if rootPathsMatch(m.repoNames[name], rootPaths) {
 			return name
 		}
 	}
@@ -209,7 +214,13 @@ func (m *model) reconcileAutoRepoFilter() bool {
 	}
 	rootPaths := m.repoNames[displayName]
 	if len(rootPaths) == 0 || rootPathsMatch(rootPaths, m.activeRepoFilter) {
-		return false
+		if m.cwdRepoIdentity == "" {
+			return false
+		}
+		rootPaths = m.repoIdentities[m.cwdRepoIdentity]
+		if len(rootPaths) == 0 || rootPathsMatch(rootPaths, m.activeRepoFilter) {
+			return false
+		}
 	}
 
 	m.activeRepoFilter = copyStrings(rootPaths)

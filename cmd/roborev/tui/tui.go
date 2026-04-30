@@ -323,7 +323,8 @@ type model struct {
 	// Repo name lookup (display name → root paths), populated from
 	// /api/repos at init. Used by control socket set-filter to resolve
 	// display names to the root paths that the daemon API expects.
-	repoNames map[string][]string
+	repoNames      map[string][]string
+	repoIdentities map[string][]string
 
 	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
 	branchNames map[int64]string
@@ -332,8 +333,9 @@ type model struct {
 	branchBackfillDone bool
 
 	// Repo root and branch detected from cwd at launch (for filter sort priority)
-	cwdRepoRoot string
-	cwdBranch   string
+	cwdRepoRoot     string
+	cwdRepoIdentity string
+	cwdBranch       string
 
 	// Pending closed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
@@ -479,7 +481,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	hiddenCols := parseHiddenColumns(nil)
 	colOrder := parseColumnOrder(nil)
 	taskColOrder := parseTaskColumnOrder(nil)
-	var cwdRepoRoot, cwdBranch string
+	var cwdRepoRoot, cwdRepoIdentity, cwdBranch string
 
 	if !opt.disableExternalIO {
 		// Read daemon version from runtime file
@@ -513,6 +515,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		// Detect current repo/branch for filter sort priority
 		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
 			cwdRepoRoot = repoRoot
+			cwdRepoIdentity = config.ResolveRepoIdentity(repoRoot, nil)
 			cwdBranch = git.GetCurrentBranch(".")
 		}
 	}
@@ -529,6 +532,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	if opt.autoFilterRepo {
 		autoFilterRepo = true
 		cwdRepoRoot = opt.cwdRepoRoot
+		cwdRepoIdentity = opt.cwdRepoIdentity
 	}
 	if opt.autoFilterBranch {
 		autoFilterBranch = true
@@ -599,6 +603,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		lockedRepoFilter:    lockedRepo,
 		lockedBranchFilter:  lockedBranch,
 		cwdRepoRoot:         cwdRepoRoot,
+		cwdRepoIdentity:     cwdRepoIdentity,
 		cwdBranch:           cwdBranch,
 		displayNames:        make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:         make(map[int64]string),       // Cache derived branch names to avoid git calls on render

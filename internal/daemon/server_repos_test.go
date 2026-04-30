@@ -92,6 +92,35 @@ func TestHandleListRepos(t *testing.T) {
 		}
 	})
 
+	t.Run("repos include identity", func(t *testing.T) {
+		repo, err := db.GetRepoByName("repo1")
+		require.NoError(t, err)
+		identity := "https://github.com/test/repo1.git"
+		require.NoError(t, db.SetRepoIdentity(repo.ID, identity))
+
+		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response struct {
+			Repos []struct {
+				Name     string `json:"name"`
+				Identity string `json:"identity"`
+			} `json:"repos"`
+		}
+		testutil.DecodeJSON(t, w, &response)
+
+		var found bool
+		for _, r := range response.Repos {
+			if r.Name == "repo1" {
+				found = true
+				assert.Equal(t, identity, r.Identity)
+			}
+		}
+		assert.True(t, found)
+	})
+
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/repos", nil)
 		w := httptest.NewRecorder()

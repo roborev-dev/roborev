@@ -303,6 +303,25 @@ func TestRenameRepo(t *testing.T) {
 	})
 }
 
+func TestListReposWithReviewCountsIncludesIdentity(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	identity := "https://github.com/test/renamed-repo.git"
+	repo, err := db.GetOrCreateRepo(
+		filepath.Join(t.TempDir(), "renamed-repo"),
+		identity,
+	)
+	require.NoError(t, err)
+
+	repos, _, err := db.ListReposWithReviewCounts()
+	require.NoError(t, err)
+	require.Len(t, repos, 1)
+
+	assert.Equal(t, repo.RootPath, repos[0].RootPath)
+	assert.Equal(t, identity, repos[0].Identity)
+}
+
 func TestMoveRepo(t *testing.T) {
 	t.Run("updates root_path", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "move-test")
