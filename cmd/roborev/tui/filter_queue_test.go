@@ -485,6 +485,33 @@ func TestTUIAutoRepoFilterPrefersIdentityOverDisplayName(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+func TestTUIAutoRepoFilterKeepsTrackedCloneWithSharedIdentity(t *testing.T) {
+	currentRoot := "/workspace/team-a/service"
+	otherRoot := "/workspace/team-b/service"
+	identity := "https://github.com/test/service.git"
+	m := newModel(
+		localhostEndpoint,
+		withExternalIODisabled(),
+		withAutoFilterRepo(currentRoot),
+		withCwdRepoIdentity(identity),
+	)
+	m.currentView = viewQueue
+	m.loadingJobs = false
+
+	m2, cmd := updateModel(t, m, repoNamesMsg{
+		names: map[string][]string{
+			"service": []string{currentRoot, otherRoot},
+		},
+		identities: map[string][]string{
+			identity: []string{currentRoot, otherRoot},
+		},
+	})
+
+	assert.Equal(t, []string{currentRoot}, m2.activeRepoFilter)
+	assert.Nil(t, cmd)
+	assert.False(t, m2.loadingJobs)
+}
+
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview

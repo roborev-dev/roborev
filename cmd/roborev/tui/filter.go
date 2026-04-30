@@ -202,9 +202,34 @@ func (m model) repoFilterDisplayName() string {
 	return strings.Join(m.activeRepoFilter, ", ")
 }
 
+func (m model) repoRootTracked(rootPath string) bool {
+	if rootPath == "" {
+		return false
+	}
+	for _, rootPaths := range m.repoNames {
+		if slices.Contains(rootPaths, rootPath) {
+			return true
+		}
+	}
+	for _, rootPaths := range m.repoIdentities {
+		if slices.Contains(rootPaths, rootPath) {
+			return true
+		}
+	}
+	for _, node := range m.filterTree {
+		if slices.Contains(node.rootPaths, rootPath) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) reconcileAutoRepoFilter() bool {
 	if !m.autoRepoFilter || len(m.activeRepoFilter) != 1 ||
 		m.cwdRepoRoot == "" || m.activeRepoFilter[0] != m.cwdRepoRoot {
+		return false
+	}
+	if m.repoRootTracked(m.cwdRepoRoot) {
 		return false
 	}
 
