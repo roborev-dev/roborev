@@ -1409,6 +1409,199 @@ func (db *DB) migrateSyncColumns() error {
 		}
 	}
 
+	if err := db.migrateRepoRootPathNormalization(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type repoRootPathMigrationRow struct {
+	id         int64
+	rootPath   string
+	normalized string
+}
+
+func (db *DB) migrateRepoRootPathNormalization() error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin repo root_path normalization: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.Query(`SELECT id, root_path FROM repos ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("query repo root_paths: %w", err)
+	}
+	groups := map[string][]repoRootPathMigrationRow{}
+	for rows.Next() {
+		var r repoRootPathMigrationRow
+		if err := rows.Scan(&r.id, &r.rootPath); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan repo root_path: %w", err)
+		}
+		r.normalized = normalizeStoredRepoPath(r.rootPath)
+		groups[r.normalized] = append(groups[r.normalized], r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate repo root_paths: %w", err)
+	}
+	rows.Close()
+
+	for normalized, group := range groups {
+		if len(group) == 1 {
+			if group[0].rootPath != normalized {
+				if _, err := tx.Exec(`UPDATE repos SET root_path = ? WHERE id = ?`, normalized, group[0].id); err != nil {
+					return fmt.Errorf("normalize repo root_path %q: %w", group[0].rootPath, err)
+				}
+			}
+			continue
+		}
+
+		target := chooseRepoRootPathMigrationTarget(normalized, group)
+		if target.rootPath != normalized {
+			if _, err := tx.Exec(`UPDATE repos SET root_path = ? WHERE id = ?`, normalized, target.id); err != nil {
+				return fmt.Errorf("normalize target repo root_path %q: %w", target.rootPath, err)
+			}
+		}
+		for _, source := range group {
+			if source.id == target.id {
+				continue
+			}
+			if err := mergeRepoRootPathConflict(tx, source.id, target.id); err != nil {
+				return fmt.Errorf("merge repo root_path conflict %d into %d: %w", source.id, target.id, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit repo root_path normalization: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+func chooseRepoRootPathMigrationTarget(
+	normalized string,
+	rows []repoRootPathMigrationRow,
+) repoRootPathMigrationRow {
+	target := rows[0]
+	for _, r := range rows {
+		if r.rootPath == normalized {
+			return r
+		}
+		if r.id < target.id {
+			target = r
+		}
+	}
+	return target
+}
+
+func mergeRepoRootPathConflict(tx *sql.Tx, sourceRepoID, targetRepoID int64) error {
+	if _, err := tx.Exec(`
+		UPDATE repos
+		SET identity = (SELECT identity FROM repos WHERE id = ?)
+		WHERE id = ?
+		  AND (identity IS NULL OR identity = '')
+		  AND COALESCE((SELECT identity FROM repos WHERE id = ?), '') != ''
+	`, sourceRepoID, targetRepoID, sourceRepoID); err != nil {
+		return fmt.Errorf("copy repo identity: %w", err)
+	}
+
+	rows, err := tx.Query(`
+		SELECT sc.id, tc.id
+		FROM commits sc
+		JOIN commits tc ON tc.repo_id = ? AND tc.sha = sc.sha
+		WHERE sc.repo_id = ?
+	`, targetRepoID, sourceRepoID)
+	if err != nil {
+		return fmt.Errorf("query duplicate commits: %w", err)
+	}
+	type commitPair struct {
+		sourceID int64
+		targetID int64
+	}
+	var duplicateCommits []commitPair
+	for rows.Next() {
+		var pair commitPair
+		if err := rows.Scan(&pair.sourceID, &pair.targetID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan duplicate commit: %w", err)
+		}
+		duplicateCommits = append(duplicateCommits, pair)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate duplicate commits: %w", err)
+	}
+	rows.Close()
+
+	for _, pair := range duplicateCommits {
+		if _, err := tx.Exec(`UPDATE review_jobs SET commit_id = ? WHERE commit_id = ?`, pair.targetID, pair.sourceID); err != nil {
+			return fmt.Errorf("remap review job commit %d to %d: %w", pair.sourceID, pair.targetID, err)
+		}
+		if _, err := tx.Exec(`UPDATE responses SET commit_id = ? WHERE commit_id = ?`, pair.targetID, pair.sourceID); err != nil {
+			return fmt.Errorf("remap response commit %d to %d: %w", pair.sourceID, pair.targetID, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM commits WHERE id = ?`, pair.sourceID); err != nil {
+			return fmt.Errorf("delete duplicate commit %d: %w", pair.sourceID, err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID); err != nil {
+		return fmt.Errorf("move commits: %w", err)
+	}
+	if err := demoteConflictingAutoDesignJobs(tx, sourceRepoID, targetRepoID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID); err != nil {
+		return fmt.Errorf("move review jobs: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM repos WHERE id = ?`, sourceRepoID); err != nil {
+		return fmt.Errorf("delete duplicate repo: %w", err)
+	}
+	return nil
+}
+
+func demoteConflictingAutoDesignJobs(tx *sql.Tx, sourceRepoID, targetRepoID int64) error {
+	var hasSource int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'source'`).Scan(&hasSource); err != nil {
+		return fmt.Errorf("check review_jobs source column: %w", err)
+	}
+	if hasSource == 0 {
+		return nil
+	}
+
+	_, err := tx.Exec(`
+		UPDATE review_jobs AS sj
+		SET source = 'auto_design_duplicate'
+		WHERE sj.repo_id = ?
+		  AND sj.source = 'auto_design'
+		  AND EXISTS (
+			SELECT 1
+			FROM review_jobs AS tj
+			WHERE tj.repo_id = ?
+			  AND tj.source = 'auto_design'
+			  AND tj.review_type = sj.review_type
+			  AND (
+				tj.git_ref = sj.git_ref
+				OR (
+					tj.commit_id IS NOT NULL
+					AND sj.commit_id IS NOT NULL
+					AND tj.commit_id = sj.commit_id
+				)
+			  )
+		  )
+	`, sourceRepoID, targetRepoID)
+	if err != nil {
+		return fmt.Errorf("demote duplicate auto-design jobs: %w", err)
+	}
 	return nil
 }
 

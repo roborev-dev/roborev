@@ -12,7 +12,7 @@ import (
 
 func normalizeRepoPath(rootPath string) (string, error) {
 	if isWindowsAbsPath(rootPath) {
-		return strings.ReplaceAll(rootPath, `\`, "/"), nil
+		return normalizeStoredRepoPath(rootPath), nil
 	}
 
 	absPath, err := filepath.Abs(rootPath)
@@ -20,6 +20,13 @@ func normalizeRepoPath(rootPath string) (string, error) {
 		return "", err
 	}
 	return filepath.ToSlash(absPath), nil
+}
+
+func normalizeStoredRepoPath(rootPath string) string {
+	if isWindowsAbsPath(rootPath) {
+		return strings.ReplaceAll(rootPath, `\`, "/")
+	}
+	return rootPath
 }
 
 func normalizeRepoPathBestEffort(rootPath string) string {

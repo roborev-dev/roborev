@@ -318,6 +318,86 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 }
 
+func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "paths.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+
+	const (
+		sourceRepoID   = int64(1)
+		targetRepoID   = int64(2)
+		sourceCommitID = int64(10)
+		targetCommitID = int64(20)
+		sourceJobID    = int64(100)
+		targetJobID    = int64(200)
+	)
+	_, err = db.Exec(`
+		INSERT INTO repos (id, root_path, name, identity)
+		VALUES
+			(?, 'C:\Users\dev\workspace\repo', 'repo', 'https://github.com/test/repo.git'),
+			(?, 'C:/Users/dev/workspace/repo', 'repo', NULL)
+	`, sourceRepoID, targetRepoID)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
+		VALUES
+			(?, ?, 'abc123', 'A', 'source commit', '2024-01-01T00:00:00Z'),
+			(?, ?, 'abc123', 'A', 'target commit', '2024-01-01T00:00:00Z')
+	`, sourceCommitID, sourceRepoID, targetCommitID, targetRepoID)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, review_type, source)
+		VALUES
+			(?, ?, ?, 'abc123', 'codex', 'done', 'design', 'auto_design'),
+			(?, ?, ?, 'abc123', 'codex', 'done', 'design', 'auto_design')
+	`, sourceJobID, sourceRepoID, sourceCommitID, targetJobID, targetRepoID, targetCommitID)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO responses (id, commit_id, job_id, responder, response)
+		VALUES (1, ?, ?, 'codex', 'source response')
+	`, sourceCommitID, sourceJobID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo, err := db.GetRepoByPath(`C:\Users\dev\workspace\repo`)
+	require.NoError(t, err)
+	assert.Equal(t, targetRepoID, repo.ID)
+	assert.Equal(t, "C:/Users/dev/workspace/repo", repo.RootPath)
+
+	var identity string
+	err = db.QueryRow(`SELECT COALESCE(identity, '') FROM repos WHERE id = ?`, targetRepoID).Scan(&identity)
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/test/repo.git", identity)
+
+	var repoCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM repos WHERE root_path IN (?, ?)`,
+		`C:\Users\dev\workspace\repo`, `C:/Users/dev/workspace/repo`).Scan(&repoCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, repoCount)
+
+	var sourceJobRepoID, sourceJobCommitID int64
+	err = db.QueryRow(`SELECT repo_id, commit_id FROM review_jobs WHERE id = ?`, sourceJobID).
+		Scan(&sourceJobRepoID, &sourceJobCommitID)
+	require.NoError(t, err)
+	assert.Equal(t, targetRepoID, sourceJobRepoID)
+	assert.Equal(t, targetCommitID, sourceJobCommitID)
+
+	var sourceCommitCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE id = ?`, sourceCommitID).
+		Scan(&sourceCommitCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, sourceCommitCount)
+
+	var responseCommitID int64
+	err = db.QueryRow(`SELECT commit_id FROM responses WHERE id = 1`).Scan(&responseCommitID)
+	require.NoError(t, err)
+	assert.Equal(t, targetCommitID, responseCommitID)
+}
+
 func TestMigrationAddsVerdictBoolColumn(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
