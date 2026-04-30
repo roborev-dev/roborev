@@ -458,6 +458,33 @@ func TestTUIAutoRepoFilterFallsBackToIdentity(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+func TestTUIAutoRepoFilterPrefersIdentityOverDisplayName(t *testing.T) {
+	expectedRoot := "/workspace/team-a/service"
+	wrongRoot := "/workspace/team-b/service"
+	newRoot := "/workspace/team-c/service"
+	identity := "https://github.com/test/team-a-service.git"
+	m := newModel(
+		localhostEndpoint,
+		withExternalIODisabled(),
+		withAutoFilterRepo(newRoot),
+		withCwdRepoIdentity(identity),
+	)
+	m.currentView = viewQueue
+	m.loadingJobs = false
+
+	m2, cmd := updateModel(t, m, repoNamesMsg{
+		names: map[string][]string{
+			"service": []string{wrongRoot},
+		},
+		identities: map[string][]string{
+			identity: []string{expectedRoot},
+		},
+	})
+
+	assert.Equal(t, []string{expectedRoot}, m2.activeRepoFilter)
+	assert.NotNil(t, cmd)
+}
+
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview

@@ -208,19 +208,19 @@ func (m *model) reconcileAutoRepoFilter() bool {
 		return false
 	}
 
-	displayName := config.GetDisplayName(m.cwdRepoRoot)
-	if displayName == "" {
-		displayName = filepath.Base(m.cwdRepoRoot)
-	}
-	rootPaths := m.repoNames[displayName]
-	if len(rootPaths) == 0 || rootPathsMatch(rootPaths, m.activeRepoFilter) {
-		if m.cwdRepoIdentity == "" {
-			return false
-		}
+	var rootPaths []string
+	if m.cwdRepoIdentity != "" {
 		rootPaths = m.repoIdentities[m.cwdRepoIdentity]
-		if len(rootPaths) == 0 || rootPathsMatch(rootPaths, m.activeRepoFilter) {
-			return false
+	}
+	if len(rootPaths) == 0 {
+		displayName := config.GetDisplayName(m.cwdRepoRoot)
+		if displayName == "" {
+			displayName = filepath.Base(m.cwdRepoRoot)
 		}
+		rootPaths = m.repoNames[displayName]
+	}
+	if len(rootPaths) == 0 || rootPathsMatch(rootPaths, m.activeRepoFilter) {
+		return false
 	}
 
 	m.activeRepoFilter = copyStrings(rootPaths)
