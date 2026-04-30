@@ -514,6 +514,29 @@ func TestGetCommitInfo(t *testing.T) {
 	})
 }
 
+func TestGetCommitParents(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	baseSHA := repo.HeadSHA()
+	defaultBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
+
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature")
+	featureSHA := repo.HeadSHA()
+
+	repo.Run("checkout", defaultBranch)
+	repo.Run("merge", "--no-ff", "feature", "-m", "merge feature")
+	mergeSHA := repo.HeadSHA()
+
+	parents, err := GetCommitParents(repo.Dir, mergeSHA)
+	require.NoError(t, err, "GetCommitParents failed")
+	assert.Equal(t, []string{baseSHA, featureSHA}, parents)
+
+	rootParents, err := GetCommitParents(repo.Dir, baseSHA)
+	require.NoError(t, err, "GetCommitParents root failed")
+	assert.Empty(t, rootParents)
+}
+
 func TestGetBranchName(t *testing.T) {
 	t.Run("valid commit on branch", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)

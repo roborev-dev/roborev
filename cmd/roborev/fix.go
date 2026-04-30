@@ -515,9 +515,17 @@ func filterReachableJobs(
 	if matchBranch == "" {
 		matchBranch = git.GetCurrentBranch(worktreeRoot)
 	}
+	var detachedRefs map[string]struct{}
+	if matchBranch == "" {
+		detachedRefs = detachedHeadReviewRefs(worktreeRoot)
+	}
 	var filtered []storage.ReviewJob
 	for _, j := range jobs {
 		if branchMatch(matchBranch, j.Branch) {
+			filtered = append(filtered, j)
+			continue
+		}
+		if len(detachedRefs) > 0 && jobMatchesDetachedRef(worktreeRoot, detachedRefs, j) {
 			filtered = append(filtered, j)
 		}
 	}
@@ -532,6 +540,50 @@ func branchMatch(matchBranch, jobBranch string) bool {
 		return false
 	}
 	return jobBranch == matchBranch
+}
+
+func detachedHeadReviewRefs(worktreeRoot string) map[string]struct{} {
+	head, err := git.ResolveSHA(worktreeRoot, "HEAD")
+	if err != nil {
+		return nil
+	}
+
+	refs := make(map[string]struct{})
+	seen := make(map[string]struct{})
+	stack := []string{head}
+	for len(stack) > 0 {
+		sha := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[sha]; ok {
+			continue
+		}
+		seen[sha] = struct{}{}
+		refs[sha] = struct{}{}
+		if git.GetBranchName(worktreeRoot, sha) != "" {
+			continue
+		}
+		parents, err := git.GetCommitParents(worktreeRoot, sha)
+		if err == nil {
+			stack = append(stack, parents...)
+		}
+	}
+	return refs
+}
+
+func jobMatchesDetachedRef(worktreeRoot string, refs map[string]struct{}, job storage.ReviewJob) bool {
+	if job.GitRef == "" || job.GitRef == "dirty" {
+		return false
+	}
+	ref := job.GitRef
+	if _, end, ok := git.ParseRange(ref); ok {
+		ref = end
+	}
+	sha, err := git.ResolveSHA(worktreeRoot, ref)
+	if err != nil {
+		return false
+	}
+	_, ok := refs[sha]
+	return ok
 }
 
 func queryOpenJobs(
