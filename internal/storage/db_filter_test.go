@@ -820,27 +820,33 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		assert.Equal(t, 2, total)
 	})
 
-	t.Run("backslash in path does not cause SQL error", func(t *testing.T) {
+	t.Run("backslash prefix matches normalized Windows path", func(t *testing.T) {
 
 		createRepo(t, db, `C:\Users\dev\workspace\project-a`)
 		rA, _ := db.GetRepoByPath(`C:\Users\dev\workspace\project-a`)
 		cA := createCommit(t, db, rA.ID, "win-a")
 		enqueueJob(t, db, rA.ID, cA.ID, "win-a")
+		claimed := claimJob(t, db, "w2")
+		require.NoError(t, db.CompleteJob(claimed.ID, "codex", "p", "o"))
 
-		_, err := db.ListJobs(
+		jobs, err := db.ListJobs(
 			"", "", 50, 0, WithRepoPrefix(`C:\Users\dev\workspace`),
 		)
 		require.NoError(t, err, "ListJobs with backslash prefix should not error: %v")
+		assert.Len(t, jobs, 1)
 
-		_, err = db.CountJobStats(
+		stats, err := db.CountJobStats(
 			"", WithRepoPrefix(`C:\Users\dev\workspace`),
 		)
 		require.NoError(t, err, "CountJobStats with backslash prefix should not error: %v")
+		assert.Equal(t, 1, stats.Open)
 
-		_, _, err = db.ListReposWithReviewCounts(
+		repos, total, err := db.ListReposWithReviewCounts(
 			WithRepoPathPrefix(`C:\Users\dev\workspace`),
 		)
 		require.NoError(t, err, "ListReposWithReviewCounts with backslash prefix should not error: %v")
+		assert.Len(t, repos, 1)
+		assert.Equal(t, 1, total)
 
 	})
 }

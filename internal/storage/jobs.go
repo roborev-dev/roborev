@@ -734,7 +734,7 @@ func WithRepoPrefix(prefix string) ListJobsOption {
 	return func(o *listJobsOptions) {
 		// Trim trailing slash so LIKE "prefix/%"  doesn't become "prefix//%".
 		// Root prefix "/" trims to "" which disables the filter (all repos match).
-		o.repoPrefix = escapeLike(strings.TrimRight(prefix, "/"))
+		o.repoPrefix = escapeLike(normalizeRepoPathPrefix(prefix))
 	}
 }
 

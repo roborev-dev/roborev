@@ -392,6 +392,26 @@ func TestMoveRepo(t *testing.T) {
 		assert.Equal(t, repoA.RootPath, unchanged.RootPath)
 	})
 
+	t.Run("returns ErrRepoPathConflict for normalized Windows target path", func(t *testing.T) {
+		db := openTestDB(t)
+		t.Cleanup(func() { db.Close() })
+
+		repoA := createRepo(t, db, filepath.Join(t.TempDir(), "repo-a"))
+		_, err := db.Exec(
+			`INSERT INTO repos (root_path, name) VALUES (?, ?)`,
+			`C:/Users/dev/workspace/repo-b`,
+			"repo-b",
+		)
+		require.NoError(t, err)
+
+		err = db.MoveRepo(repoA.ID, `C:\Users\dev\workspace\repo-b`, "")
+		require.ErrorIs(t, err, ErrRepoPathConflict)
+
+		unchanged, err := db.GetRepoByID(repoA.ID)
+		require.NoError(t, err)
+		assert.Equal(t, repoA.RootPath, unchanged.RootPath)
+	})
+
 	t.Run("moving to same path is a no-op", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "move-same-path-test")
 
