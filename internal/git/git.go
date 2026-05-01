@@ -434,10 +434,16 @@ func GetMainRepoRoot(path string) (string, error) {
 			return filepath.Dir(commonDir), nil
 		}
 
-		// Submodule worktree - read core.worktree from config
+		// Submodule worktree - read core.worktree from config. Bare-repo
+		// worktrees have a common git dir that does not end in ".git", but
+		// their common config has no core.worktree; in that case there is no
+		// main checkout to resolve to, so use the current worktree root.
 		cmd := exec.Command("git", "config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
 		out, err := cmd.Output()
 		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				return GetRepoRoot(path)
+			}
 			return "", fmt.Errorf("git config core.worktree for submodule worktree: %w", err)
 		}
 		worktree := normalizeMSYSPath(string(out))

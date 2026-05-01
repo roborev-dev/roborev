@@ -53,6 +53,36 @@ func NewBareTestRepo(t *testing.T) *TestRepo {
 	return r
 }
 
+func NewBareRepoLinkedWorktree(t *testing.T) *TestRepo {
+	t.Helper()
+
+	root := t.TempDir()
+	bareDir := filepath.Join(root, ".bare")
+	require.NoError(t, os.MkdirAll(bareDir, 0o755))
+	bare := &TestRepo{T: t, Dir: bareDir}
+	bare.Run("init", "--bare")
+	bare.Run("symbolic-ref", "HEAD", "refs/heads/main")
+
+	seedDir := filepath.Join(root, "seed")
+	require.NoError(t, os.MkdirAll(seedDir, 0o755))
+	seed := &TestRepo{T: t, Dir: seedDir}
+	seed.Run("init")
+	seed.Run("config", "user.email", "test@test.com")
+	seed.Run("config", "user.name", "Test")
+	seed.Run("checkout", "-b", "main")
+	seed.CommitFile("initial.txt", "initial content", "initial commit")
+	seed.Run("remote", "add", "origin", bareDir)
+	seed.Run("push", "-u", "origin", "main")
+
+	worktreeDir := filepath.Join(root, "feature")
+	cmd := exec.Command("git", "--git-dir", bareDir, "worktree", "add", worktreeDir, "-b", "feature", "main")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %v\n%s", err, out)
+
+	return &TestRepo{T: t, Dir: worktreeDir}
+}
+
 func (r *TestRepo) Run(args ...string) string {
 	r.T.Helper()
 	return runGit(r.T, r.Dir, args...)
@@ -1993,6 +2023,24 @@ func TestWorktreePathForBranch(t *testing.T) {
 			require.NoError(t, statErr, "WorktreePathForBranch() returned checkedOut=true for stale path %q that doesn't exist", got)
 		}
 	})
+}
+
+func TestGetMainRepoRootBareRepoLinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	wt := NewBareRepoLinkedWorktree(t)
+	checkoutRoot, err := GetRepoRoot(wt.Dir)
+	require.NoError(t, err)
+
+	commonDir := wt.Run("rev-parse", "--git-common-dir")
+	cmd := exec.Command("git", "config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
+	require.Error(t, cmd.Run(), "bare repo common config should not define core.worktree")
+
+	mainRoot, err := GetMainRepoRoot(wt.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, cleanEvalPath(checkoutRoot), cleanEvalPath(mainRoot))
 }
 
 func TestValidateWorktreeForRepo(t *testing.T) {
