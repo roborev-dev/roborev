@@ -2225,7 +2225,7 @@ func ResolveACPAgentConfig(repoPath string, globalCfg *Config) *ACPAgentConfig {
 		if IsConfigParseError(err) {
 			// Parse error - skip repo config
 		} else {
-			return nil
+			repoCfg = nil
 		}
 	}
 	if repoCfg != nil && repoCfg.ACP != nil {
