@@ -42,8 +42,8 @@ func HasRealErrors(err error) bool {
 // Version markers identify the current hook template version.
 // Bump these when the hook template changes to trigger
 // upgrade warnings and auto-upgrades.
-const PostCommitVersionMarker = "post-commit hook v4"
-const PostRewriteVersionMarker = "post-rewrite hook v2"
+const PostCommitVersionMarker = "post-commit hook v5"
+const PostRewriteVersionMarker = "post-rewrite hook v3"
 
 // VersionMarker returns the current version marker for a hook.
 func VersionMarker(hookName string) string {
@@ -142,6 +142,13 @@ func resolveRoborevPath() string {
 
 // GeneratePostCommit returns a standalone post-commit hook
 // (with shebang, suitable for fresh installs).
+//
+// Output is redirected to /dev/null as a belt-and-suspenders
+// guard against terminal escape leakage: the hook runs while
+// the parent shell (e.g. git rebase) holds the TTY, so any
+// stray byte from a transitive package init lands directly
+// in the user's shell. The vendored termenv tmux patch is the
+// real fix; this redirect catches any future regressions.
 func GeneratePostCommit() string {
 	return fmt.Sprintf(`#!/bin/sh
 # roborev %s - auto-reviews every commit
@@ -150,7 +157,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
-"$ROBOREV" post-commit 2>/dev/null
+"$ROBOREV" post-commit >/dev/null 2>/dev/null
 `, PostCommitVersionMarker, resolveRoborevPath())
 }
 
@@ -164,7 +171,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
-"$ROBOREV" remap --quiet 2>/dev/null
+"$ROBOREV" remap --quiet >/dev/null 2>/dev/null
 `, PostRewriteVersionMarker, resolveRoborevPath())
 }
 
@@ -180,7 +187,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
 fi
-"$ROBOREV" post-commit 2>/dev/null
+"$ROBOREV" post-commit >/dev/null 2>/dev/null
 }
 _roborev_hook
 `, PostCommitVersionMarker, resolveRoborevPath())
@@ -196,7 +203,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
 fi
-"$ROBOREV" remap --quiet 2>/dev/null
+"$ROBOREV" remap --quiet >/dev/null 2>/dev/null
 }
 _roborev_remap
 `, PostRewriteVersionMarker, resolveRoborevPath())
