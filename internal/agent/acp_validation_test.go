@@ -211,11 +211,8 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 			AgentMessageChunk: messageChunk,
 		},
 	})
-	require.Error(t, err, "Expected session mismatch error for SessionUpdate")
+	require.NoError(t, err, "SessionUpdate should not return error for mismatched session ID")
 
-	if !strings.Contains(err.Error(), "session ID mismatch") {
-		require.Failf(t, "unexpected error", "Expected session mismatch error, got: %v", err)
-	}
 	if client.result.String() != "" {
 		assert.Empty(t, client.result.String(), "Expected no output to be appended on session mismatch, got: %q", client.result.String())
 	}

@@ -91,12 +91,16 @@ func (c *acpClient) RequestPermission(ctx context.Context, params acp.RequestPer
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params acp.SessionNotification) error {
-	// If we don't have an active session yet but the server is sending a session update,
-	// it might be from a previous session or the session creation is still in progress.
-	// Store the session ID if we don't have one, otherwise validate it.
+	// Store the session ID if we don't have one yet
+	// This can happen if the server sends a session update before NewSession completes
 	if c.sessionID == "" {
-		// No active session in client yet - store the session ID from the notification
-		// This can happen if the server sends a session update before NewSession completes
+		// First session update - validate against agent's session if set
+		if c.agent != nil && c.agent.SessionID != "" && string(params.SessionId) != c.agent.SessionID {
+			// Session ID mismatch - log but don't return error to avoid breaking the connection
+			// This can happen with stale session notifications from the server
+			log.Printf("ACP session update with mismatched session ID (expected %q, got %q), ignoring", c.agent.SessionID, params.SessionId)
+			return nil
+		}
 		c.sessionID = string(params.SessionId)
 	} else if err := c.validateSessionID(params.SessionId); err != nil {
 		// Session ID mismatch - log but don't return error to avoid breaking the connection
