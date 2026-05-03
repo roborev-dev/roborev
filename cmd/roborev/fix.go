@@ -345,7 +345,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	}
 
 	a, err := agent.GetAvailableWithConfig(
-		resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)

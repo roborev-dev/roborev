@@ -409,7 +409,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	// backup determination to avoid baking the primary model into a
 	// backup agent).
 	addressAgent, err := selectRefineAgent(
-		cfg, resolution.PreferredAgent, reasoningLevel, resolution.BackupAgent,
+		repoPath, cfg, resolution.PreferredAgent, reasoningLevel, resolution.BackupAgent,
 	)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
@@ -1240,8 +1240,8 @@ func verifyRepoState(
 	return nil
 }
 
-func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, backups ...string) (agent.Agent, error) {
-	baseAgent, err := agent.GetAvailableWithConfig(resolvedAgent, cfg, backups...)
+func selectRefineAgent(repoPath string, cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, backups ...string) (agent.Agent, error) {
+	baseAgent, err := agent.GetAvailableWithConfig(repoPath, resolvedAgent, cfg, backups...)
 	if err != nil {
 		return nil, err
 	}

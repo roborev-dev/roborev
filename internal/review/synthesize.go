@@ -18,7 +18,11 @@ import (
 var ErrAllFailed = errors.New(
 	"all review jobs failed")
 
-var getAvailableWithConfig = agent.GetAvailableWithConfig
+// getAvailableWithConfig is a variable for dependency injection in tests.
+// It wraps agent.GetAvailableWithConfig with repoPath as the first parameter.
+var getAvailableWithConfig = func(repoPath string, preferred string, cfg *config.Config, backups ...string) (agent.Agent, error) {
+	return agent.GetAvailableWithConfig(repoPath, preferred, cfg, backups...)
+}
 
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
@@ -123,7 +127,7 @@ func runSynthesis(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (string, error) {
-	synthAgent, err := getAvailableWithConfig(opts.Agent, opts.GlobalConfig)
+	synthAgent, err := getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig)
 	if err != nil {
 		return "", fmt.Errorf("get synthesis agent: %w", err)
 	}

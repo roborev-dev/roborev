@@ -624,7 +624,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			}
 			resolvedAgent = name
 		} else if resolved, err := agent.GetAvailableWithConfig(
-			resolvedAgent, cfg, resolution.BackupAgent,
+			repo.RootPath, resolvedAgent, cfg, resolution.BackupAgent,
 		); err != nil {
 			rollback("No agent available — check agent config or quota")
 			return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
@@ -1968,7 +1968,7 @@ func runSynthesisAgent(
 	agentName, model, repoPath, prompt string,
 	cfg *config.Config,
 ) (string, error) {
-	a, err := agent.GetAvailableWithConfig(agentName, cfg)
+	a, err := agent.GetAvailableWithConfig(repoPath, agentName, cfg)
 	if err != nil {
 		return "", fmt.Errorf("get agent %q: %w", agentName, err)
 	}

@@ -20,16 +20,19 @@ func defaultACPAgentConfig() *config.ACPAgentConfig {
 	}
 }
 
-func isConfiguredACPAgentName(name string, cfg *config.Config) bool {
+func isConfiguredACPAgentName(name string, cfg *config.Config, repoPath string) bool {
 	rawName := strings.TrimSpace(name)
 	if rawName == defaultACPName {
 		return true
 	}
-	if cfg == nil || cfg.ACP == nil {
+
+	// Check if there's a configured ACP name in either repo or global config
+	acpCfg := config.ResolveACPAgentConfig(repoPath, cfg)
+	if acpCfg == nil {
 		return false
 	}
 
-	configuredName := strings.TrimSpace(cfg.ACP.Name)
+	configuredName := strings.TrimSpace(acpCfg.Name)
 	if rawName == "" || configuredName == "" {
 		return false
 	}
@@ -41,11 +44,8 @@ func isConfiguredACPAgentName(name string, cfg *config.Config) bool {
 	return rawName == configuredName
 }
 
-func configuredACPAgent(cfg *config.Config) *ACPAgent {
-	var acpCfg *config.ACPAgentConfig
-	if cfg != nil {
-		acpCfg = cfg.ACP
-	}
+func configuredACPAgent(repoPath string, cfg *config.Config) *ACPAgent {
+	acpCfg := config.ResolveACPAgentConfig(repoPath, cfg)
 	resolved := NewACPAgentFromConfig(acpCfg)
 	// Keep a stable canonical name in runtime state.
 	resolved.agentName = defaultACPName
@@ -101,14 +101,17 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 // at resolution time instead of package-init time.
 // It also applies command overrides for other agents (codex, claude, cursor, pi).
 //
+// The repoPath parameter is used to resolve repo-level ACP configuration,
+// which takes precedence over global ACP configuration.
+//
 // Optional backup agent names are tried after the preferred agent but
 // before the hardcoded fallback chain (see GetAvailable).
-func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...string) (Agent, error) {
+func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
 	rawPreferred := strings.TrimSpace(preferred)
 	preferred = resolveAlias(rawPreferred)
 
-	if isConfiguredACPAgentName(rawPreferred, cfg) {
-		acpAgent := configuredACPAgent(cfg)
+	if isConfiguredACPAgentName(rawPreferred, cfg, repoPath) {
+		acpAgent := configuredACPAgent(repoPath, cfg)
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
@@ -163,7 +166,7 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...str
 		return nil, err
 	}
 	if resolved.Name() == defaultACPName {
-		configured := configuredACPAgent(cfg)
+		configured := configuredACPAgent(repoPath, cfg)
 		if _, err := exec.LookPath(configured.CommandName()); err == nil {
 			return configured, nil
 		}

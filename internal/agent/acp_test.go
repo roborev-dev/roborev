@@ -163,7 +163,7 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
@@ -191,7 +191,7 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("claude", cfg)
+	resolved, err := GetAvailableWithConfig("", "claude", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
@@ -219,7 +219,7 @@ func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissi
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
@@ -252,7 +252,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
@@ -890,7 +890,7 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("cursor", cfg)
+	resolved, err := GetAvailableWithConfig("", "cursor", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	require.Equal(t, "cursor", resolved.Name(), "resolved agent name")
@@ -899,7 +899,7 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
 	cfg := &config.Config{}
 
-	_, err := GetAvailableWithConfig("typo-agent", cfg)
+	_, err := GetAvailableWithConfig("", "typo-agent", cfg)
 	require.Error(t, err, "Expected error for unknown agent name")
 	require.ErrorContains(t, err, "unknown agent")
 }
@@ -923,7 +923,7 @@ func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {
 	t.Cleanup(func() { registry = originalRegistry })
 
 	cfg := &config.Config{}
-	resolved, err := GetAvailableWithConfig("codex", cfg, "gemini")
+	resolved, err := GetAvailableWithConfig("", "codex", cfg, "gemini")
 	require.NoError(t, err, "expected fallback, got error: %v", err)
 	assert.Equal(t, "gemini", resolved.Name(), "expected backup agent to be selected")
 }
@@ -948,7 +948,7 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	resolved, err := GetAvailableWithConfig("", "claude-code", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	assert.NotEqual(t, "acp", resolved.Name(), "Request for 'claude-code' should not route to ACP when acp.name='claude'")
@@ -970,7 +970,7 @@ func TestGetAvailableWithConfigAppliesClaudeCodeCmd(t *testing.T) {
 
 	cfg := &config.Config{ClaudeCodeCmd: "/custom/claude-wrapper"}
 
-	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	resolved, err := GetAvailableWithConfig("", "claude-code", cfg)
 	require.NoError(t, err)
 
 	ca, ok := resolved.(CommandAgent)
@@ -1005,7 +1005,7 @@ func TestGetAvailableWithConfigUsesConfigCmdForAvailability(t *testing.T) {
 		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	resolved, err := GetAvailableWithConfig("", "claude-code", cfg)
 	require.NoError(t, err, "agent should be available via configured command")
 
 	assert.Equal(t, "claude-code", resolved.Name())
@@ -1042,7 +1042,7 @@ func TestGetAvailableWithConfigBackupUsesConfigCmd(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig(
-		"codex", cfg, "claude-code",
+		"", "codex", cfg, "claude-code",
 	)
 	require.NoError(t, err,
 		"backup agent should be available via configured command")
@@ -1076,7 +1076,7 @@ func TestGetAvailableWithConfigCodexCmd(t *testing.T) {
 		CodexCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("codex", cfg)
+	resolved, err := GetAvailableWithConfig("", "codex", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "codex", resolved.Name())
 
@@ -1108,7 +1108,7 @@ func TestGetAvailableWithConfigCursorCmd(t *testing.T) {
 		CursorCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("cursor", cfg)
+	resolved, err := GetAvailableWithConfig("", "cursor", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "cursor", resolved.Name())
 
@@ -1140,7 +1140,7 @@ func TestGetAvailableWithConfigPiCmd(t *testing.T) {
 		PiCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("pi", cfg)
+	resolved, err := GetAvailableWithConfig("", "pi", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "pi", resolved.Name())
 
@@ -1172,7 +1172,7 @@ func TestGetAvailableWithConfigOpenCodeCmd(t *testing.T) {
 		OpenCodeCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("opencode", cfg)
+	resolved, err := GetAvailableWithConfig("", "opencode", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "opencode", resolved.Name())
 
@@ -1213,7 +1213,7 @@ func TestGetAvailableWithConfigACPFallbackBackupUsesConfigCmd(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig(
-		"my-acp", cfg, "claude-code",
+		"", "my-acp", cfg, "claude-code",
 	)
 	require.NoError(t, err,
 		"backup should resolve via config cmd when ACP is unavailable")
@@ -1250,7 +1250,7 @@ func TestGetAvailableWithConfigEmptyPreferredBackupUsesConfigCmd(t *testing.T) {
 		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
 	}
 
-	resolved, err := GetAvailableWithConfig("", cfg, "claude-code")
+	resolved, err := GetAvailableWithConfig("", "", cfg, "claude-code")
 	require.NoError(t, err,
 		"backup agent should be available via config cmd even with empty preferred")
 	assert.Equal(t, "claude-code", resolved.Name())

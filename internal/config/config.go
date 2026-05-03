@@ -1076,6 +1076,9 @@ type RepoConfig struct {
 
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size" comment:"Maximum prompt size for this repo before falling back to file paths."` // Max prompt size in bytes before falling back to paths (overrides global default)
+
+	// ACP (Agent Client Protocol) configuration for this repo
+	ACP *ACPAgentConfig `toml:"acp"`
 }
 
 // DefaultConfig returns the default configuration
@@ -2209,6 +2212,32 @@ func ResolveBackupModelForWorkflow(repoPath string, globalCfg *Config, workflow 
 	}
 
 	return ""
+}
+
+// ResolveACPAgentConfig returns the effective ACP agent configuration for a repo.
+// Priority: repo [acp] config > global [acp] config > nil (no ACP config).
+// Repo-level ACP config completely overrides global ACP config (no merging of individual fields).
+func ResolveACPAgentConfig(repoPath string, globalCfg *Config) *ACPAgentConfig {
+	// Try repo config first
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		// Malformed repo config - fall through to global
+		if IsConfigParseError(err) {
+			// Parse error - skip repo config
+		} else {
+			return nil
+		}
+	}
+	if repoCfg != nil && repoCfg.ACP != nil {
+		return repoCfg.ACP
+	}
+
+	// Fall back to global config
+	if globalCfg != nil && globalCfg.ACP != nil {
+		return globalCfg.ACP
+	}
+
+	return nil
 }
 
 // lookupFieldByTag finds a struct field by its TOML tag and returns its trimmed value.

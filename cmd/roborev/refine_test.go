@@ -152,7 +152,7 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 
 	t.Setenv("PATH", "")
 
-	_, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
+	_, err := selectRefineAgent("", nil, "codex", agent.ReasoningFast, "")
 	require.Error(t, err, "expected error when no agents are available")
 	if !strings.Contains(err.Error(), "no agents available") {
 		require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
-	selected, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("", nil, "codex", agent.ReasoningFast, "")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
@@ -252,7 +252,7 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 		},
 	}
 
-	selected, err := selectRefineAgent(cfg, "codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("", cfg, "codex", agent.ReasoningFast, "")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	acpAgent, ok := selected.(*agent.ACPAgent)
@@ -263,7 +263,7 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
-	selected, err := selectRefineAgent(nil, "gemini", agent.ReasoningThorough, "")
+	selected, err := selectRefineAgent("", nil, "gemini", agent.ReasoningThorough, "")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
@@ -919,7 +919,7 @@ func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	selected, err := selectRefineAgent(
-		nil, "gemini", agent.ReasoningStandard, "codex",
+		"", nil, "gemini", agent.ReasoningStandard, "codex",
 	)
 	require.NoError(t, err, "selectRefineAgent: %v")
 

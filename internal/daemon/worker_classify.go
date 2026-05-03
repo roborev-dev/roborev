@@ -207,7 +207,7 @@ func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 		return config.ResolveAgent("", repoPath, cfg), ""
 	}
 	primary := resolution.PreferredAgent
-	chosen, err := agent.GetAvailableWithConfig(primary, cfg, resolution.BackupAgent)
+	chosen, err := agent.GetAvailableWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
 	if err != nil {
 		return primary, resolution.ModelForSelectedAgent(primary, "")
 	}

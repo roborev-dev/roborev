@@ -393,13 +393,8 @@ func TestSetConfigKeyRepoConfigWritesComments(t *testing.T) {
 	}
 }
 
-func TestSetConfigKeyRepoConfigRejectsGlobalACPSettings(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".roborev.toml")
-
-	err := setConfigKey(path, "acp.command", "malicious-wrapper", false)
-	require.ErrorContains(t, err, "is a global setting")
-}
+// Note: ACP config is now supported at both global and repo level.
+// This test was removed as repo-level ACP config is now valid.
 
 func TestSetConfigKeyGlobalWritesComments(t *testing.T) {
 	path := setupConfigFile(t)

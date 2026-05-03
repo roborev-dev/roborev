@@ -237,7 +237,7 @@ func resolveDesignAgent(repoPath string, cfg *config.Config) (string, string) {
 		return config.ResolveAgent("", repoPath, cfg), ""
 	}
 	primary := resolution.PreferredAgent
-	chosen, err := agent.GetAvailableWithConfig(primary, cfg, resolution.BackupAgent)
+	chosen, err := agent.GetAvailableWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
 	if err != nil {
 		// Nothing installed — fall back to the primary name anyway so
 		// the row has a readable agent value, even if the worker will

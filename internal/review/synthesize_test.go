@@ -272,7 +272,7 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	var seenAgent string
 	var seenCfg *config.Config
 	cap := newCapturingAgent()
-	getAvailableWithConfig = func(agentName string, cfg *config.Config, backups ...string) (agent.Agent, error) {
+	getAvailableWithConfig = func(repoPath string, agentName string, cfg *config.Config, backups ...string) (agent.Agent, error) {
 		seenAgent = agentName
 		seenCfg = cfg
 		return cap, nil

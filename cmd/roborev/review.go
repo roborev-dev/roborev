@@ -430,7 +430,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 
 	// Get the agent (try backup before hardcoded chain)
 	a, err := agent.GetAvailableWithConfig(
-		resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)

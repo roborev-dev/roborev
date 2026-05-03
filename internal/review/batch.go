@@ -117,7 +117,7 @@ func runSingle(
 		}
 	} else {
 		resolvedAgent, err = agent.GetAvailableWithConfig(
-			resolvedName, cfg.GlobalConfig, backupAgent)
+			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)
 	}
 
 	if err == nil && cfg.GlobalConfig != nil {

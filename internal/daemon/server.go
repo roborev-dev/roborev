@@ -534,7 +534,7 @@ func validatedWorktreePath(worktreePath, repoPath string) string {
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
-	if err := validateRerunAgent(job.Agent, cfg); err != nil {
+	if err := validateRerunAgent(job.RepoPath, job.Agent, cfg); err != nil {
 		return "", "", err
 	}
 
@@ -567,8 +567,8 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 	return model, provider, nil
 }
 
-func validateRerunAgent(agentName string, cfg *config.Config) error {
-	_, err := agent.GetAvailableWithConfig(agentName, cfg)
+func validateRerunAgent(repoPath string, agentName string, cfg *config.Config) error {
+	_, err := agent.GetAvailableWithConfig(repoPath, agentName, cfg)
 	if err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
@@ -1466,7 +1466,7 @@ func (s *Server) humaEnqueue(
 	}
 	agentName := resolution.PreferredAgent
 	if resolved, err := agent.GetAvailableWithConfig(
-		agentName, cfg, resolution.BackupAgent,
+		resolutionPath, agentName, cfg, resolution.BackupAgent,
 	); err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
@@ -2103,7 +2103,7 @@ func (s *Server) humaFixJob(
 	}
 	agentName := resolution.PreferredAgent
 	if resolved, err := agent.GetAvailableWithConfig(
-		agentName, cfg, resolution.BackupAgent,
+		resolutionPath, agentName, cfg, resolution.BackupAgent,
 	); err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {

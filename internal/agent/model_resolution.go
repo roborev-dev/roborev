@@ -42,8 +42,8 @@ func ResolveWorkflowConfig(
 // AgentMatches reports whether two agent names refer to the same logical
 // agent after alias and ACP-name normalization.
 func (w WorkflowConfig) AgentMatches(left, right string) bool {
-	return workflowModelComparableAgentName(left, w.GlobalConfig) ==
-		workflowModelComparableAgentName(right, w.GlobalConfig)
+	return workflowModelComparableAgentName(left, w.RepoPath, w.GlobalConfig) ==
+		workflowModelComparableAgentName(right, w.RepoPath, w.GlobalConfig)
 }
 
 // UsesBackupAgent reports whether the selected agent is the configured
@@ -102,8 +102,8 @@ func ResolveWorkflowModelForAgent(
 	}
 
 	defaultAgent := config.ResolveAgent("", repoPath, globalCfg)
-	if workflowModelComparableAgentName(selectedAgent, globalCfg) !=
-		workflowModelComparableAgentName(defaultAgent, globalCfg) {
+	if workflowModelComparableAgentName(selectedAgent, repoPath, globalCfg) !=
+		workflowModelComparableAgentName(defaultAgent, repoPath, globalCfg) {
 		return config.ResolveWorkflowModel(
 			repoPath, globalCfg, workflow, level,
 		)
@@ -114,9 +114,9 @@ func ResolveWorkflowModelForAgent(
 	)
 }
 
-func workflowModelComparableAgentName(name string, cfg *config.Config) string {
+func workflowModelComparableAgentName(name string, repoPath string, cfg *config.Config) string {
 	name = strings.TrimSpace(name)
-	if isConfiguredACPAgentName(name, cfg) {
+	if isConfiguredACPAgentName(name, cfg, repoPath) {
 		return defaultACPName
 	}
 	return CanonicalName(name)
