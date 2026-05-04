@@ -18,6 +18,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0),
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
@@ -27,6 +28,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
+		&reviewFields.HighCount, &reviewFields.MediumCount, &reviewFields.LowCount,
 		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
 		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &job.MinSeverity)
@@ -36,6 +38,12 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	applyReviewScan(&r, reviewFields)
 	applyReviewJobScan(&job, jobFields)
 	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
+	// Mirror the scanned review counts onto the joined Job so the TUI's
+	// detail header (which reads job.HighFindings/etc.) sees them.
+	h, m, l := r.HighCount, r.MediumCount, r.LowCount
+	job.HighFindings = &h
+	job.MediumFindings = &m
+	job.LowFindings = &l
 
 	r.Job = &job
 
@@ -50,6 +58,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0),
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
@@ -61,6 +70,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		ORDER BY rv.created_at DESC
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
+		&reviewFields.HighCount, &reviewFields.MediumCount, &reviewFields.LowCount,
 		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
 		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &job.MinSeverity)
@@ -70,6 +80,12 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	applyReviewScan(&r, reviewFields)
 	applyReviewJobScan(&job, jobFields)
 	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
+	// Mirror the scanned review counts onto the joined Job so the TUI's
+	// detail header (which reads job.HighFindings/etc.) sees them.
+	h, m, l := r.HighCount, r.MediumCount, r.LowCount
+	job.HighFindings = &h
+	job.MediumFindings = &m
+	job.LowFindings = &l
 
 	r.Job = &job
 
@@ -79,7 +95,8 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 // GetAllReviewsForGitRef returns all reviews for a git ref (commit SHA or range) for re-review context
 func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	rows, err := db.Query(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.git_ref = ?
@@ -94,7 +111,8 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	for rows.Next() {
 		var r Review
 		var fields reviewScanFields
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed); err != nil {
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed,
+			&fields.HighCount, &fields.MediumCount, &fields.LowCount); err != nil {
 			return nil, err
 		}
 		applyReviewScan(&r, fields)
@@ -107,7 +125,8 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 // GetRecentReviewsForRepo returns the N most recent reviews for a repo
 func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error) {
 	rows, err := db.Query(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.repo_id = ?
@@ -123,7 +142,8 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	for rows.Next() {
 		var r Review
 		var fields reviewScanFields
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed); err != nil {
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed,
+			&fields.HighCount, &fields.MediumCount, &fields.LowCount); err != nil {
 			return nil, err
 		}
 		applyReviewScan(&r, fields)
@@ -340,7 +360,8 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 	// Fetch reviews for these jobs
 	reviewQuery := fmt.Sprintf(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.verdict_bool
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.verdict_bool,
+		       COALESCE(rv.high_count, 0), COALESCE(rv.medium_count, 0), COALESCE(rv.low_count, 0)
 		FROM reviews rv
 		WHERE rv.job_id IN (%s)
 	`, inClause)
@@ -354,13 +375,20 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	for reviewRows.Next() {
 		var r Review
 		var fields reviewScanFields
-		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed, &fields.VerdictBool); err != nil {
+		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed, &fields.VerdictBool,
+			&fields.HighCount, &fields.MediumCount, &fields.LowCount); err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
 		}
 		applyReviewScan(&r, fields)
 
 		if entry, ok := result[r.JobID]; ok {
 			entry.Review = &r
+			// Also propagate counts to the joined Job so consumers like
+			// ListJobs callers see consistent values via either pathway.
+			h, m, l := r.HighCount, r.MediumCount, r.LowCount
+			entry.Job.HighFindings = &h
+			entry.Job.MediumFindings = &m
+			entry.Job.LowFindings = &l
 			applyJobVerdict(&entry.Job, fields.VerdictBool, r.Output)
 			result[r.JobID] = entry
 		}
@@ -378,9 +406,11 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	var fields reviewScanFields
 
 	err := db.QueryRow(`
-		SELECT id, job_id, agent, prompt, output, created_at, closed
+		SELECT id, job_id, agent, prompt, output, created_at, closed,
+		       COALESCE(high_count, 0), COALESCE(medium_count, 0), COALESCE(low_count, 0)
 		FROM reviews WHERE id = ?
-	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed)
+	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &fields.CreatedAt, &fields.Closed,
+		&fields.HighCount, &fields.MediumCount, &fields.LowCount)
 	if err != nil {
 		return nil, err
 	}

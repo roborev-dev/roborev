@@ -454,6 +454,9 @@ type SyncableReview struct {
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	HighCount          int
+	MediumCount        int
+	LowCount           int
 }
 
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
@@ -463,7 +466,8 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at
+			r.updated_by_machine_id, r.created_at, r.updated_at,
+			COALESCE(r.high_count, 0), COALESCE(r.medium_count, 0), COALESCE(r.low_count, 0)
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?
@@ -494,6 +498,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
 			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
 			&r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&r.HighCount, &r.MediumCount, &r.LowCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
@@ -664,18 +669,30 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	// Counts are derived from output text — the most reliable source of truth.
+	// Recomputing here means a legacy PostgreSQL row (with default 0/0/0
+	// counts but real findings in its output) yields the right counts on
+	// pull, and a legitimate zero-finding review also yields zero. This
+	// avoids the legacy-vs-valid-zero ambiguity that storing the count
+	// alongside the output would create.
+	highCount, mediumCount, lowCount := CountFindings(r.Output)
 	_, err = db.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			updated_by_machine_id, created_at, updated_at, synced_at,
+			high_count, medium_count, low_count
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
-			synced_at = ?
+			synced_at = ?,
+			high_count = excluded.high_count,
+			medium_count = excluded.medium_count,
+			low_count = excluded.low_count
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
+		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now,
+		highCount, mediumCount, lowCount, now)
 	return err
 }
 

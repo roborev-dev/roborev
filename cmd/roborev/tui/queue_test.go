@@ -598,9 +598,11 @@ func TestTUIJobCellsContent(t *testing.T) {
 		job.Closed = &handled
 
 		cells := m.jobCells(job)
+		// cells: ref(0), branch(1), repo(2), agent(3), queued(4),
+		// elapsed(5), status(6), pf(7), findings(8), handled(9), session(10), ...
 		assert.Equal(t, "Done", cells[6])
 		assert.Equal(t, "P", cells[7])
-		assert.Equal(t, "yes", cells[8])
+		assert.Equal(t, "yes", cells[9])
 	})
 }
 
@@ -2160,14 +2162,16 @@ func TestClosedKeyShortcut(t *testing.T) {
 
 func TestMigrateColumnConfig(t *testing.T) {
 	tests := []struct {
-		name         string
-		columnOrder  []string
-		hiddenCols   []string
-		version      int
-		wantDirty    bool
-		wantColOrder []string
-		wantHidden   []string
-		wantVersion  int
+		name             string
+		columnOrder      []string
+		taskColumnOrder  []string
+		hiddenCols       []string
+		version          int
+		wantDirty        bool
+		wantColOrder     []string
+		wantTaskColOrder []string
+		wantHidden       []string
+		wantVersion      int
 	}{
 		{
 			name:         "nil config unchanged",
@@ -2200,16 +2204,16 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantColOrder: nil,
 		},
 		{
-			name:         "custom order preserved",
+			name:         "custom order has findings inserted after pf",
 			columnOrder:  []string{"repo", "ref", "agent", "status", "pf", "queued", "elapsed", "branch", "closed"},
-			wantDirty:    false,
-			wantColOrder: []string{"repo", "ref", "agent", "status", "pf", "queued", "elapsed", "branch", "closed"},
+			wantDirty:    true,
+			wantColOrder: []string{"repo", "ref", "agent", "status", "pf", "findings", "queued", "elapsed", "branch", "closed"},
 		},
 		{
-			name:         "current default order preserved",
+			name:         "current default order has findings inserted after pf",
 			columnOrder:  []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
-			wantDirty:    false,
-			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "closed"},
+			wantDirty:    true,
+			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "pf", "findings", "closed"},
 		},
 		{
 			name:        "stale hidden_columns backfills only new columns",
@@ -2246,18 +2250,38 @@ func TestMigrateColumnConfig(t *testing.T) {
 			wantHidden:  []string{"branch"},
 			wantVersion: 1,
 		},
+		{
+			name:             "task column order has findings inserted after parent",
+			taskColumnOrder:  []string{"id", "ref", "agent", "status", "parent", "created"},
+			wantDirty:        true,
+			wantTaskColOrder: []string{"id", "ref", "agent", "status", "parent", "findings", "created"},
+		},
+		{
+			name:             "task column order without parent appends findings",
+			taskColumnOrder:  []string{"id", "ref", "agent", "status", "created"},
+			wantDirty:        true,
+			wantTaskColOrder: []string{"id", "ref", "agent", "status", "created", "findings"},
+		},
+		{
+			name:             "task column order already has findings is preserved",
+			taskColumnOrder:  []string{"id", "ref", "parent", "findings", "agent"},
+			wantDirty:        false,
+			wantTaskColOrder: []string{"id", "ref", "parent", "findings", "agent"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
 				ColumnOrder:         slices.Clone(tt.columnOrder),
+				TaskColumnOrder:     slices.Clone(tt.taskColumnOrder),
 				HiddenColumns:       slices.Clone(tt.hiddenCols),
 				ColumnConfigVersion: tt.version,
 			}
 			dirty := migrateColumnConfig(cfg)
 			assert.Equal(t, tt.wantDirty, dirty)
 			assert.True(t, slices.Equal(cfg.ColumnOrder, tt.wantColOrder))
+			assert.True(t, slices.Equal(cfg.TaskColumnOrder, tt.wantTaskColOrder))
 			assert.True(t, slices.Equal(cfg.HiddenColumns, tt.wantHidden))
 			assert.Equal(t, tt.wantVersion, cfg.ColumnConfigVersion)
 		})

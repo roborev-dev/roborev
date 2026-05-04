@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 12
+const pgSchemaVersion = 13
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v12.sql
+//go:embed schemas/postgres_v13.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -335,6 +335,18 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				ON review_jobs(repo_id, git_ref, review_type)
 				WHERE source = 'auto_design' AND commit_id IS NULL`); err != nil {
 				return fmt.Errorf("v12 migration (add dedup ref index): %w", err)
+			}
+		}
+		if currentVersion < 13 {
+			// Nullable so the SQLite side can distinguish "not yet
+			// parsed" (NULL) from "parsed and zero findings" (0)
+			// during backfill — see BackfillFindingCounts. New rows
+			// are written with explicit ints, never NULL.
+			for _, col := range []string{"high_count", "medium_count", "low_count"} {
+				stmt := fmt.Sprintf(`ALTER TABLE roborev.reviews ADD COLUMN IF NOT EXISTS %s INTEGER`, col)
+				if _, err = p.pool.Exec(ctx, stmt); err != nil {
+					return fmt.Errorf("migrate to v13 (add %s column to reviews): %w", col, err)
+				}
 			}
 		}
 		// Update version
@@ -666,14 +678,19 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			updated_by_machine_id, created_at, updated_at,
+			high_count, medium_count, low_count
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-			updated_at = NOW()
+			updated_at = NOW(),
+			high_count = EXCLUDED.high_count,
+			medium_count = EXCLUDED.medium_count,
+			low_count = EXCLUDED.low_count
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt)
+		r.UpdatedByMachineID, r.CreatedAt,
+		r.HighCount, r.MediumCount, r.LowCount)
 	return err
 }
 
@@ -805,6 +822,9 @@ type PulledReview struct {
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	HighCount          int
+	MediumCount        int
+	LowCount           int
 }
 
 // PullReviews fetches reviews from PostgreSQL updated after the given cursor.
@@ -829,7 +849,8 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
+			r.updated_by_machine_id, r.created_at, r.updated_at, r.id,
+			COALESCE(r.high_count, 0), COALESCE(r.medium_count, 0), COALESCE(r.low_count, 0)
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
@@ -852,6 +873,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
 			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
+			&r.HighCount, &r.MediumCount, &r.LowCount,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)
@@ -951,14 +973,19 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		batch.Queue(`
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
-				updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+				updated_by_machine_id, created_at, updated_at,
+				high_count, medium_count, low_count
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
 			ON CONFLICT (uuid) DO UPDATE SET
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-				updated_at = NOW()
+				updated_at = NOW(),
+				high_count = EXCLUDED.high_count,
+				medium_count = EXCLUDED.medium_count,
+				low_count = EXCLUDED.low_count
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.UpdatedByMachineID, r.CreatedAt)
+			r.UpdatedByMachineID, r.CreatedAt,
+			r.HighCount, r.MediumCount, r.LowCount)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
