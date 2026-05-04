@@ -228,3 +228,58 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 	assert.Equal(t, "hello", client.result.String(), "Expected session output to be appended, got: %q", client.result.String())
 
 }
+
+// TestSessionUpdateRejectsBeforeSessionEstablished verifies that an early
+// SessionUpdate notification cannot bind c.sessionID before NewSession has
+// completed. A spoofed or stale notification arriving before the session is
+// established must be rejected, not used to bootstrap the client's session ID.
+func TestSessionUpdateRejectsBeforeSessionEstablished(t *testing.T) {
+	t.Parallel()
+
+	client := &acpClient{
+		agent:  &ACPAgent{},
+		result: &bytes.Buffer{},
+	}
+
+	messageChunk := &acp.SessionUpdateAgentMessageChunk{
+		Content:       acp.TextBlock("attacker-content"),
+		SessionUpdate: "agent_message_chunk",
+	}
+
+	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("attacker-session"),
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: messageChunk,
+		},
+	})
+	require.NoError(t, err, "SessionUpdate should not return an error when rejecting a notification")
+
+	assert.Empty(t, client.sessionID, "SessionUpdate must not bootstrap c.sessionID from an incoming notification")
+	assert.Empty(t, client.result.String(), "Rejected SessionUpdate must not append output")
+
+	// After NewSession would set the session ID, subsequent updates with the
+	// real session ID are accepted, while the earlier "attacker-session" ID
+	// remains rejected.
+	client.sessionID = "real-session"
+
+	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("attacker-session"),
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: messageChunk,
+		},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, client.result.String(), "Stale notification for non-matching session must remain rejected")
+
+	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("real-session"),
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content:       acp.TextBlock("real-content"),
+				SessionUpdate: "agent_message_chunk",
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "real-content", client.result.String(), "Valid SessionUpdate after NewSession must be accepted")
+}
