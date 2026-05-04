@@ -1,4 +1,7 @@
-![roborev](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-light.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-dark-bg.svg">
+  <img alt="roborev" src="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-light.svg">
+</picture>
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
