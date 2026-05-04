@@ -1385,7 +1385,9 @@ func remoteValueIsURL(repoPath, remote string) bool {
 	}
 	return strings.Contains(remote, "://") ||
 		strings.Contains(remote, ":") ||
-		strings.Contains(remote, "/") ||
+		strings.HasPrefix(remote, "/") ||
+		strings.HasPrefix(remote, "./") ||
+		strings.HasPrefix(remote, "../") ||
 		strings.HasPrefix(remote, "~")
 }
 
