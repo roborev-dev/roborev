@@ -278,26 +278,29 @@ func validateRefineContext(
 				)
 		}
 	} else {
-		// Prefer the current branch's upstream tracking ref only when it
-		// resolves to a trunk-named branch (e.g., local main tracking
-		// upstream/main in a fork). A branch tracking its own remote
-		// counterpart is not trunk — use GetDefaultBranch instead.
-		upstream, uerr := git.GetUpstream(repoPath, "HEAD")
-		var missing *git.UpstreamMissingError
-		if errors.As(uerr, &missing) {
-			return "", "", "", "",
-				fmt.Errorf(
-					"%w (run 'git fetch' or pass --since)", missing,
-				)
-		}
-		if uerr != nil {
-			return "", "", "", "",
-				fmt.Errorf(
-					"resolve upstream for HEAD: %w (pass --since to skip)", uerr,
-				)
-		}
-		if upstream != "" && git.UpstreamIsTrunk(repoPath, "HEAD") {
-			base = upstream
+		base = git.GetBranchBase(repoPath, "HEAD")
+		if base == "" {
+			// Prefer the current branch's upstream tracking ref only when it
+			// resolves to a trunk-named branch (e.g., local main tracking
+			// upstream/main in a fork). A branch tracking its own remote
+			// counterpart is not trunk — use GetDefaultBranch instead.
+			upstream, uerr := git.GetUpstream(repoPath, "HEAD")
+			var missing *git.UpstreamMissingError
+			if errors.As(uerr, &missing) {
+				return "", "", "", "",
+					fmt.Errorf(
+						"%w (run 'git fetch' or pass --since)", missing,
+					)
+			}
+			if uerr != nil {
+				return "", "", "", "",
+					fmt.Errorf(
+						"resolve upstream for HEAD: %w (pass --since to skip)", uerr,
+					)
+			}
+			if upstream != "" && git.UpstreamIsTrunk(repoPath, "HEAD") {
+				base = upstream
+			}
 		}
 		if base == "" {
 			base, err = git.GetDefaultBranch(repoPath)

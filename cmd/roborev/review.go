@@ -162,6 +162,9 @@ Examples:
 
 				base := baseBranch
 				if base == "" {
+					base = git.GetBranchBase(root, targetRef)
+				}
+				if base == "" {
 					// Prefer the branch's upstream tracking ref only when it resolves
 					// to a trunk-named branch (e.g., local main tracking upstream/main
 					// in a fork). A branch tracking its own remote counterpart
@@ -528,6 +531,9 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 	}
 
 	base := baseBranchOverride
+	if base == "" {
+		base = git.GetBranchBase(root, "HEAD")
+	}
 	if base == "" {
 		// Prefer the branch's upstream tracking ref only when it resolves to
 		// trunk. Hooks must never block commits, but any GetUpstream failure

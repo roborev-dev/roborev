@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1326,17 +1327,9 @@ type upstreamConfig struct {
 // indicating @{upstream} is configured even if rev-parse cannot resolve the
 // ref. Returns (zero, false) otherwise.
 func readUpstreamConfig(repoPath, ref string) (upstreamConfig, bool) {
-	branch := ref
-	if branch == "HEAD" || branch == "" {
-		branch = GetCurrentBranch(repoPath)
-		if branch == "" {
-			return upstreamConfig{}, false
-		}
-	} else {
-		// Accept fully-qualified local branch refs (e.g., "refs/heads/feature")
-		// so callers who pass a ResolveSHA-style ref still resolve to the
-		// correct branch.<name>.* config keys.
-		branch = strings.TrimPrefix(branch, "refs/heads/")
+	branch := branchNameForConfig(repoPath, ref)
+	if branch == "" {
+		return upstreamConfig{}, false
 	}
 	remote := readGitConfig(repoPath, "branch."+branch+".remote")
 	merge := readGitConfig(repoPath, "branch."+branch+".merge")
@@ -1351,10 +1344,57 @@ func readUpstreamConfig(repoPath, ref string) (upstreamConfig, bool) {
 			qualified: "refs/heads/" + mergeBranch,
 		}, true
 	}
+	if remoteValueIsURL(repoPath, remote) {
+		return upstreamConfig{}, false
+	}
 	return upstreamConfig{
 		short:     remote + "/" + mergeBranch,
 		qualified: "refs/remotes/" + remote + "/" + mergeBranch,
 	}, true
+}
+
+// GetBranchBase returns roborev's branch.<name>.base config value for ref.
+// Passing an empty ref is equivalent to HEAD.
+func GetBranchBase(repoPath, ref string) string {
+	branch := branchNameForConfig(repoPath, ref)
+	if branch == "" {
+		return ""
+	}
+	return readGitConfig(repoPath, "branch."+branch+".base")
+}
+
+func branchNameForConfig(repoPath, ref string) string {
+	branch := ref
+	if branch == "HEAD" || branch == "" {
+		branch = GetCurrentBranch(repoPath)
+		if branch == "" {
+			return ""
+		}
+	} else {
+		// Accept fully-qualified local branch refs (e.g., "refs/heads/feature")
+		// so callers who pass a ResolveSHA-style ref still resolve to the
+		// correct branch.<name>.* config keys.
+		branch = strings.TrimPrefix(branch, "refs/heads/")
+	}
+	return branch
+}
+
+func remoteValueIsURL(repoPath, remote string) bool {
+	if remoteNameExists(repoPath, remote) {
+		return false
+	}
+	return strings.Contains(remote, "://") ||
+		strings.Contains(remote, ":") ||
+		strings.Contains(remote, "/") ||
+		strings.HasPrefix(remote, "~")
+}
+
+func remoteNameExists(repoPath, remote string) bool {
+	remotes, err := listRemotes(repoPath)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(remotes, remote)
 }
 
 // readGitConfig returns the value of a git config key, or "" if missing.

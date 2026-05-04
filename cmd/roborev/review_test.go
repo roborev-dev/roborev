@@ -454,6 +454,26 @@ func TestReviewBranchFlag(t *testing.T) {
 		assert.Contains(t, req.GitRef, mainSHA)
 		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"))
 	})
+
+	t.Run("branch review uses branch base before url upstream", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.Run("config", "branch.feature.remote", "https://example.com/fork.git")
+		repo.Run("config", "branch.feature.merge", "refs/heads/feature")
+		repo.Run("config", "branch.feature.base", "main")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		require.NoError(t, err)
+
+		req := <-reqCh
+		assert.Equal(t, mainSHA+"..HEAD", req.GitRef)
+	})
 }
 
 func TestReviewFastFlag(t *testing.T) {
@@ -597,6 +617,23 @@ func TestTryBranchReview(t *testing.T) {
 
 		want := developSHA + "..HEAD"
 		assert.Equal(t, want, ref)
+	})
+
+	t.Run("uses branch base before url upstream", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.Run("config", "branch.feature.remote", "https://example.com/fork.git")
+		repo.Run("config", "branch.feature.merge", "refs/heads/feature")
+		repo.Run("config", "branch.feature.base", "main")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		require.True(t, ok, "expected branch base config to enable branch review")
+		assert.Equal(t, mainSHA+"..HEAD", ref)
 	})
 
 	t.Run("returns false on detached HEAD", func(t *testing.T) {
