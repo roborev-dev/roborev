@@ -164,7 +164,9 @@ func (b *Builder) BuildWithSnapshot(repoPath, gitRef string, repoID int64, conte
 	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 }
 
-// WriteDiffSnapshot writes the full diff for a git ref to a file in the repo's git dir.
+// WriteDiffSnapshot writes the full diff for a git ref to an external temp
+// file. The file intentionally lives outside .git so sandboxed agents can read
+// it without inlining oversized diffs into the submitted prompt.
 func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func(), error) {
 	var (
 		fullDiff string
@@ -181,16 +183,16 @@ func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func
 	if fullDiff == "" {
 		return "", nil, fmt.Errorf("diff is empty")
 	}
-	gitDir, err := git.ResolveGitDir(repoPath)
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve git dir: %w", err)
-	}
-	f, err := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
+	return writeExternalDiffSnapshot(fullDiff)
+}
+
+func writeExternalDiffSnapshot(diff string) (string, func(), error) {
+	f, err := os.CreateTemp("", "roborev-snapshot-*.diff")
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
 	diffFile := f.Name()
-	_, writeErr := f.WriteString(fullDiff)
+	_, writeErr := f.WriteString(diff)
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil {
 		os.Remove(diffFile)
@@ -210,26 +212,12 @@ func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, co
 		return SnapshotResult{}, err
 	}
 	if strings.Contains(p, "(Diff too large to include in full)") && len(diff) > 0 {
-		gitDir, dirErr := git.ResolveGitDir(repoPath)
-		if dirErr != nil {
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", dirErr)
-		}
-		f, createErr := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
-		if createErr != nil {
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", createErr)
-		}
-		diffFile := f.Name()
-		_, writeErr := f.WriteString(diff)
-		closeErr := f.Close()
-		if writeErr != nil || closeErr != nil {
-			os.Remove(diffFile)
-			if writeErr != nil {
-				return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", writeErr)
-			}
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", closeErr)
+		diffFile, cleanup, snapErr := writeExternalDiffSnapshot(diff)
+		if snapErr != nil {
+			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}
 		p += fmt.Sprintf("\nThe full diff is also available at: `%s`\n", diffFile)
-		return SnapshotResult{Prompt: p, Cleanup: func() { os.Remove(diffFile) }}, nil
+		return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 	}
 	return SnapshotResult{Prompt: p}, nil
 }

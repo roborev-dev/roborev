@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 
 	"github.com/roborev-dev/roborev/internal/agent"
@@ -515,7 +516,7 @@ func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 	assert.Equal(t, capturedPrompt, updated.Prompt)
 }
 
-func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
+func TestWriteDiffSnapshot_WritesExternalReadableTempFile(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	worktreeDir := filepath.Join(t.TempDir(), "feature-worktree")
 
@@ -550,9 +551,9 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 		gitDir = filepath.Join(worktreeDir, gitDir)
 	}
 
-	assert.True(t,
+	assert.False(t,
 		strings.HasPrefix(filepath.Clean(diffFile), filepath.Clean(gitDir)),
-		"snapshot should be in git dir: got %s, want prefix %s", diffFile, gitDir)
+		"snapshot should not live in git dir: got %s, git dir %s", diffFile, gitDir)
 	data, err := os.ReadFile(diffFile)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "diff --git")
@@ -564,7 +565,7 @@ func TestPrepareDiffFileForCodex_WritesDiffInWorktreeGitDir(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "expected cleanup to remove diff file, got %v", err)
 }
 
-func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
+func TestPreparePrebuiltPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := &storage.ReviewJob{ID: 73, Agent: "codex", GitRef: sha}
@@ -584,7 +585,7 @@ func TestPreparePrebuiltCodexPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	cleanup()
 }
 
-func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
+func TestPreparePrebuiltPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
 	baseDir := t.TempDir()
 	repoPath := filepath.Join(baseDir, "repo's")
 	require.NoError(t, os.MkdirAll(repoPath, 0o755))
@@ -609,7 +610,7 @@ func TestPreparePrebuiltCodexPrompt_RequotesDiffPathWithSingleQuote(t *testing.T
 	cleanup()
 }
 
-func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing.T) {
+func TestPreparePrebuiltPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing.T) {
 	prev := agent.AllowUnsafeAgents()
 	agent.SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
@@ -632,7 +633,7 @@ func TestPreparePrebuiltCodexPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *te
 	cleanup()
 }
 
-func TestProcessJob_SmallDiffSucceedsWhenSnapshotFails(t *testing.T) {
+func TestProcessJob_SmallDiffSucceedsWhenGitDirReadOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod does not restrict writes on Windows")
 	}
@@ -662,7 +663,7 @@ func TestProcessJob_SmallDiffSucceedsWhenSnapshotFails(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Make git dir read-only so diff file write fails
+	// Make git dir read-only. Small diffs should not need a snapshot.
 	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
 	require.NoError(t, err)
 	info, err := os.Stat(gitDir)
@@ -677,12 +678,12 @@ func TestProcessJob_SmallDiffSucceedsWhenSnapshotFails(t *testing.T) {
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	// Small diff fits inline — snapshot failure doesn't matter
+	// Small diff fits inline.
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.True(t, agentCalled, "agent should run for small diffs even when snapshot fails")
+	assert.True(t, agentCalled, "agent should run for small diffs even when .git is read-only")
 }
 
-func TestProcessJob_LargeDiffRetriesWhenSnapshotFails(t *testing.T) {
+func TestProcessJob_LargeDiffUsesExternalSnapshotWhenGitDirReadOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod does not restrict writes on Windows")
 	}
@@ -731,7 +732,8 @@ func TestProcessJob_LargeDiffRetriesWhenSnapshotFails(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Make git dir read-only so diff file write fails
+	// Make git dir read-only. Large-diff snapshots should still work
+	// because they are written outside .git.
 	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
 	require.NoError(t, err)
 	info, err := os.Stat(gitDir)
@@ -746,52 +748,130 @@ func TestProcessJob_LargeDiffRetriesWhenSnapshotFails(t *testing.T) {
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	// Large diff can't inline and snapshot failed — must retry
-	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.False(t, agentCalled, "agent should not run when large diff has no snapshot")
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.True(t, agentCalled, "agent should run because snapshots no longer require writing to .git")
 }
 
-func TestExpandSnapshotInline_ReplacesFileRef(t *testing.T) {
-	// Write a temp snapshot file
-	f, err := os.CreateTemp(t.TempDir(), "roborev-snapshot-*.diff")
+func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testing.T) {
+	originalTest, err := agent.Get("test")
 	require.NoError(t, err)
-	_, err = f.WriteString("diff --git a/file.go b/file.go\n+added line\n")
+
+	agentCalled := false
+	var capturedPrompt string
+	snapshotRE := regexp.MustCompile("`([^`]+roborev-snapshot-[^`]+\\.diff)`")
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
+			agentCalled = true
+			capturedPrompt = p
+			require.LessOrEqual(t, len(p), 4096, "submitted prompt must stay within configured cap")
+			match := snapshotRE.FindStringSubmatch(p)
+			require.NotNil(t, match, "large diff prompt should reference a snapshot file")
+			snapshotPath := match[1]
+			assert.NotContains(t, snapshotPath, string(filepath.Separator)+".git"+string(filepath.Separator))
+			data, readErr := os.ReadFile(snapshotPath)
+			require.NoError(t, readErr)
+			assert.Contains(t, string(data), "large-agent.txt")
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalTest) })
+
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultMaxPromptSize = 4096
+	tc.reconfigurePool(cfg)
+
+	var content strings.Builder
+	for range 300 {
+		content.WriteString("+")
+		content.WriteString(strings.Repeat("large diff content ", 8))
+		content.WriteString("\n")
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tc.TmpDir, "large-agent.txt"),
+		[]byte(content.String()), 0o644,
+	))
+	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "large-agent.txt")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", out)
+	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "large agent diff")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "git commit failed: %s", out)
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "large", time.Now())
 	require.NoError(t, err)
-	require.NoError(t, f.Close())
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "test",
+	})
+	require.NoError(t, err)
 
-	prompt := fmt.Sprintf(
-		"### Diff\n\n"+
-			"(Diff too large to include inline)\n\n"+
-			"The full diff has been written to a file for review.\n"+
-			"Read the diff from: `%s`\n\n"+
-			"Review the actual diff before writing findings.\n"+
-			"\n## Summary\n",
-		f.Name(),
-	)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
 
-	result := expandSnapshotInline(prompt)
+	tc.Pool.processJob(testWorkerID, claimed)
 
-	assert := assert.New(t)
-	assert.NotContains(result, "Diff too large")
-	assert.NotContains(result, "roborev-snapshot-")
-	assert.Contains(result, "```diff")
-	assert.Contains(result, "+added line")
-	assert.Contains(result, "## Summary")
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.True(t, agentCalled, "agent should run with an external snapshot prompt")
+	assert.Equal(t, 0, updated.RetryCount)
+	assert.NotEmpty(t, capturedPrompt)
+	assert.NotContains(t, capturedPrompt, "```diff")
 }
 
-func TestExpandSnapshotInline_NoRef(t *testing.T) {
-	prompt := "### Diff\n\n```diff\n+inline diff\n```\n"
-	result := expandSnapshotInline(prompt)
-	assert.Equal(t, prompt, result)
+func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
+	originalTest, err := agent.Get("test")
+	require.NoError(t, err)
+
+	agentCalled := false
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
+			agentCalled = true
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalTest) })
+
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultMaxPromptSize = 1024
+	tc.reconfigurePool(cfg)
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:  tc.Repo.ID,
+		GitRef:  "run:large-prompt",
+		Agent:   "test",
+		Prompt:  strings.Repeat("x", 2048),
+		JobType: storage.JobTypeTask,
+	})
+	require.NoError(t, err)
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.False(t, agentCalled, "oversized final prompt must not be submitted")
+	assert.Equal(t, 0, updated.RetryCount)
+	assert.Contains(t, updated.Error, "prompt exceeds size limit before agent submission")
 }
 
-func TestExpandSnapshotInline_MissingFile(t *testing.T) {
-	prompt := "### Diff\n\n" +
-		"(Diff too large to include inline)\n\n" +
-		"Read the diff from: `/nonexistent/roborev-snapshot-123.diff`\n"
-	result := expandSnapshotInline(prompt)
-	// Should return unchanged when file doesn't exist
-	assert.Equal(t, prompt, result)
+func TestFailOrRetryAgent_ContextWindowErrorFailsWithoutRetry(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "context-limit-test", testWorkerID, "codex")
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "codex", "agent: codex failed: Codex ran out of room in the model's context window")
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Equal(t, 0, updated.RetryCount)
+	assert.Contains(t, updated.Error, "context window")
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
