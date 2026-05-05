@@ -1,5 +1,16 @@
 # Agent Rate-Limit and Session-Cap Handling
 
+## Scope
+
+This spec covers the foundation: a shared classifier package, unmatched
+non-zero exit logging, daemon-worker integration that preserves current
+behavior, and CLI fix-loop abort plumbing wired up against a synthetic
+test fixture. Adding a production Claude session-cap pattern is an
+explicit follow-up, taken once a real Claude limit message is captured
+(see [Detection without a captured Claude message](#detection-without-a-captured-claude-message)).
+The first PR ships the framework end-to-end; Claude detection is a
+one-line table addition plus a unit test in a follow-up PR.
+
 ## Problem
 
 Long-running `roborev fix` sessions keep iterating fruitlessly when the
@@ -27,9 +38,12 @@ has two gaps:
 - For the foreground fix loop, abort the entire session immediately when
   the configured agent hits a session-cap, surfacing the reset time (or
   a conservative fallback message) so the user knows when to retry.
-- Preserve the daemon's existing behavior for daemon-owned review jobs:
-  cooldown the agent, retry, then fail over to the configured backup
-  agent if one is set. CI flows benefit from best-effort completion.
+- Preserve the daemon's existing behavior for daemon-owned review jobs
+  bit-for-bit: on a quota- or session-class error, cooldown the agent
+  and immediately fail over to a configured backup (or fail the job if
+  none) — no retries, matching today's `isQuotaError` branch in
+  `worker.go`. CI flows continue to benefit from best-effort completion
+  via failover.
 - Keep the detection table conservative: high-confidence patterns only,
   one unit test per pattern, with logging for unmatched non-zero exits
   so new variants can be observed and added incrementally.
@@ -76,6 +90,12 @@ type Classification struct {
 // agent is the canonical agent name (caller resolves aliases). Returns
 // KindNone when no signature matches.
 func Classify(agent, errMsg string) Classification
+
+// classifyWithRules is the same as Classify but accepts an explicit
+// rule slice. Unexported; used inside the package's own tests so that
+// fixtures (e.g. a synthetic KindSession pattern) do not leak into the
+// production defaultRules slice.
+func classifyWithRules(agent, errMsg string, rules []rule) Classification
 ```
 
 The pattern table lives in the package as a slice of per-agent rules:
@@ -89,15 +109,27 @@ type rule struct {
 }
 ```
 
-Day-1 rules — copied verbatim from the existing `isQuotaError` set so
-behavior for Gemini and Codex is unchanged:
+Day-1 rules — copied verbatim from the current `isQuotaError`
+(`internal/daemon/worker.go:974`) so detection for Gemini and Codex is
+byte-for-byte unchanged. The full set of nine substrings (case-insensitive,
+matched via `strings.Contains`):
 
-| Agent | Pattern (case-insensitive) | Kind | Reset parsing |
-|-------|----------------------------|------|---------------|
-| any | `resource exhausted` | Quota | (none) |
-| any | `quota exhausted` / `quota_exhausted` | Quota | (none) |
-| any | `exhausted your capacity` | Quota | `reset after <duration>` if present |
-| any | `capacity exhausted` / `capacity_exhausted` | Quota | (none) |
+| Pattern | Kind | Reset parsing |
+|---------|------|---------------|
+| `resource exhausted` | Quota | `reset after <duration>` if present |
+| `quota exceeded` | Quota | same |
+| `quota_exceeded` | Quota | same |
+| `quota exhausted` | Quota | same |
+| `quota_exhausted` | Quota | same |
+| `insufficient_quota` | Quota | same |
+| `exhausted your capacity` | Quota | same |
+| `capacity exhausted` | Quota | same |
+| `capacity_exhausted` | Quota | same |
+
+Reset parsing applies uniformly: any matching message is run through
+`parseResetDuration` (today's `parseQuotaCooldown`, moved into the
+shared package) so a `reset after X` substring produces `CooldownFor`
+when present, regardless of which pattern matched.
 
 The `Transient` kind exists in the API and is exercised in tests, but
 no production rule produces it on day one. Adding a generic
@@ -116,18 +148,27 @@ both consumers share it.
 ### Daemon worker (`internal/daemon/worker.go`) changes
 
 The existing `isQuotaError` helper (line 974) and inline duration parsing
-are replaced with calls to `agentlimit.Classify`. Behavior is preserved:
+are replaced with calls to `agentlimit.Classify`. Behavior is preserved
+exactly — quota-class errors skip retries entirely:
 
 - `KindQuota` or `KindSession`: cooldown the canonical agent until
-  `ResetAt` (or `now + CooldownFor`, defaulting to 30m if both are zero).
-  Continue with normal retry; on retry exhaustion, fail over to the
-  configured backup agent if one exists. This keeps CI / daemon-owned
-  review flows best-effort, as today.
-- `KindTransient`: do not cooldown; let normal retry handle it.
-- `KindNone`: unchanged (generic failure path).
+  `ResetAt` (or `now + CooldownFor`, defaulting to 30m if both are zero),
+  then immediately call `failoverOrFail`. Retries are skipped — this
+  matches today's `isQuotaError` branch at `worker.go:792-798`.
+  CI / daemon-owned review flows continue to benefit from failover when
+  a backup agent is configured.
+- `KindTransient`: do not cooldown; fall through to the normal retry
+  path (`failOrRetryAgent` semantics unchanged).
+- `KindNone`: unchanged (generic retry-then-fail-or-failover path).
 
 The `cooldownAgent`/`isAgentInCooldown` helpers stay where they are —
 only the *trigger* moves to the shared classifier.
+
+Implementation note: rather than hard-coding `agentlimit.Classify`, the
+`WorkerPool` struct holds a `classify func(agent, errMsg string) agentlimit.Classification`
+field, initialized to `agentlimit.Classify` at construction. Tests in
+this package can substitute a stub for deterministic
+`KindSession`/`KindQuota` outcomes without touching `defaultRules`.
 
 ### CLI fix loop (`cmd/roborev/fix.go`) changes
 
@@ -136,10 +177,13 @@ only the *trigger* moves to the shared classifier.
 drivers — both call `fixJobDirect` (directly or via `fixSingleJob`) and
 process the result.
 
-After each `fixJobDirect` error, the caller runs:
+After each `fixJobDirect` error, the caller runs the classifier and
+branches on the result. The fix loop holds a classifier function
+(default `agentlimit.Classify`, swappable in tests) on its options/
+context struct so tests can drive deterministic outcomes:
 
 ```go
-cls := agentlimit.Classify(canonicalAgent(params.Agent.Name()), err.Error())
+cls := opts.classify(canonicalAgent(params.Agent.Name()), err.Error())
 switch cls.Kind {
 case agentlimit.KindSession, agentlimit.KindQuota:
     // Strict abort. No auto-failover for foreground fix.
@@ -180,11 +224,21 @@ the next observed cap actionable:
    log a single WARN line containing the agent name and the first 200
    chars of the error message. This produces a recoverable sample the
    moment the next cap fires.
-2. **Test-only mock pattern.** The unit tests include a synthetic
-   "claude session limit" pattern fixture so the `KindSession` branch
-   has full test coverage end-to-end (worker cooldown path and CLI
-   abort path). Real Claude patterns get added to the production rule
-   table once captured.
+2. **Test-only mock pattern via injectable rules.** The package's
+   public API is a single `Classify(agent, errMsg)` function backed by
+   a private `defaultRules` slice. To exercise the `KindSession` branch
+   end-to-end without polluting the production rule table, the package
+   also exposes an unexported `classifyWithRules(agent, errMsg, rules)`
+   helper. Tests in the same package call `classifyWithRules` with a
+   synthetic rule slice (e.g. one that maps a fake "test-claude session
+   limit" message to `KindSession`); production callers always go
+   through `Classify` and only see `defaultRules`. Tests in other
+   packages that need to drive a `KindSession` outcome receive a
+   pre-built `Classification` struct from a small test helper exported
+   for that purpose, rather than mutating any global state.
+
+   Real Claude patterns get added to the production rule table once
+   captured.
 
 Once a real Claude message is observed, adding the rule is a one-line
 table change plus a unit test fixture.
@@ -231,9 +285,12 @@ Daemon:      worker job → Agent.Review → error
               KindSession/Quota          KindTransient/None
                        │                     │
                        ▼                     ▼
-              cooldownAgent(...)      Existing retry path
-              + retry + failover
-              (existing behavior)
+              cooldownAgent(...)       Existing retry path
+              then immediate           (failOrRetryAgent
+              failoverOrFail            with up to maxRetries,
+              (no retries —             then failoverOrFail)
+              matches today's
+              quota branch)
 ```
 
 ## Testing strategy
@@ -253,24 +310,38 @@ error containing the word "limit") map to `KindNone`.
 ### Worker integration test
 
 A new test in `internal/daemon/worker_test.go` exercises the
-end-to-end daemon path:
+end-to-end daemon path. To avoid depending on Claude's exact wording
+or mutating the production rule table, the worker code calls into a
+small package-internal entry point that takes a classifier function
+(default: `agentlimit.Classify`); the test substitutes a stub
+classifier that returns a `KindSession` `Classification` for the test
+agent's error message.
 
 - Configure a worker pool with a mock agent that returns a session-limit
-  error message on first call.
+  error string and a stub classifier that maps that string to
+  `KindSession` with a known `ResetAt`.
 - Enqueue a job. Run a worker tick.
 - Assert: the agent is now in cooldown, the cooldown expiry matches the
-  parsed reset, and a subsequent job for the same agent is skipped per
-  existing `(quota cooldown active)` logic.
+  stub's `ResetAt`, retries did *not* happen (`retry_count` stays at 0),
+  and a subsequent job for the same agent is skipped per existing
+  `(quota cooldown active)` logic.
 
-This covers the daemon-side wiring without depending on Claude's exact
-wording — the test pattern is registered as a fixture in the test file.
+A second test confirms the byte-for-byte preservation of today's quota
+behavior: each of the nine substrings from the original `isQuotaError`
+list is fed in as an error message; the test asserts each produces
+`KindQuota` and that the worker takes the cooldown-then-failover path
+without retries.
 
 ### CLI fix abort test
 
-A new test in `cmd/roborev/fix_test.go` (or `fix_mock_test.go`):
+A new test in `cmd/roborev/fix_test.go` (or `fix_mock_test.go`) uses
+the same classifier-injection pattern: the fix-loop call site takes a
+classifier function from a package-private factory that defaults to
+`agentlimit.Classify`, and the test substitutes a stub.
 
-- Use the existing `test` agent infrastructure to inject an error that
-  classifies as `KindSession`.
+- Use the existing `test` agent infrastructure to inject an error.
+- Stub classifier maps the error to `KindSession` with a known
+  `ResetAt`.
 - Run `runFixBatch` with two job IDs.
 - Assert: the loop aborts after the first job, the returned error
   surfaces the parsed reset time, and the second job was *not*
@@ -284,15 +355,30 @@ error preview, so the unmatched-pattern surfacing path is covered.
 
 ## Migration / rollout
 
+The work splits into two PRs:
+
+**PR 1 — Framework (this spec):** shared classifier package, unmatched
+non-zero exit logging, daemon-worker integration that preserves
+existing behavior bit-for-bit, and CLI fix-loop abort plumbing
+exercised by a synthetic test fixture. No behavior change for any
+currently-supported agent.
+
+**PR 2 — Claude detection (follow-up):** add the production Claude
+session-cap rule plus a unit test fixture, once a real session-limit
+message has been captured (either by triggering one in normal use, or
+by a contributor who has hit one previously).
+
+Other migration notes:
+
 - The change is internal (no public API surface). No flag-gating, no
   config opt-in.
 - `isQuotaError` becomes a thin wrapper over `agentlimit.Classify` if
-  any tests still reference it directly; otherwise it is removed in the
-  same PR.
+  any tests still reference it directly; otherwise it is removed in
+  PR 1.
 - Existing behavior for Gemini and Codex is preserved bit-for-bit by
-  copying their patterns verbatim into the new rule table — verified
-  by a regression test that runs each known-failing message through
-  the new classifier and checks it still returns `KindQuota`.
+  copying all nine patterns from `isQuotaError` verbatim into the new
+  rule table — verified by the regression test described above that
+  runs each pattern through the new classifier.
 
 ## Risks and mitigations
 
