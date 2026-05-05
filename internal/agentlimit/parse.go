@@ -90,8 +90,16 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 				now.Year(), now.Month(), now.Day(),
 				t.Hour(), t.Minute(), 0, 0, now.Location(),
 			)
-			if candidate.Before(now) {
-				candidate = candidate.Add(24 * time.Hour)
+			// Roll forward when the parsed wall-clock time is at-or-before
+			// now. Using time.Date with Day()+1 (instead of Add(24h)) is
+			// DST-safe: Go normalizes lost/gained hours so the returned
+			// time always means "same wall-clock time tomorrow" in
+			// now.Location().
+			if !candidate.After(now) {
+				candidate = time.Date(
+					now.Year(), now.Month(), now.Day()+1,
+					t.Hour(), t.Minute(), 0, 0, now.Location(),
+				)
 			}
 			return candidate
 		}

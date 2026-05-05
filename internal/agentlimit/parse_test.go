@@ -62,6 +62,29 @@ func TestParseResetTime(t *testing.T) {
 			want: time.Date(2026, 5, 5, 18, 0, 0, 0, loc),
 		},
 		{"unparseable token", "resets at moonrise", true, time.Time{}},
+		{
+			// Trailing content after the time defeats time.Parse and
+			// produces zero. Documenting current conservative behavior
+			// — extending the parser to handle "today" / "UTC" suffixes
+			// is deferred until a real Claude message is captured.
+			name:    "trailing word causes miss",
+			msg:     "limit resets at 5:42 PM today",
+			wantErr: true,
+			want:    time.Time{},
+		},
+		{
+			// 24h with a timezone abbreviation: same conservative miss.
+			name:    "24h with trailing zone causes miss",
+			msg:     "resets at 17:42 UTC",
+			wantErr: true,
+			want:    time.Time{},
+		},
+		{
+			// Same instant as now: should roll forward, not return now.
+			name: "exactly now rolls to next day",
+			msg:  "limit resets at 12:00 PM",
+			want: time.Date(2026, 5, 6, 12, 0, 0, 0, loc),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,4 +96,15 @@ func TestParseResetTime(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestParseResetTimeRespectsLocation(t *testing.T) {
+	// Non-UTC fixture: confirms now.Location() is honored end-to-end.
+	est := time.FixedZone("EST", -5*60*60)
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, est) // noon EST
+
+	got := parseResetTimeAt("limit resets at 5:42 PM", now)
+	want := time.Date(2026, 5, 5, 17, 42, 0, 0, est)
+	assert.Equal(t, want, got)
+	assert.Equal(t, est, got.Location())
 }
