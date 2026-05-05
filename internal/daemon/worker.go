@@ -574,7 +574,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
-	sessionWriter := newSessionCaptureWriter(agentOutput, func(sessionID string) {
+	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
