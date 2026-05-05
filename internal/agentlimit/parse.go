@@ -41,3 +41,60 @@ func ParseResetDuration(errMsg string) time.Duration {
 	}
 	return d
 }
+
+// ParseResetTime extracts an absolute reset time from messages like
+// "resets at 5:42 PM" or "try again at 17:42". Interprets the parsed
+// clock time in the local timezone. Returns the zero time.Time if no
+// recognized phrase is present or the time is unparseable.
+//
+// If the parsed clock time is earlier than now-on-the-same-day, the
+// returned time rolls forward by 24 hours so callers that compute
+// "time until reset" never get a negative duration.
+func ParseResetTime(errMsg string) time.Time {
+	return parseResetTimeAt(errMsg, time.Now())
+}
+
+// parseResetTimeAt is ParseResetTime with an injectable clock for tests.
+func parseResetTimeAt(errMsg string, now time.Time) time.Time {
+	lower := strings.ToLower(errMsg)
+	var idx int
+	switch {
+	case strings.Contains(lower, "resets at "):
+		idx = strings.Index(lower, "resets at ") + len("resets at ")
+	case strings.Contains(lower, "try again at "):
+		idx = strings.Index(lower, "try again at ") + len("try again at ")
+	default:
+		return time.Time{}
+	}
+	// Consume up to the next non-time character. Allow digits, ':', and
+	// AM/PM markers (with optional spaces before them).
+	rest := errMsg[idx:]
+	end := len(rest)
+	for i, r := range rest {
+		// Stop at sentence-ending punctuation or newline.
+		if r == '.' || r == ',' || r == ';' || r == '\n' || r == ')' {
+			end = i
+			break
+		}
+	}
+	token := strings.TrimSpace(rest[:end])
+
+	formats := []string{
+		"3:04 PM", "3:04 pm",
+		"3:04PM", "3:04pm",
+		"15:04",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, token); err == nil {
+			candidate := time.Date(
+				now.Year(), now.Month(), now.Day(),
+				t.Hour(), t.Minute(), 0, 0, now.Location(),
+			)
+			if candidate.Before(now) {
+				candidate = candidate.Add(24 * time.Hour)
+			}
+			return candidate
+		}
+	}
+	return time.Time{}
+}

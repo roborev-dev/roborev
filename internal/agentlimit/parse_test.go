@@ -29,3 +29,48 @@ func TestParseResetDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestParseResetTime(t *testing.T) {
+	// Use a fixed "now" so same-day vs next-day rollover is deterministic.
+	loc := time.FixedZone("test", 0)
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, loc) // noon UTC
+	cases := []struct {
+		name    string
+		msg     string
+		wantErr bool
+		want    time.Time
+	}{
+		{"none", "agent failed", true, time.Time{}},
+		{
+			name: "resets at later today",
+			msg:  "limit resets at 5:42 PM",
+			want: time.Date(2026, 5, 5, 17, 42, 0, 0, loc),
+		},
+		{
+			name: "try again at later today 24h",
+			msg:  "try again at 17:42",
+			want: time.Date(2026, 5, 5, 17, 42, 0, 0, loc),
+		},
+		{
+			name: "resets at earlier today rolls to next day",
+			msg:  "limit resets at 9:00 AM",
+			want: time.Date(2026, 5, 6, 9, 0, 0, 0, loc),
+		},
+		{
+			name: "case insensitive",
+			msg:  "LIMIT RESETS AT 6:00 pm",
+			want: time.Date(2026, 5, 5, 18, 0, 0, 0, loc),
+		},
+		{"unparseable token", "resets at moonrise", true, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseResetTimeAt(tc.msg, now)
+			if tc.wantErr {
+				assert.True(t, got.IsZero(), "expected zero time, got %v", got)
+				return
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
