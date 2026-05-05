@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -141,6 +142,7 @@ Examples:
 				minSeverity: minSeverity,
 				quiet:       quiet,
 				resume:      resume,
+				classify:    agentlimit.Classify,
 			}
 
 			roots, err := resolveCurrentRepoRoots()
@@ -228,6 +230,87 @@ type fixOptions struct {
 	minSeverity string
 	quiet       bool
 	resume      bool
+
+	// classify is the rate-limit classifier. Defaults to
+	// agentlimit.Classify in the production cobra command's RunE; tests
+	// inject a stub to drive deterministic KindQuota / KindSession
+	// outcomes without depending on real agent error wording.
+	classify agentlimit.ClassifyFunc
+}
+
+// agentLimitError is returned by the fix loop when the configured agent
+// hits a quota or session limit. The fix command surfaces it as the
+// process exit error so users see the reset time and a hint to retry.
+//
+//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
+type agentLimitError struct {
+	Classification agentlimit.Classification
+}
+
+//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
+func (e *agentLimitError) Error() string {
+	return formatAgentLimitMessage(e.Classification, time.Now())
+}
+
+// formatAgentLimitMessage builds the user-facing abort message. Pulled
+// out so tests can assert against it without depending on time.Now.
+// The label ("quota" / "session limit" / "rate limit") is derived from
+// cls.Kind so a Gemini/Codex KindQuota abort doesn't mis-report itself
+// as a session-cap.
+//
+//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
+func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) string {
+	label := agentLimitLabel(cls.Kind)
+	var dur time.Duration
+	switch {
+	case !cls.ResetAt.IsZero():
+		dur = cls.ResetAt.Sub(now)
+	case cls.CooldownFor > 0:
+		dur = cls.CooldownFor
+	}
+	switch {
+	case dur > 0 && !cls.ResetAt.IsZero():
+		return fmt.Sprintf(
+			"agent %s hit a %s. Cooldown until %s (in %s). "+
+				"Re-run after that, or pass --agent <other> to switch.",
+			cls.Agent,
+			label,
+			cls.ResetAt.Format("3:04 PM"),
+			dur.Round(time.Minute),
+		)
+	case dur > 0:
+		return fmt.Sprintf(
+			"agent %s hit a %s. Cooldown for ~%s. "+
+				"Re-run after that, or pass --agent <other> to switch.",
+			cls.Agent,
+			label,
+			dur.Round(time.Minute),
+		)
+	default:
+		flat := strings.ReplaceAll(cls.Message, "\n", " ")
+		return fmt.Sprintf(
+			"agent %s hit a %s (unknown reset time). "+
+				"Re-run later, or pass --agent <other> to switch. "+
+				"Original error: %s",
+			cls.Agent,
+			label,
+			truncateString(flat, 200),
+		)
+	}
+}
+
+//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
+func agentLimitLabel(k agentlimit.Kind) string {
+	switch k {
+	case agentlimit.KindSession:
+		return "session limit"
+	case agentlimit.KindQuota:
+		return "quota limit"
+	case agentlimit.KindTransient:
+		return "rate limit"
+	default:
+		return "rate limit"
+	}
 }
 
 // fixJobParams configures a fixJobDirect operation.
@@ -828,6 +911,9 @@ func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
+	if opts.classify == nil {
+		opts.classify = agentlimit.Classify
+	}
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -998,6 +1084,9 @@ type batchEntry struct {
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
 func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
+	if opts.classify == nil {
+		opts.classify = agentlimit.Classify
+	}
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
