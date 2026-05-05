@@ -1,0 +1,71 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/roborev-dev/roborev/internal/agent"
+)
+
+// fixSessionTracker keeps the most-recent agent session ID across
+// calls within a single roborev fix run and produces the agent to
+// invoke next. See spec for full contract.
+type fixSessionTracker struct {
+	enabled bool         // --resume passed
+	base    agent.Agent  // resolved once (already WithAgentic/WithReasoning/WithModel)
+	last    string       // most recent valid captured session ID
+	warned  bool         // log "agent X doesn't support resume" only once
+	quiet   bool         // suppress progress logs and warnings under --quiet
+	log     func(string) // injected logger; cmd.Printf in CLI, no-op in tests
+}
+
+// NextAgent returns the agent to use for the next invocation along
+// with a resuming flag indicating whether this call is actually
+// resumed. The flag is the source of truth for "Resuming session ..."
+// — relying on agent identity equality is brittle.
+//
+// Decision order (kept exact for contract clarity):
+//  1. !enabled                        → (base, false)
+//  2. !SessionAgent                   → warn once (respect quiet); (base, false)
+//  3. last == ""                      → (base, false)
+//  4. otherwise                       → (sa.WithSessionID(last), true)
+func (t *fixSessionTracker) NextAgent() (agent.Agent, bool) {
+	if !t.enabled {
+		return t.base, false
+	}
+	sa, ok := t.base.(agent.SessionAgent)
+	if !ok {
+		if !t.warned {
+			t.warned = true
+			if !t.quiet && t.log != nil {
+				t.log(fmt.Sprintf(
+					"Warning: agent %s does not support session resume; running fresh sessions\n",
+					t.base.Name(),
+				))
+			}
+		}
+		return t.base, false
+	}
+	if t.last == "" {
+		return t.base, false
+	}
+	return sa.WithSessionID(t.last), true
+}
+
+// Capture stores id only if it is non-empty AND passes the resume ID
+// validator. Empty/invalid IDs are silently dropped so the
+// "Resuming session ..." log can never lie.
+func (t *fixSessionTracker) Capture(id string) {
+	if id == "" {
+		return
+	}
+	if !agent.IsValidResumeSessionID(id) {
+		return
+	}
+	t.last = id
+}
+
+// Reset clears the tracked session ID. Called on any agent error so a
+// stale session token does not poison every subsequent batch.
+func (t *fixSessionTracker) Reset() {
+	t.last = ""
+}
