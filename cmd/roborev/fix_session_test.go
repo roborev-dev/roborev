@@ -29,7 +29,7 @@ func TestFixSessionTracker_DisabledAlwaysReturnsBase(t *testing.T) {
 	tr := &fixSessionTracker{
 		enabled: false,
 		base:    base,
-		log:     func(s string) { logged.WriteString(s) },
+		out:     logged,
 	}
 
 	a, resuming := tr.NextAgent()
@@ -45,7 +45,7 @@ func TestFixSessionTracker_DisabledAlwaysReturnsBase(t *testing.T) {
 
 func TestFixSessionTracker_EnabledFirstCallReturnsBase(t *testing.T) {
 	base := agent.NewTestAgent()
-	tr := &fixSessionTracker{enabled: true, base: base, log: func(string) {}}
+	tr := &fixSessionTracker{enabled: true, base: base, out: io.Discard}
 
 	a, resuming := tr.NextAgent()
 	assert.Same(t, agent.Agent(base), a)
@@ -54,7 +54,7 @@ func TestFixSessionTracker_EnabledFirstCallReturnsBase(t *testing.T) {
 
 func TestFixSessionTracker_AfterCaptureReturnsResumedAgent(t *testing.T) {
 	base := agent.NewTestAgent()
-	tr := &fixSessionTracker{enabled: true, base: base, log: func(string) {}}
+	tr := &fixSessionTracker{enabled: true, base: base, out: io.Discard}
 
 	tr.Capture("test-session-1")
 	a, resuming := tr.NextAgent()
@@ -66,7 +66,7 @@ func TestFixSessionTracker_AfterCaptureReturnsResumedAgent(t *testing.T) {
 
 func TestFixSessionTracker_InvalidIDsDropped(t *testing.T) {
 	base := agent.NewTestAgent()
-	tr := &fixSessionTracker{enabled: true, base: base, log: func(string) {}}
+	tr := &fixSessionTracker{enabled: true, base: base, out: io.Discard}
 
 	tr.Capture("")
 	tr.Capture("contains spaces")
@@ -79,7 +79,7 @@ func TestFixSessionTracker_InvalidIDsDropped(t *testing.T) {
 
 func TestFixSessionTracker_ResetClearsLast(t *testing.T) {
 	base := agent.NewTestAgent()
-	tr := &fixSessionTracker{enabled: true, base: base, log: func(string) {}}
+	tr := &fixSessionTracker{enabled: true, base: base, out: io.Discard}
 
 	tr.Capture("test-session-1")
 	tr.Reset()
@@ -95,7 +95,7 @@ func TestFixSessionTracker_NonSessionAgentWarnsOnce(t *testing.T) {
 	tr := &fixSessionTracker{
 		enabled: true,
 		base:    base,
-		log:     func(s string) { logged.WriteString(s) },
+		out:     logged,
 	}
 
 	for range 5 {
@@ -116,7 +116,7 @@ func TestFixSessionTracker_NonSessionAgentWarningRespectsQuiet(t *testing.T) {
 		enabled: true,
 		base:    base,
 		quiet:   true,
-		log:     func(s string) { logged.WriteString(s) },
+		out:     logged,
 	}
 
 	tr.NextAgent()

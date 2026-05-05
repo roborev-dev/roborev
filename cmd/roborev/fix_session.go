@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 )
@@ -10,12 +11,12 @@ import (
 // calls within a single roborev fix run and produces the agent to
 // invoke next. See spec for full contract.
 type fixSessionTracker struct {
-	enabled bool         // --resume passed
-	base    agent.Agent  // resolved once (already WithAgentic/WithReasoning/WithModel)
-	last    string       // most recent valid captured session ID
-	warned  bool         // log "agent X doesn't support resume" only once
-	quiet   bool         // suppress progress logs and warnings under --quiet
-	log     func(string) // injected logger; cmd.Printf in CLI, no-op in tests
+	enabled bool        // --resume passed
+	base    agent.Agent // resolved once (already WithAgentic/WithReasoning/WithModel)
+	last    string      // most recent valid captured session ID
+	warned  bool        // emit "agent X doesn't support resume" only once
+	quiet   bool        // suppress warnings under --quiet
+	out     io.Writer   // where to write the unsupported-agent warning
 }
 
 // NextAgent returns the agent to use for the next invocation along
@@ -36,11 +37,11 @@ func (t *fixSessionTracker) NextAgent() (agent.Agent, bool) {
 	if !ok {
 		if !t.warned {
 			t.warned = true
-			if !t.quiet && t.log != nil {
-				t.log(fmt.Sprintf(
+			if !t.quiet && t.out != nil {
+				fmt.Fprintf(t.out,
 					"Warning: agent %s does not support session resume; running fresh sessions\n",
 					t.base.Name(),
-				))
+				)
 			}
 		}
 		return t.base, false

@@ -144,7 +144,7 @@ func TestRunFixBatch_CountCapGroupsIntoTwoTwoOne(t *testing.T) {
 		}
 		tracker := &fixSessionTracker{
 			base: base,
-			log:  func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:  cmd.OutOrStdout(),
 		}
 		return runFixBatch(cmd, []int64{1, 2, 3, 4, 5}, "", false, false, false, 2, opts, tracker)
 	})
@@ -187,7 +187,7 @@ func TestRunFix_ResumeChainsSessionAcrossSingleJobCalls(t *testing.T) {
 			enabled: true,
 			base:    base,
 			quiet:   true,
-			log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:     cmd.OutOrStdout(),
 		}
 		return runFix(cmd, []int64{11, 12, 13}, opts, tracker)
 	})
@@ -224,7 +224,7 @@ func TestRunFix_BatchSizeAndResumeCombined(t *testing.T) {
 			enabled: true,
 			base:    base,
 			quiet:   true,
-			log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:     cmd.OutOrStdout(),
 		}
 		return runFixBatch(cmd, []int64{20, 21, 22, 23, 24, 25}, "", false, false, false, 3, opts, tracker)
 	})
@@ -347,7 +347,7 @@ func TestRunFix_ResumeCascadeBrokenOnError(t *testing.T) {
 			enabled: true,
 			base:    base,
 			quiet:   true,
-			log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:     cmd.OutOrStdout(),
 		}
 		// Errors are expected mid-run; runFixBatch logs and continues.
 		return runFixBatch(cmd, []int64{30, 31, 32, 33, 34, 35}, "", false, false, false, 2, opts, tracker)
@@ -406,7 +406,7 @@ func TestRunFix_ResumeWithNonSessionAgentWarnsOnce(t *testing.T) {
 		tracker := &fixSessionTracker{
 			enabled: true,
 			base:    base,
-			log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:     cmd.OutOrStdout(),
 		}
 		return runFix(cmd, []int64{50, 51}, opts, tracker)
 	})
@@ -447,7 +447,7 @@ func TestRunFix_QuietSuppressesResumeAndUnsupportedWarnings(t *testing.T) {
 			enabled: true,
 			base:    base,
 			quiet:   true,
-			log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			out:     cmd.OutOrStdout(),
 		}
 		return runFix(cmd, []int64{60, 61}, opts, tracker)
 	})

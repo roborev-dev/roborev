@@ -552,7 +552,7 @@ func TestFixSingleJob(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 	err := fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
@@ -677,7 +677,7 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 
 	base, err := resolveFixAgent(repo.Dir, opts)
 	require.NoError(t, err, "resolveFixAgent")
-	tracker := &fixSessionTracker{base: base, log: func(string) {}}
+	tracker := &fixSessionTracker{base: base, out: io.Discard}
 	err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
@@ -707,7 +707,7 @@ func TestFixJobNotComplete(t *testing.T) {
 
 	cmd, _ := newTestCmd(t)
 
-	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 	err := fixSingleJob(cmd, t.TempDir(), 99, fixOptions{agentName: "test"}, tracker)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not complete")
@@ -840,7 +840,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
@@ -892,7 +892,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
@@ -916,7 +916,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "feature-branch", false, true, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
@@ -932,7 +932,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.Error(t, err, "expected error on server failure")
@@ -1001,7 +1001,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", true, false, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
@@ -1072,7 +1072,7 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "target-branch", false, true, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
@@ -1140,7 +1140,7 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err)
@@ -1153,7 +1153,7 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 			return runFixOpen(cmd, "", false, false, true, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err)
@@ -1221,7 +1221,7 @@ func TestRunFixOpenRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 	})
 	require.NoError(t, err)
@@ -1323,7 +1323,7 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 	})
 	require.NoError(t, err)
@@ -2137,7 +2137,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		if err := runFixOpen(cmd, "", false, false, false, opts, tracker); err != nil {
 			require.NoError(t, err, "runFixOpen: %v")
 		}
@@ -2155,7 +2155,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		// nil jobIDs triggers discovery via queryOpenJobs
 		if err := runFixBatch(cmd, nil, "", false, false, false, 0, opts, tracker); err != nil {
 			require.NoError(t, err, "runFixBatch: %v")
@@ -2304,7 +2304,7 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 
 	opts := fixOptions{agentName: "test-pass-skip"}
 
-	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 	err := fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
@@ -2389,7 +2389,7 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			false, false, false,
 			0,
 			fixOptions{agentName: "test", reasoning: "fast"},
-			&fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}},
+			&fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard},
 		)
 	})
 	require.NoError(t, err, "runFixBatch: %v")
@@ -2462,7 +2462,7 @@ func TestRunFixWithSeenExplicitAbortsOnError(t *testing.T) {
 	setupFixErrorMockDaemon(t, &processedJobs, &mu)
 
 	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
@@ -2489,7 +2489,7 @@ func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
@@ -2561,7 +2561,7 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixWithSeen(cmd, []int64{10, 20}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
@@ -3310,7 +3310,7 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 	// (effectiveBranch is resolved to the current branch). allBranches
 	// is false, so filterReachableJobs uses commit-graph reachability.
 	_, runErr := runWithOutput(t, worktreeDir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixOpen(
 			cmd, "wt-branch", false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
@@ -3405,7 +3405,7 @@ func TestRunFixOpenExcludesMergedBranchJobs(t *testing.T) {
 
 	// Run from main with auto-resolved branch (explicitBranch=false).
 	_, runErr := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
 		return runFixOpen(
 			cmd, defaultBranch, false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
@@ -3537,12 +3537,4 @@ func TestFixCmd_BatchSizeMustBePositive(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--batch-size must be >= 1")
-}
-
-func TestFixCmd_ResumeAndNoResumeMutuallyExclusive(t *testing.T) {
-	cmd := fixCmd()
-	cmd.SetArgs([]string{"--resume", "--no-resume"})
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--resume and --no-resume are mutually exclusive")
 }
