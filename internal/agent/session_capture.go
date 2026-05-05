@@ -7,7 +7,23 @@ import (
 
 // ExtractSessionID returns the agent session/thread identifier carried by a
 // streamed JSONL event. For Codex, thread_id is treated as the session ID.
+//
+// Accepts a single JSONL line, a partial line (no trailing newline), or a
+// multi-line stream. Multi-line input is scanned newline by newline and
+// the first line that yields a session ID wins.
 func ExtractSessionID(line string) string {
+	if strings.ContainsRune(line, '\n') {
+		for l := range strings.SplitSeq(line, "\n") {
+			if id := extractSessionIDFromLine(l); id != "" {
+				return id
+			}
+		}
+		return ""
+	}
+	return extractSessionIDFromLine(line)
+}
+
+func extractSessionIDFromLine(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" || !strings.HasPrefix(line, "{") {
 		return ""

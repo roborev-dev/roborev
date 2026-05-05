@@ -114,7 +114,10 @@ func TestTestAgentStreaming(t *testing.T) {
 		var buf bytes.Buffer
 		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", &buf)
 		require.NoError(t, err)
-		assert.Equal(t, result, buf.String(), "streamed output should match result")
+		// The streamed output is the returned body prefixed by a synthetic
+		// session JSONL line (consumed by SessionCaptureWriter). Verify the
+		// body is present in the stream rather than asserting exact equality.
+		assert.Contains(t, buf.String(), result, "streamed output should contain the returned body")
 	})
 
 	t.Run("nil output writer works", func(t *testing.T) {
