@@ -997,6 +997,11 @@ type batchEntry struct {
 
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
+//
+// In discovery mode (no explicit jobIDs), it re-queries for open jobs after
+// each round of batches and continues until no new open jobs remain — matching
+// the keep-going behavior of runFixOpen so reviews that complete mid-run get
+// picked up. With explicit jobIDs the function processes the list once.
 func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -1011,8 +1016,12 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		return err
 	}
 
-	// Discover jobs if none provided
-	if len(jobIDs) == 0 {
+	if len(jobIDs) > 0 {
+		return processFixBatch(ctx, cmd, roots, jobIDs, batchSize, opts, tracker)
+	}
+
+	seen := make(map[int64]bool)
+	for {
 		apiBranch := branch
 		if !explicitBranch {
 			apiBranch = ""
@@ -1028,17 +1037,49 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			}
 			jobs = filterReachableJobs(roots.worktreeRoot, filterBranch, jobs)
 		}
-		jobIDs = make([]int64, len(jobs))
-		for i, j := range jobs {
-			jobIDs[i] = j.ID
-		}
-		if !newestFirst {
-			for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
-				jobIDs[i], jobIDs[j] = jobIDs[j], jobIDs[i]
+
+		var newIDs []int64
+		for _, j := range jobs {
+			if !seen[j.ID] {
+				newIDs = append(newIDs, j.ID)
 			}
 		}
-	}
+		if !newestFirst {
+			for i, j := 0, len(newIDs)-1; i < j; i, j = i+1, j-1 {
+				newIDs[i], newIDs[j] = newIDs[j], newIDs[i]
+			}
+		}
 
+		if len(newIDs) == 0 {
+			if len(seen) == 0 && !opts.quiet {
+				cmd.Println("No open jobs found.")
+			}
+			return nil
+		}
+
+		if !opts.quiet {
+			if len(seen) > 0 {
+				cmd.Printf("\nFound %d new open job(s): %v\n", len(newIDs), newIDs)
+			} else {
+				cmd.Printf("Found %d open job(s): %v\n", len(newIDs), newIDs)
+			}
+		}
+		// Mark before processing so transient fetch errors or skipped
+		// (passing) jobs don't get re-discovered on the next iteration.
+		for _, id := range newIDs {
+			seen[id] = true
+		}
+
+		if err := processFixBatch(ctx, cmd, roots, newIDs, batchSize, opts, tracker); err != nil {
+			return err
+		}
+	}
+}
+
+// processFixBatch fetches reviews for the given job IDs, splits them into
+// batches by prompt size and count, runs each batch as a single agent
+// invocation, and marks the jobs closed when done.
+func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
 	if len(jobIDs) == 0 {
 		if !opts.quiet {
 			cmd.Println("No open jobs found.")
@@ -1046,7 +1087,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		return nil
 	}
 
-	// Fetch all jobs and reviews
 	batchAddr := getDaemonEndpoint().BaseURL()
 	var entries []batchEntry
 	for _, id := range jobIDs {
@@ -1099,7 +1139,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		return nil
 	}
 
-	// Load global config for severity + prompt-size resolution.
 	cfg, _ := config.LoadGlobal()
 
 	// Resolve minimum severity filter. Suppress if any entry is a

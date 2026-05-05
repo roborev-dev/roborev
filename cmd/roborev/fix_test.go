@@ -2441,6 +2441,80 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	assert.True(t, slices.Contains(ids, int64(10)))
 }
 
+// TestRunFixBatchRequery verifies that runFixBatch in discovery mode
+// (no explicit job IDs) re-queries for open jobs after processing the
+// initial set, picking up new jobs that appeared mid-run. This mirrors
+// the keep-going behavior of runFixOpen.
+func TestRunFixBatchRequery(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repoBranch := strings.TrimSpace(repo.Run("rev-parse", "--abbrev-ref", "HEAD"))
+
+	var queryCount atomic.Int32
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
+				n := queryCount.Add(1)
+				switch n {
+				case 1:
+					writeJSON(w, map[string]any{
+						"jobs": []storage.ReviewJob{
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+						},
+						"has_more": false,
+					})
+				case 2:
+					writeJSON(w, map[string]any{
+						"jobs": []storage.ReviewJob{
+							{ID: 20, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+						},
+						"has_more": false,
+					})
+				default:
+					writeJSON(w, map[string]any{
+						"jobs":     []storage.ReviewJob{},
+						"has_more": false,
+					})
+				}
+				return
+			}
+			var id int64
+			fmt.Sscanf(q.Get("id"), "%d", &id)
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{
+					{ID: id, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+				},
+				"has_more": false,
+			})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard}
+		return runFixBatch(cmd, nil, "", false, false, false, 1,
+			fixOptions{agentName: "test", reasoning: "fast"}, tracker)
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(3), queryCount.Load(),
+		"expected 3 discovery queries: initial, requery picks up job 20, requery sees nothing")
+	assert.Contains(t, out, "Found 1 open job(s)")
+	assert.Contains(t, out, "Found 1 new open job(s)")
+}
+
 func setupFixErrorMockDaemon(t *testing.T, processedJobs *[]int64, mu *sync.Mutex) {
 	t.Helper()
 	_ = newMockDaemonBuilder(t).
