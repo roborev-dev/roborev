@@ -2139,8 +2139,9 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		// nil jobIDs triggers discovery via queryOpenJobs
-		if err := runFixBatch(cmd, nil, "", false, false, false, 0, opts); err != nil {
+		if err := runFixBatch(cmd, nil, "", false, false, false, 0, opts, tracker); err != nil {
 			require.NoError(t, err, "runFixBatch: %v")
 		}
 
@@ -2371,6 +2372,7 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			false, false, false,
 			0,
 			fixOptions{agentName: "test", reasoning: "fast"},
+			&fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}},
 		)
 	})
 	require.NoError(t, err, "runFixBatch: %v")

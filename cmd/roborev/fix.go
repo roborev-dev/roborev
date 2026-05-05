@@ -145,6 +145,21 @@ Examples:
 				resume:      resume,
 			}
 
+			roots, err := resolveCurrentRepoRoots()
+			if err != nil {
+				return err
+			}
+			base, err := resolveFixAgent(roots.worktreeRoot, opts)
+			if err != nil {
+				return err
+			}
+			tracker := &fixSessionTracker{
+				enabled: opts.resume,
+				base:    base,
+				quiet:   opts.quiet,
+				log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
+			}
+
 			if batch || batchSize > 0 {
 				var jobIDs []int64
 				for _, arg := range args {
@@ -158,16 +173,12 @@ Examples:
 					return fmt.Errorf("--branch, --all-branches, and --newest-first cannot be used with explicit job IDs")
 				}
 				if len(jobIDs) == 0 {
-					roots, err := resolveCurrentRepoRoots()
-					if err != nil {
-						return err
-					}
 					effectiveBranch := resolveCurrentBranchFilter(
 						roots.worktreeRoot, branch, allBranches,
 					)
-					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, batchSize, opts)
+					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, batchSize, opts, tracker)
 				}
-				return runFixBatch(cmd, jobIDs, "", false, false, false, batchSize, opts)
+				return runFixBatch(cmd, jobIDs, "", false, false, false, batchSize, opts, tracker)
 			}
 
 			if len(args) == 0 {
@@ -975,7 +986,7 @@ type batchEntry struct {
 
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
-func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions) error {
+func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
@@ -1077,12 +1088,6 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		return nil
 	}
 
-	// Resolve agent once
-	fixAgent, err := resolveFixAgent(roots.worktreeRoot, opts)
-	if err != nil {
-		return err
-	}
-
 	// Load global config for severity + prompt-size resolution.
 	cfg, _ := config.LoadGlobal()
 
@@ -1119,6 +1124,8 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			batchJobIDs[j] = e.jobID
 		}
 
+		currentAgent, resuming := tracker.NextAgent()
+
 		if !opts.quiet {
 			cmd.Printf("\n=== Batch %d/%d (jobs %s) ===\n\n", i+1, len(batches), formatJobIDs(batchJobIDs))
 			w := cmd.OutOrStdout()
@@ -1129,32 +1136,38 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 				cmd.Println(strings.Repeat("-", 60))
 				cmd.Println()
 			}
-			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
+			if resuming {
+				cmd.Printf("Resuming session %s\n", shortSessionID(tracker.last))
+			}
+			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())
 		}
 
 		prompt := buildBatchFixPrompt(batch, minSev)
 
-		var out io.Writer
+		var underlying = io.Discard
 		var fmtr *streamfmt.Formatter
-		if opts.quiet {
-			out = io.Discard
-		} else {
+		if !opts.quiet {
 			fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
-			out = fmtr
+			underlying = fmtr
 		}
+		capture := agent.NewSessionCaptureWriter(underlying, nil)
 
 		result, err := fixJobDirect(ctx, fixJobParams{
 			RepoRoot: roots.worktreeRoot,
-			Agent:    fixAgent,
-			Output:   out,
+			Agent:    currentAgent,
+			Output:   capture,
 		}, prompt)
+		// Flush capture FIRST so session extraction completes before reading SessionID.
+		capture.Flush()
 		if fmtr != nil {
 			fmtr.Flush()
 		}
 		if err != nil {
+			tracker.Reset()
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
 			continue
 		}
+		tracker.Capture(capture.SessionID())
 
 		if !opts.quiet {
 			fmt.Fprintln(cmd.OutOrStdout())

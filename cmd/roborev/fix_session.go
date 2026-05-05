@@ -69,3 +69,11 @@ func (t *fixSessionTracker) Capture(id string) {
 func (t *fixSessionTracker) Reset() {
 	t.last = ""
 }
+
+// shortSessionID returns the first 12 characters of id for log lines.
+func shortSessionID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
