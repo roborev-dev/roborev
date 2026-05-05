@@ -1415,6 +1415,42 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 	})
 }
 
+func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "base"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		require.NoError(t, c.Run(), "git %v", args)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted"), 0o644))
+
+	tester := agent.NewTestAgent()
+	tester.Delay = 0
+	capture := agent.NewSessionCaptureWriter(io.Discard, nil)
+
+	_, err := fixJobDirect(context.Background(), fixJobParams{
+		RepoRoot: dir,
+		Agent:    tester,
+		Output:   capture,
+	}, "fix things")
+	require.NoError(t, err)
+
+	calls := tester.Calls()
+	require.Len(t, calls, 2, "fixJobDirect should call Review twice when uncommitted changes remain")
+	assert.Empty(t, calls[0].SessionID, "first call is fresh")
+	assert.Equal(t, "test-session-1", calls[1].SessionID,
+		"retry must resume the first call's session so the tracker captures the latest context")
+}
+
 func TestBuildBatchFixPrompt(t *testing.T) {
 	entries := []batchEntry{
 		{

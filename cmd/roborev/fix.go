@@ -305,7 +305,21 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 	}
 
 	fmt.Fprint(out, "\nNo commit was created. Re-running agent with commit instructions...\n\n")
-	if _, retryErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
+	retryAgent := params.Agent
+	// Thread the first call's session ID into the retry so the commit
+	// step continues the same agent context. Without this, the retry
+	// runs as a fresh session and the caller's tracker captures the
+	// pre-retry session — leaving subsequent jobs to resume stale
+	// context that's missing the actual fix work.
+	if capture, ok := out.(*agent.SessionCaptureWriter); ok {
+		capture.Flush()
+		if id := capture.SessionID(); id != "" {
+			if sa, ok := retryAgent.(agent.SessionAgent); ok {
+				retryAgent = sa.WithSessionID(id)
+			}
+		}
+	}
+	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
 	}
 	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
