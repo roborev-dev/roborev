@@ -2140,7 +2140,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
 		// nil jobIDs triggers discovery via queryOpenJobs
-		if err := runFixBatch(cmd, nil, "", false, false, false, opts); err != nil {
+		if err := runFixBatch(cmd, nil, "", false, false, false, 0, opts); err != nil {
 			require.NoError(t, err, "runFixBatch: %v")
 		}
 
@@ -2369,6 +2369,7 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			[]int64{10, 20},
 			"",
 			false, false, false,
+			0,
 			fixOptions{agentName: "test", reasoning: "fast"},
 		)
 	})
@@ -3486,4 +3487,20 @@ func TestFilterReachableJobsFeatureBranch(t *testing.T) {
 			assert.Equal(t, tt.wantIDs, gotIDs)
 		})
 	}
+}
+
+func TestFixCmd_BatchAndBatchSizeMutuallyExclusive(t *testing.T) {
+	cmd := fixCmd()
+	cmd.SetArgs([]string{"--batch", "--batch-size", "5"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--batch and --batch-size are mutually exclusive")
+}
+
+func TestFixCmd_BatchSizeMustBePositive(t *testing.T) {
+	cmd := fixCmd()
+	cmd.SetArgs([]string{"--batch-size", "0"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--batch-size must be >= 1")
 }

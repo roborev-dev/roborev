@@ -49,6 +49,7 @@ func fixCmd() *cobra.Command {
 		newestFirst bool
 		branch      string
 		batch       bool
+		batchSize   int
 		list        bool
 	)
 
@@ -69,14 +70,14 @@ With no arguments, discovers and fixes all open completed jobs on the
 current branch.
 
 Examples:
-  roborev fix                            # Fix all open jobs on current branch
+  roborev fix                            # 1 review per agent call (default)
   roborev fix 123                        # Fix a single job
   roborev fix 123 124 125                # Fix multiple jobs sequentially
   roborev fix --agent claude-code 123    # Use a specific agent
   roborev fix --branch main              # Fix all open jobs on main
   roborev fix --all-branches             # Fix all open jobs across all branches
-  roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
-  roborev fix --batch                    # Batch all open jobs on current branch
+  roborev fix --batch-size 5             # Up to 5 reviews per agent call
+  roborev fix --batch                    # Pack until max_prompt_size
   roborev fix --list                     # List open jobs without fixing
 `,
 		Args: cobra.ArbitraryArgs,
@@ -108,6 +109,15 @@ Examples:
 			if list && batch {
 				return fmt.Errorf("--list and --batch are mutually exclusive")
 			}
+			if batch && batchSize > 0 {
+				return fmt.Errorf("--batch and --batch-size are mutually exclusive")
+			}
+			if batchSize < 0 {
+				return fmt.Errorf("--batch-size must be >= 1")
+			}
+			if cmd.Flags().Changed("batch-size") && batchSize == 0 {
+				return fmt.Errorf("--batch-size must be >= 1")
+			}
 			if list {
 				roots, err := resolveCurrentRepoRoots()
 				if err != nil {
@@ -129,7 +139,7 @@ Examples:
 				quiet:       quiet,
 			}
 
-			if batch {
+			if batch || batchSize > 0 {
 				var jobIDs []int64
 				for _, arg := range args {
 					var id int64
@@ -141,7 +151,6 @@ Examples:
 				if len(jobIDs) > 0 && (branch != "" || allBranches || newestFirst) {
 					return fmt.Errorf("--branch, --all-branches, and --newest-first cannot be used with explicit job IDs")
 				}
-				// If no args, discover unaddressed jobs
 				if len(jobIDs) == 0 {
 					roots, err := resolveCurrentRepoRoots()
 					if err != nil {
@@ -150,9 +159,9 @@ Examples:
 					effectiveBranch := resolveCurrentBranchFilter(
 						roots.worktreeRoot, branch, allBranches,
 					)
-					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, opts)
+					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, batchSize, opts)
 				}
-				return runFixBatch(cmd, jobIDs, "", false, false, false, opts)
+				return runFixBatch(cmd, jobIDs, "", false, false, false, batchSize, opts)
 			}
 
 			if len(args) == 0 {
@@ -195,6 +204,7 @@ Examples:
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include open jobs from all branches")
 	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first")
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 0, "concatenate up to N reviews per agent invocation (cap by count, still bounded by max_prompt_size)")
 	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing")
 	_ = cmd.Flags().MarkHidden("open")
 	_ = cmd.Flags().MarkHidden("unaddressed")
@@ -956,7 +966,7 @@ type batchEntry struct {
 
 // runFixBatch discovers jobs (or uses provided IDs), splits them into batches
 // respecting max prompt size, and runs each batch as a single agent invocation.
-func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions) error {
+func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions) error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
@@ -1090,6 +1100,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	maxSize := config.ResolveMaxPromptSize(roots.worktreeRoot, cfg)
 	batches := splitIntoBatches(entries, batchSplitOptions{
 		MaxSize:     maxSize,
+		MaxCount:    batchSize,
 		MinSeverity: minSev,
 	})
 
@@ -1157,9 +1168,13 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		}
 
 		// Mark all jobs in this batch as closed
-		responseText := "Fix applied via `roborev fix --batch`"
+		flagLabel := "--batch"
+		if batchSize > 0 {
+			flagLabel = "--batch-size"
+		}
+		responseText := fmt.Sprintf("Fix applied via `roborev fix %s`", flagLabel)
 		if result.CommitCreated {
-			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))
+			responseText = fmt.Sprintf("Fix applied via `roborev fix %s` (commit: %s)", flagLabel, git.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
 			if addErr := addJobResponse(ctx, batchAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
