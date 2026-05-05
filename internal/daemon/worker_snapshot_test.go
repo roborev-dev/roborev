@@ -156,11 +156,12 @@ func TestSnapshotFlow_SnapshotFileContentMatchesDiff(t *testing.T) {
 
 	// The snapshot file should have existed during the review.
 	// After processJob returns, cleanup runs and deletes it.
-	// Verify the file was in the git dir.
+	// Verify the file was not hidden under .git, where sandboxed agents
+	// may be unable to read it.
 	gitDir, err := gitpkg.ResolveGitDir(tc.TmpDir)
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(snapshotPath, gitDir),
-		"snapshot should be in git dir: got %s, want prefix %s",
+	assert.False(t, strings.HasPrefix(snapshotPath, gitDir),
+		"snapshot should not be in git dir: got %s, git dir %s",
 		snapshotPath, gitDir)
 
 	// Verify it was cleaned up

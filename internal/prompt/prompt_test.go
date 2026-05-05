@@ -1012,6 +1012,42 @@ func TestBuildDirtySmallCapStaysWithinCap(t *testing.T) {
 		"expected oversized optional context to be trimmed")
 }
 
+func TestBuildDirtyWithSnapshotKeepsReferenceWithinCap(t *testing.T) {
+	repoPath, _ := setupLargeDiffRepoWithGuidelines(t, 5000)
+	diff := strings.Repeat("+ line\n", 50000)
+	cap := 10000
+	cfg := &config.Config{DefaultMaxPromptSize: cap}
+	b := NewBuilderWithConfig(nil, cfg)
+
+	result, err := b.BuildDirtyWithSnapshot(repoPath, diff, 0, 0, "claude-code", "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result.Cleanup)
+	defer result.Cleanup()
+
+	assert.LessOrEqual(t, len(result.Prompt), cap,
+		"dirty snapshot prompt should keep the file reference within the configured cap")
+	assert.Contains(t, result.Prompt, "Read the diff from:",
+		"dirty snapshot prompt should point reviewers at the external diff file")
+	assert.Contains(t, result.Prompt, "roborev-snapshot-",
+		"dirty snapshot prompt should include the generated snapshot path")
+}
+
+func TestFitPrefixWithSuffixVariantsRejectsNonPositiveLimit(t *testing.T) {
+	prompt, err := fitPrefixWithSuffixVariants("prefix", 0, "suffix")
+
+	require.Error(t, err)
+	assert.Empty(t, prompt)
+	assert.Contains(t, err.Error(), "prompt limit must be positive")
+}
+
+func TestFitPrefixWithSuffixVariantsRejectsUnfittableSuffix(t *testing.T) {
+	prompt, err := fitPrefixWithSuffixVariants("prefix", 4, "required suffix")
+
+	require.Error(t, err)
+	assert.Empty(t, prompt)
+	assert.Contains(t, err.Error(), "required prompt suffix")
+}
+
 func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
 	b := NewBuilder(nil)
 	assert.Equal(t, config.DefaultMaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))

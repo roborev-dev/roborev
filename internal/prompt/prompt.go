@@ -67,6 +67,8 @@ type Builder struct {
 // reusable across retries.
 const DiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
 
+const dirtyTruncatedDiffMarker = "(Diff too large to include in full)"
+
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
 	return &Builder{db: db}
@@ -164,7 +166,9 @@ func (b *Builder) BuildWithSnapshot(repoPath, gitRef string, repoID int64, conte
 	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 }
 
-// WriteDiffSnapshot writes the full diff for a git ref to a file in the repo's git dir.
+// WriteDiffSnapshot writes the full diff for a git ref to an external temp
+// file. The file intentionally lives outside .git so sandboxed agents can read
+// it without inlining oversized diffs into the submitted prompt.
 func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func(), error) {
 	var (
 		fullDiff string
@@ -181,16 +185,16 @@ func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func
 	if fullDiff == "" {
 		return "", nil, fmt.Errorf("diff is empty")
 	}
-	gitDir, err := git.ResolveGitDir(repoPath)
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve git dir: %w", err)
-	}
-	f, err := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
+	return writeExternalDiffSnapshot(fullDiff)
+}
+
+func writeExternalDiffSnapshot(diff string) (string, func(), error) {
+	f, err := os.CreateTemp("", "roborev-snapshot-*.diff")
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
 	diffFile := f.Name()
-	_, writeErr := f.WriteString(fullDiff)
+	_, writeErr := f.WriteString(diff)
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil {
 		os.Remove(diffFile)
@@ -209,27 +213,17 @@ func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, co
 	if err != nil {
 		return SnapshotResult{}, err
 	}
-	if strings.Contains(p, "(Diff too large to include in full)") && len(diff) > 0 {
-		gitDir, dirErr := git.ResolveGitDir(repoPath)
-		if dirErr != nil {
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", dirErr)
+	if strings.Contains(p, dirtyTruncatedDiffMarker) && len(diff) > 0 {
+		diffFile, cleanup, snapErr := writeExternalDiffSnapshot(diff)
+		if snapErr != nil {
+			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}
-		f, createErr := os.CreateTemp(gitDir, "roborev-snapshot-*.diff")
-		if createErr != nil {
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", createErr)
+		p, err = fitDirtySnapshotReference(p, diffFile, b.resolveMaxPromptSize(repoPath))
+		if err != nil {
+			cleanup()
+			return SnapshotResult{}, err
 		}
-		diffFile := f.Name()
-		_, writeErr := f.WriteString(diff)
-		closeErr := f.Close()
-		if writeErr != nil || closeErr != nil {
-			os.Remove(diffFile)
-			if writeErr != nil {
-				return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", writeErr)
-			}
-			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", closeErr)
-		}
-		p += fmt.Sprintf("\nThe full diff is also available at: `%s`\n", diffFile)
-		return SnapshotResult{Prompt: p, Cleanup: func() { os.Remove(diffFile) }}, nil
+		return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 	}
 	return SnapshotResult{Prompt: p}, nil
 }
@@ -360,6 +354,42 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		return "", err
 	}
 	return ctx.requiredPrefix + hardCapPrompt(body, bodyLimit), nil
+}
+
+func fitDirtySnapshotReference(prompt, diffFile string, limit int) (string, error) {
+	variants := dirtySnapshotReferenceVariants(diffFile)
+	prefix := prompt
+	if before, _, found := strings.Cut(prompt, dirtyTruncatedDiffMarker); found {
+		prefix = before
+	}
+	return fitPrefixWithSuffixVariants(prefix, limit, variants...)
+}
+
+func dirtySnapshotReferenceVariants(diffFile string) []string {
+	return []string{
+		fmt.Sprintf("%s\nThe full diff has been written to a file for review.\nRead the diff from: `%s`\n\nReview the actual diff before writing findings.\n", dirtyTruncatedDiffMarker, diffFile),
+		fmt.Sprintf("%s\nRead the diff from: `%s`\n", dirtyTruncatedDiffMarker, diffFile),
+		fmt.Sprintf("(Diff too large; read `%s`.)\n", diffFile),
+	}
+}
+
+func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) (string, error) {
+	if limit <= 0 {
+		return "", fmt.Errorf("prompt limit must be positive, got %d", limit)
+	}
+	if len(variants) == 0 {
+		return truncateUTF8(prefix, limit), nil
+	}
+	for _, variant := range variants {
+		if len(prefix)+len(variant) <= limit {
+			return prefix + variant, nil
+		}
+	}
+	shortest := variants[len(variants)-1]
+	if len(shortest) > limit {
+		return "", fmt.Errorf("required prompt suffix is %d bytes but prompt limit is %d bytes", len(shortest), limit)
+	}
+	return truncateUTF8(prefix, limit-len(shortest)) + shortest, nil
 }
 
 func isCodexReviewAgent(agentName string) bool {
