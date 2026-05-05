@@ -1088,7 +1088,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 	// Split into batches by prompt size (after severity resolution
 	// so the severity instruction overhead is accounted for)
 	maxSize := config.ResolveMaxPromptSize(roots.worktreeRoot, cfg)
-	batches := splitIntoBatches(entries, maxSize, minSev)
+	batches := splitIntoBatches(entries, batchSplitOptions{
+		MaxSize:     maxSize,
+		MinSeverity: minSev,
+	})
 
 	for i, batch := range batches {
 		batchJobIDs := make([]int64, len(batch))
@@ -1191,15 +1194,23 @@ func batchEntrySize(index int, e batchEntry) int {
 	return size
 }
 
-// splitIntoBatches groups entries into batches respecting maxSize.
-// Greedily packs reviews; a single oversized review gets its own batch.
-// When minSeverity is non-empty, the severity instruction size is
-// included in the per-batch overhead.
+// batchSplitOptions configures how splitIntoBatches groups entries.
+// Both caps are upper bounds; MaxCount = 0 means "no count cap".
+type batchSplitOptions struct {
+	MaxSize     int    // total prompt bytes per batch, including overhead
+	MaxCount    int    // entries per batch (0 = unbounded)
+	MinSeverity string // forwarded to overhead calculation
+}
+
+// splitIntoBatches groups entries into batches respecting opts.
+// Greedy packing: a batch terminates when adding the next entry would
+// exceed MaxSize, OR when MaxCount > 0 and the batch already has
+// MaxCount entries. A single oversized entry still gets its own batch.
 func splitIntoBatches(
-	entries []batchEntry, maxSize int, minSeverity string,
+	entries []batchEntry, opts batchSplitOptions,
 ) [][]batchEntry {
 	overhead := batchPromptOverhead +
-		len(config.SeverityInstruction(minSeverity))
+		len(config.SeverityInstruction(opts.MinSeverity))
 	var batches [][]batchEntry
 	var current []batchEntry
 	currentSize := 0
@@ -1207,7 +1218,9 @@ func splitIntoBatches(
 	for _, e := range entries {
 		entrySize := batchEntrySize(len(current)+1, e)
 
-		if len(current) > 0 && currentSize+entrySize > maxSize {
+		countFull := opts.MaxCount > 0 && len(current) >= opts.MaxCount
+		sizeFull := len(current) > 0 && currentSize+entrySize > opts.MaxSize
+		if countFull || sizeFull {
 			batches = append(batches, current)
 			current = nil
 			currentSize = 0

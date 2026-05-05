@@ -1459,7 +1459,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(2, 100),
 			makeEntry(3, 100),
 		}
-		batches := splitIntoBatches(entries, 100000, "")
+		batches := splitIntoBatches(entries, batchSplitOptions{MaxSize: 100000})
 		assert.Len(t, batches, 1)
 		assert.Len(t, batches[0], 3)
 	})
@@ -1472,7 +1472,7 @@ func TestSplitIntoBatches(t *testing.T) {
 		}
 		// Set limit small enough that not all fit (overhead ~300 bytes + entry ~530 each)
 		maxSize := 1000
-		batches := splitIntoBatches(entries, maxSize, "")
+		batches := splitIntoBatches(entries, batchSplitOptions{MaxSize: maxSize})
 		assert.GreaterOrEqual(t, len(batches), 2)
 		// All entries should be present across batches
 		total := 0
@@ -1488,7 +1488,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(2, 5000), // oversized
 			makeEntry(3, 100),
 		}
-		batches := splitIntoBatches(entries, 1000, "")
+		batches := splitIntoBatches(entries, batchSplitOptions{MaxSize: 1000})
 		assert.GreaterOrEqual(t, len(batches), 2)
 		// The oversized entry should be alone in its batch
 		found := false
@@ -1503,7 +1503,7 @@ func TestSplitIntoBatches(t *testing.T) {
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		batches := splitIntoBatches(nil, 100000, "")
+		batches := splitIntoBatches(nil, batchSplitOptions{MaxSize: 100000})
 		assert.Empty(t, batches)
 	})
 
@@ -1517,7 +1517,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(5, 200),
 		}
 		maxSize := 1000
-		batches := splitIntoBatches(entries, maxSize, "")
+		batches := splitIntoBatches(entries, batchSplitOptions{MaxSize: maxSize})
 		for _, batch := range batches {
 			prompt := buildBatchFixPrompt(batch, "")
 			// Single-entry batches that are inherently oversized are allowed to exceed.
@@ -1531,7 +1531,7 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(20, 100),
 			makeEntry(30, 100),
 		}
-		batches := splitIntoBatches(entries, 100000, "")
+		batches := splitIntoBatches(entries, batchSplitOptions{MaxSize: 100000})
 		assert.Len(t, batches, 1)
 		for i, want := range []int64{10, 20, 30} {
 			assert.Equal(t, want, batches[0][i].jobID)
@@ -1546,8 +1546,8 @@ func TestSplitIntoBatches(t *testing.T) {
 		}
 		// With severity, the overhead is larger so entries may split
 		// into more batches than without severity.
-		batchesNoSev := splitIntoBatches(entries, 1200, "")
-		batchesWithSev := splitIntoBatches(entries, 1200, "high")
+		batchesNoSev := splitIntoBatches(entries, batchSplitOptions{MaxSize: 1200})
+		batchesWithSev := splitIntoBatches(entries, batchSplitOptions{MaxSize: 1200, MinSeverity: "high"})
 		if len(batchesWithSev) < len(batchesNoSev) {
 			assert.Condition(t, func() bool {
 				return false
@@ -1567,6 +1567,69 @@ func TestSplitIntoBatches(t *testing.T) {
 
 			}
 		}
+	})
+
+	t.Run("count cap forces multiple batches when size would allow one", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 100),
+			makeEntry(2, 100),
+			makeEntry(3, 100),
+			makeEntry(4, 100),
+			makeEntry(5, 100),
+		}
+		batches := splitIntoBatches(entries, batchSplitOptions{
+			MaxSize:  100000,
+			MaxCount: 2,
+		})
+		require.Len(t, batches, 3)
+		assert.Len(t, batches[0], 2)
+		assert.Len(t, batches[1], 2)
+		assert.Len(t, batches[2], 1)
+	})
+
+	t.Run("count cap and size cap, count cap dominates", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 100),
+			makeEntry(2, 100),
+			makeEntry(3, 100),
+		}
+		batches := splitIntoBatches(entries, batchSplitOptions{
+			MaxSize:  100000,
+			MaxCount: 1,
+		})
+		require.Len(t, batches, 3)
+		for _, b := range batches {
+			assert.Len(t, b, 1)
+		}
+	})
+
+	t.Run("size cap and count cap, size cap dominates", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 500),
+			makeEntry(2, 500),
+			makeEntry(3, 500),
+		}
+		batches := splitIntoBatches(entries, batchSplitOptions{
+			MaxSize:  1000,
+			MaxCount: 100,
+		})
+		assert.GreaterOrEqual(t, len(batches), 2,
+			"size cap forces a split even though count cap is far higher")
+	})
+
+	t.Run("count cap = 0 means unbounded", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 100),
+			makeEntry(2, 100),
+			makeEntry(3, 100),
+			makeEntry(4, 100),
+		}
+		batches := splitIntoBatches(entries, batchSplitOptions{
+			MaxSize:  100000,
+			MaxCount: 0,
+		})
+		require.Len(t, batches, 1)
+		assert.Len(t, batches[0], 4)
 	})
 }
 
