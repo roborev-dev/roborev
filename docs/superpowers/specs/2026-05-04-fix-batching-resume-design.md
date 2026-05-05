@@ -134,13 +134,21 @@ type fixSessionTracker struct {
     log     func(string)  // injected; cmd.Printf in CLI, t.Logf in tests
 }
 
-// NextAgent returns the agent to use for the next invocation.
-//   - If !enabled or last == "", returns base.
-//   - If base implements SessionAgent and last != "",
-//     returns base.(SessionAgent).WithSessionID(last).
-//   - If base does not implement SessionAgent, returns base and emits
-//     the "doesn't support resume" warning once (respecting --quiet).
-func (t *fixSessionTracker) NextAgent() agent.Agent
+// NextAgent returns the agent to use for the next invocation and a
+// resuming flag indicating whether this call is actually resumed.
+// The flag is the source of truth for the "Resuming session ..." log
+// — relying on agent identity equality (currentAgent != base) is
+// brittle.
+//
+// Decision order, in this exact sequence:
+//   1. If !enabled, return (base, false). No warning.
+//   2. If base does not implement SessionAgent, emit the
+//      "doesn't support resume" warning once (respecting --quiet) and
+//      return (base, false). The warning fires on the first call so it
+//      surfaces even when no session ID is ever captured.
+//   3. If last == "", return (base, false). No warning.
+//   4. Otherwise return (sa.WithSessionID(last), true).
+func (t *fixSessionTracker) NextAgent() (agent.Agent, bool)
 
 // Capture stores id if it is non-empty AND passes
 // agent.IsValidResumeSessionID. Empty/invalid IDs are silently
@@ -232,17 +240,17 @@ Concrete example: `roborev fix --batch-size 5 --resume`, agent is
 
 For batch `i` of `n`:
 
-1. `currentAgent := tracker.NextAgent()`. Iteration 1 returns `base`
-   (no `last` captured yet); iterations 2–3 return
-   `base.(SessionAgent).WithSessionID(last)` provided no error has
-   triggered `tracker.Reset()` in between.
+1. `currentAgent, resuming := tracker.NextAgent()`. Iteration 1 returns
+   `(base, false)` (no `last` captured yet); iterations 2–3 return
+   `(base.(SessionAgent).WithSessionID(last), true)` provided no error
+   has triggered `tracker.Reset()` in between.
 2. Build prompt via `buildBatchFixPrompt(batch, minSev)`.
 3. Print "=== Batch i/n (jobs A, B, C) ===" header and per-job findings.
-4. If `currentAgent != base` (i.e. tracker actually returned a
-   session-aware agent), print `Resuming session <shortID>`
-   (respects `--quiet`). Using the agent identity rather than
-   "iteration > 1" handles the post-Reset case correctly: after a
-   reset, iteration 3 starts fresh and the resume log is suppressed.
+4. If `resuming`, print `Resuming session <shortID>` (respects
+   `--quiet`). Driving the log from the explicit boolean — not from
+   agent identity equality — handles the post-`Reset()` case correctly:
+   after a reset, the next call returns `(base, false)` and the resume
+   log is suppressed.
 5. Wire output chain: `capture` wraps `fmtr` (or `io.Discard`).
 6. Run `currentAgent.Review(ctx, repoPath, "HEAD", prompt, capture)`.
 7. After return:
@@ -296,11 +304,11 @@ poisoned session is not (every batch fails).
 
 | Case | Behavior |
 |---|---|
-| `--resume`, agent doesn't implement `SessionAgent` | `tracker.NextAgent()` returns `base` and emits the warning once: `Warning: agent X does not support session resume; running fresh sessions`. Respects `--quiet`. |
-| `--resume`, stream emits no `session_id` event | `last` stays empty; next `NextAgent()` returns `base`. Silent. Tracker keeps trying on subsequent calls. |
+| `--resume`, agent doesn't implement `SessionAgent` | `tracker.NextAgent()` returns `(base, false)` and emits the warning on the **first** call: `Warning: agent X does not support session resume; running fresh sessions`. Respects `--quiet`. Subsequent calls remain silent. |
+| `--resume`, stream emits no `session_id` event | `last` stays empty; next `NextAgent()` returns `(base, false)`. Silent. Tracker keeps trying on subsequent calls. |
 | Resume call fails | `tracker.Reset()`; `Warning: error in batch …` printed; loop continues with next batch fresh. |
 | Ctrl-C between batches | `last` is in-process memory; dies with the process. Next `roborev fix` invocation starts fresh. Matches "within one fix invocation" scope. |
-| `--batch-size N >= len(jobs)` | One batch of all jobs. |
+| `--batch-size N >= len(jobs)` | One batch of all jobs **only if** the concatenated prompt also fits under `max_prompt_size`; otherwise size splitting still applies and produces multiple smaller batches. |
 | `--batch-size N` with explicit job IDs | Discovery skipped; count cap applies to the explicit list. |
 | Empty repo / unborn HEAD | `fixJobDirect` already handles this. Unchanged. |
 | Severity filter + mixed task/review jobs | Existing rule preserved: `minSev` is suppressed if **any** entry is a task job. Resolved once before splitting; applies to all batches consistently. |
@@ -308,11 +316,15 @@ poisoned session is not (every batch fails).
 
 ### Logging (when `--resume` is on)
 
-- First call: silent (no `last` yet).
-- Subsequent calls returning a session-aware agent:
+- First call: silent (`NextAgent()` returns `(base, false)` because
+  no session ID has been captured yet — unless the agent doesn't
+  support resume, see below).
+- Calls where `NextAgent()` returns `(_, true)`: print
   `Resuming session <shortID>`. `shortID` truncates the ID to its first
   12 characters.
-- Agent doesn't support resume: warning once.
+- Agent doesn't support resume: `NextAgent()` emits the warning on
+  the **first** call (so users learn immediately, not only after the
+  first session capture would have happened) and never repeats it.
 
 Both lines respect `--quiet`, matching the existing fix.go convention.
 
@@ -342,7 +354,7 @@ Both lines respect `--quiet`, matching the existing fix.go convention.
 | Test | Lives in | What it covers |
 |---|---|---|
 | `splitIntoBatches` with options struct | `cmd/roborev/fix_test.go` | size-only cap, count-only cap, both active (boundary at `min(N, size-fit)`), single oversize entry isolated, empty input, `MaxCount == 0` means unbounded |
-| `fixSessionTracker` | `cmd/roborev/fix_test.go` | first `NextAgent()` returns base; after valid `Capture("id")`, returns `base.(SessionAgent).WithSessionID("id")`; invalid/empty IDs dropped; `Reset()` clears `last`; non-`SessionAgent` base + tracker enabled → warns once, returns base; tracker disabled → always returns base |
+| `fixSessionTracker` | `cmd/roborev/fix_test.go` | first `NextAgent()` returns `(base, false)`; after valid `Capture("id")`, returns `(base.(SessionAgent).WithSessionID("id"), true)`; invalid/empty IDs dropped; `Reset()` clears `last` so next `NextAgent()` returns `(base, false)`; non-`SessionAgent` base + tracker enabled → warns on **first** call (even before any capture) and returns `(base, false)`; warning fires only once across many calls; tracker disabled → always returns `(base, false)` and never warns |
 | `agent.NewSessionCaptureWriter` (moved) | `internal/agent/session_writer_test.go` | passthrough exact bytes, captures first `session_id`/`thread_id`/`type:session` event, ignores subsequent events, `Flush()` recovers trailing partial line, returns `""` if none seen |
 | `IsValidResumeSessionID` integration | reused | verify tracker rejects invalid IDs at capture time |
 | Flag mutual exclusion | `cmd/roborev/fix_test.go` | `--batch + --batch-size` errors; `--resume + --no-resume` errors; `--batch-size 0` errors; `--batch-size 1 --resume` accepted |
