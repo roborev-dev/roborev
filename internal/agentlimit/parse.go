@@ -47,9 +47,12 @@ func ParseResetDuration(errMsg string) time.Duration {
 // clock time in the local timezone. Returns the zero time.Time if no
 // recognized phrase is present or the time is unparseable.
 //
-// If the parsed clock time is earlier than now-on-the-same-day, the
-// returned time rolls forward by 24 hours so callers that compute
-// "time until reset" never get a negative duration.
+// If the parsed clock time is at or before now-on-the-same-day, the
+// returned time rolls forward to the same wall-clock time on the next
+// local calendar day so callers that compute "time until reset" never
+// get a negative duration. Rollover is DST-safe via time.Date day
+// arithmetic; on a 23-hour or 25-hour day, Go normalizes the offset
+// so the returned wall-clock time matches the user's local clock.
 func ParseResetTime(errMsg string) time.Time {
 	return parseResetTimeAt(errMsg, time.Now())
 }

@@ -255,10 +255,13 @@ Two formats need to be supported in the shared parser:
 - Relative duration: `reset after 48m20s`, `try again in 2h13m`,
   `retry after 5m`. Existing worker.go logic handles this for Gemini —
   it moves into `agentlimit.parseResetDuration` verbatim.
-- Absolute time: `resets at 5:42 PM`, `try again at 17:42 UTC`. New
+- Absolute time: `resets at 5:42 PM`, `try again at 17:42`. New
   parser, returns `time.Time` interpreted in the local timezone with a
   same-day or next-day disambiguation (next-day if the parsed time is
-  already in the past).
+  already in the past). Day-1 scope is bare clock times only — trailing
+  qualifiers like `UTC`, `EST`, or `today` defeat `time.Parse` and
+  produce zero. Extending coverage to timezone-suffixed messages is
+  deferred until a real Claude session-cap message is captured.
 
 If neither format matches, both `ResetAt` and `CooldownFor` are zero —
 the caller (worker or CLI) applies its own default fallback (30m

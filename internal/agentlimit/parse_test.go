@@ -108,3 +108,49 @@ func TestParseResetTimeRespectsLocation(t *testing.T) {
 	assert.Equal(t, want, got)
 	assert.Equal(t, est, got.Location())
 }
+
+// TestParseResetTimeAcrossDST exercises the rollover code path through
+// real DST transitions where Add(24*time.Hour) would land an hour off.
+// time.FixedZone has no DST rules, so it cannot exercise this branch —
+// only a real IANA zone with a transition does.
+func TestParseResetTimeAcrossDST(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("America/New_York tzdata unavailable: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		now  time.Time
+		msg  string
+		want time.Time
+	}{
+		{
+			// Spring forward: 2026-03-08 02:00 EST does not exist; the
+			// clock jumps to 03:00 EDT. A reset advertised at 9:00 AM on
+			// the morning of the transition, evaluated when "now" is the
+			// previous evening, must land at 9:00 AM EDT — same wall-clock
+			// time, despite the day having only 23 hours.
+			name: "spring forward rollover preserves wall-clock",
+			now:  time.Date(2026, 3, 7, 21, 0, 0, 0, ny), // 9pm EST
+			msg:  "limit resets at 9:00 AM",
+			want: time.Date(2026, 3, 8, 9, 0, 0, 0, ny), // 9am EDT next day
+		},
+		{
+			// Fall back: 2026-11-01 has 25 hours. A reset advertised at
+			// 9:00 AM, evaluated the prior evening, must land at 9:00 AM
+			// EST — same wall-clock time, longer day notwithstanding.
+			name: "fall back rollover preserves wall-clock",
+			now:  time.Date(2026, 10, 31, 22, 0, 0, 0, ny), // 10pm EDT
+			msg:  "limit resets at 9:00 AM",
+			want: time.Date(2026, 11, 1, 9, 0, 0, 0, ny), // 9am EST next day
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseResetTimeAt(tc.msg, tc.now)
+			assert.Equal(t, tc.want, got,
+				"DST-safe rollover should preserve wall-clock time")
+		})
+	}
+}

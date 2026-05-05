@@ -928,7 +928,11 @@ func (e *agentLimitError) Error() string {
 
 // formatAgentLimitMessage builds the user-facing abort message. Pulled
 // out so tests can assert against it without depending on time.Now.
+// The label ("quota" / "session limit" / "rate limit") is derived from
+// cls.Kind so a Gemini/Codex KindQuota abort doesn't mis-report itself
+// as a session-cap.
 func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) string {
+	label := agentLimitLabel(cls.Kind)
 	var dur time.Duration
 	switch {
 	case !cls.ResetAt.IsZero():
@@ -939,28 +943,44 @@ func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) strin
 	switch {
 	case dur > 0 && !cls.ResetAt.IsZero():
 		return fmt.Sprintf(
-			"agent %s hit a session limit. Cooldown until %s (in %s). "+
+			"agent %s hit a %s. Cooldown until %s (in %s). "+
 				"Re-run after that, or pass --agent <other> to switch.",
 			cls.Agent,
+			label,
 			cls.ResetAt.Format("3:04 PM"),
 			dur.Round(time.Minute),
 		)
 	case dur > 0:
 		return fmt.Sprintf(
-			"agent %s hit a session limit. Cooldown for ~%s. "+
+			"agent %s hit a %s. Cooldown for ~%s. "+
 				"Re-run after that, or pass --agent <other> to switch.",
 			cls.Agent,
+			label,
 			dur.Round(time.Minute),
 		)
 	default:
 		flat := strings.ReplaceAll(cls.Message, "\n", " ")
 		return fmt.Sprintf(
-			"agent %s hit a session limit (unknown reset time). "+
+			"agent %s hit a %s (unknown reset time). "+
 				"Re-run later, or pass --agent <other> to switch. "+
 				"Original error: %s",
 			cls.Agent,
+			label,
 			truncateString(flat, 200),
 		)
+	}
+}
+
+func agentLimitLabel(k agentlimit.Kind) string {
+	switch k {
+	case agentlimit.KindSession:
+		return "session limit"
+	case agentlimit.KindQuota:
+		return "quota limit"
+	case agentlimit.KindTransient:
+		return "rate limit"
+	default:
+		return "rate limit"
 	}
 }
 ```
@@ -1266,12 +1286,16 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 	}
 
 	_, err = runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		// batchSize=1 forces one job per agent call. With batchSize=0,
+		// runFixBatch may pack both jobs into a single batch, making
+		// agentCalls=1 ambiguous between "aborted before second batch"
+		// and "both jobs in one batch". batchSize=1 is unambiguous.
 		return runFixBatch(
 			cmd,
 			[]int64{10, 20},
 			"",
 			false, false, false,
-			0,
+			1,
 			opts,
 			&fixSessionTracker{base: agent.NewTestAgent(), out: io.Discard},
 		)
@@ -1284,13 +1308,17 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(agentlimit.KindQuota, lim.Classification.Kind)
 	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
+	// agentCalls is the load-bearing assertion: with batchSize=1 and two
+	// jobs, two agent invocations would mean the loop continued past the
+	// abort. Exactly one means the abort short-circuits the second batch.
 	assert.Equal(1, agentCalls, "fix agent should be invoked exactly once before abort")
+	assert.Contains(err.Error(), "quota limit", "Gemini KindQuota label should be 'quota limit', not 'session limit'")
 
-	// Job 20 must not have been processed past initial discovery.
-	mu.Lock()
-	reviewed := append([]int64(nil), reviewedJobIDs...)
-	mu.Unlock()
-	assert.NotContains(reviewed, int64(20), "second job must not be reviewed after abort")
+	// Note: do NOT assert `reviewedJobIDs` does not contain job 20 —
+	// runFixBatch prefetches every job's review at the start of the
+	// function (before any agent call), so /api/review fires for all
+	// queued jobs regardless of when the loop aborts. The agentCalls
+	// counter above is the correct measure of abort behavior.
 }
 ```
 
@@ -1407,7 +1435,7 @@ roborev fix
 Expected: the fix loop aborts after the first job with a message like
 
 ```
-agent gemini hit a session limit. Cooldown for ~30m. Re-run after that, or pass --agent <other> to switch.
+agent gemini hit a quota limit. Cooldown for ~30m. Re-run after that, or pass --agent <other> to switch.
 ```
 
 If no exhausted agent is reachable, this step is informational only — coverage is in the unit tests.
