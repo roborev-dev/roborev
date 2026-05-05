@@ -210,7 +210,7 @@ The internal `lookupFieldByTag()` helper resolves these via reflection on the st
 
 - **Retries**: Up to 3 retries for transient failures (`db.RetryJob`). Resets status to queued.
 - **Failover**: After retries exhausted (or on quota errors), switches to backup agent via `db.FailoverJob`. Resets retry_count, sets backup agent/model.
-- **Cooldown**: Quota exhaustion errors (`isQuotaError`) trigger per-agent cooldown (default 30 min, parsed from error message). Cooldowns are tracked in-memory with RWMutex.
+- **Cooldown**: Quota exhaustion errors (classified by `internal/agentlimit.Classify` as `KindQuota`/`KindSession`) trigger per-agent cooldown (default 30 min, parsed from the error message via `agentlimit.ParseResetDuration`/`ParseResetTime`). Cooldowns are tracked in-memory with RWMutex.
 
 ### Workflow derivation for failover
 
