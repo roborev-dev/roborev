@@ -1246,7 +1246,7 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	logged := buf.String()
 	assert := assert.New(t)
 	assert.Contains(logged, "unclassified agent error", "expected WARN line for unmatched error")
-	assert.Contains(logged, "test", "log line should include agent name")
+	assert.Contains(logged, "from test:", "log line should include agent name as 'from <agent>:'")
 	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
 }
 

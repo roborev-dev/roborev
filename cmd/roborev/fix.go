@@ -498,6 +498,14 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
 			}
+			// Agent quota/session-limit aborts must propagate even in
+			// discovery mode — otherwise the re-query loop keeps
+			// invoking the exhausted agent until every queued job is
+			// burned through with the same error.
+			var lim *agentLimitError
+			if errors.As(err, &lim) {
+				return err
+			}
 			// In discovery mode (seen != nil), log a warning and
 			// continue best-effort. For explicit job IDs (seen ==
 			// nil), return the error so the CLI exits non-zero.

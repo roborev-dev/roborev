@@ -3777,3 +3777,91 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 	// queued jobs regardless of when the loop aborts. The agentCalls
 	// counter above is the correct measure of abort behavior.
 }
+
+func TestRunFixWithSeenDiscoveryAbortsOnAgentLimit(t *testing.T) {
+	// Discovery mode (seen != nil) normally warns-and-continues on
+	// per-job errors, but agent quota/session-limit aborts must
+	// propagate so the re-query loop doesn't keep invoking the
+	// exhausted agent.
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+
+	originalAgent, err := agent.Get("test")
+	require.NoError(t, err, "get test agent")
+	agentCalls := 0
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			agentCalls++
+			return "", errors.New("agent failed: you have exhausted your capacity")
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalAgent) })
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			id := r.URL.Query().Get("id")
+			var idNum int64
+			switch id {
+			case "10":
+				idNum = 10
+			case "20":
+				idNum = 20
+			default:
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{
+					ID:     idNum,
+					Status: storage.JobStatusDone,
+					Agent:  "test",
+				}},
+			})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "## Issues\n- Bug"})
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	classifyCalls := 0
+	opts := fixOptions{
+		agentName: "test",
+		reasoning: "fast",
+		classify: func(_, msg string) agentlimit.Classification {
+			classifyCalls++
+			return agentlimit.Classification{
+				Kind:        agentlimit.KindQuota,
+				Agent:       "gemini",
+				CooldownFor: 30 * time.Minute,
+				Message:     msg,
+			}
+		},
+	}
+
+	seen := make(map[int64]bool)
+	_, err = runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		base, baseErr := resolveFixAgent(repo.Dir, opts)
+		require.NoError(t, baseErr, "resolveFixAgent")
+		tracker := &fixSessionTracker{base: base, out: io.Discard}
+		return runFixWithSeen(cmd, []int64{10, 20}, opts, seen, tracker)
+	})
+	require.Error(t, err, "expected discovery mode to propagate agentLimitError")
+
+	var lim *agentLimitError
+	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
+
+	assert := assert.New(t)
+	assert.Equal(agentlimit.KindQuota, lim.Classification.Kind)
+	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
+	// Load-bearing: only one agent invocation means the abort short-
+	// circuited the loop. Two would mean discovery mode demoted the
+	// agentLimitError to a warning and continued.
+	assert.Equal(1, agentCalls, "fix agent should be invoked exactly once before abort")
+	assert.False(seen[20], "second job must not be marked seen after abort")
+}
