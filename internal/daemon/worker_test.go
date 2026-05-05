@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1221,6 +1223,31 @@ func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	got, err := tc.DB.GetJobRetryCount(job.ID)
 	require.NoError(t, err)
 	assert.Equal(0, got, "session-limit error must not consume a retry slot")
+}
+
+func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	// Capture log output by swapping the standard logger's writer.
+	var buf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(origOutput) })
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	tc.Pool.classify = func(agentName, msg string) agentlimit.Classification {
+		return agentlimit.Classification{Kind: agentlimit.KindNone, Agent: agentName, Message: msg}
+	}
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "some brand new error wording from a future agent")
+
+	logged := buf.String()
+	assert := assert.New(t)
+	assert.Contains(logged, "unclassified agent error", "expected WARN line for unmatched error")
+	assert.Contains(logged, "test", "log line should include agent name")
+	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
 }
 
 func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {

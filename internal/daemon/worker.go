@@ -800,7 +800,8 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 	// internal/agentlimit so the CLI fix loop can share it.
 	if agentError {
 		cls := wp.classify(agent.CanonicalName(agentName), errorMsg)
-		if cls.Kind == agentlimit.KindQuota || cls.Kind == agentlimit.KindSession {
+		switch cls.Kind {
+		case agentlimit.KindQuota, agentlimit.KindSession:
 			dur := defaultCooldown
 			if cls.CooldownFor > 0 {
 				dur = cls.CooldownFor
@@ -815,6 +816,16 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 				workerID, agentName, dur)
 			wp.failoverOrFail(workerID, job, agentName, errorMsg)
 			return
+		case agentlimit.KindNone:
+			if errorMsg != "" {
+				preview := strings.ReplaceAll(errorMsg, "\n", " ")
+				preview = strings.ReplaceAll(preview, "\r", "")
+				log.Printf("[%s] unclassified agent error from %s: %s",
+					workerID, agentName, truncateRunes(preview, 200))
+			}
+			// fall through to context-window / retry handling
+		case agentlimit.KindTransient:
+			// fall through to retry handling
 		}
 	}
 	if agentError && isContextWindowError(errorMsg) {
