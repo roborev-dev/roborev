@@ -186,14 +186,10 @@ Examples:
 				// --branch X: use explicit branch
 				// --all-branches: empty string (no filter)
 				// default: current branch
-				roots, err := resolveCurrentRepoRoots()
-				if err != nil {
-					return err
-				}
 				effectiveBranch := resolveCurrentBranchFilter(
 					roots.worktreeRoot, branch, allBranches,
 				)
-				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts)
+				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts, tracker)
 			}
 
 			// Parse job IDs
@@ -206,7 +202,7 @@ Examples:
 				jobIDs = append(jobIDs, id)
 			}
 
-			return runFix(cmd, jobIDs, opts)
+			return runFix(cmd, jobIDs, opts, tracker)
 		},
 	}
 
@@ -393,11 +389,11 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	return a, nil
 }
 
-func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions) error {
-	return runFixWithSeen(cmd, jobIDs, opts, nil)
+func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions, tracker *fixSessionTracker) error {
+	return runFixWithSeen(cmd, jobIDs, opts, nil, tracker)
 }
 
-func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen map[int64]bool) error {
+func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen map[int64]bool, tracker *fixSessionTracker) error {
 	// Ensure daemon is running
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -414,7 +410,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
 		}
 
-		err := fixSingleJob(cmd, roots.worktreeRoot, jobID, opts)
+		err := fixSingleJob(cmd, roots.worktreeRoot, jobID, opts, tracker)
 		if err != nil {
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
@@ -451,7 +447,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 //
 // explicitBranch should be true when the caller set --branch (as
 // opposed to auto-resolving the current branch).
-func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions) error {
+func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, newestFirst bool, opts fixOptions, tracker *fixSessionTracker) error {
 	// Ensure daemon is running
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -524,7 +520,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 			}
 		}
 
-		if err := runFixWithSeen(cmd, newIDs, opts, seen); err != nil {
+		if err := runFixWithSeen(cmd, newIDs, opts, seen, tracker); err != nil {
 			return err
 		}
 	}
@@ -825,7 +821,7 @@ func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
 	return storage.ParseVerdict(review.Output)
 }
 
-func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {
+func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -871,11 +867,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		cmd.Println()
 	}
 
-	// Resolve agent
-	fixAgent, err := resolveFixAgent(repoRoot, opts)
-	if err != nil {
-		return err
-	}
+	currentAgent, resuming := tracker.NextAgent()
 
 	// Resolve minimum severity filter (only for review-type jobs;
 	// task/analyze jobs have free-form output without severity labels)
@@ -903,30 +895,36 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	if !opts.quiet {
-		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
+		if resuming {
+			cmd.Printf("Resuming session %s\n", shortSessionID(tracker.last))
+		}
+		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())
 	}
 
 	// Set up output
-	var out io.Writer
+	var underlying = io.Discard
 	var fmtr *streamfmt.Formatter
-	if opts.quiet {
-		out = io.Discard
-	} else {
+	if !opts.quiet {
 		fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
-		out = fmtr
+		underlying = fmtr
 	}
+	capture := agent.NewSessionCaptureWriter(underlying, nil)
 
 	result, err := fixJobDirect(ctx, fixJobParams{
 		RepoRoot: repoRoot,
-		Agent:    fixAgent,
-		Output:   out,
+		Agent:    currentAgent,
+		Output:   capture,
 	}, buildGenericFixPrompt(review.Output, minSev, comments))
+	// Flush capture FIRST so session extraction completes before reading SessionID.
+	capture.Flush()
 	if fmtr != nil {
 		fmtr.Flush()
 	}
 	if err != nil {
+		tracker.Reset()
 		return err
 	}
+	tracker.Capture(capture.SessionID())
 
 	if !opts.quiet {
 		fmt.Fprintln(cmd.OutOrStdout())

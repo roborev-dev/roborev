@@ -552,7 +552,8 @@ func TestFixSingleJob(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	err := fixSingleJob(cmd, repo.Dir, 99, opts)
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	err := fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
 	// Verify output contains expected content
@@ -674,7 +675,10 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	err = fixSingleJob(cmd, repo.Dir, 99, opts)
+	base, err := resolveFixAgent(repo.Dir, opts)
+	require.NoError(t, err, "resolveFixAgent")
+	tracker := &fixSessionTracker{base: base, log: func(string) {}}
+	err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
 	outputStr := output.String()
@@ -703,7 +707,8 @@ func TestFixJobNotComplete(t *testing.T) {
 
 	cmd, _ := newTestCmd(t)
 
-	err := fixSingleJob(cmd, t.TempDir(), 99, fixOptions{agentName: "test"})
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	err := fixSingleJob(cmd, t.TempDir(), 99, fixOptions{agentName: "test"}, tracker)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not complete")
 }
@@ -835,7 +840,8 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Contains(t, out, "No open jobs found")
@@ -886,7 +892,8 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Contains(t, out, "Found 2 open job(s)")
@@ -909,7 +916,8 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "feature-branch", false, true, false, fixOptions{agentName: "test"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "feature-branch", false, true, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen")
 		assert.Equal(t, "feature-branch", gotBranch)
@@ -924,7 +932,8 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test"}, tracker)
 		})
 		require.Error(t, err, "expected error on server failure")
 		assert.Contains(t, err.Error(), "server error")
@@ -992,10 +1001,11 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 			return runFixOpen(cmd, "", true, false, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
-			})
+			}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen all-branches")
 		assert.Contains(t, out, "Found 2 open job(s)")
@@ -1062,10 +1072,11 @@ func TestRunFixOpen(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 			return runFixOpen(cmd, "target-branch", false, true, false, fixOptions{
 				agentName: "test",
 				reasoning: "fast",
-			})
+			}, tracker)
 		})
 		require.NoError(t, err, "runFixOpen with explicit branch")
 		// Only job 40 matches; job 41 has wrong branch
@@ -1129,7 +1140,8 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err)
 
@@ -1141,7 +1153,8 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixOpen(cmd, "", false, false, true, fixOptions{agentName: "test", reasoning: "fast"})
+			tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+			return runFixOpen(cmd, "", false, false, true, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 		})
 		require.NoError(t, err)
 
@@ -1208,7 +1221,8 @@ func TestRunFixOpenRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 	})
 	require.NoError(t, err)
 
@@ -1309,7 +1323,8 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"})
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		return runFixOpen(cmd, "", false, false, false, fixOptions{agentName: "test", reasoning: "fast"}, tracker)
 	})
 	require.NoError(t, err)
 
@@ -2122,7 +2137,8 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		if err := runFixOpen(cmd, "", false, false, false, opts); err != nil {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+		if err := runFixOpen(cmd, "", false, false, false, opts, tracker); err != nil {
 			require.NoError(t, err, "runFixOpen: %v")
 		}
 
@@ -2288,7 +2304,8 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 
 	opts := fixOptions{agentName: "test-pass-skip"}
 
-	err := fixSingleJob(cmd, repo.Dir, 99, opts)
+	tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
+	err := fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 	require.NoError(t, err, "fixSingleJob")
 
 	outputStr := output.String()
@@ -2445,10 +2462,11 @@ func TestRunFixWithSeenExplicitAbortsOnError(t *testing.T) {
 	setupFixErrorMockDaemon(t, &processedJobs, &mu)
 
 	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
-		}, nil)
+		}, nil, tracker)
 	})
 	require.Error(t, err, "expected error for explicit job IDs")
 	assert.Contains(t, err.Error(), "error fixing job 20")
@@ -2471,10 +2489,11 @@ func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
-		}, seen)
+		}, seen, tracker)
 	})
 
 	require.NoError(t, err, "runFixWithSeen")
@@ -2542,10 +2561,11 @@ func TestRunFixWithSeenDiscoveryAbortsOnConnectionError(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		return runFixWithSeen(cmd, []int64{10, 20}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
-		}, seen)
+		}, seen, tracker)
 	})
 
 	require.Error(t, err, "expected connection error in discovery mode")
@@ -3290,9 +3310,11 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 	// (effectiveBranch is resolved to the current branch). allBranches
 	// is false, so filterReachableJobs uses commit-graph reachability.
 	_, runErr := runWithOutput(t, worktreeDir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		return runFixOpen(
 			cmd, "wt-branch", false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
+			tracker,
 		)
 	})
 	require.NoError(t, runErr, "runFixOpen")
@@ -3383,9 +3405,11 @@ func TestRunFixOpenExcludesMergedBranchJobs(t *testing.T) {
 
 	// Run from main with auto-resolved branch (explicitBranch=false).
 	_, runErr := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		tracker := &fixSessionTracker{base: agent.NewTestAgent(), log: func(string) {}}
 		return runFixOpen(
 			cmd, defaultBranch, false, false, false,
 			fixOptions{agentName: "test", reasoning: "fast"},
+			tracker,
 		)
 	})
 	require.NoError(t, runErr, "runFixOpen")
