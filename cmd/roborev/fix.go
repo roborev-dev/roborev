@@ -241,13 +241,10 @@ type fixOptions struct {
 // agentLimitError is returned by the fix loop when the configured agent
 // hits a quota or session limit. The fix command surfaces it as the
 // process exit error so users see the reset time and a hint to retry.
-//
-//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
 type agentLimitError struct {
 	Classification agentlimit.Classification
 }
 
-//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
 func (e *agentLimitError) Error() string {
 	return formatAgentLimitMessage(e.Classification, time.Now())
 }
@@ -257,8 +254,6 @@ func (e *agentLimitError) Error() string {
 // The label ("quota" / "session limit" / "rate limit") is derived from
 // cls.Kind so a Gemini/Codex KindQuota abort doesn't mis-report itself
 // as a session-cap.
-//
-//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
 func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) string {
 	label := agentLimitLabel(cls.Kind)
 	var dur time.Duration
@@ -299,7 +294,6 @@ func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) strin
 	}
 }
 
-//nolint:unused // wired up by Tasks 9-10 (fixSingleJob / runFixBatch abort paths)
 func agentLimitLabel(k agentlimit.Kind) string {
 	switch k {
 	case agentlimit.KindSession:
@@ -1021,6 +1015,20 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 	if err != nil {
 		tracker.Reset()
+		cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
+		switch cls.Kind {
+		case agentlimit.KindQuota, agentlimit.KindSession:
+			return &agentLimitError{Classification: cls}
+		case agentlimit.KindNone:
+			if err.Error() != "" && !opts.quiet {
+				flat := strings.ReplaceAll(err.Error(), "\n", " ")
+				cmd.PrintErrf(
+					"warning: unclassified agent error from %s: %s\n",
+					currentAgent.Name(),
+					truncateString(flat, 200),
+				)
+			}
+		}
 		return err
 	}
 	tracker.Capture(capture.SessionID())

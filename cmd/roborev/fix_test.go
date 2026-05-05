@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -3600,4 +3601,65 @@ func TestFixCmd_BatchSizeAcceptsBranchFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFixSingleJobAbortsOnSessionLimit(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+
+	originalAgent, err := agent.Get("test")
+	require.NoError(t, err, "get test agent")
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "", errors.New("simulated claude session cap")
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalAgent) })
+
+	ts, _ := newMockServer(t, MockServerOpts{
+		ReviewOutput: "## Issues\n- Found issue",
+		OnJobs: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{
+					ID:     99,
+					Status: storage.JobStatusDone,
+					Agent:  "test",
+				}},
+			})
+		},
+	})
+	patchServerAddr(t, ts.URL)
+
+	cmd, _ := newTestCmd(t)
+
+	resetAt := time.Now().Add(2*time.Hour + 13*time.Minute)
+	classifyCalls := 0
+	opts := fixOptions{
+		agentName: "test",
+		reasoning: "fast",
+		classify: func(_, msg string) agentlimit.Classification {
+			classifyCalls++
+			return agentlimit.Classification{
+				Kind:    agentlimit.KindSession,
+				Agent:   "claude-code",
+				ResetAt: resetAt,
+				Message: msg,
+			}
+		},
+	}
+
+	base, err := resolveFixAgent(repo.Dir, opts)
+	require.NoError(t, err, "resolveFixAgent")
+	tracker := &fixSessionTracker{base: base, out: io.Discard}
+	err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
+	require.Error(t, err, "expected abort error, got nil")
+
+	var lim *agentLimitError
+	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
+
+	assert := assert.New(t)
+	assert.Equal(agentlimit.KindSession, lim.Classification.Kind)
+	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
+	assert.Contains(err.Error(), "claude-code")
+	assert.Contains(err.Error(), "session limit")
 }
