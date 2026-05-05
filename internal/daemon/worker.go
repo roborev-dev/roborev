@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
@@ -47,6 +48,11 @@ type WorkerPool struct {
 	agentCooldowns   map[string]time.Time // agent name -> expiry
 	agentCooldownsMu sync.RWMutex
 
+	// classify is the rate-limit/quota classifier. Defaults to
+	// agentlimit.Classify; tests substitute a stub by setting this
+	// field directly after construction (test-only access).
+	classify agentlimit.ClassifyFunc
+
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
 
@@ -70,6 +76,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		pendingCancels: make(map[int64]bool),
 		agentCooldowns: make(map[string]time.Time),
 		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
+		classify:       agentlimit.Classify,
 	}
 }
 
@@ -787,15 +794,28 @@ func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, 
 }
 
 func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
-	// Quota errors skip retries entirely — cool down the agent and
-	// attempt failover or fail with a quota-prefixed error.
-	if agentError && isQuotaError(errorMsg) {
-		dur := parseQuotaCooldown(errorMsg, defaultCooldown)
-		wp.cooldownAgent(agentName, time.Now().Add(dur))
-		log.Printf("[%s] Agent %s quota exhausted, cooldown %v",
-			workerID, agentName, dur)
-		wp.failoverOrFail(workerID, job, agentName, errorMsg)
-		return
+	// Quota and session-limit errors skip retries entirely — cool down
+	// the agent and attempt failover or fail. Behavior matches the
+	// original isQuotaError branch; classification now lives in
+	// internal/agentlimit so the CLI fix loop can share it.
+	if agentError {
+		cls := wp.classify(agent.CanonicalName(agentName), errorMsg)
+		if cls.Kind == agentlimit.KindQuota || cls.Kind == agentlimit.KindSession {
+			dur := defaultCooldown
+			if cls.CooldownFor > 0 {
+				dur = cls.CooldownFor
+			}
+			if !cls.ResetAt.IsZero() {
+				if until := time.Until(cls.ResetAt); until > 0 {
+					dur = until
+				}
+			}
+			wp.cooldownAgent(agentName, time.Now().Add(dur))
+			log.Printf("[%s] Agent %s quota exhausted, cooldown %v",
+				workerID, agentName, dur)
+			wp.failoverOrFail(workerID, job, agentName, errorMsg)
+			return
+		}
 	}
 	if agentError && isContextWindowError(errorMsg) {
 		wp.failoverOrFailNonRetryableAgent(workerID, job, agentName, errorMsg)
@@ -965,32 +985,6 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 // defaultCooldown is the fallback duration when the error message doesn't
 // contain a parseable "reset after" token.
 const defaultCooldown = 30 * time.Minute
-const minCooldown = 1 * time.Minute
-const maxCooldown = 24 * time.Hour
-
-// isQuotaError returns true if the error message indicates a hard API
-// quota exhaustion (case-insensitive). Transient rate-limit/429 errors
-// are excluded — those should go through normal retries, not cooldown.
-func isQuotaError(errMsg string) bool {
-	lower := strings.ToLower(errMsg)
-	patterns := []string{
-		"resource exhausted",
-		"quota exceeded",
-		"quota_exceeded",
-		"quota exhausted",
-		"quota_exhausted",
-		"insufficient_quota",
-		"exhausted your capacity",
-		"capacity_exhausted",
-		"capacity exhausted",
-	}
-	for _, p := range patterns {
-		if strings.Contains(lower, p) {
-			return true
-		}
-	}
-	return false
-}
 
 func isContextWindowError(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
@@ -1008,34 +1002,6 @@ func isContextWindowError(errMsg string) bool {
 		}
 	}
 	return false
-}
-
-// parseQuotaCooldown extracts a Go-format duration from a "reset after
-// <dur>" substring. Returns fallback if not found or unparseable.
-func parseQuotaCooldown(errMsg string, fallback time.Duration) time.Duration {
-	lower := strings.ToLower(errMsg)
-	idx := strings.Index(lower, "reset after ")
-	if idx < 0 {
-		return fallback
-	}
-	rest := errMsg[idx+len("reset after "):]
-	// Take the next whitespace-delimited token as a duration
-	token := rest
-	if sp := strings.IndexAny(rest, " \t\n,;)"); sp > 0 {
-		token = rest[:sp]
-	}
-	token = strings.TrimRight(token, ".,;:)]}")
-	d, err := time.ParseDuration(token)
-	if err != nil || d <= 0 {
-		return fallback
-	}
-	if d < minCooldown {
-		return minCooldown
-	}
-	if d > maxCooldown {
-		return maxCooldown
-	}
-	return d
 }
 
 // cooldownAgent sets or extends the cooldown expiry for an agent.
