@@ -78,4 +78,16 @@ findings with summary/front matter in a way that makes verdict detection less
 reliable, the fix should be to tighten the review prompts/templates and output
 contract. Do not ask for increasingly broad deterministic heuristics to parse
 arbitrary narrative text.
+
+## Compilation, imports, and build errors
+
+Do not flag suspected compile errors, missing imports, undeclared
+identifiers, type mismatches, or other build-level issues. The local
+toolchain (go build, go vet, golangci-lint) and the pre-commit hook
+catch these before any commit lands; if the diff actually fails to
+compile, the PR cannot merge regardless of what the review says.
+Reviews see only the diff, not the rest of the package, so claims like
+"function X is not defined" or "package Y is not imported" are almost
+always wrong — the symbol exists elsewhere in the file or package.
+Focus reviews on logic, architecture, and behavior; trust the build.
 """
