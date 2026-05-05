@@ -109,13 +109,13 @@ Examples:
 			if list && batch {
 				return fmt.Errorf("--list and --batch are mutually exclusive")
 			}
+			if list && batchSize > 0 {
+				return fmt.Errorf("--list and --batch-size are mutually exclusive")
+			}
 			if batch && batchSize > 0 {
 				return fmt.Errorf("--batch and --batch-size are mutually exclusive")
 			}
-			if batchSize < 0 {
-				return fmt.Errorf("--batch-size must be >= 1")
-			}
-			if cmd.Flags().Changed("batch-size") && batchSize == 0 {
+			if cmd.Flags().Changed("batch-size") && batchSize < 1 {
 				return fmt.Errorf("--batch-size must be >= 1")
 			}
 			if list {

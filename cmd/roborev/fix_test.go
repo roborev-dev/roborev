@@ -3497,6 +3497,14 @@ func TestFixCmd_BatchAndBatchSizeMutuallyExclusive(t *testing.T) {
 	assert.Contains(t, err.Error(), "--batch and --batch-size are mutually exclusive")
 }
 
+func TestFixCmd_ListAndBatchSizeMutuallyExclusive(t *testing.T) {
+	cmd := fixCmd()
+	cmd.SetArgs([]string{"--list", "--batch-size", "5"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--list and --batch-size are mutually exclusive")
+}
+
 func TestFixCmd_BatchSizeMustBePositive(t *testing.T) {
 	cmd := fixCmd()
 	cmd.SetArgs([]string{"--batch-size", "0"})
