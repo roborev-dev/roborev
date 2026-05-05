@@ -1191,7 +1191,7 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 	}
 }
 
-func TestFailOrRetryInner_SessionLimitCoolsDownAndFailsOver(t *testing.T) {
+func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJob(t, sha, testWorkerID)
