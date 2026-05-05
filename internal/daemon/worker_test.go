@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
@@ -1188,6 +1189,38 @@ func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 			return false
 		}, "expected gemini NOT in cooldown for non-quota error")
 	}
+}
+
+func TestFailOrRetryInner_SessionLimitCoolsDownAndFailsOver(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	// Stub classifier: any error message containing the marker yields
+	// KindSession with a 1-hour CooldownFor. Tests the seam without
+	// depending on real Claude wording.
+	tc.Pool.classify = func(agentName, msg string) agentlimit.Classification {
+		if strings.Contains(msg, "MARKER-SESSION-LIMIT") {
+			return agentlimit.Classification{
+				Kind:        agentlimit.KindSession,
+				Agent:       agentName,
+				CooldownFor: 1 * time.Hour,
+				Message:     msg,
+			}
+		}
+		return agentlimit.Classification{Kind: agentlimit.KindNone, Agent: agentName, Message: msg}
+	}
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "boom MARKER-SESSION-LIMIT")
+
+	assert := assert.New(t)
+	assert.True(tc.Pool.isAgentCoolingDown("test"), "agent should be in cooldown")
+
+	// retry_count must NOT have advanced — quota/session errors skip
+	// retries entirely (matches the original isQuotaError semantics).
+	got, err := tc.DB.GetJobRetryCount(job.ID)
+	require.NoError(t, err)
+	assert.Equal(0, got, "session-limit error must not consume a retry slot")
 }
 
 func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
