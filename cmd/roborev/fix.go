@@ -51,6 +51,8 @@ func fixCmd() *cobra.Command {
 		batch       bool
 		batchSize   int
 		list        bool
+		resume      bool
+		noResume    bool
 	)
 
 	cmd := &cobra.Command{
@@ -118,6 +120,9 @@ Examples:
 			if cmd.Flags().Changed("batch-size") && batchSize < 1 {
 				return fmt.Errorf("--batch-size must be >= 1")
 			}
+			if resume && noResume {
+				return fmt.Errorf("--resume and --no-resume are mutually exclusive")
+			}
 			if list {
 				roots, err := resolveCurrentRepoRoots()
 				if err != nil {
@@ -137,6 +142,7 @@ Examples:
 				reasoning:   reasoning,
 				minSeverity: minSeverity,
 				quiet:       quiet,
+				resume:      resume,
 			}
 
 			if batch || batchSize > 0 {
@@ -206,6 +212,8 @@ Examples:
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 0, "concatenate up to N reviews per agent invocation (cap by count, still bounded by max_prompt_size)")
 	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing")
+	cmd.Flags().BoolVar(&resume, "resume", false, "resume the agent's session ID across calls within this run")
+	cmd.Flags().BoolVar(&noResume, "no-resume", false, "explicitly disable session resume (default off)")
 	_ = cmd.Flags().MarkHidden("open")
 	_ = cmd.Flags().MarkHidden("unaddressed")
 	registerAgentCompletion(cmd)
@@ -220,6 +228,7 @@ type fixOptions struct {
 	reasoning   string
 	minSeverity string
 	quiet       bool
+	resume      bool
 }
 
 // fixJobParams configures a fixJobDirect operation.

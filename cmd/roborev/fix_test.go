@@ -3512,3 +3512,11 @@ func TestFixCmd_BatchSizeMustBePositive(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--batch-size must be >= 1")
 }
+
+func TestFixCmd_ResumeAndNoResumeMutuallyExclusive(t *testing.T) {
+	cmd := fixCmd()
+	cmd.SetArgs([]string{"--resume", "--no-resume"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--resume and --no-resume are mutually exclusive")
+}
