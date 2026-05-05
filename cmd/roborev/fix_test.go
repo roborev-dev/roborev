@@ -3663,3 +3663,117 @@ func TestFixSingleJobAbortsOnSessionLimit(t *testing.T) {
 	assert.Contains(err.Error(), "claude-code")
 	assert.Contains(err.Error(), "session limit")
 }
+
+func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+
+	originalAgent, err := agent.Get("test")
+	require.NoError(t, err, "get test agent")
+	agentCalls := 0
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			agentCalls++
+			return "", errors.New("agent failed: you have exhausted your capacity")
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalAgent) })
+
+	var mu sync.Mutex
+	var reviewedJobIDs []int64
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			id := r.URL.Query().Get("id")
+			switch id {
+			case "10", "20":
+				idNum := int64(10)
+				if id == "20" {
+					idNum = 20
+				}
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{{
+						ID:     idNum,
+						Status: storage.JobStatusDone,
+						Agent:  "test",
+					}},
+				})
+			default:
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+			}
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			jobID := r.URL.Query().Get("job_id")
+			mu.Lock()
+			switch jobID {
+			case "10":
+				reviewedJobIDs = append(reviewedJobIDs, 10)
+			case "20":
+				reviewedJobIDs = append(reviewedJobIDs, 20)
+			}
+			mu.Unlock()
+			writeJSON(w, storage.Review{
+				JobID:  10,
+				Output: "## Issues\n- Bug",
+			})
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	classifyCalls := 0
+	opts := fixOptions{
+		agentName: "test",
+		reasoning: "fast",
+		classify: func(_, msg string) agentlimit.Classification {
+			classifyCalls++
+			return agentlimit.Classification{
+				Kind:        agentlimit.KindQuota,
+				Agent:       "gemini",
+				CooldownFor: 30 * time.Minute,
+				Message:     msg,
+			}
+		},
+	}
+
+	base, err := resolveFixAgent(repo.Dir, opts)
+	require.NoError(t, err, "resolveFixAgent")
+
+	_, err = runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		// batchSize=1 forces one job per agent call. With batchSize=0,
+		// runFixBatch may pack both jobs into a single batch, making
+		// agentCalls=1 ambiguous between "aborted before second batch"
+		// and "both jobs in one batch". batchSize=1 is unambiguous.
+		return runFixBatch(
+			cmd,
+			[]int64{10, 20},
+			"",
+			false, false, false,
+			1,
+			opts,
+			&fixSessionTracker{base: base, out: io.Discard},
+		)
+	})
+	require.Error(t, err, "expected batch to abort with agentLimitError")
+
+	var lim *agentLimitError
+	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
+
+	assert := assert.New(t)
+	assert.Equal(agentlimit.KindQuota, lim.Classification.Kind)
+	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
+	// agentCalls is the load-bearing assertion: with batchSize=1 and two
+	// jobs, two agent invocations would mean the loop continued past the
+	// abort. Exactly one means the abort short-circuits the second batch.
+	assert.Equal(1, agentCalls, "fix agent should be invoked exactly once before abort")
+	assert.Contains(err.Error(), "quota limit", "Gemini KindQuota label should be 'quota limit', not 'session limit'")
+
+	// Note: do NOT assert `reviewedJobIDs` does not contain job 20 —
+	// runFixBatch prefetches every job's review at the start of the
+	// function (before any agent call), so /api/review fires for all
+	// queued jobs regardless of when the loop aborts. The agentCalls
+	// counter above is the correct measure of abort behavior.
+}

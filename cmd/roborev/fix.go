@@ -1276,6 +1276,20 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		}
 		if err != nil {
 			tracker.Reset()
+			cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
+			switch cls.Kind {
+			case agentlimit.KindQuota, agentlimit.KindSession:
+				return &agentLimitError{Classification: cls}
+			case agentlimit.KindNone:
+				if err.Error() != "" && !opts.quiet {
+					flat := strings.ReplaceAll(err.Error(), "\n", " ")
+					cmd.PrintErrf(
+						"warning: unclassified agent error from %s: %s\n",
+						currentAgent.Name(),
+						truncateString(flat, 200),
+					)
+				}
+			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
 			continue
 		}
