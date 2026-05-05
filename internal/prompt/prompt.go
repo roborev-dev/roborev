@@ -370,11 +370,14 @@ func dirtySnapshotReferenceVariants(diffFile string) []string {
 }
 
 func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) string {
-	if limit <= 0 {
-		return ""
-	}
 	if len(variants) == 0 {
+		if limit <= 0 {
+			return prefix
+		}
 		return truncateUTF8(prefix, limit)
+	}
+	if limit <= 0 {
+		return prefix + variants[0]
 	}
 	for _, variant := range variants {
 		if len(prefix)+len(variant) <= limit {
