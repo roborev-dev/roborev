@@ -67,6 +67,8 @@ type Builder struct {
 // reusable across retries.
 const DiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
 
+const dirtyTruncatedDiffMarker = "(Diff too large to include in full)"
+
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
 	return &Builder{db: db}
@@ -211,12 +213,12 @@ func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, co
 	if err != nil {
 		return SnapshotResult{}, err
 	}
-	if strings.Contains(p, "(Diff too large to include in full)") && len(diff) > 0 {
+	if strings.Contains(p, dirtyTruncatedDiffMarker) && len(diff) > 0 {
 		diffFile, cleanup, snapErr := writeExternalDiffSnapshot(diff)
 		if snapErr != nil {
 			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}
-		p += fmt.Sprintf("\nThe full diff is also available at: `%s`\n", diffFile)
+		p = fitDirtySnapshotReference(p, diffFile, b.resolveMaxPromptSize(repoPath))
 		return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 	}
 	return SnapshotResult{Prompt: p}, nil
@@ -348,6 +350,42 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 		return "", err
 	}
 	return ctx.requiredPrefix + hardCapPrompt(body, bodyLimit), nil
+}
+
+func fitDirtySnapshotReference(prompt, diffFile string, limit int) string {
+	variants := dirtySnapshotReferenceVariants(diffFile)
+	prefix := prompt
+	if before, _, found := strings.Cut(prompt, dirtyTruncatedDiffMarker); found {
+		prefix = before
+	}
+	return fitPrefixWithSuffixVariants(prefix, limit, variants...)
+}
+
+func dirtySnapshotReferenceVariants(diffFile string) []string {
+	return []string{
+		fmt.Sprintf("%s\nThe full diff has been written to a file for review.\nRead the diff from: `%s`\n\nReview the actual diff before writing findings.\n", dirtyTruncatedDiffMarker, diffFile),
+		fmt.Sprintf("%s\nRead the diff from: `%s`\n", dirtyTruncatedDiffMarker, diffFile),
+		fmt.Sprintf("(Diff too large; read `%s`.)\n", diffFile),
+	}
+}
+
+func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(variants) == 0 {
+		return truncateUTF8(prefix, limit)
+	}
+	for _, variant := range variants {
+		if len(prefix)+len(variant) <= limit {
+			return prefix + variant
+		}
+	}
+	shortest := variants[len(variants)-1]
+	if len(shortest) >= limit {
+		return truncateUTF8(shortest, limit)
+	}
+	return truncateUTF8(prefix, limit-len(shortest)) + shortest
 }
 
 func isCodexReviewAgent(agentName string) bool {
