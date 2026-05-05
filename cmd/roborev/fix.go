@@ -80,6 +80,8 @@ Examples:
   roborev fix --all-branches             # Fix all open jobs across all branches
   roborev fix --batch-size 5             # Up to 5 reviews per agent call
   roborev fix --batch                    # Pack until max_prompt_size
+  roborev fix --resume                   # Resume agent session across calls
+  roborev fix --batch-size 5 --resume    # 5 per call, session resumed
   roborev fix --list                     # List open jobs without fixing
 `,
 		Args: cobra.ArbitraryArgs,
