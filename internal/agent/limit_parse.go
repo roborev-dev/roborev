@@ -1,4 +1,4 @@
-package agentlimit
+package agent
 
 import (
 	"strings"
@@ -69,8 +69,6 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	default:
 		return time.Time{}
 	}
-	// Consume up to the next non-time character. Allow digits, ':', and
-	// AM/PM markers (with optional spaces before them).
 	rest := errMsg[idx:]
 	end := len(rest)
 	for i, r := range rest {

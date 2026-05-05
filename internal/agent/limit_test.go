@@ -1,4 +1,4 @@
-package agentlimit
+package agent
 
 import (
 	"testing"
@@ -7,20 +7,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestClassificationZeroValue(t *testing.T) {
-	var c Classification
+func TestLimitClassificationZeroValue(t *testing.T) {
+	var c LimitClassification
 	assert := assert.New(t)
-	assert.Equal(KindNone, c.Kind)
+	assert.Equal(LimitKindNone, c.Kind)
 	assert.Empty(c.Agent)
 	assert.True(c.ResetAt.IsZero())
 	assert.Equal(time.Duration(0), c.CooldownFor)
 	assert.Empty(c.Message)
 }
 
-func TestClassifyProductionPatterns(t *testing.T) {
+func TestClassifyLimitProductionPatterns(t *testing.T) {
 	// All nine substrings from the original isQuotaError set must
-	// produce KindQuota. This is the byte-for-byte regression test
-	// for current Gemini and Codex detection.
+	// produce LimitKindQuota. This is the byte-for-byte regression
+	// test for current Gemini and Codex detection.
 	patterns := []string{
 		"resource exhausted",
 		"quota exceeded",
@@ -34,27 +34,27 @@ func TestClassifyProductionPatterns(t *testing.T) {
 	}
 	for _, p := range patterns {
 		t.Run(p, func(t *testing.T) {
-			cls := Classify("gemini", "agent failed: "+p+", retrying...")
+			cls := ClassifyLimit("gemini", "agent failed: "+p+", retrying...")
 			assert := assert.New(t)
-			assert.Equal(KindQuota, cls.Kind, "expected KindQuota for %q", p)
+			assert.Equal(LimitKindQuota, cls.Kind, "expected LimitKindQuota for %q", p)
 			assert.Equal("gemini", cls.Agent)
 			assert.Contains(cls.Message, p)
 		})
 	}
 }
 
-func TestClassifyExtractsCooldownDuration(t *testing.T) {
-	cls := Classify(
+func TestClassifyLimitExtractsCooldownDuration(t *testing.T) {
+	cls := ClassifyLimit(
 		"gemini",
 		"You have exhausted your capacity on this model. Your quota will reset after 48m20s.",
 	)
 	assert := assert.New(t)
-	assert.Equal(KindQuota, cls.Kind)
+	assert.Equal(LimitKindQuota, cls.Kind)
 	assert.Equal(48*time.Minute+20*time.Second, cls.CooldownFor)
 	assert.True(cls.ResetAt.IsZero(), "no absolute time in this message")
 }
 
-func TestClassifyNegativeCases(t *testing.T) {
+func TestClassifyLimitNegativeCases(t *testing.T) {
 	cases := []struct {
 		name string
 		msg  string
@@ -66,28 +66,29 @@ func TestClassifyNegativeCases(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cls := Classify("gemini", tc.msg)
-			assert.Equal(t, KindNone, cls.Kind, "expected KindNone for %q", tc.msg)
+			cls := ClassifyLimit("gemini", tc.msg)
+			assert.Equal(t, LimitKindNone, cls.Kind, "expected LimitKindNone for %q", tc.msg)
 		})
 	}
 }
 
-func TestClassifyWithRulesIsolatesSyntheticPattern(t *testing.T) {
-	// Synthetic rule used only inside this test — does not pollute defaultRules.
-	syntheticRules := []rule{
-		{Agents: []string{"*"}, Substring: "test-claude session limit", Kind: KindSession},
+func TestClassifyLimitWithRulesIsolatesSyntheticPattern(t *testing.T) {
+	// Synthetic rule used only inside this test — does not pollute
+	// defaultLimitRules.
+	syntheticRules := []limitRule{
+		{Agents: []string{"*"}, Substring: "test-claude session limit", Kind: LimitKindSession},
 	}
-	cls := classifyWithRules(
+	cls := classifyLimitWithRules(
 		"claude-code",
 		"5-hour test-claude session limit reached",
 		syntheticRules,
 	)
 	assert := assert.New(t)
-	assert.Equal(KindSession, cls.Kind)
+	assert.Equal(LimitKindSession, cls.Kind)
 	assert.Equal("claude-code", cls.Agent)
 
-	// Same message via the production Classify must not match —
-	// the synthetic rule is not in defaultRules.
-	cls2 := Classify("claude-code", "5-hour test-claude session limit reached")
-	assert.Equal(KindNone, cls2.Kind, "synthetic rule must not leak into defaultRules")
+	// Same message via the production ClassifyLimit must not match —
+	// the synthetic rule is not in defaultLimitRules.
+	cls2 := ClassifyLimit("claude-code", "5-hour test-claude session limit reached")
+	assert.Equal(LimitKindNone, cls2.Kind, "synthetic rule must not leak into defaultLimitRules")
 }

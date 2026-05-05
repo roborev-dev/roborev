@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -3637,10 +3636,10 @@ func TestFixSingleJobAbortsOnSessionLimit(t *testing.T) {
 	opts := fixOptions{
 		agentName: "test",
 		reasoning: "fast",
-		classify: func(_, msg string) agentlimit.Classification {
+		classify: func(_, msg string) agent.LimitClassification {
 			classifyCalls++
-			return agentlimit.Classification{
-				Kind:    agentlimit.KindSession,
+			return agent.LimitClassification{
+				Kind:    agent.LimitKindSession,
 				Agent:   "claude-code",
 				ResetAt: resetAt,
 				Message: msg,
@@ -3658,7 +3657,7 @@ func TestFixSingleJobAbortsOnSessionLimit(t *testing.T) {
 	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
 
 	assert := assert.New(t)
-	assert.Equal(agentlimit.KindSession, lim.Classification.Kind)
+	assert.Equal(agent.LimitKindSession, lim.Classification.Kind)
 	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
 	assert.Contains(err.Error(), "claude-code")
 	assert.Contains(err.Error(), "session limit")
@@ -3728,10 +3727,10 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 	opts := fixOptions{
 		agentName: "test",
 		reasoning: "fast",
-		classify: func(_, msg string) agentlimit.Classification {
+		classify: func(_, msg string) agent.LimitClassification {
 			classifyCalls++
-			return agentlimit.Classification{
-				Kind:        agentlimit.KindQuota,
+			return agent.LimitClassification{
+				Kind:        agent.LimitKindQuota,
 				Agent:       "gemini",
 				CooldownFor: 30 * time.Minute,
 				Message:     msg,
@@ -3763,7 +3762,7 @@ func TestRunFixBatchAbortsOnQuotaError(t *testing.T) {
 	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
 
 	assert := assert.New(t)
-	assert.Equal(agentlimit.KindQuota, lim.Classification.Kind)
+	assert.Equal(agent.LimitKindQuota, lim.Classification.Kind)
 	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
 	// agentCalls is the load-bearing assertion: with batchSize=1 and two
 	// jobs, two agent invocations would mean the loop continued past the
@@ -3833,10 +3832,10 @@ func TestRunFixWithSeenDiscoveryAbortsOnAgentLimit(t *testing.T) {
 	opts := fixOptions{
 		agentName: "test",
 		reasoning: "fast",
-		classify: func(_, msg string) agentlimit.Classification {
+		classify: func(_, msg string) agent.LimitClassification {
 			classifyCalls++
-			return agentlimit.Classification{
-				Kind:        agentlimit.KindQuota,
+			return agent.LimitClassification{
+				Kind:        agent.LimitKindQuota,
 				Agent:       "gemini",
 				CooldownFor: 30 * time.Minute,
 				Message:     msg,
@@ -3857,11 +3856,79 @@ func TestRunFixWithSeenDiscoveryAbortsOnAgentLimit(t *testing.T) {
 	require.ErrorAs(t, err, &lim, "expected agentLimitError, got %T: %v", err, err)
 
 	assert := assert.New(t)
-	assert.Equal(agentlimit.KindQuota, lim.Classification.Kind)
+	assert.Equal(agent.LimitKindQuota, lim.Classification.Kind)
 	assert.Equal(1, classifyCalls, "classifier should be called exactly once")
 	// Load-bearing: only one agent invocation means the abort short-
 	// circuited the loop. Two would mean discovery mode demoted the
 	// agentLimitError to a warning and continued.
 	assert.Equal(1, agentCalls, "fix agent should be invoked exactly once before abort")
 	assert.False(seen[20], "second job must not be marked seen after abort")
+}
+
+func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
+	// fixJobDirect runs the agent twice when the first call leaves
+	// uncommitted changes: once for the fix, once with commit
+	// instructions. A quota or session-limit error on that second
+	// call must produce *agentLimitError, not a swallowed warning.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "base"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		require.NoError(t, c.Run(), "git %v", args)
+	}
+
+	calls := 0
+	ag := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			calls++
+			if calls == 1 {
+				// First call: leave an uncommitted change so the retry
+				// path is reached.
+				return "applied fix", os.WriteFile(
+					filepath.Join(repoPath, "dirty.txt"),
+					[]byte("uncommitted"),
+					0o644,
+				)
+			}
+			// Second call (commit retry): hit a session limit.
+			return "", errors.New("simulated claude session cap")
+		},
+	}
+
+	classifyCalls := 0
+	classify := func(_, msg string) agent.LimitClassification {
+		classifyCalls++
+		return agent.LimitClassification{
+			Kind:    agent.LimitKindSession,
+			Agent:   "claude-code",
+			Message: msg,
+		}
+	}
+
+	_, err := fixJobDirect(context.Background(), fixJobParams{
+		RepoRoot: dir,
+		Agent:    ag,
+		Classify: classify,
+	}, "fix things")
+	require.Error(t, err, "expected agentLimitError from retry path")
+
+	var lim *agentLimitError
+	require.ErrorAs(t, err, &lim, "expected *agentLimitError, got %T: %v", err, err)
+
+	assert := assert.New(t)
+	assert.Equal(agent.LimitKindSession, lim.Classification.Kind)
+	assert.Equal(2, calls, "agent must be called twice (fix + retry) before abort")
+	assert.Equal(1, classifyCalls, "classifier should run once on the retry error")
+	assert.Contains(err.Error(), "claude-code")
+	assert.Contains(err.Error(), "session limit")
 }

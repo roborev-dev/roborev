@@ -1,4 +1,4 @@
-package agentlimit
+package agent
 
 import (
 	"testing"

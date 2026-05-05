@@ -12,7 +12,6 @@ import (
 	"runtime"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
@@ -1201,16 +1200,16 @@ func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	// Stub classifier: any error message containing the marker yields
 	// KindSession with a 1-hour CooldownFor. Tests the seam without
 	// depending on real Claude wording.
-	tc.Pool.classify = func(agentName, msg string) agentlimit.Classification {
+	tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
 		if strings.Contains(msg, "MARKER-SESSION-LIMIT") {
-			return agentlimit.Classification{
-				Kind:        agentlimit.KindSession,
+			return agent.LimitClassification{
+				Kind:        agent.LimitKindSession,
 				Agent:       agentName,
 				CooldownFor: 1 * time.Hour,
 				Message:     msg,
 			}
 		}
-		return agentlimit.Classification{Kind: agentlimit.KindNone, Agent: agentName, Message: msg}
+		return agent.LimitClassification{Kind: agent.LimitKindNone, Agent: agentName, Message: msg}
 	}
 
 	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "boom MARKER-SESSION-LIMIT")
@@ -1237,8 +1236,8 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJob(t, sha, testWorkerID)
 
-	tc.Pool.classify = func(agentName, msg string) agentlimit.Classification {
-		return agentlimit.Classification{Kind: agentlimit.KindNone, Agent: agentName, Message: msg}
+	tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+		return agent.LimitClassification{Kind: agent.LimitKindNone, Agent: agentName, Message: msg}
 	}
 
 	tc.Pool.failOrRetryAgent(testWorkerID, job, "test", "some brand new error wording from a future agent")

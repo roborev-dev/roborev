@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -142,7 +141,7 @@ Examples:
 				minSeverity: minSeverity,
 				quiet:       quiet,
 				resume:      resume,
-				classify:    agentlimit.Classify,
+				classify:    agent.ClassifyLimit,
 			}
 
 			roots, err := resolveCurrentRepoRoots()
@@ -232,17 +231,17 @@ type fixOptions struct {
 	resume      bool
 
 	// classify is the rate-limit classifier. Defaults to
-	// agentlimit.Classify in the production cobra command's RunE; tests
+	// agent.ClassifyLimit in the production cobra command's RunE; tests
 	// inject a stub to drive deterministic KindQuota / KindSession
 	// outcomes without depending on real agent error wording.
-	classify agentlimit.ClassifyFunc
+	classify agent.LimitClassifier
 }
 
 // agentLimitError is returned by the fix loop when the configured agent
 // hits a quota or session limit. The fix command surfaces it as the
 // process exit error so users see the reset time and a hint to retry.
 type agentLimitError struct {
-	Classification agentlimit.Classification
+	Classification agent.LimitClassification
 }
 
 func (e *agentLimitError) Error() string {
@@ -254,7 +253,7 @@ func (e *agentLimitError) Error() string {
 // The label ("quota" / "session limit" / "rate limit") is derived from
 // cls.Kind so a Gemini/Codex KindQuota abort doesn't mis-report itself
 // as a session-cap.
-func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) string {
+func formatAgentLimitMessage(cls agent.LimitClassification, now time.Time) string {
 	label := agentLimitLabel(cls.Kind)
 	var dur time.Duration
 	switch {
@@ -294,13 +293,13 @@ func formatAgentLimitMessage(cls agentlimit.Classification, now time.Time) strin
 	}
 }
 
-func agentLimitLabel(k agentlimit.Kind) string {
+func agentLimitLabel(k agent.LimitKind) string {
 	switch k {
-	case agentlimit.KindSession:
+	case agent.LimitKindSession:
 		return "session limit"
-	case agentlimit.KindQuota:
+	case agent.LimitKindQuota:
 		return "quota limit"
-	case agentlimit.KindTransient:
+	case agent.LimitKindTransient:
 		return "rate limit"
 	default:
 		return "rate limit"
@@ -312,6 +311,9 @@ type fixJobParams struct {
 	RepoRoot string
 	Agent    agent.Agent
 	Output   io.Writer // agent streaming output (nil = discard)
+	// Classify is the rate-limit classifier used for the commit-retry
+	// path. nil defaults to agent.ClassifyLimit. Tests inject a stub.
+	Classify agent.LimitClassifier
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -397,6 +399,18 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		}
 	}
 	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
+		// Classify the retry error so quota/session limits abort
+		// instead of being demoted to a warning — otherwise the fix
+		// loop keeps invoking the exhausted agent on every following
+		// job until the queue is empty.
+		classify := params.Classify
+		if classify == nil {
+			classify = agent.ClassifyLimit
+		}
+		cls := classify(agent.CanonicalName(retryAgent.Name()), retryErr.Error())
+		if cls.Kind == agent.LimitKindQuota || cls.Kind == agent.LimitKindSession {
+			return nil, &agentLimitError{Classification: cls}
+		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
 	}
 	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
@@ -914,7 +928,7 @@ func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
 	if opts.classify == nil {
-		opts.classify = agentlimit.Classify
+		opts.classify = agent.ClassifyLimit
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -1015,6 +1029,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		RepoRoot: repoRoot,
 		Agent:    currentAgent,
 		Output:   capture,
+		Classify: opts.classify,
 	}, buildGenericFixPrompt(review.Output, minSev, comments))
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
@@ -1023,11 +1038,18 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 	if err != nil {
 		tracker.Reset()
+		// fixJobDirect already returns *agentLimitError for retry-path
+		// quota/session aborts; preserve it instead of re-classifying
+		// its user-facing message string.
+		var lim *agentLimitError
+		if errors.As(err, &lim) {
+			return err
+		}
 		cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
 		switch cls.Kind {
-		case agentlimit.KindQuota, agentlimit.KindSession:
+		case agent.LimitKindQuota, agent.LimitKindSession:
 			return &agentLimitError{Classification: cls}
-		case agentlimit.KindNone:
+		case agent.LimitKindNone:
 			if err.Error() != "" && !opts.quiet {
 				flat := strings.ReplaceAll(err.Error(), "\n", " ")
 				cmd.PrintErrf(
@@ -1101,7 +1123,7 @@ type batchEntry struct {
 // respecting max prompt size, and runs each batch as a single agent invocation.
 func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches, explicitBranch, newestFirst bool, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
 	if opts.classify == nil {
-		opts.classify = agentlimit.Classify
+		opts.classify = agent.ClassifyLimit
 	}
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -1276,6 +1298,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			RepoRoot: roots.worktreeRoot,
 			Agent:    currentAgent,
 			Output:   capture,
+			Classify: opts.classify,
 		}, prompt)
 		// Flush capture FIRST so session extraction completes before reading SessionID.
 		capture.Flush()
@@ -1284,11 +1307,17 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		}
 		if err != nil {
 			tracker.Reset()
+			// Preserve a retry-path agentLimitError without
+			// re-classifying its user-facing message string.
+			var lim *agentLimitError
+			if errors.As(err, &lim) {
+				return err
+			}
 			cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
 			switch cls.Kind {
-			case agentlimit.KindQuota, agentlimit.KindSession:
+			case agent.LimitKindQuota, agent.LimitKindSession:
 				return &agentLimitError{Classification: cls}
-			case agentlimit.KindNone:
+			case agent.LimitKindNone:
 				if err.Error() != "" && !opts.quiet {
 					flat := strings.ReplaceAll(err.Error(), "\n", " ")
 					cmd.PrintErrf(

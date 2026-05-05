@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
-	"github.com/roborev-dev/roborev/internal/agentlimit"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
@@ -49,9 +48,9 @@ type WorkerPool struct {
 	agentCooldownsMu sync.RWMutex
 
 	// classify is the rate-limit/quota classifier. Defaults to
-	// agentlimit.Classify; tests substitute a stub by setting this
+	// agent.ClassifyLimit; tests substitute a stub by setting this
 	// field directly after construction (test-only access).
-	classify agentlimit.ClassifyFunc
+	classify agent.LimitClassifier
 
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
@@ -76,7 +75,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		pendingCancels: make(map[int64]bool),
 		agentCooldowns: make(map[string]time.Time),
 		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
-		classify:       agentlimit.Classify,
+		classify:       agent.ClassifyLimit,
 	}
 }
 
@@ -797,11 +796,11 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 	// Quota and session-limit errors skip retries entirely — cool down
 	// the agent and attempt failover or fail. Behavior matches the
 	// original isQuotaError branch; classification now lives in
-	// internal/agentlimit so the CLI fix loop can share it.
+	// internal/agent (ClassifyLimit) so the CLI fix loop can share it.
 	if agentError {
 		cls := wp.classify(agent.CanonicalName(agentName), errorMsg)
 		switch cls.Kind {
-		case agentlimit.KindQuota, agentlimit.KindSession:
+		case agent.LimitKindQuota, agent.LimitKindSession:
 			dur := defaultCooldown
 			if cls.CooldownFor > 0 {
 				dur = cls.CooldownFor
@@ -816,7 +815,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 				workerID, agentName, dur)
 			wp.failoverOrFail(workerID, job, agentName, errorMsg)
 			return
-		case agentlimit.KindNone:
+		case agent.LimitKindNone:
 			if errorMsg != "" {
 				preview := strings.ReplaceAll(errorMsg, "\n", " ")
 				preview = strings.ReplaceAll(preview, "\r", "")
@@ -824,7 +823,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 					workerID, agentName, truncateRunes(preview, 200))
 			}
 			// fall through to context-window / retry handling
-		case agentlimit.KindTransient:
+		case agent.LimitKindTransient:
 			// fall through to retry handling
 		}
 	}
