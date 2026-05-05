@@ -151,13 +151,8 @@ Examples:
 			if err != nil {
 				return err
 			}
-			base, err := resolveFixAgent(roots.worktreeRoot, opts)
-			if err != nil {
-				return err
-			}
 			tracker := &fixSessionTracker{
 				enabled: opts.resume,
-				base:    base,
 				quiet:   opts.quiet,
 				log:     func(s string) { fmt.Fprint(cmd.OutOrStdout(), s) },
 			}
@@ -869,6 +864,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		cmd.Println()
 	}
 
+	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
+		return err
+	}
 	currentAgent, resuming := tracker.NextAgent()
 
 	// Resolve minimum severity filter (only for review-type jobs;
@@ -1117,6 +1115,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		MaxCount:    batchSize,
 		MinSeverity: minSev,
 	})
+
+	if err := ensureBaseAgent(roots.worktreeRoot, opts, tracker); err != nil {
+		return err
+	}
 
 	for i, batch := range batches {
 		batchJobIDs := make([]int64, len(batch))

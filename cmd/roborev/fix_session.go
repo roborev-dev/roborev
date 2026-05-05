@@ -77,3 +77,19 @@ func shortSessionID(id string) string {
 	}
 	return id[:12]
 }
+
+// ensureBaseAgent lazily resolves the fix agent and stores it on the
+// tracker. Called by entry functions just before they need an agent so
+// no-op paths (no eligible jobs, all jobs already passing) don't fail
+// on agent resolution that would never be exercised.
+func ensureBaseAgent(repoRoot string, opts fixOptions, tracker *fixSessionTracker) error {
+	if tracker.base != nil {
+		return nil
+	}
+	base, err := resolveFixAgent(repoRoot, opts)
+	if err != nil {
+		return err
+	}
+	tracker.base = base
+	return nil
+}

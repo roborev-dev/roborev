@@ -337,7 +337,7 @@ func TestRunFix_ResumeCascadeBrokenOnError(t *testing.T) {
 	}
 	_ = builder.WithJobs(jobs).Build()
 
-	_, _ = runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		opts := fixOptions{agentName: "test", quiet: true, resume: true}
 		base, err := resolveFixAgent(repo.Dir, opts)
 		if err != nil {
@@ -352,6 +352,7 @@ func TestRunFix_ResumeCascadeBrokenOnError(t *testing.T) {
 		// Errors are expected mid-run; runFixBatch logs and continues.
 		return runFixBatch(cmd, []int64{30, 31, 32, 33, 34, 35}, "", false, false, false, 2, opts, tracker)
 	})
+	require.NoError(t, err)
 
 	calls := tester.Calls()
 	require.GreaterOrEqual(t, len(calls), 3,
@@ -396,7 +397,7 @@ func TestRunFix_ResumeWithNonSessionAgentWarnsOnce(t *testing.T) {
 		WithReview(51, "f").
 		Build()
 
-	out, _ := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		opts := fixOptions{agentName: "test", resume: true}
 		base, err := resolveFixAgent(repo.Dir, opts)
 		if err != nil {
@@ -409,7 +410,9 @@ func TestRunFix_ResumeWithNonSessionAgentWarnsOnce(t *testing.T) {
 		}
 		return runFix(cmd, []int64{50, 51}, opts, tracker)
 	})
+	require.NoError(t, err)
 
+	assert.Equal(t, 2, stub.calls, "both jobs should reach the agent")
 	count := strings.Count(out, "does not support session resume")
 	assert.Equal(t, 1, count, "warning fires exactly once across multiple calls")
 }
@@ -434,7 +437,7 @@ func TestRunFix_QuietSuppressesResumeAndUnsupportedWarnings(t *testing.T) {
 		WithReview(61, "f").
 		Build()
 
-	out, _ := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		opts := fixOptions{agentName: "test", quiet: true, resume: true}
 		base, err := resolveFixAgent(repo.Dir, opts)
 		if err != nil {
@@ -448,7 +451,9 @@ func TestRunFix_QuietSuppressesResumeAndUnsupportedWarnings(t *testing.T) {
 		}
 		return runFix(cmd, []int64{60, 61}, opts, tracker)
 	})
+	require.NoError(t, err)
 
+	assert.Equal(t, 2, stub.calls, "both jobs should reach the agent")
 	assert.NotContains(t, out, "does not support session resume")
 	assert.NotContains(t, out, "Resuming session")
 }
