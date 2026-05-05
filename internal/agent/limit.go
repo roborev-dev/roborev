@@ -12,7 +12,14 @@ const (
 	LimitKindNone      LimitKind = iota // no rate-limit signal recognized
 	LimitKindTransient                  // 429-style; retry locally, no cooldown
 	LimitKindQuota                      // hard quota exhaustion (Gemini/Codex today)
-	LimitKindSession                    // session-level cap (e.g. Claude 5-hour)
+	// LimitKindSession is a session-level cap (e.g. Claude 5-hour).
+	// Plumbing is in place — daemon cooldown/abort and CLI strict abort
+	// both handle it — but defaultLimitRules does not yet produce it for
+	// any real agent. ClassifyLimit can return LimitKindSession only via
+	// an injected classifier (tests). Production support is pending a
+	// captured Claude session-cap message; see the TODO at
+	// defaultLimitRules.
+	LimitKindSession
 )
 
 // LimitClassification is the result of inspecting an agent error.
@@ -41,9 +48,15 @@ type limitRule struct {
 // internal/daemon/worker.go so detection for Gemini and Codex is
 // byte-for-byte unchanged.
 //
-// Claude session-cap patterns are intentionally absent — once a real
-// session-cap message is captured, a single LimitKindSession rule plus
-// a unit-test fixture is sufficient to enable Claude detection.
+// TODO: add a LimitKindSession rule for Claude's 5-hour cap once the
+// exact error wording is captured from a real session-cap failure.
+// Speculative substrings ("usage limit", "limit reached", etc.) are
+// not added on purpose — they would also match policy errors,
+// transient 429s, and config-validation messages, and a false positive
+// would abort roborev fix and cool down the agent when retrying might
+// have worked. Until that pattern lands, ClassifyLimit returns
+// LimitKindSession only when an injected classifier produces it
+// (i.e., in tests).
 var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "resource exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota exceeded", Kind: LimitKindQuota},
