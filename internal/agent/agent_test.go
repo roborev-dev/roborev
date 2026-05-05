@@ -102,10 +102,10 @@ func TestSyncWriter(t *testing.T) {
 
 func TestTestAgentStreaming(t *testing.T) {
 	setup := func() *TestAgent {
-		return &TestAgent{
-			Delay:  1 * time.Millisecond,
-			Output: "test output",
-		}
+		a := NewTestAgent()
+		a.Delay = 1 * time.Millisecond
+		a.Output = "test output"
+		return a
 	}
 
 	t.Run("streams output to writer", func(t *testing.T) {

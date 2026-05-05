@@ -52,17 +52,13 @@ func NewTestAgent() *TestAgent {
 }
 
 func (a *TestAgent) clone() *TestAgent {
-	st := a.state
-	if st == nil {
-		st = &testAgentState{}
-	}
 	return &TestAgent{
 		Delay:     a.Delay,
 		Output:    a.Output,
 		Fail:      a.Fail,
 		Reasoning: a.Reasoning,
 		SessionID: a.SessionID,
-		state:     st,
+		state:     a.state,
 	}
 }
 
@@ -102,9 +98,6 @@ func (a *TestAgent) Name() string {
 // Calls returns a copy of every Review invocation recorded by this
 // agent (and any clones that share its state).
 func (a *TestAgent) Calls() []TestAgentCall {
-	if a.state == nil {
-		return nil
-	}
 	a.state.mu.Lock()
 	defer a.state.mu.Unlock()
 	out := make([]TestAgentCall, len(a.state.calls))
@@ -118,10 +111,6 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case <-time.After(a.Delay):
-	}
-
-	if a.state == nil {
-		a.state = &testAgentState{}
 	}
 
 	// Determine the session ID to advertise: echo incoming, or mint fresh.

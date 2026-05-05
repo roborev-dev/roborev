@@ -49,12 +49,14 @@ func TestTestAgent_WithSessionIDEchoesReceivedID(t *testing.T) {
 func TestTestAgent_NewInstanceResetsCounter(t *testing.T) {
 	a1 := NewTestAgent()
 	var buf bytes.Buffer
-	_, _ = a1.Review(context.Background(), "/repo", "abc", "p", &buf)
+	_, err := a1.Review(context.Background(), "/repo", "abc", "p", &buf)
+	require.NoError(t, err)
 	assert.Equal(t, "test-session-1", ExtractSessionID(buf.String()))
 
 	a2 := NewTestAgent()
 	buf.Reset()
-	_, _ = a2.Review(context.Background(), "/repo", "abc", "p", &buf)
+	_, err = a2.Review(context.Background(), "/repo", "abc", "p", &buf)
+	require.NoError(t, err)
 	assert.Equal(t, "test-session-1", ExtractSessionID(buf.String()),
 		"new instance starts its own counter at 1")
 }
