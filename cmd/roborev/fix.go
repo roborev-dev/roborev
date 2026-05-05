@@ -409,6 +409,16 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		}
 		cls := classify(agent.CanonicalName(retryAgent.Name()), retryErr.Error())
 		if cls.Kind == agent.LimitKindQuota || cls.Kind == agent.LimitKindSession {
+			// The first agent call left uncommitted changes; the
+			// retry that would have committed them was aborted by
+			// the limit. Surface the dirty-tree state so the user
+			// can decide whether to commit manually before the
+			// cooldown expires — the success path emits the same
+			// warning, and bare cooldown text would otherwise hide
+			// the regression.
+			if hasChanges, _ := git.HasUncommittedChanges(params.RepoRoot); hasChanges {
+				fmt.Fprintln(out, "Warning: Changes were made but not committed. Please review and commit manually.")
+			}
 			return nil, &agentLimitError{Classification: cls}
 		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)

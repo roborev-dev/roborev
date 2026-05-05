@@ -19,11 +19,15 @@ const (
 // values to [minCooldown, maxCooldown].
 func ParseResetDuration(errMsg string) time.Duration {
 	lower := strings.ToLower(errMsg)
-	idx := strings.Index(lower, "reset after ")
-	if idx < 0 {
+	_, after, ok := strings.Cut(lower, "reset after ")
+	if !ok {
 		return 0
 	}
-	rest := errMsg[idx+len("reset after "):]
+	// Slice lower (not errMsg): a few runes (e.g. "İ" U+0130 → "i")
+	// shorten under strings.ToLower, so byte indices computed against
+	// lower can land in the middle of a UTF-8 sequence in errMsg.
+	// time.ParseDuration accepts the lowercase unit suffixes anyway.
+	rest := after
 	token := rest
 	if sp := strings.IndexAny(rest, " \t\n,;)"); sp > 0 {
 		token = rest[:sp]
@@ -69,7 +73,10 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	default:
 		return time.Time{}
 	}
-	rest := errMsg[idx:]
+	// Slice lower (not errMsg) so a rune that shortens under ToLower
+	// can't shift byte offsets out of alignment with errMsg. The
+	// token feeds time.Parse with lowercase formats below.
+	rest := lower[idx:]
 	end := len(rest)
 	for i, r := range rest {
 		// Stop at sentence-ending punctuation or newline.
@@ -81,8 +88,8 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	token := strings.TrimSpace(rest[:end])
 
 	formats := []string{
-		"3:04 PM", "3:04 pm",
-		"3:04PM", "3:04pm",
+		"3:04 pm",
+		"3:04pm",
 		"15:04",
 	}
 	for _, f := range formats {

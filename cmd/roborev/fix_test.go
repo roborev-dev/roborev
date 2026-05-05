@@ -3915,9 +3915,11 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 		}
 	}
 
+	var buf bytes.Buffer
 	_, err := fixJobDirect(context.Background(), fixJobParams{
 		RepoRoot: dir,
 		Agent:    ag,
+		Output:   &buf,
 		Classify: classify,
 	}, "fix things")
 	require.Error(t, err, "expected agentLimitError from retry path")
@@ -3931,4 +3933,12 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 	assert.Equal(1, classifyCalls, "classifier should run once on the retry error")
 	assert.Contains(err.Error(), "claude-code")
 	assert.Contains(err.Error(), "session limit")
+	// The first call left a dirty tree; the abort must still surface
+	// the uncommitted-changes warning so the user knows their tree
+	// needs attention before re-running after cooldown.
+	assert.Contains(
+		buf.String(),
+		"Changes were made but not committed",
+		"limit-abort retry path should still warn about uncommitted changes",
+	)
 }

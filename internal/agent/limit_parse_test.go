@@ -109,6 +109,25 @@ func TestParseResetTimeRespectsLocation(t *testing.T) {
 	assert.Equal(t, est, got.Location())
 }
 
+// TestParseResetDurationToLowerByteSafety guards the ToLower
+// byte-index pitfall: U+0130 "İ" lowercases to "i" — a 2→1 byte
+// change. Slicing the original errMsg with indices computed against
+// strings.ToLower(errMsg) would extract the wrong bytes (or panic
+// inside a multi-byte sequence). Slicing the lowercased copy is
+// safe and parses cleanly.
+func TestParseResetDurationToLowerByteSafety(t *testing.T) {
+	got := ParseResetDuration("İ reset after 30m")
+	assert.Equal(t, 30*time.Minute, got)
+}
+
+func TestParseResetTimeToLowerByteSafety(t *testing.T) {
+	loc := time.FixedZone("test", 0)
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, loc) // noon
+	got := parseResetTimeAt("İ resets at 5:42 PM", now)
+	want := time.Date(2026, 5, 5, 17, 42, 0, 0, loc)
+	assert.Equal(t, want, got)
+}
+
 // TestParseResetTimeAcrossDST exercises the rollover code path through
 // real DST transitions where Add(24*time.Hour) would land an hour off.
 // time.FixedZone has no DST rules, so it cannot exercise this branch —
