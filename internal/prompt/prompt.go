@@ -218,7 +218,11 @@ func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, co
 		if snapErr != nil {
 			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}
-		p = fitDirtySnapshotReference(p, diffFile, b.resolveMaxPromptSize(repoPath))
+		p, err = fitDirtySnapshotReference(p, diffFile, b.resolveMaxPromptSize(repoPath))
+		if err != nil {
+			cleanup()
+			return SnapshotResult{}, err
+		}
 		return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 	}
 	return SnapshotResult{Prompt: p}, nil
@@ -352,7 +356,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	return ctx.requiredPrefix + hardCapPrompt(body, bodyLimit), nil
 }
 
-func fitDirtySnapshotReference(prompt, diffFile string, limit int) string {
+func fitDirtySnapshotReference(prompt, diffFile string, limit int) (string, error) {
 	variants := dirtySnapshotReferenceVariants(diffFile)
 	prefix := prompt
 	if before, _, found := strings.Cut(prompt, dirtyTruncatedDiffMarker); found {
@@ -369,23 +373,23 @@ func dirtySnapshotReferenceVariants(diffFile string) []string {
 	}
 }
 
-func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) string {
+func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) (string, error) {
 	if limit <= 0 {
-		return ""
+		return "", fmt.Errorf("prompt limit must be positive, got %d", limit)
 	}
 	if len(variants) == 0 {
-		return truncateUTF8(prefix, limit)
+		return truncateUTF8(prefix, limit), nil
 	}
 	for _, variant := range variants {
 		if len(prefix)+len(variant) <= limit {
-			return prefix + variant
+			return prefix + variant, nil
 		}
 	}
 	shortest := variants[len(variants)-1]
-	if len(shortest) >= limit {
-		return truncateUTF8(shortest, limit)
+	if len(shortest) > limit {
+		return "", fmt.Errorf("required prompt suffix is %d bytes but prompt limit is %d bytes", len(shortest), limit)
 	}
-	return truncateUTF8(prefix, limit-len(shortest)) + shortest
+	return truncateUTF8(prefix, limit-len(shortest)) + shortest, nil
 }
 
 func isCodexReviewAgent(agentName string) bool {

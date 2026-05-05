@@ -1032,6 +1032,22 @@ func TestBuildDirtyWithSnapshotKeepsReferenceWithinCap(t *testing.T) {
 		"dirty snapshot prompt should include the generated snapshot path")
 }
 
+func TestFitPrefixWithSuffixVariantsRejectsNonPositiveLimit(t *testing.T) {
+	prompt, err := fitPrefixWithSuffixVariants("prefix", 0, "suffix")
+
+	require.Error(t, err)
+	assert.Empty(t, prompt)
+	assert.Contains(t, err.Error(), "prompt limit must be positive")
+}
+
+func TestFitPrefixWithSuffixVariantsRejectsUnfittableSuffix(t *testing.T) {
+	prompt, err := fitPrefixWithSuffixVariants("prefix", 4, "required suffix")
+
+	require.Error(t, err)
+	assert.Empty(t, prompt)
+	assert.Contains(t, err.Error(), "required prompt suffix")
+}
+
 func TestResolveMaxPromptSizeWithoutConfigUsesConfigDefault(t *testing.T) {
 	b := NewBuilder(nil)
 	assert.Equal(t, config.DefaultMaxPromptSize, b.resolveMaxPromptSize(t.TempDir()))
