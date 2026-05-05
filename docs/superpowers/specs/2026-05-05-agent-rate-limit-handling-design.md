@@ -229,13 +229,18 @@ the next observed cap actionable:
    a private `defaultRules` slice. To exercise the `KindSession` branch
    end-to-end without polluting the production rule table, the package
    also exposes an unexported `classifyWithRules(agent, errMsg, rules)`
-   helper. Tests in the same package call `classifyWithRules` with a
+   helper. Tests inside `agentlimit` call `classifyWithRules` with a
    synthetic rule slice (e.g. one that maps a fake "test-claude session
    limit" message to `KindSession`); production callers always go
-   through `Classify` and only see `defaultRules`. Tests in other
-   packages that need to drive a `KindSession` outcome receive a
-   pre-built `Classification` struct from a small test helper exported
-   for that purpose, rather than mutating any global state.
+   through `Classify` and only see `defaultRules`.
+
+   Tests in `internal/daemon` and `cmd/roborev` need a different
+   mechanism — they can't reach an unexported helper. They use the
+   injected `classify` function on `WorkerPool` / fix-loop options
+   (described below) and have their stub return a literal
+   `agentlimit.Classification{Kind: agentlimit.KindSession, ResetAt: ...}`.
+   `Classification` and the `Kind*` constants are already exported, so
+   no extra test helper is needed.
 
    Real Claude patterns get added to the production rule table once
    captured.
@@ -358,10 +363,26 @@ error preview, so the unmatched-pattern surfacing path is covered.
 The work splits into two PRs:
 
 **PR 1 — Framework (this spec):** shared classifier package, unmatched
-non-zero exit logging, daemon-worker integration that preserves
-existing behavior bit-for-bit, and CLI fix-loop abort plumbing
-exercised by a synthetic test fixture. No behavior change for any
-currently-supported agent.
+non-zero exit logging, daemon-worker integration, and CLI fix-loop
+abort plumbing exercised by a synthetic test fixture.
+
+Behavior changes in PR 1:
+
+- **Daemon worker (no change):** quota detection for Gemini and Codex
+  is preserved bit-for-bit. The same nine `isQuotaError` substrings
+  produce the same cooldown-then-failover-or-fail outcome.
+- **Foreground `roborev fix` (intentional change):** today, when a
+  Gemini/Codex job hits a quota error mid-session, the fix loop logs
+  a per-job warning and continues (in discovery mode) or returns an
+  error for that one job (in explicit-IDs mode), then proceeds to the
+  next job — which usually hits the same wall. After PR 1, any error
+  matching a `KindQuota` (or future `KindSession`) rule on the
+  configured fix agent aborts the entire session immediately with a
+  reset-time message. This is the central improvement of the spec; it
+  applies to existing Codex/Gemini quota errors as well as future
+  Claude session caps. Users running `roborev fix` against a
+  quota-exhausted Gemini or Codex backend will see strict abort
+  instead of warn-and-continue starting in PR 1.
 
 **PR 2 — Claude detection (follow-up):** add the production Claude
 session-cap rule plus a unit test fixture, once a real session-limit
