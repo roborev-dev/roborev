@@ -873,11 +873,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		cmd.Println()
 	}
 
-	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
-		return err
-	}
-	currentAgent, resuming := tracker.NextAgent()
-
 	// Resolve minimum severity filter (only for review-type jobs;
 	// task/analyze jobs have free-form output without severity labels)
 	var minSev string
@@ -902,6 +897,15 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if commentsErr != nil && !opts.quiet {
 		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
 	}
+
+	// Resolve the agent only after every check above that can return
+	// without invoking it. This keeps no-op paths (verdict P, bad
+	// min-severity config, job-not-done) from failing on missing-agent
+	// resolution before the actual reason surfaces.
+	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
+		return err
+	}
+	currentAgent, resuming := tracker.NextAgent()
 
 	if !opts.quiet {
 		if resuming {

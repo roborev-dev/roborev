@@ -3574,3 +3574,30 @@ func TestFixCmd_BatchSizeMustBePositive(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--batch-size must be >= 1")
 }
+
+// TestFixCmd_BatchSizeAcceptsBranchFlags asserts that --batch-size is
+// treated equivalently to --batch in the validation path: it can be
+// combined with --branch / --all-branches / --newest-first without
+// being rejected before dispatch. Failures here would surface as an
+// error containing "mutually exclusive" or "cannot be used", not the
+// downstream daemon error these cases produce when validation passes.
+func TestFixCmd_BatchSizeAcceptsBranchFlags(t *testing.T) {
+	cases := [][]string{
+		{"--batch-size", "5", "--branch", "main"},
+		{"--batch-size", "5", "--all-branches"},
+		{"--batch-size", "5", "--newest-first"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			cmd := fixCmd()
+			cmd.SetArgs(args)
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			err := cmd.Execute()
+			if err != nil {
+				assert.NotContains(t, err.Error(), "mutually exclusive")
+				assert.NotContains(t, err.Error(), "cannot be used")
+			}
+		})
+	}
+}
