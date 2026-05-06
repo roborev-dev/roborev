@@ -189,21 +189,26 @@ func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func
 }
 
 func writeExternalDiffSnapshot(diff string) (string, func(), error) {
-	f, err := os.CreateTemp("", "roborev-snapshot-*.diff")
+	dir, err := os.MkdirTemp("", "roborev-snapshot-*")
 	if err != nil {
+		return "", nil, fmt.Errorf("create snapshot dir: %w", err)
+	}
+	diffFile := dir + string(os.PathSeparator) + "roborev-snapshot-content.diff"
+	f, err := os.OpenFile(diffFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
-	diffFile := f.Name()
 	_, writeErr := f.WriteString(diff)
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil {
-		os.Remove(diffFile)
+		os.RemoveAll(dir)
 		if writeErr != nil {
 			return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
 		}
 		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
-	return diffFile, func() { os.Remove(diffFile) }, nil
+	return diffFile, func() { os.RemoveAll(dir) }, nil
 }
 
 // BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff to a snapshot file

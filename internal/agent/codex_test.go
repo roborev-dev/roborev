@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestCodex_buildArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove, tt.sandboxBroken)
+			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove, tt.sandboxBroken, "")
 
 			for _, flag := range tt.wantFlags {
 				assert.Contains(t, args, flag, "buildArgs() missing expected flag %q, args: %v", flag, args)
@@ -77,7 +78,7 @@ func TestCodex_buildArgs(t *testing.T) {
 func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 	a := NewCodexAgent("codex").WithSessionID("session-123").(*CodexAgent)
 
-	args := a.buildArgs("/repo", false, true, false)
+	args := a.buildArgs("/repo", false, true, false, "")
 
 	require.GreaterOrEqual(t, len(args), 3)
 	assert.Equal(t, "exec", args[0])
@@ -87,10 +88,51 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 	assert.Equal(t, "-", args[len(args)-1], "expected stdin marker '-' at end of args, got %v", args)
 }
 
+func TestCodexBuildArgsAddsDiffSnapshotDirectory(t *testing.T) {
+	a := NewCodexAgent("codex")
+	snapshotDir, err := os.MkdirTemp("", "roborev-snapshot-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(snapshotDir) })
+	diffFile := snapshotDir + string(os.PathSeparator) + "roborev-snapshot-content.diff"
+	require.NoError(t, os.WriteFile(diffFile, []byte("diff --git a/x b/x\n"), 0o600))
+
+	args := a.buildArgs(
+		"/repo",
+		false,
+		true,
+		false,
+		"Read the diff from: `"+diffFile+"`",
+	)
+
+	addDirIndex := slices.Index(args, "--add-dir")
+	require.NotEqual(t, -1, addDirIndex, "expected --add-dir in args: %v", args)
+	require.Less(t, addDirIndex+1, len(args), "expected --add-dir value in args: %v", args)
+	assert.Equal(t, snapshotDir, args[addDirIndex+1])
+	assert.Less(t, addDirIndex, len(args)-1, "--add-dir must appear before stdin marker: %v", args)
+	assert.Equal(t, "-", args[len(args)-1], "expected stdin marker '-' at end of args, got %v", args)
+}
+
+func TestCodexBuildArgsIgnoresDiffSnapshotOutsidePrivateDirectory(t *testing.T) {
+	a := NewCodexAgent("codex")
+	diffFile, err := os.CreateTemp("", "roborev-snapshot-*.diff")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(diffFile.Name()) })
+
+	args := a.buildArgs(
+		"/repo",
+		false,
+		true,
+		false,
+		"Read the diff from: `"+diffFile.Name()+"`",
+	)
+
+	assert.NotContains(t, args, "--add-dir")
+}
+
 func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
 	a := NewCodexAgent("codex").WithSessionID("-bad-session").(*CodexAgent)
 
-	args := a.buildArgs("/repo", false, true, false)
+	args := a.buildArgs("/repo", false, true, false, "")
 
 	require.GreaterOrEqual(t, len(args), 2)
 	assert.Equal(t, "exec", args[0])

@@ -556,6 +556,9 @@ func TestWriteDiffSnapshot_WritesExternalReadableTempFile(t *testing.T) {
 	assert.False(t,
 		strings.HasPrefix(filepath.Clean(diffFile), filepath.Clean(gitDir)),
 		"snapshot should not live in git dir: got %s, git dir %s", diffFile, gitDir)
+	assert.True(t,
+		strings.HasPrefix(filepath.Base(filepath.Dir(diffFile)), "roborev-snapshot-"),
+		"snapshot should live in a private roborev temp dir, got %s", diffFile)
 	data, err := os.ReadFile(diffFile)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "diff --git")
