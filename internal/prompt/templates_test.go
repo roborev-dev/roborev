@@ -109,6 +109,33 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 	}
 }
 
+func TestGetSystemPrompt_ReviewPromptsRequireFindingSeparators(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	tests := []struct {
+		name    string
+		agent   string
+		command string
+	}{
+		{name: "default review", agent: "test", command: "review"},
+		{name: "default dirty", agent: "test", command: "dirty"},
+		{name: "default range", agent: "test", command: "range"},
+		{name: "default security", agent: "test", command: "security"},
+		{name: "claude review", agent: "claude-code", command: "review"},
+		{name: "codex review", agent: "codex", command: "review"},
+		{name: "gemini review", agent: "gemini", command: "review"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getSystemPrompt(tt.agent, tt.command, mockNow)
+
+			assert.Contains(t, got, "Separate multiple findings with `---` on its own line.")
+		})
+	}
+}
+
 func TestGetSystemPrompt_DateInjection(t *testing.T) {
 	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
 	fixedDateStr := "Current date: 2030-06-15 (UTC)"

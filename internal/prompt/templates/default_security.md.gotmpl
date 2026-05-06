@@ -24,6 +24,7 @@ For each finding, provide:
 - File and line reference
 - The specific code path an attacker would exploit and what they gain
 - Suggested remediation
+- Separate multiple findings with `---` on its own line.
 
 Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file-level when the issue spans a range) and describe a plausible exploit path. The severity must match the exploitability you described. Drop any finding that fails these checks.
 

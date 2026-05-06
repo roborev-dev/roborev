@@ -23,6 +23,7 @@ After reviewing, provide:
    - File and line reference where possible
    - What specifically goes wrong if this is not fixed (concrete harm, not "violates best practices")
    - Suggested fix
+   - Separate multiple findings with `---` on its own line.
 
 Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
