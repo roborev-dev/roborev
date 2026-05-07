@@ -1039,9 +1039,20 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 }
 
 func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
-	t.Parallel()
 	// A dedicated stress test proving WaitUntilIdle waits past the event-processing boundary
 	// under timing races and concurrent broadcasts.
+	if runtime.GOOS != "windows" {
+		t.Parallel()
+	}
+
+	iterations := 50
+	numEvents := 10
+	if runtime.GOOS == "windows" {
+		// Each hook starts a PowerShell process on Windows. Keep the test broad
+		// enough to exercise concurrent broadcasts without exhausting CI time.
+		iterations = 5
+		numEvents = 4
+	}
 
 	tmpDir := t.TempDir()
 
@@ -1053,11 +1064,10 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 		},
 	}
 
-	for i := range 50 {
+	for i := range iterations {
 		hr, broadcaster := setupRunner(t, cfg)
 
 		var wg sync.WaitGroup
-		numEvents := 10
 
 		for j := range numEvents {
 			wg.Add(1)
