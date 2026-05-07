@@ -1420,10 +1420,15 @@ func isQualifiedRemoteRef(repoPath, value string) bool {
 // branch name, preferring the branch's configured @{upstream} so fork
 // workflows (local main → upstream/main) translate correctly, and falling
 // back to origin/<name> only when no upstream is configured. Returns ""
-// when no remote-tracking counterpart resolves locally; in particular, an
-// explicitly configured upstream that does not resolve is NOT silently
-// substituted with origin/<name> — that would override the user's choice
-// of remote in fork workflows.
+// when no remote-tracking counterpart resolves locally; in particular:
+//   - An explicitly configured upstream that does not resolve is NOT
+//     silently substituted with origin/<name> — that would override the
+//     user's choice of remote in fork workflows.
+//   - For slash-containing names, the origin/<name> fallback only applies
+//     when a local branch by that name exists. Otherwise a remote-
+//     qualified value like "upstream/main" whose configured remote-
+//     tracking ref isn't fetched would collapse to "origin/upstream/main",
+//     silently switching to a different remote.
 func preferredRemoteTracking(repoPath, name string) string {
 	if cfg, ok := readUpstreamConfig(repoPath, name); ok {
 		if strings.HasPrefix(cfg.qualified, "refs/remotes/") &&
@@ -1432,10 +1437,13 @@ func preferredRemoteTracking(repoPath, name string) string {
 		}
 		return ""
 	}
-	if refExists(repoPath, "refs/remotes/origin/"+name) {
-		return "origin/" + name
+	if !refExists(repoPath, "refs/remotes/origin/"+name) {
+		return ""
 	}
-	return ""
+	if strings.Contains(name, "/") && !refExists(repoPath, "refs/heads/"+name) {
+		return ""
+	}
+	return "origin/" + name
 }
 
 func branchNameForConfig(repoPath, ref string) string {
