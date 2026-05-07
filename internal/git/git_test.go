@@ -2177,6 +2177,83 @@ func TestGetBranchBase(t *testing.T) {
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
 
+	t.Run("resolves slash-containing local branch when stale", func(t *testing.T) {
+		// Branch names may contain slashes (release/1.2, team/main). Such
+		// names must still get stale-ancestor translation — treating any
+		// '/' as a remote prefix would skip the fix for these cases.
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/release/1.2")
+		repo.CommitFile("base.txt", "base", "initial")
+		staleSHA := repo.HeadSHA()
+		repo.CommitFile("trunk.txt", "t", "trunk advance")
+		freshSHA := repo.HeadSHA()
+		repo.Run("update-ref", "refs/heads/release/1.2", staleSHA)
+		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/origin/release/1.2", freshSHA)
+		repo.Run("checkout", "-b", "feature", freshSHA)
+		repo.CommitFile("feature.txt", "f", "feature commit")
+		repo.Run("config", "branch.feature.base", "release/1.2")
+
+		assert.Equal(t, "origin/release/1.2", GetBranchBase(repo.Dir, "HEAD"))
+	})
+
+	t.Run("passes qualified remote-tracking ref through unchanged", func(t *testing.T) {
+		// An unambiguous remote-tracking ref (refs/remotes/<value> exists,
+		// no shadowing local branch) is not subject to translation.
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("base.txt", "base", "initial")
+		mainSHA := repo.HeadSHA()
+		repo.Run("remote", "add", "upstream", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/upstream/main", mainSHA)
+		repo.Run("checkout", "-b", "feature")
+		repo.Run("config", "branch.feature.base", "upstream/main")
+
+		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
+	})
+
+	t.Run("does not fall back to origin when configured upstream is missing", func(t *testing.T) {
+		// Fork workflow: local main is configured to track upstream/main
+		// but upstream/main has not been fetched. origin/main (the user's
+		// fork) must NOT be silently substituted — that would compute the
+		// merge-base against a different remote than the user intended.
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("base.txt", "base", "initial")
+		mainSHA := repo.HeadSHA()
+		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/origin/main", mainSHA)
+		// Configure local main to track upstream/main, but never set up
+		// the corresponding remote-tracking ref.
+		repo.Run("config", "branch.main.remote", "upstream")
+		repo.Run("config", "branch.main.merge", "refs/heads/main")
+		repo.Run("checkout", "-b", "feature")
+		repo.Run("config", "branch.feature.base", "main")
+
+		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"),
+			"missing upstream must not be substituted with origin counterpart")
+	})
+
+	t.Run("does not fall back to origin when configured upstream is local-only", func(t *testing.T) {
+		// Local-branch tracking (branch.<name>.remote = ".") explicitly
+		// targets another local branch. origin/<name> is unrelated and
+		// must not be silently substituted.
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/develop")
+		repo.CommitFile("base.txt", "base", "initial")
+		developSHA := repo.HeadSHA()
+		repo.Run("checkout", "-b", "main")
+		repo.Run("config", "branch.main.remote", ".")
+		repo.Run("config", "branch.main.merge", "refs/heads/develop")
+		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/origin/main", developSHA)
+		repo.Run("checkout", "-b", "feature")
+		repo.Run("config", "branch.feature.base", "main")
+
+		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"),
+			"local-branch tracking must not be substituted with origin counterpart")
+	})
+
 	t.Run("prefers configured upstream over origin counterpart", func(t *testing.T) {
 		// Fork workflow: local main tracks upstream/main, and origin/main
 		// also exists (e.g., points at the user's fork). The base should

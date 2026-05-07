@@ -1371,11 +1371,17 @@ func GetBranchBase(repoPath, ref string) string {
 	return resolveConfiguredBase(repoPath, raw)
 }
 
-// resolveConfiguredBase translates a bare base name to the remote-tracking
-// ref it should map to, or returns configValue unchanged when no translation
-// applies. Qualified refs and divergent local branches are passed through.
+// resolveConfiguredBase translates a configured base name to the remote-
+// tracking ref it should map to, or returns configValue unchanged when no
+// translation applies. Values that already name a remote-tracking ref
+// unambiguously are passed through; local branch names (including slash-
+// containing names like "release/1.2") are subject to stale-ancestor
+// translation; divergent local branches are also passed through.
 func resolveConfiguredBase(repoPath, configValue string) string {
-	if configValue == "" || strings.Contains(configValue, "/") {
+	if configValue == "" {
+		return configValue
+	}
+	if isQualifiedRemoteRef(repoPath, configValue) {
 		return configValue
 	}
 	remoteTracking := preferredRemoteTracking(repoPath, configValue)
@@ -1392,19 +1398,42 @@ func resolveConfiguredBase(repoPath, configValue string) string {
 	return remoteTracking
 }
 
-// preferredRemoteTracking returns the remote-tracking ref short name for a
-// bare branch name, preferring the branch's configured @{upstream} so fork
-// workflows (local main → upstream/main) translate correctly, and falling
-// back to origin/<bareName>. Returns "" when no remote-tracking counterpart
-// resolves locally.
-func preferredRemoteTracking(repoPath, bareName string) string {
-	if cfg, ok := readUpstreamConfig(repoPath, bareName); ok &&
-		strings.HasPrefix(cfg.qualified, "refs/remotes/") &&
-		refExists(repoPath, cfg.qualified) {
-		return cfg.short
+// isQualifiedRemoteRef reports whether value names a remote-tracking ref
+// that is not shadowed by a same-named local branch. Defers to the local
+// branch when both exist so stale-ancestor translation still applies, and
+// so the resolved base matches git's normal ref lookup precedence
+// (refs/heads beats refs/remotes).
+func isQualifiedRemoteRef(repoPath, value string) bool {
+	if !strings.Contains(value, "/") {
+		return false
 	}
-	if refExists(repoPath, "refs/remotes/origin/"+bareName) {
-		return "origin/" + bareName
+	if !refExists(repoPath, "refs/remotes/"+value) {
+		return false
+	}
+	if refExists(repoPath, "refs/heads/"+value) {
+		return false
+	}
+	return true
+}
+
+// preferredRemoteTracking returns the remote-tracking ref short name for a
+// branch name, preferring the branch's configured @{upstream} so fork
+// workflows (local main → upstream/main) translate correctly, and falling
+// back to origin/<name> only when no upstream is configured. Returns ""
+// when no remote-tracking counterpart resolves locally; in particular, an
+// explicitly configured upstream that does not resolve is NOT silently
+// substituted with origin/<name> — that would override the user's choice
+// of remote in fork workflows.
+func preferredRemoteTracking(repoPath, name string) string {
+	if cfg, ok := readUpstreamConfig(repoPath, name); ok {
+		if strings.HasPrefix(cfg.qualified, "refs/remotes/") &&
+			refExists(repoPath, cfg.qualified) {
+			return cfg.short
+		}
+		return ""
+	}
+	if refExists(repoPath, "refs/remotes/origin/"+name) {
+		return "origin/" + name
 	}
 	return ""
 }
