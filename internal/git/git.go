@@ -1353,14 +1353,60 @@ func readUpstreamConfig(repoPath, ref string) (upstreamConfig, bool) {
 	}, true
 }
 
-// GetBranchBase returns roborev's branch.<name>.base config value for ref.
-// Passing an empty ref is equivalent to HEAD.
+// GetBranchBase returns the base ref derived from ref's branch.<name>.base
+// config. Bare names (e.g. "main") are resolved to the remote-tracking ref
+// (e.g. "origin/main") that the local branch tracks when local <name> exists
+// and is an ancestor of the remote-tracking ref — i.e., local <name> is just
+// a stale snapshot of the trunk. Without this, merge-base(local-main, HEAD)
+// walks back to the stale pointer and the resulting range pulls in commits
+// already merged into the remote trunk after a rebase-onto-origin/main.
+// Qualified refs (containing '/') are returned as-is so users can pin to
+// e.g. "upstream/main". Passing an empty ref is equivalent to HEAD.
 func GetBranchBase(repoPath, ref string) string {
 	branch := branchNameForConfig(repoPath, ref)
 	if branch == "" {
 		return ""
 	}
-	return readGitConfig(repoPath, "branch."+branch+".base")
+	raw := readGitConfig(repoPath, "branch."+branch+".base")
+	return resolveConfiguredBase(repoPath, raw)
+}
+
+// resolveConfiguredBase translates a bare base name to the remote-tracking
+// ref it should map to, or returns configValue unchanged when no translation
+// applies. Qualified refs and divergent local branches are passed through.
+func resolveConfiguredBase(repoPath, configValue string) string {
+	if configValue == "" || strings.Contains(configValue, "/") {
+		return configValue
+	}
+	remoteTracking := preferredRemoteTracking(repoPath, configValue)
+	if remoteTracking == "" {
+		return configValue
+	}
+	if !refExists(repoPath, "refs/heads/"+configValue) {
+		return remoteTracking
+	}
+	isAncestor, err := IsAncestor(repoPath, configValue, remoteTracking)
+	if err != nil || !isAncestor {
+		return configValue
+	}
+	return remoteTracking
+}
+
+// preferredRemoteTracking returns the remote-tracking ref short name for a
+// bare branch name, preferring the branch's configured @{upstream} so fork
+// workflows (local main → upstream/main) translate correctly, and falling
+// back to origin/<bareName>. Returns "" when no remote-tracking counterpart
+// resolves locally.
+func preferredRemoteTracking(repoPath, bareName string) string {
+	if cfg, ok := readUpstreamConfig(repoPath, bareName); ok &&
+		strings.HasPrefix(cfg.qualified, "refs/remotes/") &&
+		refExists(repoPath, cfg.qualified) {
+		return cfg.short
+	}
+	if refExists(repoPath, "refs/remotes/origin/"+bareName) {
+		return "origin/" + bareName
+	}
+	return ""
 }
 
 func branchNameForConfig(repoPath, ref string) string {

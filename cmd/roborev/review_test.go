@@ -474,6 +474,38 @@ func TestReviewBranchFlag(t *testing.T) {
 		req := <-reqCh
 		assert.Equal(t, mainSHA+"..HEAD", req.GitRef)
 	})
+
+	t.Run("branch review uses origin counterpart when local main is stale after rebase", func(t *testing.T) {
+		// Regression: a feature branch rebased onto origin/main with a stale
+		// local main pointing at an older commit must review only the new
+		// branch commits — not the trunk commits that already landed on
+		// origin/main between the local main pointer and the rebase target.
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("base.txt", "base", "initial")
+		staleMainSHA := repo.Run("rev-parse", "HEAD")
+		// Two commits land on the trunk after local main was last updated.
+		repo.CommitFile("trunk1.txt", "t1", "trunk advance 1")
+		repo.CommitFile("trunk2.txt", "t2", "trunk advance 2")
+		freshOriginSHA := repo.Run("rev-parse", "HEAD")
+		// Rewind local main to simulate a stale checkout.
+		repo.Run("update-ref", "refs/heads/main", staleMainSHA)
+		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/origin/main", freshOriginSHA)
+		// Feature branch was rebased onto origin/main.
+		repo.Run("checkout", "-b", "feature", freshOriginSHA)
+		repo.CommitFile("feature.txt", "f", "feature commit")
+		repo.Run("config", "branch.feature.base", "main")
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		require.NoError(t, err)
+
+		req := <-reqCh
+		assert.Equal(t, freshOriginSHA+"..HEAD", req.GitRef,
+			"range must start at origin/main, not stale local main")
+	})
 }
 
 func TestReviewFastFlag(t *testing.T) {
@@ -713,6 +745,31 @@ func TestTryBranchReview(t *testing.T) {
 
 		_, ok := tryBranchReview(repo.Dir, "")
 		assert.False(t, ok, "local main tracking upstream/main must be treated as base branch")
+	})
+
+	t.Run("uses origin counterpart when local base is stale ancestor", func(t *testing.T) {
+		// Mirrors the rebase-onto-origin/main scenario for the post-commit
+		// hook path (tryBranchReview): branch.<feature>.base = main with a
+		// stale local main must resolve to origin/main, not the rewound
+		// pointer, so the hook enqueues only the real branch commits.
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("base.txt", "base", "initial")
+		staleMainSHA := repo.Run("rev-parse", "HEAD")
+		repo.CommitFile("trunk.txt", "t", "trunk advance")
+		freshOriginSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("update-ref", "refs/heads/main", staleMainSHA)
+		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.Run("update-ref", "refs/remotes/origin/main", freshOriginSHA)
+		repo.Run("checkout", "-b", "feature", freshOriginSHA)
+		repo.CommitFile("feature.txt", "f", "feature commit")
+		repo.Run("config", "branch.feature.base", "main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReview(repo.Dir, "")
+		require.True(t, ok, "expected branch review with stale local main")
+		assert.Equal(t, freshOriginSHA+"..HEAD", ref,
+			"range must start at origin/main, not stale local main")
 	})
 
 	t.Run("prefers branch upstream over default branch", func(t *testing.T) {
