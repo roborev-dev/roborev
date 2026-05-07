@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -734,10 +735,22 @@ func (m model) handleClipboardResultMsg(
 ) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.err = fmt.Errorf("copy failed: %w", msg.err)
+		m.setWarningFlash(clipboardErrorMessage(msg.err), 4*time.Second, msg.view)
 	} else {
 		m.setFlash("Copied to clipboard", 2*time.Second, msg.view)
 	}
 	return m, nil
+}
+
+// clipboardErrorMessage returns a user-friendly flash message for a
+// clipboard write failure. The atotto/clipboard library returns a verbose
+// "No clipboard utilities available..." error when no clipboard tool is
+// installed; we substitute a shorter, actionable hint in that case.
+func clipboardErrorMessage(err error) string {
+	if strings.Contains(err.Error(), "No clipboard utilities available") {
+		return "Copy failed: install xclip, wl-clipboard, or xsel"
+	}
+	return fmt.Sprintf("Copy failed: %v", err)
 }
 
 // handleSavePatchResultMsg processes save-patch-to-file results.

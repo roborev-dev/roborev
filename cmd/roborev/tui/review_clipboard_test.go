@@ -67,14 +67,47 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
+	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
+	m.width = 80
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusDone)),
+	}
 
 	m, _ = updateModel(t, m, clipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: viewQueue})
 
 	require.Error(t, m.err)
+	assert.Contains(m.err.Error(), "copy failed")
 
-	assert.Contains(t, m.err.Error(), "copy failed")
+	assert.True(m.flashWarning, "expected warning-styled flash")
+	assert.Equal("Copy failed: clipboard not available", m.flashMessage)
+	assert.Equal(viewQueue, m.flashView)
+	assert.False(m.flashExpiresAt.IsZero())
+
+	output := m.renderQueueView()
+	assert.Contains(output, "Copy failed: clipboard not available")
+}
+
+func TestTUIYankCopyShowsFriendlyMessageWhenNoClipboardTool(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.width = 80
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusDone)),
+	}
+
+	atottoErr := fmt.Errorf("No clipboard utilities available. Please install xsel, xclip, wl-clipboard or Termux:API add-on for termux-clipboard-get/set.")
+	m, _ = updateModel(t, m, clipboardResultMsg{err: atottoErr, view: viewQueue})
+
+	assert.True(m.flashWarning)
+	assert.Equal("Copy failed: install xclip, wl-clipboard, or xsel", m.flashMessage)
+
+	output := m.renderQueueView()
+	assert.Contains(output, "Copy failed: install xclip, wl-clipboard, or xsel")
 }
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
