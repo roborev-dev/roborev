@@ -466,18 +466,20 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			}
 		})
 
-	// This test corrupts a git object, so it must run last
-	// since the repo becomes unusable afterward.
+	// This test corrupts a branch's parent chain, so it must run last
+	// since the corrupt-range branch becomes unwalkable afterward.
 	t.Run("range with corrupt mid-commit enqueues normally",
 		func(t *testing.T) {
-			// Removing a mid-range commit object makes
-			// GetRangeCommits fail, so the exclusion block
-			// is skipped entirely and the job is enqueued.
-			// (The allRead guard is additional defense for
-			// transient I/O failures where GetRangeCommits
-			// succeeds but individual GetCommitInfo calls
-			// fail — git object corruption can't isolate
-			// those two calls.)
+			// Build a synthetic tip whose `parent` line points at a SHA
+			// that does not exist in the object store. GetRangeCommits
+			// walks back from tip, can't load the fake parent, and
+			// fails — same failure mode as a corrupted/missing object,
+			// but independent of the on-disk object layout (which is
+			// fragile on Windows due to packing and AV behavior).
+			// (The allRead guard is additional defense for transient
+			// I/O failures where GetRangeCommits succeeds but
+			// individual GetCommitInfo calls fail — git object
+			// corruption can't isolate those two calls.)
 			branchCmd := exec.Command("git", "-C", repoDir,
 				"checkout", "-b", "corrupt-range")
 			if out, err := branchCmd.CombinedOutput(); err != nil {
@@ -487,45 +489,36 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			}
 			base := testutil.GetHeadSHA(t, repoDir)
 
-			// Three excluded commits; corrupt the middle one.
-			for i := range 3 {
-				cmd := exec.Command("git", "-C", repoDir,
-					"commit", "--allow-empty",
-					"-m", fmt.Sprintf("[wip] corrupt %d", i))
-				if out, err := cmd.CombinedOutput(); err != nil {
-					require.Condition(t, func() bool {
-						return false
-					}, "commit failed: %v\n%s", err, out)
-				}
-			}
-			tip := testutil.GetHeadSHA(t, repoDir)
+			treeOut, err := exec.Command("git", "-C", repoDir,
+				"rev-parse", "HEAD^{tree}").Output()
+			require.NoError(t, err, "rev-parse tree")
+			tree := strings.TrimSpace(string(treeOut))
 
-			// Walk back to the middle commit (parent of tip).
-			midCmd := exec.Command("git", "-C", repoDir,
-				"rev-parse", "HEAD~1")
-			midOut, err := midCmd.Output()
-			if err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "rev-parse HEAD~1: %v", err)
-			}
-			mid := strings.TrimSpace(string(midOut))
+			const fakeParent = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+			content := fmt.Sprintf(
+				"tree %s\nparent %s\n"+
+					"author test <t@example.com> 1700000000 +0000\n"+
+					"committer test <t@example.com> 1700000000 +0000\n"+
+					"\nbroken parent\n",
+				tree, fakeParent)
+			hashCmd := exec.Command("git", "-C", repoDir,
+				"hash-object", "-w", "-t", "commit", "--stdin")
+			hashCmd.Stdin = strings.NewReader(content)
+			hashOut, err := hashCmd.Output()
+			require.NoError(t, err, "hash-object")
+			tip := strings.TrimSpace(string(hashOut))
 
-			objFile := filepath.Join(
-				repoDir, ".git", "objects",
-				mid[:2], mid[2:],
-			)
-			if err := os.Remove(objFile); err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "remove object: %v", err)
+			if out, err := exec.Command("git", "-C", repoDir,
+				"update-ref", "refs/heads/corrupt-range", tip).
+				CombinedOutput(); err != nil {
+				require.NoError(t, err, "update-ref: %s", out)
 			}
 
-			// ResolveSHA succeeds for both endpoints (base
-			// and tip are intact), but GetRangeCommits fails
-			// because git can't walk through the missing
-			// middle commit. The exclusion block is skipped
-			// and the job is enqueued normally.
+			// ResolveSHA succeeds for both endpoints (base and the
+			// synthetic tip both exist as objects), but
+			// GetRangeCommits fails because git can't load tip's
+			// fake parent. The exclusion block is skipped and the
+			// job is enqueued normally.
 			ref := base + ".." + tip
 			reqData := EnqueueRequest{
 				RepoPath: repoDir, GitRef: ref, Agent: "test",
