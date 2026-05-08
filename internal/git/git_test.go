@@ -1088,6 +1088,25 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 	})
 }
 
+func TestGetGeneratedFiles(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile(".gitattributes", "internal/daemon_client/*.gen.go linguist-generated=true\n")
+	repo.WriteFile("internal/daemon_client/client.gen.go", "generated\n")
+	repo.WriteFile("package-lock.json", "lock\n")
+	repo.WriteFile("src/keep.go", "package src\n")
+	repo.CommitAll("add generated files")
+
+	files, err := GetFilesChanged(repo.Dir, repo.HeadSHA())
+	require.NoError(t, err)
+
+	generated, err := GetGeneratedFiles(repo.Dir, repo.HeadSHA(), files)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"internal/daemon_client/client.gen.go",
+		"package-lock.json",
+	}, generated)
+}
+
 func TestGetDiffExcludesSlashedDirectory(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	repo.WriteFile("keep.txt", "keep\n")

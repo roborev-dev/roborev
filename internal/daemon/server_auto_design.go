@@ -146,6 +146,7 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 	// file/diff lookup doesn't apply.
 	diff := derefString(parent.DiffContent)
 	var files []string
+	var generatedFiles []string
 	if diff == "" && parent.JobType == storage.JobTypeReview && parent.GitRef != "" && parent.GitRef != "dirty" {
 		inputsIncomplete := false
 		var err error
@@ -163,17 +164,24 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 				files = nil
 			}
 		}
+		if !inputsIncomplete {
+			generatedFiles, err = git.GetGeneratedFiles(parent.RepoPath, parent.GitRef, files)
+			if err != nil {
+				log.Printf("auto-design: git.GetGeneratedFiles(%s) failed, continuing without generated-file category: %v", parent.GitRef, err)
+			}
+		}
 		if inputsIncomplete {
 			return s.enqueueClassifyJob(parent)
 		}
 	}
 
 	in := autotype.Input{
-		RepoPath:     parent.RepoPath,
-		GitRef:       parent.GitRef,
-		Diff:         diff,
-		Message:      classifierCommitMessage(parent.RepoPath, parent.GitRef, parent.CommitSubject),
-		ChangedFiles: files,
+		RepoPath:       parent.RepoPath,
+		GitRef:         parent.GitRef,
+		Diff:           diff,
+		Message:        classifierCommitMessage(parent.RepoPath, parent.GitRef, parent.CommitSubject),
+		ChangedFiles:   files,
+		GeneratedFiles: generatedFiles,
 	}
 
 	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})

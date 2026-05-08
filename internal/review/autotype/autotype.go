@@ -93,11 +93,12 @@ type Decision struct {
 
 // Input is what the heuristics and classifier operate on.
 type Input struct {
-	RepoPath     string
-	GitRef       string
-	Diff         string
-	Message      string
-	ChangedFiles []string
+	RepoPath       string
+	GitRef         string
+	Diff           string
+	Message        string
+	ChangedFiles   []string
+	GeneratedFiles []string
 }
 
 // Classifier returns a yes/no + reason for ambiguous cases. Implementations
@@ -126,6 +127,10 @@ func Classify(ctx context.Context, in Input, h Heuristics, cls Classifier) (Deci
 			Method: MethodHeuristic,
 			Reason: sanitizeReason(fmt.Sprintf(format, a...)),
 		}
+	}
+
+	if allGenerated(in.ChangedFiles, in.GeneratedFiles) {
+		return heuristic(false, "generated change"), nil
 	}
 
 	for _, f := range in.ChangedFiles {
@@ -185,4 +190,20 @@ func Classify(ctx context.Context, in Input, h Heuristics, cls Classifier) (Deci
 		Method: MethodClassifier,
 		Reason: sanitizeReason(reason),
 	}, nil
+}
+
+func allGenerated(files, generated []string) bool {
+	if len(files) == 0 || len(generated) == 0 {
+		return false
+	}
+	generatedSet := make(map[string]struct{}, len(generated))
+	for _, f := range generated {
+		generatedSet[f] = struct{}{}
+	}
+	for _, f := range files {
+		if _, ok := generatedSet[f]; !ok {
+			return false
+		}
+	}
+	return true
 }

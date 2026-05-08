@@ -214,6 +214,34 @@ func TestE2EAutoDesign_HeuristicSkip_DocsOnly(t *testing.T) {
 	assert.EqualValues(1, snap.SkippedHeuristic)
 }
 
+func TestE2EAutoDesign_HeuristicSkip_GeneratedOnly(t *testing.T) {
+	e := newAutoDesignE2E(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(e.repo.Path(), ".gitattributes"),
+		[]byte("internal/daemon_client/*.gen.go linguist-generated=true\n"), 0o644))
+	e.repo.RunGit("add", ".gitattributes")
+	e.repo.RunGit("commit", "-m", "chore: mark generated client")
+
+	var body strings.Builder
+	for range 600 {
+		body.WriteString("// generated line\n")
+	}
+	sha := e.repo.CommitFile("internal/daemon_client/client.gen.go", body.String(),
+		"feat: refresh generated client")
+
+	e.enqueueReviewFor(sha, "feat: refresh generated client")
+
+	got := e.eventuallyFindAutoDesign(sha)
+	assert := assert.New(t)
+	assert.Equal(storage.JobStatusSkipped, got.Status)
+	assert.Equal("review", got.JobType)
+	assert.Contains(got.SkipReason, "generated")
+
+	snap := AutoDesignMetricsSnapshot()
+	assert.EqualValues(1, snap.SkippedHeuristic)
+	assert.EqualValues(0, snap.TriggeredHeuristic)
+}
+
 func TestE2EAutoDesign_HeuristicSkip_ConventionalPrefix(t *testing.T) {
 	// Separate coverage for the skip_message_patterns branch (docs:,
 	// chore:, etc.) — asserting that a conventional-prefix commit

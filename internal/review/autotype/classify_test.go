@@ -95,6 +95,19 @@ func TestClassify_SkipAllMatchPaths(t *testing.T) {
 	assert.Contains(t, d.Reason, "doc/test-only")
 }
 
+func TestClassify_SkipAllGeneratedFiles(t *testing.T) {
+	d, err := Classify(context.Background(), Input{
+		ChangedFiles:   []string{"internal/daemon_client/client.gen.go", "package-lock.json"},
+		GeneratedFiles: []string{"internal/daemon_client/client.gen.go", "package-lock.json"},
+		Diff:           strings.Repeat("+line\n", 600),
+		Message:        "feat: refresh generated client",
+	}, newTestHeuristics(), nil)
+	require.NoError(t, err)
+	assert.False(t, d.Run)
+	assert.Equal(t, MethodHeuristic, d.Method)
+	assert.Contains(t, d.Reason, "generated")
+}
+
 func TestClassify_SkipMessage(t *testing.T) {
 	d, err := Classify(context.Background(), Input{
 		ChangedFiles: []string{"src/foo.go"},

@@ -768,6 +768,14 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 	files, filesErr := gitpkg.GetFilesChanged(repo.RootPath, headSHA)
 	diff, diffErr := gitpkg.GetDiff(repo.RootPath, headSHA)
 	inputsIncomplete := filesErr != nil || diffErr != nil
+	var generatedFiles []string
+	if !inputsIncomplete {
+		var generatedErr error
+		generatedFiles, generatedErr = gitpkg.GetGeneratedFiles(repo.RootPath, headSHA, files)
+		if generatedErr != nil {
+			log.Printf("CI poller: git.GetGeneratedFiles(%s) failed, continuing without generated-file category: %v", headSHA, generatedErr)
+		}
+	}
 
 	var commitID int64
 	subject := ""
@@ -793,11 +801,12 @@ func (p *CIPoller) maybeDispatchAutoDesignForCI(ctx context.Context, repo *stora
 	}
 
 	in := autotype.Input{
-		RepoPath:     repo.RootPath,
-		GitRef:       headSHA,
-		Diff:         diff,
-		Message:      classifierCommitMessage(repo.RootPath, headSHA, subject),
-		ChangedFiles: files,
+		RepoPath:       repo.RootPath,
+		GitRef:         headSHA,
+		Diff:           diff,
+		Message:        classifierCommitMessage(repo.RootPath, headSHA, subject),
+		ChangedFiles:   files,
+		GeneratedFiles: generatedFiles,
 	}
 
 	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})

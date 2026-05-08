@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // normalizeMSYSPath converts MSYS-style paths (e.g., /c/Users/...) to Windows paths (C:\Users\...).
@@ -256,6 +258,79 @@ func GetFilesChanged(
 	}
 
 	return files, nil
+}
+
+// GetGeneratedFiles returns the subset of files that should be categorized as
+// generated. It combines repo-authored Linguist attributes with roborev's
+// built-in generated-artifact patterns such as lockfiles.
+func GetGeneratedFiles(repoPath, source string, files []string) ([]string, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	generated := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		if isBuiltinGeneratedPath(file) {
+			generated[file] = struct{}{}
+		}
+	}
+
+	attrGenerated, err := linguistGeneratedFiles(repoPath, source, files)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range attrGenerated {
+		generated[file] = struct{}{}
+	}
+
+	out := make([]string, 0, len(generated))
+	for _, file := range files {
+		if _, ok := generated[file]; ok {
+			out = append(out, file)
+		}
+	}
+	return out, nil
+}
+
+func linguistGeneratedFiles(repoPath, source string, files []string) ([]string, error) {
+	args := []string{"check-attr", "-z"}
+	if source != "" {
+		args = append(args, "--source", source)
+	}
+	args = append(args, "--stdin", "linguist-generated")
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(strings.Join(files, "\x00") + "\x00")
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git check-attr linguist-generated: %w", err)
+	}
+
+	parts := strings.Split(string(out), "\x00")
+	generated := make([]string, 0)
+	for i := 0; i+2 < len(parts); i += 3 {
+		file, attr, value := parts[i], parts[i+1], strings.ToLower(parts[i+2])
+		if attr != "linguist-generated" {
+			continue
+		}
+		if value == "set" || value == "true" {
+			generated = append(generated, file)
+		}
+	}
+	return generated, nil
+}
+
+func isBuiltinGeneratedPath(file string) bool {
+	path := filepath.ToSlash(file)
+	for _, pattern := range builtinGeneratedGlobs {
+		ok, err := doublestar.Match(pattern, path)
+		if err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // GetStat returns the stat summary for a commit
@@ -712,48 +787,58 @@ func GetDirtyDiff(
 	return result.String(), nil
 }
 
+// builtinGeneratedGlobs contains file patterns that are generated artifacts
+// even without a Linguist attribute in the repo.
+var builtinGeneratedGlobs = []string{
+	// JavaScript / Node
+	"**/package-lock.json",
+	"**/yarn.lock",
+	"**/pnpm-lock.yaml",
+	"**/bun.lockb",
+	"**/bun.lock",
+	// Python
+	"**/uv.lock",
+	"**/poetry.lock",
+	"**/Pipfile.lock",
+	"**/pdm.lock",
+	// Go
+	"**/go.sum",
+	// Rust
+	"**/Cargo.lock",
+	"**/cargo.lock", // lowercase for case-insensitive filesystems
+	// Ruby
+	"**/Gemfile.lock",
+	// PHP
+	"**/composer.lock",
+	// .NET
+	"**/packages.lock.json",
+	// Dart / Flutter
+	"**/pubspec.lock",
+	// Elixir
+	"**/mix.lock",
+	// Swift
+	"**/Package.resolved",
+	// iOS / macOS
+	"**/Podfile.lock",
+	// Nix
+	"**/flake.lock",
+	// Directories — trailing /** matches all files inside at any depth
+	"**/.beads/**",
+	"**/.gocache/**",
+	"**/.cache/**",
+}
+
 // excludedPathPatterns contains pathspec patterns for files that should be excluded from diffs.
 // These are typically generated files that add noise to code reviews.
 // Uses :(exclude,glob)**/ form so patterns match at any directory depth.
 // Directory patterns use :(exclude) without glob since git recognizes them as trees.
-var excludedPathPatterns = []string{
-	// JavaScript / Node
-	":(exclude,glob)**/package-lock.json",
-	":(exclude,glob)**/yarn.lock",
-	":(exclude,glob)**/pnpm-lock.yaml",
-	":(exclude,glob)**/bun.lockb",
-	":(exclude,glob)**/bun.lock",
-	// Python
-	":(exclude,glob)**/uv.lock",
-	":(exclude,glob)**/poetry.lock",
-	":(exclude,glob)**/Pipfile.lock",
-	":(exclude,glob)**/pdm.lock",
-	// Go
-	":(exclude,glob)**/go.sum",
-	// Rust
-	":(exclude,glob)**/Cargo.lock",
-	":(exclude,glob)**/cargo.lock", // lowercase for case-insensitive filesystems
-	// Ruby
-	":(exclude,glob)**/Gemfile.lock",
-	// PHP
-	":(exclude,glob)**/composer.lock",
-	// .NET
-	":(exclude,glob)**/packages.lock.json",
-	// Dart / Flutter
-	":(exclude,glob)**/pubspec.lock",
-	// Elixir
-	":(exclude,glob)**/mix.lock",
-	// Swift
-	":(exclude,glob)**/Package.resolved",
-	// iOS / macOS
-	":(exclude,glob)**/Podfile.lock",
-	// Nix
-	":(exclude,glob)**/flake.lock",
-	// Directories — trailing /** matches all files inside at any depth
-	":(exclude,glob)**/.beads/**",
-	":(exclude,glob)**/.gocache/**",
-	":(exclude,glob)**/.cache/**",
-}
+var excludedPathPatterns = func() []string {
+	out := make([]string, 0, len(builtinGeneratedGlobs))
+	for _, pattern := range builtinGeneratedGlobs {
+		out = append(out, ":(exclude,glob)"+pattern)
+	}
+	return out
+}()
 
 // FormatExcludeArgs converts user-provided exclude patterns (filenames
 // or globs) into git pathspec arguments. Plain names without path
