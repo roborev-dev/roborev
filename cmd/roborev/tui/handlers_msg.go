@@ -546,8 +546,22 @@ func (m model) handleLogOutputMsg(
 	}
 	if msg.err != nil {
 		if errors.Is(msg.err, errNoLog) {
+			// Auto-design-router rows (running classify, terminal
+			// skipped, failed/canceled classify) never produce a
+			// streamed agent log because the classifier is a
+			// one-shot SchemaAgent.Decide call. Stay in the log
+			// view so renderLogView's classifyReasoningLines
+			// header can show the verdict, skip reason, and any
+			// classifier error — bouncing back to the queue
+			// would hide that information behind a flash.
+			job := m.logViewLookupJob()
+			if job != nil && len(classifyReasoningLines(job, m.width)) > 0 {
+				m.logLines = []logLine{}
+				m.logStreaming = false
+				return m, nil
+			}
 			flash := "No log available for this job"
-			if job := m.logViewLookupJob(); job != nil &&
+			if job != nil &&
 				job.Status == storage.JobStatusFailed &&
 				job.Error != "" {
 				flash = fmt.Sprintf(

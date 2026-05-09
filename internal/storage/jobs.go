@@ -843,7 +843,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
-		       j.command_line, COALESCE(j.min_severity, '')
+		       j.command_line, COALESCE(j.min_severity, ''),
+		       j.skip_reason, j.source
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -882,7 +883,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
-			&fields.CommandLine, &fields.MinSeverity)
+			&fields.CommandLine, &fields.MinSeverity,
+			&fields.SkipReason, &fields.Source)
 		if err != nil {
 			return nil, err
 		}
