@@ -146,7 +146,18 @@ func classifyReasoningLines(job *storage.ReviewJob, width int) []string {
 	var verdict string
 	switch {
 	case isAutoDesignSkipped:
-		verdict = "Auto-design verdict: no design review needed"
+		// completeClassifyAsSkip converts a classifier execution
+		// failure into a skipped row with job.Error populated. A
+		// clean "no design review needed" verdict comes from
+		// applyClassifyVerdict and leaves job.Error empty. Don't
+		// label a degraded skip as a clean verdict — operators
+		// reading the log header need to see that the classifier
+		// errored.
+		if job.Error != "" {
+			verdict = "Auto-design classifier failed (skipped)"
+		} else {
+			verdict = "Auto-design verdict: no design review needed"
+		}
 	case isClassify:
 		// classify rows can sit in queued/running, or end in
 		// failed/canceled when something went wrong before the

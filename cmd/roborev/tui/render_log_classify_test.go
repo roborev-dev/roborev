@@ -81,6 +81,8 @@ func TestClassifyReasoningLines(t *testing.T) {
 			notWant: []string{"in progress"},
 		},
 		{
+			// Clean classifier verdict (applyClassifyVerdict path):
+			// MarkClassifyAsSkippedDesign with empty errorDetail.
 			name: "skipped auto_design with reason",
 			job: &storage.ReviewJob{
 				ID:         3,
@@ -89,9 +91,15 @@ func TestClassifyReasoningLines(t *testing.T) {
 				Source:     "auto_design",
 				SkipReason: "trivial diff",
 			},
-			want: []string{"no design review needed", "trivial diff"},
+			want:    []string{"no design review needed", "trivial diff"},
+			notWant: []string{"failed"},
 		},
 		{
+			// Daemon path: classifier execution fails →
+			// completeClassifyAsSkip → MarkClassifyAsSkippedDesign
+			// produces a row with status=skipped, source=auto_design,
+			// AND a non-empty Error. Must NOT be labeled as a clean
+			// "no design review needed" verdict.
 			name: "skipped auto_design with classifier error",
 			job: &storage.ReviewJob{
 				ID:         4,
@@ -102,9 +110,12 @@ func TestClassifyReasoningLines(t *testing.T) {
 				Error:      "classify_agent \"codex\" not registered",
 			},
 			want: []string{
-				"no design review needed",
+				"classifier failed",
 				"classifier unavailable",
 				"not registered",
+			},
+			notWant: []string{
+				"no design review needed",
 			},
 		},
 		{
