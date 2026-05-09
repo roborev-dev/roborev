@@ -15,6 +15,7 @@ func TestClassifyReasoningLines(t *testing.T) {
 		name      string
 		job       *storage.ReviewJob
 		want      []string
+		notWant   []string
 		wantEmpty bool
 	}{
 		{
@@ -40,6 +41,44 @@ func TestClassifyReasoningLines(t *testing.T) {
 				Source:  "auto_design",
 			},
 			want: []string{"in progress"},
+		},
+		{
+			name: "queued classify",
+			job: &storage.ReviewJob{
+				ID:      20,
+				JobType: storage.JobTypeClassify,
+				Status:  storage.JobStatusQueued,
+				Source:  "auto_design",
+			},
+			want: []string{"in progress"},
+		},
+		{
+			// Terminal classify failures must not claim "in progress";
+			// the operator pressing 'l' needs the actual status.
+			name: "failed classify",
+			job: &storage.ReviewJob{
+				ID:      21,
+				JobType: storage.JobTypeClassify,
+				Status:  storage.JobStatusFailed,
+				Source:  "auto_design",
+				Error:   "exec: classifier: timeout after 30s",
+			},
+			want: []string{"failed", "timeout"},
+			notWant: []string{
+				"in progress",
+				"no design review needed",
+			},
+		},
+		{
+			name: "canceled classify",
+			job: &storage.ReviewJob{
+				ID:      22,
+				JobType: storage.JobTypeClassify,
+				Status:  storage.JobStatusCanceled,
+				Source:  "auto_design",
+			},
+			want:    []string{"canceled"},
+			notWant: []string{"in progress"},
 		},
 		{
 			name: "skipped auto_design with reason",
@@ -108,6 +147,10 @@ func TestClassifyReasoningLines(t *testing.T) {
 			for _, want := range tt.want {
 				assert.Contains(t, joined, want,
 					"reasoning header should mention %q", want)
+			}
+			for _, notWant := range tt.notWant {
+				assert.NotContains(t, joined, notWant,
+					"reasoning header should NOT mention %q", notWant)
 			}
 		})
 	}

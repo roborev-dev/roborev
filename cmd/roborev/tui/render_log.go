@@ -145,11 +145,24 @@ func classifyReasoningLines(job *storage.ReviewJob, width int) []string {
 
 	var verdict string
 	switch {
-	case isClassify && job.Status != storage.JobStatusSkipped:
-		// classify row that hasn't transitioned yet (queued/running)
-		verdict = "Auto-design classifier in progress"
 	case isAutoDesignSkipped:
 		verdict = "Auto-design verdict: no design review needed"
+	case isClassify:
+		// classify rows can sit in queued/running, or end in
+		// failed/canceled when something went wrong before the
+		// classifier could MarkClassifyAsSkippedDesign or
+		// PromoteClassifyToDesignReview the row. Distinguish these so
+		// 'l' on a failed classifier doesn't claim it's still running.
+		switch job.Status {
+		case storage.JobStatusQueued, storage.JobStatusRunning:
+			verdict = "Auto-design classifier in progress"
+		case storage.JobStatusFailed:
+			verdict = "Auto-design classifier failed"
+		case storage.JobStatusCanceled:
+			verdict = "Auto-design classifier canceled"
+		default:
+			verdict = "Auto-design classifier: " + string(job.Status)
+		}
 	default:
 		verdict = "Auto-design classifier"
 	}
