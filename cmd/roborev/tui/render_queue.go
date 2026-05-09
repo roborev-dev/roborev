@@ -43,7 +43,13 @@ func (m model) queueHelpRows() [][]helpItem {
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"})
+	row2 = append(row2, helpItem{"h", "hide"})
+	if m.shouldShowClassifyJobs() {
+		row2 = append(row2, helpItem{"s", "hide classify"})
+	} else {
+		row2 = append(row2, helpItem{"s", "show classify"})
+	}
+	row2 = append(row2, helpItem{"D", "focus"})
 	if m.tasksWorkflowEnabled() {
 		row2 = append(row2, helpItem{"T", "tasks"})
 	}

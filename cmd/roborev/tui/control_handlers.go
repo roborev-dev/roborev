@@ -254,6 +254,7 @@ func (m model) handleCtrlSetFilter(
 	m.fetchSeq++
 	m.queueColGen++
 	m.loadingJobs = true
+	m.recomputeClassifyEffective()
 	return m, controlResponse{OK: true}, m.fetchJobs()
 }
 
@@ -299,6 +300,7 @@ func (m model) handleCtrlClearFilter(
 	m.fetchSeq++
 	m.queueColGen++
 	m.loadingJobs = true
+	m.recomputeClassifyEffective()
 	return m, controlResponse{OK: true}, m.fetchJobs()
 }
 

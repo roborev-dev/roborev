@@ -59,18 +59,39 @@ func (e ListJobsParamsClosed) Valid() bool {
 	}
 }
 
+// Defines values for ListJobsParamsHideClassifyJobs.
+const (
+	ListJobsParamsHideClassifyJobsEmpty ListJobsParamsHideClassifyJobs = ""
+	ListJobsParamsHideClassifyJobsFalse ListJobsParamsHideClassifyJobs = "false"
+	ListJobsParamsHideClassifyJobsTrue  ListJobsParamsHideClassifyJobs = "true"
+)
+
+// Valid indicates whether the value is a known member of the ListJobsParamsHideClassifyJobs enum.
+func (e ListJobsParamsHideClassifyJobs) Valid() bool {
+	switch e {
+	case ListJobsParamsHideClassifyJobsEmpty:
+		return true
+	case ListJobsParamsHideClassifyJobsFalse:
+		return true
+	case ListJobsParamsHideClassifyJobsTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetSummaryParamsAll.
 const (
-	False GetSummaryParamsAll = "false"
-	True  GetSummaryParamsAll = "true"
+	GetSummaryParamsAllFalse GetSummaryParamsAll = "false"
+	GetSummaryParamsAllTrue  GetSummaryParamsAll = "true"
 )
 
 // Valid indicates whether the value is a known member of the GetSummaryParamsAll enum.
 func (e GetSummaryParamsAll) Valid() bool {
 	switch e {
-	case False:
+	case GetSummaryParamsAllFalse:
 		return true
-	case True:
+	case GetSummaryParamsAllTrue:
 		return true
 	default:
 		return false
@@ -465,9 +486,10 @@ type RepoSummary struct {
 
 // RepoWithCount defines model for RepoWithCount.
 type RepoWithCount struct {
-	Count    int64  `json:"count"`
-	Name     string `json:"name"`
-	RootPath string `json:"root_path"`
+	Count    int64   `json:"count"`
+	Identity *string `json:"identity,omitempty"`
+	Name     string  `json:"name"`
+	RootPath string  `json:"root_path"`
 }
 
 // RerunJobOutputBody defines model for RerunJobOutputBody.
@@ -696,6 +718,9 @@ type ListJobsParams struct {
 	// ExcludeJobType Exclude jobs of this type
 	ExcludeJobType *string `form:"exclude_job_type,omitempty" json:"exclude_job_type,omitempty"`
 
+	// HideClassifyJobs Hide auto-design-router rows (job_type=classify and status=skipped)
+	HideClassifyJobs *ListJobsParamsHideClassifyJobs `form:"hide_classify_jobs,omitempty" json:"hide_classify_jobs,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `form:"repo_prefix,omitempty" json:"repo_prefix,omitempty"`
 
@@ -714,6 +739,9 @@ type ListJobsParamsBranchIncludeEmpty string
 
 // ListJobsParamsClosed defines parameters for ListJobs.
 type ListJobsParamsClosed string
+
+// ListJobsParamsHideClassifyJobs defines parameters for ListJobs.
+type ListJobsParamsHideClassifyJobs string
 
 // ListReposParams defines parameters for ListRepos.
 type ListReposParams struct {
@@ -2319,6 +2347,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		if params.ExcludeJobType != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "exclude_job_type", *params.ExcludeJobType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.HideClassifyJobs != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "hide_classify_jobs", *params.HideClassifyJobs, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

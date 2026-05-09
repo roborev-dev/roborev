@@ -686,6 +686,7 @@ type listJobsOptions struct {
 	closed             *bool
 	jobType            string
 	excludeJobType     string
+	hideClassifyJobs   bool
 	repoPrefix         string
 	beforeCursor       *int64
 }
@@ -722,6 +723,16 @@ func WithJobType(jobType string) ListJobsOption {
 // WithExcludeJobType excludes jobs of the given type.
 func WithExcludeJobType(jobType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.excludeJobType = jobType }
+}
+
+// WithHideClassifyJobs excludes auto-design-router byproducts: rows
+// with job_type='classify' (the routing decision itself) and rows
+// with status='skipped' (the terminal state for skipped design
+// reviews). Both clauses are scoped to source='auto_design' so a
+// future pipeline that creates classify jobs or skipped jobs for a
+// different reason is not silently swallowed by this filter.
+func WithHideClassifyJobs() ListJobsOption {
+	return func(o *listJobsOptions) { o.hideClassifyJobs = true }
 }
 
 // WithBeforeCursor filters jobs to those with ID < cursor (for cursor pagination).
@@ -798,6 +809,20 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	if o.excludeJobType != "" {
 		conditions = append(conditions, "j.job_type != ?")
 		args = append(args, o.excludeJobType)
+	}
+	if o.hideClassifyJobs {
+		// source is nullable, so guard the comparison with COALESCE.
+		// Without it, j.source = 'auto_design' returns NULL for rows
+		// where source IS NULL, NOT (TRUE AND NULL) is also NULL, and
+		// the row gets silently dropped from results.
+		//
+		// Both predicates are scoped to source='auto_design' so a
+		// future pipeline that adopts classify jobs or status='skipped'
+		// for an unrelated reason isn't silently hidden.
+		conditions = append(conditions,
+			"NOT (COALESCE(j.source, '') = 'auto_design' AND (j.job_type = ? OR j.status = ?))")
+		args = append(args,
+			JobTypeClassify, string(JobStatusSkipped))
 	}
 	if o.beforeCursor != nil {
 		conditions = append(conditions, "j.id < ?")

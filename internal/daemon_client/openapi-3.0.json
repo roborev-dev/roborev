@@ -1221,6 +1221,9 @@
             "format": "int64",
             "type": "integer"
           },
+          "identity": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -2566,6 +2569,21 @@
             "name": "exclude_job_type",
             "schema": {
               "description": "Exclude jobs of this type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Hide auto-design-router rows (job_type=classify and status=skipped)",
+            "explode": false,
+            "in": "query",
+            "name": "hide_classify_jobs",
+            "schema": {
+              "description": "Hide auto-design-router rows (job_type=classify and status=skipped)",
+              "enum": [
+                "true",
+                "false",
+                ""
+              ],
               "type": "string"
             }
           },

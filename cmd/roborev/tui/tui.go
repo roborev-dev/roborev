@@ -316,6 +316,20 @@ type model struct {
 	activeBranchFilter string   // Empty = show all, otherwise branch name to filter by
 	filterStack        []string // Order of applied filters: "repo", "branch" - for escape to pop in order
 	hideClosed         bool     // When true, hide jobs with closed reviews
+	// globalCfg is cached at startup and consulted at fetch time so that
+	// show_classify_jobs can be resolved against whichever repo is the
+	// currently active single-repo filter (rather than baked in once
+	// from the cwd at launch).
+	globalCfg *config.Config
+	// classifyOverride is a session-level toggle that overrides the
+	// config-derived show_classify_jobs value. nil = follow config;
+	// non-nil = use the override regardless of config.
+	classifyOverride *bool
+	// classifyEffective caches the resolved show-classify-jobs value
+	// so render and fetch paths don't hit disk via LoadRepoConfig on
+	// every paint or event. Recomputed by recomputeClassifyEffective
+	// whenever classifyOverride or activeRepoFilter changes.
+	classifyEffective bool
 
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
@@ -482,6 +496,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	colOrder := parseColumnOrder(nil)
 	taskColOrder := parseTaskColumnOrder(nil)
 	var cwdRepoRoot, cwdRepoIdentity, cwdBranch string
+	var globalCfg *config.Config
 
 	if !opt.disableExternalIO {
 		// Read daemon version from runtime file
@@ -491,6 +506,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 
 		// Load preferences from config
 		if cfg, err := config.LoadGlobal(); err == nil {
+			globalCfg = cfg
 			hideClosed = cfg.HideClosedByDefault
 			autoFilterRepo = cfg.AutoFilterRepo
 			autoFilterBranch = cfg.AutoFilterBranch
@@ -583,7 +599,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	}
 
 	httpClient := ep.HTTPClient(10 * time.Second)
-	return model{
+	m := model{
 		endpoint:            ep,
 		daemonVersion:       daemonVersion,
 		client:              httpClient,
@@ -596,6 +612,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		loadingJobs:         true, // Init() calls fetchJobs, so mark as loading
 		loadingStatus:       true, // Init() calls fetchStatus, so mark as loading
 		hideClosed:          hideClosed,
+		globalCfg:           globalCfg,
 		activeRepoFilter:    activeRepoFilter,
 		autoRepoFilter:      autoRepoFilterActive,
 		activeBranchFilter:  activeBranchFilter,
@@ -624,6 +641,10 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		queueColCache:       &colWidthCache{gen: -1},
 		taskColCache:        &colWidthCache{gen: -1},
 	}
+	// Seed the cached classify-visibility decision once so render and
+	// fetch can read m.classifyEffective without hitting disk.
+	m.recomputeClassifyEffective()
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -648,6 +669,42 @@ func (m model) tasksWorkflowEnabled() bool {
 
 func (m model) tasksDisabledMessage() string {
 	return "Tasks workflow disabled. Set advanced.tasks_enabled=true in global config to enable it."
+}
+
+// shouldShowClassifyJobs returns the cached effective value computed
+// by recomputeClassifyEffective. Hot path: callable from render and
+// fetch without filesystem I/O.
+func (m model) shouldShowClassifyJobs() bool {
+	return m.classifyEffective
+}
+
+// recomputeClassifyEffective resolves whether the queue should include
+// auto-design-router classifier rows and skipped design rows, and
+// caches the result in m.classifyEffective.
+//
+// Precedence: a session-level toggle (the 's' key) takes priority over
+// config. When unset, falls back to the per-repo override if the queue
+// is filtered to a single repo, otherwise the global setting. This
+// avoids the surprise of one repo's override leaking into a multi-repo
+// view while still letting the user flip the toggle on the fly.
+//
+// Call this from any handler that mutates classifyOverride or
+// activeRepoFilter. It only loads repo config from disk under the
+// single-repo-filter branch, so amortizing it to filter/toggle changes
+// keeps the render and fetch paths I/O-free.
+func (m *model) recomputeClassifyEffective() {
+	switch {
+	case m.classifyOverride != nil:
+		m.classifyEffective = *m.classifyOverride
+	case len(m.activeRepoFilter) == 1:
+		m.classifyEffective = config.ResolveShowClassifyJobs(
+			m.activeRepoFilter[0], m.globalCfg,
+		)
+	case m.globalCfg != nil:
+		m.classifyEffective = m.globalCfg.ShowClassifyJobs
+	default:
+		m.classifyEffective = false
+	}
 }
 
 // getDisplayName returns the display name for a repo, using the cache.

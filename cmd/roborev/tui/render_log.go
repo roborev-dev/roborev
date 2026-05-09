@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 func (m model) renderLogView() string {
@@ -38,6 +39,19 @@ func (m model) renderLogView() string {
 			cmdText = runewidth.Truncate(cmdText, m.width, "…")
 		}
 		b.WriteString(statusStyle.Render(cmdText))
+		b.WriteString("\x1b[K\n")
+		headerLines++
+	}
+
+	// For auto-design-router rows (classify-typed, or terminal skipped
+	// design reviews) the streamed agent log is empty — the classifier
+	// runs as a one-shot SchemaAgent.Decide call, not a streaming chat.
+	// Surface the classifier's verdict and reasoning here so 'l' on a
+	// classify/skipped row actually shows something useful. Truncated
+	// to m.width so each returned string occupies exactly one terminal
+	// row, keeping the log content area aligned with logVisibleLines.
+	for _, line := range classifyReasoningLines(job, m.width) {
+		b.WriteString(line)
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
@@ -105,6 +119,95 @@ func (m model) renderLogView() string {
 	return b.String()
 }
 
+// classifyReasoningLines returns pre-styled header lines describing the
+// auto-design-router classifier's verdict for a classify-typed row or a
+// terminal skipped design row. Returns nil for jobs that aren't part of
+// the auto-design pipeline so the log view leaves their layout alone.
+//
+// Both classify and skipped triggers require source='auto_design'; a
+// future pipeline that adopts the classify job_type or the skipped
+// status for unrelated reasons should not be mislabeled as
+// auto-design output.
+//
+// Each returned string is truncated to fit width so it occupies exactly
+// one terminal row. width <= 0 disables truncation (useful for tests or
+// when the caller doesn't know the terminal width yet); the styled
+// output reflects the raw text in that case.
+func classifyReasoningLines(job *storage.ReviewJob, width int) []string {
+	if job == nil || job.Source != "auto_design" {
+		return nil
+	}
+	isClassify := job.JobType == storage.JobTypeClassify
+	isAutoDesignSkipped := job.Status == storage.JobStatusSkipped
+	if !isClassify && !isAutoDesignSkipped {
+		return nil
+	}
+
+	var verdict string
+	switch {
+	case isClassify && job.Status != storage.JobStatusSkipped:
+		// classify row that hasn't transitioned yet (queued/running)
+		verdict = "Auto-design classifier in progress"
+	case isAutoDesignSkipped:
+		verdict = "Auto-design verdict: no design review needed"
+	default:
+		verdict = "Auto-design classifier"
+	}
+
+	render := func(text string) string {
+		// Fold embedded newlines/tabs to single spaces so each
+		// rendered line occupies one terminal row. job.Error stores
+		// raw classifier stderr/error text and routinely contains
+		// '\n'; without this, multiline blobs would wrap across
+		// terminal rows while logVisibleLines reserves only one row
+		// per returned line, pushing status/help off the screen.
+		text = foldWhitespace(text)
+		if width > 0 && runewidth.StringWidth(text) > width {
+			text = runewidth.Truncate(text, width, "…")
+		}
+		return statusStyle.Render(text)
+	}
+
+	var lines []string
+	lines = append(lines, render(verdict))
+	if job.SkipReason != "" {
+		lines = append(lines, render("Reason: "+job.SkipReason))
+	}
+	if job.Error != "" {
+		lines = append(lines, render("Detail: "+job.Error))
+	}
+	return lines
+}
+
+// foldWhitespace replaces embedded newlines, carriage returns, and
+// tabs with a single space and collapses runs of resulting whitespace.
+// Used to keep one-row-per-line invariants when rendering raw error or
+// reason text into the log view header.
+func foldWhitespace(s string) string {
+	if !strings.ContainsAny(s, "\n\r\t") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	prevSpace := false
+	for _, r := range s {
+		switch r {
+		case '\n', '\r', '\t':
+			r = ' '
+		}
+		if r == ' ' {
+			if prevSpace {
+				continue
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func formatHelpLine(key, desc string) string {
 	return fmt.Sprintf("  %-14s %s", key, desc)
 }
@@ -147,6 +250,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: []struct{ key, desc string }{
 				{"f", "Filter by repository/branch"},
 				{"h", "Toggle hide closed/failed"},
+				{"s", "Toggle classify rows (auto-design router)"},
 				{"esc", "Clear filters (one at a time)"},
 			},
 		},

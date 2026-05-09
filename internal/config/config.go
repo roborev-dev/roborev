@@ -197,6 +197,7 @@ type Config struct {
 	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
 	AutoFilterRepo         bool     `toml:"auto_filter_repo" comment:"Automatically filter the TUI queue to the current repo."`
 	AutoFilterBranch       bool     `toml:"auto_filter_branch" comment:"Automatically filter the TUI queue to the current branch."`
+	ShowClassifyJobs       bool     `toml:"show_classify_jobs" comment:"Show auto-design-review classifier rows (and skipped design rows) in the TUI queue. Off by default to reduce noise."`
 	MouseEnabled           bool     `toml:"mouse_enabled" comment:"Enable mouse support in the TUI."`          // Enable mouse capture and mouse-driven TUI interactions
 	TabWidth               int      `toml:"tab_width"`                                                         // Tab expansion width for TUI rendering (default: 2)
 	HiddenColumns          []string `toml:"hidden_columns" comment:"Queue columns to hide in the TUI."`        // Column names to hide in queue table (e.g. ["branch", "agent"])
@@ -1070,6 +1071,7 @@ type RepoConfig struct {
 
 	// Behavior
 	AutoClosePassingReviews *bool `toml:"auto_close_passing_reviews" comment:"Automatically close reviews that pass with no findings in this repo."`
+	ShowClassifyJobs        *bool `toml:"show_classify_jobs" comment:"Override whether the TUI queue shows auto-design-review classifier rows for this repo. Omit to inherit."`
 
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
@@ -1538,6 +1540,23 @@ func ResolveAutoClosePassingReviews(repoPath string, globalCfg *Config) bool {
 	var globalVal bool
 	if globalCfg != nil {
 		globalVal = globalCfg.AutoClosePassingReviews
+	}
+	return resolveBool(globalVal, repoVal)
+}
+
+// ResolveShowClassifyJobs returns whether the TUI queue should display
+// auto-design-review classifier rows (job_type=classify) and skipped
+// design rows (status=skipped). Off by default to reduce queue noise
+// when the auto-design router is enabled. Per-repo config overrides
+// global.
+func ResolveShowClassifyJobs(repoPath string, globalCfg *Config) bool {
+	var repoVal *bool
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = repoCfg.ShowClassifyJobs
+	}
+	var globalVal bool
+	if globalCfg != nil {
+		globalVal = globalCfg.ShowClassifyJobs
 	}
 	return resolveBool(globalVal, repoVal)
 }

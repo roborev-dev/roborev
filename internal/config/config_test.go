@@ -387,6 +387,45 @@ func TestResolveAutoClosePassingReviews(t *testing.T) {
 	}
 }
 
+func TestResolveShowClassifyJobs(t *testing.T) {
+	tests := []struct {
+		name         string
+		repoConfig   string
+		globalConfig *Config
+		want         bool
+	}{
+		{
+			name: "default false",
+			want: false,
+		},
+		{
+			name:         "global enabled",
+			globalConfig: &Config{ShowClassifyJobs: true},
+			want:         true,
+		},
+		{
+			name:         "repo overrides global to true",
+			repoConfig:   `show_classify_jobs = true`,
+			globalConfig: &Config{ShowClassifyJobs: false},
+			want:         true,
+		},
+		{
+			name:         "repo overrides global to false",
+			repoConfig:   `show_classify_jobs = false`,
+			globalConfig: &Config{ShowClassifyJobs: true},
+			want:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := newTempRepo(t, tt.repoConfig)
+			got := ResolveShowClassifyJobs(tmpDir, tt.globalConfig)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestResolveReasoning(t *testing.T) {
 	type resolverFunc func(explicit string, dir string, globalCfg *Config) (string, error)
 

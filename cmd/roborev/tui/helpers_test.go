@@ -495,7 +495,7 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 	helpSets := map[string][][]helpItem{
 		"queue": {
 			{{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"}, {"c", "comment"}, {"y", "copy"}, {"m", "commit"}, {"F", "fix"}},
-			{{"↑/↓", "nav"}, {"enter", "review"}, {"a", "closed"}, {"f", "filter"}, {"h", "hide"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
+			{{"↑/↓", "nav"}, {"enter", "review"}, {"a", "closed"}, {"f", "filter"}, {"h", "hide"}, {"s", "show classify"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
 		},
 		"review": {
 			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "closed"}, {"y", "copy"}, {"F", "fix"}},

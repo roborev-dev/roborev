@@ -889,6 +889,9 @@ func (s *Server) humaListJobs(
 			storage.WithExcludeJobType(input.ExcludeJobType),
 		)
 	}
+	if input.HideClassifyJobs == "true" {
+		listOpts = append(listOpts, storage.WithHideClassifyJobs())
+	}
 	if repoPrefix != "" && repo == "" {
 		listOpts = append(
 			listOpts, storage.WithRepoPrefix(repoPrefix),
