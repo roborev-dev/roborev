@@ -179,100 +179,108 @@ func stripFieldLabel(s string) string {
 	return s
 }
 
-// hasSeverityLabel checks if the output contains severity labels indicating findings.
-// Matches patterns like "- Medium —", "* Low:", "Critical — issue", etc.
-// Checks lines that start with bullets/numbers OR directly with severity words.
-// Requires separators to be followed by space to avoid "High-level overview".
-// Skips lines that appear to be part of a severity legend/rubric.
-func hasSeverityLabel(output string) bool {
-	lc := strings.ToLower(output)
-	severities := []string{"critical", "high", "medium", "low"}
-	lines := strings.Split(lc, "\n")
+// classifySeverityLine inspects a single line in context and returns the bucket
+// it belongs to: "critical", "high", "medium", "low", "info", or "" if the
+// line is not a severity-tagged finding. Mirrors the recognition rules
+// previously inlined in hasSeverityLabel; "info" is added so CountFindings
+// can fold info-level mentions into the low bucket.
+func classifySeverityLine(lines []string, i int) string {
+	trimmed := strings.TrimSpace(lines[i])
+	if trimmed == "" {
+		return ""
+	}
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) == 0 {
+	// Strip leading bullet/number markers
+	first := trimmed[0]
+	hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
+		strings.HasPrefix(trimmed, "•")
+
+	checkText := trimmed
+	if hasBullet {
+		checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
+		checkText = strings.TrimSpace(checkText)
+	}
+	checkText = stripMarkdown(checkText)
+
+	// "info" is included so CountFindings can collapse it into the low bucket.
+	// hasSeverityLabel filters it out separately to preserve verdict semantics.
+	severities := []string{"critical", "high", "medium", "low", "info"}
+	for _, sev := range severities {
+		if !strings.HasPrefix(checkText, sev) {
 			continue
 		}
-
-		// Check if line starts with bullet/number - if so, strip it
-		first := trimmed[0]
-		hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
-			strings.HasPrefix(trimmed, "•")
-
-		checkText := trimmed
-		if hasBullet {
-			// Strip leading bullets/asterisks/numbers
-			checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
-			checkText = strings.TrimSpace(checkText)
+		rest := strings.TrimSpace(checkText[len(sev):])
+		if len(rest) == 0 {
+			continue
 		}
-
-		// Strip markdown formatting (bold, headers) before checking
-		checkText = stripMarkdown(checkText)
-
-		// Check if text starts with a severity word
-		for _, sev := range severities {
-			if !strings.HasPrefix(checkText, sev) {
-				continue
-			}
-
-			// Check if followed by separator (dash, em-dash, colon, pipe)
-			rest := checkText[len(sev):]
-			rest = strings.TrimSpace(rest)
-			if len(rest) == 0 {
-				continue
-			}
-
-			// Check for valid separator
-			hasValidSep := false
-			// Check for em-dash or en-dash (these are unambiguous)
-			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
-				hasValidSep = true
-			}
-			// Check for colon or pipe (unambiguous separators)
-			if rest[0] == ':' || rest[0] == '|' {
-				hasValidSep = true
-			}
-			// For hyphen, require space after to avoid "High-level"
-			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
-				hasValidSep = true
-			}
-
-			if !hasValidSep {
-				continue
-			}
-
-			// Skip if this looks like a legend/rubric entry
-			// Check if previous non-empty line is a legend header
-			if isLegendEntry(lines, i) {
-				continue
-			}
-
-			return true
+		hasValidSep := strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") ||
+			rest[0] == ':' || rest[0] == '|' ||
+			(rest[0] == '-' && len(rest) > 1 && rest[1] == ' ')
+		if !hasValidSep {
+			continue
 		}
+		if isLegendEntry(lines, i) {
+			continue
+		}
+		return sev
+	}
 
-		// Check for "severity: <level>" pattern (e.g., "**Severity**: High")
-		if strings.HasPrefix(checkText, "severity") {
-			rest := checkText[len("severity"):]
+	// "Severity: <level>" pattern (e.g. "**Severity**: High")
+	if strings.HasPrefix(checkText, "severity") {
+		rest := strings.TrimSpace(checkText[len("severity"):])
+		hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
+			strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–"))
+		if !hasSep && len(rest) > 1 && rest[0] == '-' && rest[1] == ' ' {
+			hasSep = true
+		}
+		if hasSep {
+			rest = strings.TrimLeft(rest, ":-–—| ")
 			rest = strings.TrimSpace(rest)
-			hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
-				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–"))
-			// Accept hyphen-minus when followed by space (mirrors the severity-word branch)
-			if !hasSep && len(rest) > 1 && rest[0] == '-' && rest[1] == ' ' {
-				hasSep = true
-			}
-			if hasSep {
-				// Skip separator and whitespace
-				rest = strings.TrimLeft(rest, ":-–—| ")
-				rest = strings.TrimSpace(rest)
-				for _, sev := range severities {
-					if strings.HasPrefix(rest, sev) {
-						if !isLegendEntry(lines, i) {
-							return true
-						}
-					}
+			for _, sev := range severities {
+				if strings.HasPrefix(rest, sev) && !isLegendEntry(lines, i) {
+					return sev
 				}
 			}
+		}
+	}
+	return ""
+}
+
+// CountFindings parses review output for severity-prefixed findings and returns
+// counts in three buckets:
+//
+//	high   = critical + high
+//	medium = medium
+//	low    = low + info
+//
+// Reuses the same line-classification rules as hasSeverityLabel.
+func CountFindings(output string) (high, medium, low int) {
+	lc := strings.ToLower(output)
+	lines := strings.Split(lc, "\n")
+	for i := range lines {
+		switch classifySeverityLine(lines, i) {
+		case "critical", "high":
+			high++
+		case "medium":
+			medium++
+		case "low", "info":
+			low++
+		}
+	}
+	return high, medium, low
+}
+
+// hasSeverityLabel returns true if the output contains any severity-tagged
+// finding among critical/high/medium/low. Info-only reviews are NOT treated
+// as having findings, preserving the original verdict semantics where
+// "Info: ..." notes do not flip a review from pass to fail.
+func hasSeverityLabel(output string) bool {
+	lc := strings.ToLower(output)
+	lines := strings.Split(lc, "\n")
+	for i := range lines {
+		sev := classifySeverityLine(lines, i)
+		if sev != "" && sev != "info" {
+			return true
 		}
 	}
 	return false
@@ -281,8 +289,12 @@ func hasSeverityLabel(output string) bool {
 // isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
 // by looking at preceding lines for legend indicators. Scans up to 10 lines back,
 // skipping empty lines, severity lines, and description lines that may appear
-// between legend entries.
+// between legend entries. Stops at any non-legend section header (a line ending
+// with ":" that does not contain a legend keyword) to avoid false positives when
+// a legend block is followed by a real findings section separated by a header.
 func isLegendEntry(lines []string, i int) bool {
+	legendKeywords := []string{"severity", "level", "legend", "priority", "rubric", "rating", "scale"}
+
 	for j := i - 1; j >= 0 && j >= i-10; j-- {
 		prev := strings.TrimSpace(lines[j])
 		if len(prev) == 0 {
@@ -293,17 +305,16 @@ func isLegendEntry(lines []string, i int) bool {
 		// "**Severity levels:**" are recognized the same as plain text.
 		prev = stripMarkdown(stripListMarker(prev))
 
-		// Check for legend header patterns (ends with ":" and contains indicator word)
+		// Lines ending with ":" are section headers.
 		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
-			if strings.Contains(prev, "severity") ||
-				strings.Contains(prev, "level") ||
-				strings.Contains(prev, "legend") ||
-				strings.Contains(prev, "priority") ||
-				strings.Contains(prev, "rubric") ||
-				strings.Contains(prev, "rating") ||
-				strings.Contains(prev, "scale") {
-				return true
+			for _, kw := range legendKeywords {
+				if strings.Contains(prev, kw) {
+					return true
+				}
 			}
+			// A non-legend section header (e.g. "Findings:") marks a boundary:
+			// stop scanning so lines below it are not attributed to a legend above.
+			return false
 		}
 	}
 	return false

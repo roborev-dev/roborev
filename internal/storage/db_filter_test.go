@@ -1031,3 +1031,49 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 		assert.Len(t, result, 3)
 	})
 }
+
+func TestCountJobStats_FindingAggregation(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Two repos so we can verify the repo filter is honored.
+	rA := createRepo(t, db, "/tmp/repo-a")
+	rB := createRepo(t, db, "/tmp/repo-b")
+
+	insertReview := func(repoID int64, sha string, h, m, l int) {
+		t.Helper()
+		commit := createCommit(t, db, repoID, sha)
+		job := enqueueJob(t, db, repoID, commit.ID, sha)
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
+		require.NoError(t, err)
+		_, err = db.Exec(
+			`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
+			 VALUES (?, 'test', 'p', 'x', ?, ?, ?)`,
+			job.ID, h, m, l,
+		)
+		require.NoError(t, err)
+	}
+
+	insertReview(rA.ID, "a1", 2, 1, 4)
+	insertReview(rA.ID, "a2", 1, 0, 3)
+	insertReview(rA.ID, "a3", 0, 5, 0)
+	insertReview(rB.ID, "b1", 7, 8, 9) // should NOT count when filtering rA
+
+	t.Run("aggregates only the filtered repo", func(t *testing.T) {
+		stats, err := db.CountJobStats(rA.RootPath)
+		require.NoError(t, err)
+		assert.Equal(t, 3, stats.Done)
+		assert.Equal(t, 3, stats.HighFindings)   // 2+1+0
+		assert.Equal(t, 6, stats.MediumFindings) // 1+0+5
+		assert.Equal(t, 7, stats.LowFindings)    // 4+3+0
+	})
+
+	t.Run("no filter returns global totals", func(t *testing.T) {
+		stats, err := db.CountJobStats("")
+		require.NoError(t, err)
+		assert.Equal(t, 4, stats.Done)
+		assert.Equal(t, 10, stats.HighFindings)   // 2+1+0+7
+		assert.Equal(t, 14, stats.MediumFindings) // 1+0+5+8
+		assert.Equal(t, 16, stats.LowFindings)    // 4+3+0+9
+	})
+}

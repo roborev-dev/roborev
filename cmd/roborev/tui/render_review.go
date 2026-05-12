@@ -57,13 +57,17 @@ func (m model) renderReviewView() string {
 		b.WriteString(statusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict, closed status, and token usage on next line (skip verdict for fix jobs)
+		// Show verdict, findings counts, closed status, and token usage on next line (skip verdict for fix jobs)
 		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
+		findHigh := derefOrZero(review.Job.HighFindings)
+		findMed := derefOrZero(review.Job.MediumFindings)
+		findLow := derefOrZero(review.Job.LowFindings)
+		hasFindings := findHigh+findMed+findLow > 0
 		tokenSummary := ""
 		if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
 			tokenSummary = tu.FormatSummary()
 		}
-		if hasVerdict || review.Closed || tokenSummary != "" {
+		if hasVerdict || hasFindings || review.Closed || tokenSummary != "" {
 			b.WriteString("\n")
 			if hasVerdict {
 				v := *review.Job.Verdict
@@ -73,15 +77,22 @@ func (m model) renderReviewView() string {
 					b.WriteString(failStyle.Render("Verdict: Fail"))
 				}
 			}
-			// Show [CLOSED] with distinct color (after verdict if present)
-			if review.Closed {
+			if hasFindings {
 				if hasVerdict {
+					b.WriteString("  ")
+				}
+				b.WriteString(statusStyle.Render("Findings: "))
+				b.WriteString(renderSeverityBadge(findHigh, findMed, findLow))
+			}
+			// Show [CLOSED] with distinct color (after verdict/findings if present)
+			if review.Closed {
+				if hasVerdict || hasFindings {
 					b.WriteString(" ")
 				}
 				b.WriteString(closedStyle.Render("[CLOSED]"))
 			}
 			if tokenSummary != "" {
-				if hasVerdict || review.Closed {
+				if hasVerdict || hasFindings || review.Closed {
 					b.WriteString(" ")
 				}
 				b.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
@@ -151,9 +162,11 @@ func (m model) renderReviewView() string {
 	// Reserve title, location, footer status, help, and optional verdict.
 	headerHeight := titleLines + locationLines + 1 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
+	hasFindings := review.Job != nil &&
+		(derefOrZero(review.Job.HighFindings)+derefOrZero(review.Job.MediumFindings)+derefOrZero(review.Job.LowFindings) > 0)
 	hasTokens := review.Job != nil && tokens.ParseJSON(review.Job.TokenUsage) != nil
-	if hasVerdict || review.Closed || hasTokens {
-		headerHeight++ // Add 1 for verdict/closed/tokens line
+	if hasVerdict || hasFindings || review.Closed || hasTokens {
+		headerHeight++ // Add 1 for verdict/findings/closed/tokens line
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {

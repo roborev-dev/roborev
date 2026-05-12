@@ -537,6 +537,75 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	return len(updates), nil
 }
 
+// BackfillFindingCounts populates high_count, medium_count, and low_count for
+// reviews where any column is still NULL (i.e. rows inserted before the columns
+// existed). Every matching row is written unconditionally so that NULL becomes
+// a concrete value — including 0 for parsed-clean reviews — preventing the
+// predicate from matching the same rows on subsequent startups.
+// Returns the number of rows updated.
+func (db *DB) BackfillFindingCounts() (int, error) {
+	rows, err := db.Query(`
+		SELECT id, output FROM reviews
+		WHERE output != ''
+		  AND (high_count IS NULL OR medium_count IS NULL OR low_count IS NULL)
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type pending struct {
+		id      int64
+		h, m, l int
+	}
+	var updates []pending
+	for rows.Next() {
+		var id int64
+		var output string
+		if err := rows.Scan(&id, &output); err != nil {
+			return 0, err
+		}
+		h, m, l := CountFindings(output)
+		updates = append(updates, pending{id: id, h: h, m: m, l: l})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Clearing synced_at re-queues the row for sync so PostgreSQL receives
+	// the backfilled counts; without it, GetReviewsToSync would still consider
+	// the row "synced" and the remote (possibly pre-v11 PG) would keep
+	// returning zeros to other clients pulling the same review.
+	stmt, err := tx.Prepare(
+		`UPDATE reviews
+		 SET high_count = ?, medium_count = ?, low_count = ?, synced_at = NULL
+		 WHERE id = ?`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.h, u.m, u.l, u.id); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(updates), nil
+}
+
 // categorizeError maps error messages to categories.
 func categorizeError(errMsg string) string {
 	lower := strings.ToLower(errMsg)

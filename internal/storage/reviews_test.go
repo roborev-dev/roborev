@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -536,4 +537,59 @@ func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg stri
 	t.Helper()
 	assert.Equal(t, expectedUser, actual.Responder)
 	assert.Equal(t, expectedMsg, actual.Response)
+}
+
+func TestGetRecentReviewsForRepo_SelectsFindingCounts(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/recent-test", "recent-test")
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "alice", "fix", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
+		 VALUES (?, 'test', 'p', 'High - bug', 3, 2, 5)`, job.ID,
+	)
+	require.NoError(t, err)
+
+	// Smoke test: this used to panic with "sql: expected N destination args
+	// but got M" when GetRecentReviewsForRepo's SELECT lost columns the Scan
+	// still expected. Both halves must move in lock-step.
+	reviews, err := db.GetRecentReviewsForRepo(repo.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+	assert.Equal(t, 3, reviews[0].HighCount)
+	assert.Equal(t, 2, reviews[0].MediumCount)
+	assert.Equal(t, 5, reviews[0].LowCount)
+}
+
+func TestGetAllReviewsForGitRef_SelectsFindingCounts(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/gitref-test", "gitref-test")
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "def456", "bob", "fix", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "def456", Agent: "test",
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO reviews (job_id, agent, prompt, output, high_count, medium_count, low_count)
+		 VALUES (?, 'test', 'p', 'High - bug', 1, 2, 3)`, job.ID,
+	)
+	require.NoError(t, err)
+
+	reviews, err := db.GetAllReviewsForGitRef("def456")
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+	assert.Equal(t, 1, reviews[0].HighCount)
+	assert.Equal(t, 2, reviews[0].MediumCount)
+	assert.Equal(t, 3, reviews[0].LowCount)
 }

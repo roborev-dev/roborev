@@ -18,6 +18,7 @@ const (
 	tcolStatus            // Job status
 	tcolJobID             // Job ID
 	tcolParent            // Parent job reference
+	tcolFindings          // Parent review's finding counts (H3 M2 L5)
 	tcolQueued            // Enqueue timestamp
 	tcolElapsed           // Elapsed time
 	tcolBranch            // Branch name
@@ -28,13 +29,14 @@ const (
 
 // taskToggleableColumns is the ordered list of task columns the user can show/hide/reorder.
 // tcolSel is always visible and not included here.
-var taskToggleableColumns = []int{tcolStatus, tcolJobID, tcolParent, tcolQueued, tcolElapsed, tcolBranch, tcolRepo, tcolRefSubject}
+var taskToggleableColumns = []int{tcolStatus, tcolJobID, tcolParent, tcolFindings, tcolQueued, tcolElapsed, tcolBranch, tcolRepo, tcolRefSubject}
 
 // taskColumnNames maps task column constants to display names.
 var taskColumnNames = map[int]string{
 	tcolStatus:     "Status",
 	tcolJobID:      "Job",
 	tcolParent:     "Parent",
+	tcolFindings:   "Findings",
 	tcolQueued:     "Queued",
 	tcolElapsed:    "Elapsed",
 	tcolBranch:     "Branch",
@@ -47,6 +49,7 @@ var taskColumnConfigNames = map[int]string{
 	tcolStatus:     "status",
 	tcolJobID:      "job",
 	tcolParent:     "parent",
+	tcolFindings:   "findings",
 	tcolQueued:     "queued",
 	tcolElapsed:    "elapsed",
 	tcolBranch:     "branch",
@@ -78,8 +81,9 @@ func (m model) visibleTaskColumns() []int {
 }
 
 // taskCells returns plain text cell values for a fix job row.
-// Order: status, jobID, parent, queued, elapsed, branch, repo, refSubject
-// (tcolStatus through tcolRefSubject, 8 values).
+// Order: status, jobID, parent, findings, queued, elapsed, branch, repo, refSubject
+// (tcolStatus through tcolRefSubject, 9 values). The findings column shows the
+// parent review's counts since fix jobs themselves don't produce findings.
 func (m model) taskCells(job storage.ReviewJob) []string {
 	var statusLabel string
 	switch job.Status {
@@ -139,7 +143,16 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 		refSubject += job.CommitSubject
 	}
 
-	return []string{statusLabel, jobID, parentRef, queued, elapsed, branch, repo, refSubject}
+	findings := ""
+	if job.ParentHighFindings != nil || job.ParentMediumFindings != nil || job.ParentLowFindings != nil {
+		findings = renderSeverityBadge(
+			derefOrZero(job.ParentHighFindings),
+			derefOrZero(job.ParentMediumFindings),
+			derefOrZero(job.ParentLowFindings),
+		)
+	}
+
+	return []string{statusLabel, jobID, parentRef, findings, queued, elapsed, branch, repo, refSubject}
 }
 
 func (m model) renderTasksView() string {
@@ -178,7 +191,7 @@ func (m model) renderTasksView() string {
 	visCols := m.visibleTaskColumns()
 
 	// Compute per-column max content widths, using cache when data hasn't changed.
-	allHeaders := [tcolCount]string{tcolSel: "", tcolStatus: "Status", tcolJobID: "Job", tcolParent: "Parent", tcolQueued: "Queued", tcolElapsed: "Elapsed", tcolBranch: "Branch", tcolRepo: "Repo", tcolRefSubject: "Ref/Subject"}
+	allHeaders := [tcolCount]string{tcolSel: "", tcolStatus: "Status", tcolJobID: "Job", tcolParent: "Parent", tcolFindings: "Findings", tcolQueued: "Queued", tcolElapsed: "Elapsed", tcolBranch: "Branch", tcolRepo: "Repo", tcolRefSubject: "Ref/Subject"}
 	allFullRows := make([][]string, len(m.fixJobs))
 	for i, job := range m.fixJobs {
 		cells := m.taskCells(job)
@@ -222,12 +235,13 @@ func (m model) renderTasksView() string {
 	}
 
 	fixedWidth := map[int]int{
-		tcolSel:     2,
-		tcolStatus:  8,
-		tcolJobID:   5,
-		tcolParent:  11,
-		tcolQueued:  12,
-		tcolElapsed: 8,
+		tcolSel:      2,
+		tcolStatus:   8,
+		tcolJobID:    5,
+		tcolParent:   11,
+		tcolFindings: 8,
+		tcolQueued:   12,
+		tcolElapsed:  8,
 	}
 
 	flexCols := []int{tcolBranch, tcolRepo, tcolRefSubject}

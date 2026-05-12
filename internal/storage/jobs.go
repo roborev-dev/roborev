@@ -350,9 +350,13 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	}
 
 	verdictBool := verdictToBool(ParseVerdict(finalOutput))
+	highCount, mediumCount, lowCount := CountFindings(finalOutput)
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now)
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at,
+		                      high_count, medium_count, low_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now,
+		highCount, mediumCount, lowCount)
 	if err != nil {
 		return err
 	}
@@ -425,13 +429,19 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		return nil
 	}
 
-	// Insert review with sync columns
+	// Insert review with sync columns and finding counts
 	var verdictBoolVal any
+	var highCount, mediumCount, lowCount int
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+		highCount, mediumCount, lowCount = CountFindings(finalOutput)
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at,
+		                      high_count, medium_count, low_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now,
+		highCount, mediumCount, lowCount)
 	if err != nil {
 		return err
 	}
@@ -818,11 +828,14 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
-		       j.command_line, COALESCE(j.min_severity, '')
+		       j.command_line, COALESCE(j.min_severity, ''),
+		       rv.high_count, rv.medium_count, rv.low_count,
+		       parent_rv.high_count, parent_rv.medium_count, parent_rv.low_count
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
+		LEFT JOIN reviews parent_rv ON parent_rv.job_id = j.parent_job_id
 	`
 	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
 	query += queryFilters
@@ -857,7 +870,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
-			&fields.CommandLine, &fields.MinSeverity)
+			&fields.CommandLine, &fields.MinSeverity,
+			&fields.HighFindings, &fields.MediumFindings, &fields.LowFindings,
+			&fields.ParentHighFindings, &fields.ParentMediumFindings, &fields.ParentLowFindings)
 		if err != nil {
 			return nil, err
 		}
@@ -875,19 +890,25 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 // GetJobByID returns a job by ID with joined fields
 // JobStats holds aggregate counts for the queue status line.
 type JobStats struct {
-	Done   int `json:"done"`
-	Closed int `json:"closed"`
-	Open   int `json:"open"`
+	Done           int `json:"done"`
+	Closed         int `json:"closed"`
+	Open           int `json:"open"`
+	HighFindings   int `json:"high_findings"`
+	MediumFindings int `json:"medium_findings"`
+	LowFindings    int `json:"low_findings"`
 }
 
-// CountJobStats returns aggregate done/closed/open counts
-// using the same filter logic as ListJobs (repo, branch, closed).
+// CountJobStats returns aggregate done/closed/open counts and per-severity
+// finding sums using the same filter logic as ListJobs (repo, branch, closed).
 func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(rv.high_count), 0),
+			COALESCE(SUM(rv.medium_count), 0),
+			COALESCE(SUM(rv.low_count), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -896,7 +917,10 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 	query += queryFilters
 
 	var stats JobStats
-	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Closed, &stats.Open)
+	err := db.QueryRow(query, args...).Scan(
+		&stats.Done, &stats.Closed, &stats.Open,
+		&stats.HighFindings, &stats.MediumFindings, &stats.LowFindings,
+	)
 	return stats, err
 }
 
@@ -908,16 +932,22 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''),
-		       j.skip_reason, j.source
+		       j.skip_reason, j.source,
+		       rv.high_count, rv.medium_count, rv.low_count,
+		       parent_rv.high_count, parent_rv.medium_count, parent_rv.low_count
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
+		LEFT JOIN reviews rv ON rv.job_id = j.id
+		LEFT JOIN reviews parent_rv ON parent_rv.job_id = j.parent_job_id
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity,
-		&fields.SkipReason, &fields.Source)
+		&fields.SkipReason, &fields.Source,
+		&fields.HighFindings, &fields.MediumFindings, &fields.LowFindings,
+		&fields.ParentHighFindings, &fields.ParentMediumFindings, &fields.ParentLowFindings)
 	if err != nil {
 		return nil, err
 	}

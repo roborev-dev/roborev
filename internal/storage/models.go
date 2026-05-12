@@ -96,6 +96,17 @@ type ReviewJob struct {
 	CommitSubject string  `json:"commit_subject,omitempty"` // empty for ranges
 	Closed        *bool   `json:"closed,omitempty"`         // nil if no review yet
 	Verdict       *string `json:"verdict,omitempty"`        // P/F parsed from review output
+
+	// Finding counts from the job's own review (nil if no review yet).
+	HighFindings   *int `json:"high_findings,omitempty"`
+	MediumFindings *int `json:"medium_findings,omitempty"`
+	LowFindings    *int `json:"low_findings,omitempty"`
+
+	// Finding counts from the parent job's review (used by fix jobs to show
+	// what they're addressing). Nil for non-fix jobs or when parent has no review.
+	ParentHighFindings   *int `json:"parent_high_findings,omitempty"`
+	ParentMediumFindings *int `json:"parent_medium_findings,omitempty"`
+	ParentLowFindings    *int `json:"parent_low_findings,omitempty"`
 }
 
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).
@@ -210,6 +221,11 @@ type Review struct {
 
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
 	VerdictBool *int `json:"verdict_bool,omitempty"`
+
+	// Per-severity finding counts (parsed from Output at completion time).
+	HighCount   int `json:"high_count"`
+	MediumCount int `json:"medium_count"`
+	LowCount    int `json:"low_count"`
 
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`
