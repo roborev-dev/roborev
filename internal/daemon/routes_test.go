@@ -125,6 +125,7 @@ func TestHumaGetStatus(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 	testutil.CreateTestJobs(t, db, repo, 2, "test-agent")
+	srv.endpoint = DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 
 	rr := serveHuma(
 		t, srv, http.MethodGet, "/api/status", nil,
@@ -135,6 +136,9 @@ func TestHumaGetStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &status))
 	assert.NotEmpty(t, status.Version)
 	assert.Equal(t, 2, status.QueuedJobs)
+	assert.Equal(t, "tcp", status.Network)
+	assert.Equal(t, "127.0.0.1:7373", status.Address)
+	assert.Equal(t, 7373, status.Port)
 }
 
 func TestHumaGetReview_NotFound(t *testing.T) {

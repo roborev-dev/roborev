@@ -253,6 +253,9 @@ type DaemonStatus struct {
 	SkippedJobs         int    `json:"skipped_jobs"`
 	ActiveWorkers       int    `json:"active_workers"`
 	MaxWorkers          int    `json:"max_workers"`
+	Network             string `json:"network,omitempty"`
+	Address             string `json:"address,omitempty"`
+	Port                int    `json:"port,omitempty"`
 	MachineID           string `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
 	ConfigReloadedAt    string `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
 	ConfigReloadCounter uint64 `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
