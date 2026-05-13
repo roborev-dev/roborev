@@ -148,6 +148,13 @@ func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
+	// NewServer spawns a HookRunner goroutine and a worker pool. Without
+	// teardown, each test that calls newTestServer leaks them; on slow
+	// Windows runners the cumulative goroutine / channel work pushes the
+	// daemon test package past its 10m timeout. Close() stops the
+	// HookRunner, the (empty) worker pool, and any other internal
+	// background work.
+	t.Cleanup(func() { _ = server.Close() })
 	return server, db, tmpDir
 }
 

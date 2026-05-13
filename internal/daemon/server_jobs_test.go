@@ -2367,6 +2367,52 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			}, "Expected non-fix job, got fix")
 		}
 	})
+
+	t.Run("hide_classify_jobs=true hides classify and skipped rows", func(t *testing.T) {
+		// Add a running classify row and a skipped design row alongside
+		// the existing review + fix jobs. The (repo_id, commit_id,
+		// review_type='design') partial unique index on auto_design rows
+		// means each auto_design row needs a distinct commit.
+		classifyCommit, err := db.GetOrCreateCommit(repo.ID, "jt-classify", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		_, err = db.Exec(`
+			INSERT INTO review_jobs
+			  (repo_id, commit_id, git_ref, agent, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
+			VALUES (?, ?, 'jt-classify', 'test', 'running', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'), datetime('now'))
+		`, repo.ID, classifyCommit.ID)
+		require.NoError(t, err)
+
+		skippedCommit, err := db.GetOrCreateCommit(repo.ID, "jt-skipped", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		_, err = db.Exec(`
+			INSERT INTO review_jobs
+			  (repo_id, commit_id, git_ref, agent, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
+			VALUES (?, ?, 'jt-skipped', 'test', 'skipped', 'review', 'design', 'auto_design', 'trivial diff', datetime('now'), datetime('now'), datetime('now'))
+		`, repo.ID, skippedCommit.ID)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(
+			http.MethodGet, "/api/jobs?hide_classify_jobs=true", nil,
+		)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		// Should see the original review + fix (2 jobs), not the classify
+		// or skipped rows.
+		assert.Len(t, resp.Jobs, 2, "expected only review and fix jobs")
+		for _, j := range resp.Jobs {
+			assert.NotEqual(t, storage.JobTypeClassify, j.JobType,
+				"classify rows should be hidden")
+			assert.NotEqual(t, storage.JobStatusSkipped, j.Status,
+				"skipped rows should be hidden")
+		}
+	})
 }
 
 func TestHandleListJobsRepoPrefixFilter(t *testing.T) {

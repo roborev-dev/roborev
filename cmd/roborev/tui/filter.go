@@ -255,6 +255,7 @@ func (m *model) reconcileAutoRepoFilter() bool {
 	m.fetchSeq++
 	m.queueColGen++
 	m.loadingJobs = true
+	m.recomputeClassifyEffective()
 	return true
 }
 
@@ -319,6 +320,7 @@ func (m *model) popFilter() string {
 		case filterTypeRepo:
 			m.activeRepoFilter = nil
 			m.autoRepoFilter = false
+			m.recomputeClassifyEffective()
 		case filterTypeBranch:
 			m.activeBranchFilter = ""
 		}

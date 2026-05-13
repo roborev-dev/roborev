@@ -372,3 +372,20 @@ func (m model) handleHideClosedKey() (tea.Model, tea.Cmd) {
 	m.loadingJobs = true
 	return m, m.fetchJobs()
 }
+
+// handleToggleClassifyKey flips visibility of auto-design-router
+// classifier rows and skipped design rows in the queue. The toggle
+// is session-only; it overrides show_classify_jobs config until the
+// TUI is restarted.
+func (m model) handleToggleClassifyKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m, nil
+	}
+	next := !m.shouldShowClassifyJobs()
+	m.classifyOverride = &next
+	m.recomputeClassifyEffective()
+	m.queueColGen++
+	m.fetchSeq++
+	m.loadingJobs = true
+	return m, m.fetchJobs()
+}

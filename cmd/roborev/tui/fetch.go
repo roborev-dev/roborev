@@ -149,6 +149,10 @@ func listJobsParams(values neturl.Values) daemonclient.ListJobsParams {
 	}
 	setStringParam("job_type", &params.JobType)
 	setStringParam("exclude_job_type", &params.ExcludeJobType)
+	if value := values.Get("hide_classify_jobs"); value != "" {
+		typed := daemonclient.ListJobsParamsHideClassifyJobs(value)
+		params.HideClassifyJobs = &typed
+	}
 	setStringParam("repo_prefix", &params.RepoPrefix)
 	setIntParam("limit", &params.Limit)
 	setIntParam("offset", &params.Offset)
@@ -198,6 +202,13 @@ func (m model) fetchJobs() tea.Cmd {
 		// Exclude fix jobs — they belong in the Tasks view, not the queue
 		params.Set("exclude_job_type", "fix")
 
+		// Hide auto-design-router byproducts (classify rows + skipped design
+		// rows) unless the user opted in via show_classify_jobs. Resolved at
+		// fetch time so single-repo filters honor that repo's override.
+		if !m.shouldShowClassifyJobs() {
+			params.Set("hide_classify_jobs", "true")
+		}
+
 		// Set limit: use pagination unless we need client-side filtering (multi-repo)
 		if needsAllJobs {
 			params.Set("limit", "0")
@@ -240,6 +251,9 @@ func (m model) fetchMoreJobs() tea.Cmd {
 			params.Set("closed", "false")
 		}
 		params.Set("exclude_job_type", "fix")
+		if !m.shouldShowClassifyJobs() {
+			params.Set("hide_classify_jobs", "true")
+		}
 		result, err := m.loadJobsPage(params)
 		if err != nil {
 			return paginationErrMsg{

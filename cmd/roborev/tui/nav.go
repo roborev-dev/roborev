@@ -144,17 +144,17 @@ func (m *model) logViewLookupJob() *storage.ReviewJob {
 }
 
 // logVisibleLines returns the number of content lines visible in the
-// log view, accounting for title, optional command line, separator,
-// status, and help bar.
+// log view, accounting for title, optional command line, optional
+// classify-reasoning lines, separator, status, and help bar.
 func (m *model) logVisibleLines() int {
 	// title + separator + status + help(N)
 	helpRows := m.logHelpRows()
 	reserved := 3 + len(reflowHelpRows(helpRows, m.width))
-	// Check if command line header is shown
 	if job := m.logViewLookupJob(); job != nil {
 		if commandLineForJob(job) != "" {
 			reserved++
 		}
+		reserved += len(classifyReasoningLines(job, m.width))
 	}
 	return max(m.height-reserved, 1)
 }

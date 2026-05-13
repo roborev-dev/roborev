@@ -172,6 +172,10 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fetchSeq++
 		m.queueColGen++
 		m.loadingJobs = true
+		// activeRepoFilter may have changed; refresh the cached
+		// classify visibility so the next render/fetch sees the
+		// repo-scoped value without hitting disk on the hot path.
+		m.recomputeClassifyEffective()
 		return m, m.fetchJobs()
 	case "backspace":
 		if len(m.filterSearch) > 0 {

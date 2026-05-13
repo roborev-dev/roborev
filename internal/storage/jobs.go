@@ -686,6 +686,7 @@ type listJobsOptions struct {
 	closed             *bool
 	jobType            string
 	excludeJobType     string
+	hideClassifyJobs   bool
 	repoPrefix         string
 	beforeCursor       *int64
 }
@@ -722,6 +723,16 @@ func WithJobType(jobType string) ListJobsOption {
 // WithExcludeJobType excludes jobs of the given type.
 func WithExcludeJobType(jobType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.excludeJobType = jobType }
+}
+
+// WithHideClassifyJobs excludes auto-design-router byproducts: rows
+// with job_type='classify' (the routing decision itself) and rows
+// with status='skipped' (the terminal state for skipped design
+// reviews). Both clauses are scoped to source='auto_design' so a
+// future pipeline that creates classify jobs or skipped jobs for a
+// different reason is not silently swallowed by this filter.
+func WithHideClassifyJobs() ListJobsOption {
+	return func(o *listJobsOptions) { o.hideClassifyJobs = true }
 }
 
 // WithBeforeCursor filters jobs to those with ID < cursor (for cursor pagination).
@@ -799,6 +810,20 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "j.job_type != ?")
 		args = append(args, o.excludeJobType)
 	}
+	if o.hideClassifyJobs {
+		// source is nullable, so guard the comparison with COALESCE.
+		// Without it, j.source = 'auto_design' returns NULL for rows
+		// where source IS NULL, NOT (TRUE AND NULL) is also NULL, and
+		// the row gets silently dropped from results.
+		//
+		// Both predicates are scoped to source='auto_design' so a
+		// future pipeline that adopts classify jobs or status='skipped'
+		// for an unrelated reason isn't silently hidden.
+		conditions = append(conditions,
+			"NOT (COALESCE(j.source, '') = 'auto_design' AND (j.job_type = ? OR j.status = ?))")
+		args = append(args,
+			JobTypeClassify, string(JobStatusSkipped))
+	}
 	if o.beforeCursor != nil {
 		conditions = append(conditions, "j.id < ?")
 		args = append(args, *o.beforeCursor)
@@ -818,7 +843,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
-		       j.command_line, COALESCE(j.min_severity, '')
+		       j.command_line, COALESCE(j.min_severity, ''),
+		       COALESCE(j.skip_reason, ''), COALESCE(j.source, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -857,7 +883,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.Agentic, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
-			&fields.CommandLine, &fields.MinSeverity)
+			&fields.CommandLine, &fields.MinSeverity,
+			&fields.SkipReason, &fields.Source)
 		if err != nil {
 			return nil, err
 		}
@@ -908,7 +935,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''),
-		       j.skip_reason, j.source
+		       COALESCE(j.skip_reason, ''), COALESCE(j.source, '')
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id

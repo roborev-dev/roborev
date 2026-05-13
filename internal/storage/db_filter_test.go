@@ -741,6 +741,113 @@ func TestListJobsWithJobTypeFilter(t *testing.T) {
 	}
 }
 
+func TestListJobsWithHideClassifyJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Plain queued review — should always be visible.
+	repo, _, _ := createJobChain(t, db, "/tmp/repo-hide-classify", "review-sha")
+
+	// Running classify row (auto-design router decision in flight). The
+	// (repo_id, commit_id, review_type='design') partial unique index on
+	// source='auto_design' rows means each auto_design row needs a
+	// distinct commit.
+	classifyCommit := createCommit(t, db, repo.ID, "classify-sha")
+	var classifyID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
+		VALUES (?, ?, 'classify-sha', 'running', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, classifyCommit.ID).Scan(&classifyID))
+
+	// Skipped design row (classifier or heuristic decided no design
+	// review needed).
+	skippedCommit := createCommit(t, db, repo.ID, "skipped-sha")
+	var skippedID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
+		VALUES (?, ?, 'skipped-sha', 'skipped', 'review', 'design', 'auto_design', 'trivial diff', datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, skippedCommit.ID).Scan(&skippedID))
+
+	// Skipped row that did NOT come from the auto-design router (source
+	// set to empty string). A future pipeline could adopt
+	// status='skipped' for some other reason; this filter must leave
+	// such rows alone.
+	otherSkippedCommit := createCommit(t, db, repo.ID, "other-skipped-sha")
+	var otherSkippedID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
+		VALUES (?, ?, 'other-skipped-sha', 'skipped', 'review', '', '', 'unrelated reason', datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, otherSkippedCommit.ID).Scan(&otherSkippedID))
+
+	// Skipped row with source IS NULL (the column is nullable, and
+	// EnqueueJob never sets it for plain reviews). This case is
+	// load-bearing: a NULL-naive predicate would silently drop these
+	// rows from results.
+	nullSkippedCommit := createCommit(t, db, repo.ID, "null-skipped-sha")
+	var nullSkippedID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, skip_reason, enqueued_at, finished_at, updated_at)
+		VALUES (?, ?, 'null-skipped-sha', 'skipped', 'review', '', 'unrelated reason', datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, nullSkippedCommit.ID).Scan(&nullSkippedID))
+
+	// Classify-typed row that did NOT come from the auto-design router
+	// (source=''). A future pipeline could use the classify job_type
+	// for unrelated routing; the filter must leave such rows alone.
+	otherClassifyCommit := createCommit(t, db, repo.ID, "other-classify-sha")
+	var otherClassifyID int64
+	require.NoError(t, db.QueryRow(`
+		INSERT INTO review_jobs
+		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
+		VALUES (?, ?, 'other-classify-sha', 'running', 'classify', 'review', '', 'w2', datetime('now'), datetime('now'), datetime('now'))
+		RETURNING id
+	`, repo.ID, otherClassifyCommit.ID).Scan(&otherClassifyID))
+
+	t.Run("default returns all rows", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0)
+		require.NoError(t, err)
+		assert.Len(t, jobs, 6,
+			"default should include both classify variants, all three skipped variants, and the plain review row")
+	})
+
+	t.Run("hide_classify_jobs only hides auto_design rows", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithHideClassifyJobs())
+		require.NoError(t, err)
+		// Should keep: plain review, source='' skipped, source IS NULL
+		// skipped, non-auto_design classify. Should hide: classify row
+		// with source='auto_design', skipped row with source='auto_design'.
+		assert.Len(t, jobs, 4, "should hide only auto-design router rows")
+		var sawOtherSkipped, sawNullSkipped, sawOtherClassify bool
+		for _, j := range jobs {
+			assert.NotEqual(t, classifyID, j.ID,
+				"auto_design classify row should be hidden")
+			assert.NotEqual(t, skippedID, j.ID,
+				"auto_design skipped row should be hidden")
+			switch j.ID {
+			case otherSkippedID:
+				sawOtherSkipped = true
+			case nullSkippedID:
+				sawNullSkipped = true
+			case otherClassifyID:
+				sawOtherClassify = true
+			}
+		}
+		assert.True(t, sawOtherSkipped,
+			"skipped rows with source='' must remain visible")
+		assert.True(t, sawNullSkipped,
+			"skipped rows with source IS NULL must remain visible")
+		assert.True(t, sawOtherClassify,
+			"classify rows with source != 'auto_design' must remain visible")
+	})
+}
+
 func TestEscapeLike(t *testing.T) {
 	tests := []struct {
 		input string

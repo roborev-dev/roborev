@@ -129,6 +129,8 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBranchFilterOpenKey()
 	case "h":
 		return m.handleHideClosedKey()
+	case "s":
+		return m.handleToggleClassifyKey()
 	case "c":
 		return m.handleCommentOpenKey()
 	case "y":
