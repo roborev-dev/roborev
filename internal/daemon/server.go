@@ -46,6 +46,8 @@ type Server struct {
 	endpointMu      sync.Mutex // protects endpoint (written by Start, read by Stop)
 	endpoint        DaemonEndpoint
 	socketActivated bool // true if started via systemd socket activation
+	stopOnce        sync.Once
+	stopErr         error
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -418,8 +420,19 @@ func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
 	return listener, ep, nil
 }
 
-// Stop gracefully shuts down the server
+// Stop gracefully shuts down the server. Safe to call more than once;
+// repeated calls return the first call's result and do nothing.
+// Idempotency matters for test cleanup (t.Cleanup will fire Close even
+// when the test body has already called Stop explicitly), and prevents
+// the "close of closed channel" panic when hookRunner.Stop runs twice.
 func (s *Server) Stop() error {
+	s.stopOnce.Do(func() {
+		s.stopErr = s.stopOnce0()
+	})
+	return s.stopErr
+}
+
+func (s *Server) stopOnce0() error {
 	// Log daemon stop before shutting down components
 	if s.activityLog != nil {
 		uptime := time.Since(s.startTime)
