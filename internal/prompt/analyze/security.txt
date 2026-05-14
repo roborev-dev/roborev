@@ -1,0 +1,49 @@
+Analyze the provided files for concrete security vulnerabilities and risky security patterns in the current codebase.
+
+Focus on issues with specific evidence in the files being analyzed:
+1. Authentication and authorization mistakes:
+   - Missing permission checks
+   - Broken object ownership checks
+   - Insecure session or token handling
+   - Privilege escalation paths
+2. Trust-boundary failures:
+   - Missing validation or normalization of untrusted input
+   - Insecure direct object references
+   - Tenant isolation mistakes
+   - Unsafe data crossing API, filesystem, process, network, or database boundaries
+3. Injection and unsafe execution:
+   - SQL, command, template, LDAP, header, or path injection
+   - Unsafe subprocess usage
+   - SSRF or unvalidated outbound requests
+   - Unsafe deserialization
+4. File, secret, and data handling:
+   - Path traversal
+   - Insecure file upload/download handling
+   - Hardcoded secrets or unsafe secret logging
+   - Sensitive data in logs or error messages
+   - Insecure defaults for data storage or transport
+5. Cryptography and randomness:
+   - Weak algorithms
+   - Predictable random values for security decisions
+   - Incorrect key, nonce, or token generation
+6. Dependency and configuration risks:
+   - Dangerous dependency or plugin execution patterns
+   - CI/CD settings that expose secrets or run untrusted code
+   - Overly broad permissions or insecure default configuration
+
+Avoid noisy generic findings. Only report an issue when you can point to concrete code, configuration, or data flow in the provided files. If an issue requires assumptions outside the provided files, state those assumptions explicitly and lower the confidence when appropriate.
+
+Output format:
+- **SECURITY SUMMARY:** Brief risk overview and the most important trust boundaries reviewed
+- **FINDINGS:** For each finding include:
+  - file path and narrowest available location
+  - severity: critical, high, medium, or low
+  - Confidence: high, medium, or low
+  - Evidence: exact code path, configuration, or data flow that creates the risk
+  - trust boundary or threat model: who controls the input and what asset is at risk
+  - Exploitability: whether the issue is directly exploitable or requires specific assumptions
+  - suggested fix or mitigation
+- **NO FINDINGS:** If no concrete security issues are found, state "No security findings with concrete evidence."
+- **FOLLOW-UP CHECKS:** Optional manual checks that could not be confirmed from these files
+
+Do not include general code quality, refactoring, performance, or style findings unless they have direct security impact.

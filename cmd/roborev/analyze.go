@@ -81,6 +81,7 @@ Available analysis types:
   api-design     Review API consistency and design patterns
   dead-code      Find unused exports and unreachable code
   architecture   Review architectural patterns and structure
+  security       Find concrete security risks in existing code
 
 Examples:
   roborev analyze test-fixtures internal/storage/*_test.go
@@ -88,6 +89,7 @@ Examples:
   roborev analyze refactor --wait main.go utils.go
   roborev analyze complexity --agent gemini ./...
   roborev analyze architecture internal/storage/    # analyze a directory
+  roborev analyze security ./...                    # security hardening pass
   roborev analyze --list
 
 Per-file mode (--per-file):
@@ -512,6 +514,7 @@ func enqueueAnalysisJob(ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix
 		Agent:        opts.agentName,
 		Model:        opts.model,
 		Reasoning:    opts.reasoning,
+		ReviewType:   analysisReviewType(label),
 		CustomPrompt: prompt,
 		OutputPrefix: outputPrefix,
 		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
@@ -538,6 +541,13 @@ func enqueueAnalysisJob(ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix
 	}
 
 	return &job, nil
+}
+
+func analysisReviewType(label string) string {
+	if label == config.ReviewTypeSecurity {
+		return config.ReviewTypeSecurity
+	}
+	return ""
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
