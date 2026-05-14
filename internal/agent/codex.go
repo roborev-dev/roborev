@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 )
@@ -128,7 +125,7 @@ func (a *CodexAgent) buildArgs(
 		agenticMode:   agenticMode,
 		autoApprove:   autoApprove,
 		sandboxBroken: sandboxBroken,
-		addDirs:       codexDiffSnapshotDirs(prompt),
+		addDirs:       diffSnapshotDirs(prompt),
 	})
 }
 
@@ -183,44 +180,6 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		args = append(args, "-")
 	}
 	return args
-}
-
-var codexDiffSnapshotRE = regexp.MustCompile("`([^`]*roborev-snapshot-[^`]*\\.diff)`")
-
-func codexDiffSnapshotDirs(reviewPrompt string) []string {
-	matches := codexDiffSnapshotRE.FindAllStringSubmatch(reviewPrompt, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(matches))
-	var dirs []string
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		path := filepath.Clean(match[1])
-		if !filepath.IsAbs(path) {
-			continue
-		}
-		base := filepath.Base(path)
-		if !strings.HasPrefix(base, "roborev-snapshot-") || filepath.Ext(base) != ".diff" {
-			continue
-		}
-		dir := filepath.Dir(path)
-		if !strings.HasPrefix(filepath.Base(dir), "roborev-snapshot-") {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		if _, ok := seen[dir]; ok {
-			continue
-		}
-		seen[dir] = struct{}{}
-		dirs = append(dirs, dir)
-	}
-	return dirs
 }
 
 func codexSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
