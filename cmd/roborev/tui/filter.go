@@ -305,8 +305,8 @@ func (m *model) pushFilter(filterType string) {
 // unlocked filter, clears its value, and returns the filter type.
 // Returns empty string if no unlocked filter exists.
 func (m *model) popFilter() string {
-	for i := len(m.filterStack) - 1; i >= 0; i-- {
-		ft := m.filterStack[i]
+	for i, v := range slices.Backward(m.filterStack) {
+		ft := v
 		if ft == filterTypeRepo && m.lockedRepoFilter {
 			continue
 		}

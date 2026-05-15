@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
@@ -320,6 +322,53 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 		"prompt should contain retained file")
 	assert.NotContains(t, captureAgent.lastPrompt, "generated.dat",
 		"prompt should not contain excluded file")
+}
+
+func TestRunBatch_CodexReviewSettings(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping test that requires Unix shell scripts")
+	}
+
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.RevParse("HEAD")
+	cmdPath, argsPath := writeFakeCodex(t)
+
+	cfg := BatchConfig{
+		RepoPath:    repo.Root,
+		GitRef:      sha,
+		Agents:      []string{"codex"},
+		ReviewTypes: []string{"review"},
+		AgentRegistry: map[string]agent.Agent{
+			"codex": agent.NewCodexAgent(cmdPath),
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(t, results, 1)
+	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
+
+	argsBytes, err := os.ReadFile(argsPath)
+	require.NoError(t, err)
+	args := string(argsBytes)
+	assert.Contains(t, args, "--ignore-user-config")
+	assert.Contains(t, args, "skills.include_instructions=false")
+}
+
+func writeFakeCodex(t *testing.T) (cmdPath string, argsPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	argsPath = filepath.Join(dir, "args.txt")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"case \"$*\" in *--help*) echo 'usage --sandbox --ignore-user-config'; exit 0;; esac",
+		fmt.Sprintf("echo \"$@\" > %q", argsPath),
+		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ok\"}}'",
+	}, "\n") + "\n"
+
+	cmdPath = filepath.Join(dir, "codex")
+	require.NoError(t, os.WriteFile(cmdPath, []byte(script), 0o755))
+	return cmdPath, argsPath
 }
 
 // promptCapture is a mock agent that records the prompt it receives.

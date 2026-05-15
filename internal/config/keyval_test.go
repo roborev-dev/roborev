@@ -553,6 +553,8 @@ func TestIsValidKey(t *testing.T) {
 	}{
 		{"default_agent", true},
 		{"agent", true},
+		{"agent.codex.disable_review_skills", true},
+		{"agent.codex.ignore_review_user_config", true},
 		{"max_workers", true},
 		{"sync.enabled", true},
 		{"ci.github_app_id", true},
@@ -584,6 +586,8 @@ func TestIsGlobalKey(t *testing.T) {
 	}{
 		{"default_agent", true},
 		{"max_workers", true},
+		{"agent.codex.disable_review_skills", true},
+		{"agent.codex.ignore_review_user_config", true},
 		{"sync.enabled", true},
 		{"agent", false},
 		{"review_guidelines", false},

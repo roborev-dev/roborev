@@ -54,6 +54,15 @@ type AdvancedConfig struct {
 	TasksEnabled bool `toml:"tasks_enabled" comment:"Enable the advanced Tasks workflow in the TUI."` // Enables advanced TUI tasks workflow
 }
 
+type CodexConfig struct {
+	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
+	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
+}
+
+type AgentConfig struct {
+	Codex CodexConfig `toml:"codex"`
+}
+
 // Config holds the daemon configuration
 type Config struct {
 	ServerAddr                 string `toml:"server_addr"`
@@ -179,6 +188,9 @@ type Config struct {
 
 	// CI poller configuration
 	CI CIConfig `toml:"ci"`
+
+	// Agent-specific behavior
+	Agent AgentConfig `toml:"agent"`
 
 	// Auto design review configuration (opt-in)
 	AutoDesignReview AutoDesignReviewConfig `toml:"auto_design_review"`
@@ -1097,6 +1109,12 @@ func DefaultConfig() *Config {
 		PiCmd:              "pi",
 		OpenCodeCmd:        "opencode",
 		MouseEnabled:       true,
+		Agent: AgentConfig{
+			Codex: CodexConfig{
+				DisableReviewSkills:    true,
+				IgnoreReviewUserConfig: true,
+			},
+		},
 	}
 	cfg.CI.ThrottleBypassUsers = []string{
 		"wesm", "mariusvniekerk",
@@ -1235,6 +1253,24 @@ func ResolveReuseReviewSession(repoPath string, globalCfg *Config) bool {
 		return *globalCfg.ReuseReviewSession
 	}
 	return false
+}
+
+// ResolveDisableCodexReviewSkills returns whether Codex review jobs should
+// suppress Codex skill instructions. Priority: global > default true.
+func ResolveDisableCodexReviewSkills(_ string, globalCfg *Config) bool {
+	if globalCfg != nil {
+		return globalCfg.Agent.Codex.DisableReviewSkills
+	}
+	return true
+}
+
+// ResolveIgnoreCodexReviewUserConfig returns whether Codex review jobs should
+// pass --ignore-user-config. Priority: global > default true.
+func ResolveIgnoreCodexReviewUserConfig(_ string, globalCfg *Config) bool {
+	if globalCfg != nil {
+		return globalCfg.Agent.Codex.IgnoreReviewUserConfig
+	}
+	return true
 }
 
 // ResolveReuseReviewSessionLookback returns how many recent reusable-session

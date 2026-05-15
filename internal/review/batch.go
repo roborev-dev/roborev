@@ -144,6 +144,14 @@ func runSingle(
 		resolvedAgent = resolvedAgent.WithReasoning(
 			agent.ParseReasoningLevel(cfg.Reasoning))
 	}
+	resolvedAgent = agent.WithCodexSkillsDisabled(
+		resolvedAgent,
+		config.ResolveDisableCodexReviewSkills(cfg.RepoPath, cfg.GlobalConfig),
+	)
+	resolvedAgent = agent.WithCodexUserConfigIgnored(
+		resolvedAgent,
+		config.ResolveIgnoreCodexReviewUserConfig(cfg.RepoPath, cfg.GlobalConfig),
+	)
 
 	// Record the resolved agent name
 	result.Agent = resolvedAgent.Name()

@@ -41,12 +41,12 @@ func getTOMLKey(field reflect.StructField) string {
 }
 
 func structType(t reflect.Type) (reflect.Type, bool) {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() == reflect.Slice {
 		t = t.Elem()
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 	}
@@ -92,20 +92,26 @@ func collectSensitiveKeys(t reflect.Type, prefix string, out map[string]bool) {
 
 // IsValidKey returns true if the key is recognized by either Config or RepoConfig.
 func IsValidKey(key string) bool {
-	_, err1 := FindFieldByTOMLKey(reflect.ValueOf(Config{}), key)
-	_, err2 := FindFieldByTOMLKey(reflect.ValueOf(RepoConfig{}), key)
-	return err1 == nil || err2 == nil
+	return hasLeafConfigKey(reflect.ValueOf(Config{}), key) || hasLeafConfigKey(reflect.ValueOf(RepoConfig{}), key)
 }
 
 // IsGlobalKey returns true if the key belongs to the global Config struct.
 func IsGlobalKey(key string) bool {
-	_, err := FindFieldByTOMLKey(reflect.ValueOf(Config{}), key)
-	return err == nil
+	return hasLeafConfigKey(reflect.ValueOf(Config{}), key)
 }
 
 // IsSensitiveKey returns true if the key holds a secret that should be masked.
 func IsSensitiveKey(key string) bool {
 	return sensitiveKeys[key]
+}
+
+func hasLeafConfigKey(v reflect.Value, key string) bool {
+	field, err := FindFieldByTOMLKey(v, key)
+	if err != nil {
+		return false
+	}
+	_, isStruct := structType(field.Type())
+	return !isStruct
 }
 
 // MaskValue returns a masked version of a sensitive value, showing only the last 4 chars.
@@ -126,7 +132,7 @@ type KeyValueOrigin struct {
 // IsConfigValueSet returns true if the field for key exists and is non-zero.
 func IsConfigValueSet(cfg any, key string) bool {
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
@@ -184,7 +190,7 @@ func IsKeyInTOMLFile(raw map[string]any, key string) bool {
 // Supports dot-separated keys for nested structs (e.g., "sync.enabled").
 func GetConfigValue(cfg any, key string) (string, error) {
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
@@ -203,7 +209,7 @@ func GetConfigValue(cfg any, key string) (string, error) {
 // Converts the string value to the appropriate Go type.
 func SetConfigValue(cfg any, key string, value string) error {
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
@@ -225,7 +231,7 @@ func SetConfigValue(cfg any, key string, value string) error {
 // ListConfigKeys returns all non-zero values from a config struct as key-value pairs.
 func ListConfigKeys(cfg any) []KeyValue {
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
@@ -243,7 +249,7 @@ func ListExplicitKeys(cfg any, raw map[string]any) []KeyValue {
 		return nil
 	}
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
@@ -263,7 +269,7 @@ func ListExplicitKeys(cfg any, raw map[string]any) []KeyValue {
 // kvMap builds a map from key to formatted value for all fields in a struct.
 func kvMap(cfg any) map[string]string {
 	v := reflect.ValueOf(cfg)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	m := make(map[string]string)
@@ -375,7 +381,7 @@ func isUnknownConfigKeyError(err error) bool {
 // - when initPointers=true, it initializes the pointer (if settable)
 // - otherwise, it returns a throwaway zero struct for read-only traversal
 func nestedStructValue(fieldVal reflect.Value, initPointers bool) (reflect.Value, bool) {
-	if fieldVal.Kind() == reflect.Ptr {
+	if fieldVal.Kind() == reflect.Pointer {
 		if fieldVal.IsNil() {
 			elemType, isStruct := structType(fieldVal.Type())
 			if !isStruct {
@@ -460,7 +466,7 @@ func formatValue(v reflect.Value) string {
 		return fmt.Sprintf("%v", v.Interface())
 	case reflect.Map:
 		return formatMap(v)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return ""
 		}
@@ -664,7 +670,7 @@ func setFieldValue(field reflect.Value, value string) error {
 		} else {
 			return fmt.Errorf("unsupported slice type for key")
 		}
-	case reflect.Ptr:
+	case reflect.Pointer:
 		// Handle *bool
 		if field.Type().Elem().Kind() == reflect.Bool {
 			b, err := strconv.ParseBool(value)
@@ -705,7 +711,7 @@ func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue 
 
 		if tagKey == "" {
 			if isInlineEmbeddedStructField(field) {
-				if fieldVal.Kind() == reflect.Ptr {
+				if fieldVal.Kind() == reflect.Pointer {
 					if fieldVal.IsNil() {
 						continue
 					}
@@ -724,7 +730,7 @@ func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue 
 		}
 
 		// Recurse into nested structs
-		if fieldVal.Kind() == reflect.Ptr && !fieldVal.IsNil() && fieldVal.Elem().Kind() == reflect.Struct {
+		if fieldVal.Kind() == reflect.Pointer && !fieldVal.IsNil() && fieldVal.Elem().Kind() == reflect.Struct {
 			result = append(result, flattenStruct(fieldVal.Elem(), fullKey, includeZero)...)
 			continue
 		}

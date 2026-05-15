@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -1032,8 +1033,8 @@ func buildAdditionalContextSection(additionalContext string) string {
 
 func orderedPreviousReviewViews(contexts []HistoricalReviewContext) []previousReviewView {
 	ordered := make([]HistoricalReviewContext, 0, len(contexts))
-	for i := len(contexts) - 1; i >= 0; i-- {
-		ordered = append(ordered, contexts[i])
+	for _, v := range slices.Backward(contexts) {
+		ordered = append(ordered, v)
 	}
 	return previousReviewViews(ordered)
 }

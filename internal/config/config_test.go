@@ -33,6 +33,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return cfg.MouseEnabled
 	}, "Expected MouseEnabled to default to true")
+	assert.True(t, cfg.Agent.Codex.DisableReviewSkills, "expected Codex review skills to be disabled by default")
+	assert.True(t, cfg.Agent.Codex.IgnoreReviewUserConfig, "expected Codex review user config to be ignored by default")
 
 }
 
@@ -3043,6 +3045,72 @@ func TestResolveReuseReviewSession(t *testing.T) {
 					return false
 				}, "ResolveReuseReviewSession() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestResolveDisableCodexReviewSkills(t *testing.T) {
+	tests := []struct {
+		name   string
+		global *Config
+		want   bool
+	}{
+		{
+			name: "default true",
+			want: true,
+		},
+		{
+			name:   "global false",
+			global: &Config{Agent: AgentConfig{Codex: CodexConfig{DisableReviewSkills: false}}},
+			want:   false,
+		},
+		{
+			name:   "global true",
+			global: &Config{Agent: AgentConfig{Codex: CodexConfig{DisableReviewSkills: true}}},
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			got := ResolveDisableCodexReviewSkills(dir, tt.global)
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolveIgnoreCodexReviewUserConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		global *Config
+		want   bool
+	}{
+		{
+			name: "default true",
+			want: true,
+		},
+		{
+			name:   "global false",
+			global: &Config{Agent: AgentConfig{Codex: CodexConfig{IgnoreReviewUserConfig: false}}},
+			want:   false,
+		},
+		{
+			name:   "global true",
+			global: &Config{Agent: AgentConfig{Codex: CodexConfig{IgnoreReviewUserConfig: true}}},
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			got := ResolveIgnoreCodexReviewUserConfig(dir, tt.global)
+
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

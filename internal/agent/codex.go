@@ -14,18 +14,23 @@ import (
 
 // CodexAgent runs code reviews using the Codex CLI
 type CodexAgent struct {
-	Command   string         // The codex command to run (default: "codex")
-	Model     string         // Model to use (e.g., "o3", "o4-mini")
-	Reasoning ReasoningLevel // Reasoning level for the agent
-	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
-	SessionID string         // Existing session/thread ID to resume
+	Command                   string         // The codex command to run (default: "codex")
+	Model                     string         // Model to use (e.g., "o3", "o4-mini")
+	Reasoning                 ReasoningLevel // Reasoning level for the agent
+	Agentic                   bool           // Whether agentic mode is enabled (allow file edits)
+	SessionID                 string         // Existing session/thread ID to resume
+	SuppressSkillInstructions bool           // Whether to suppress Codex skill instructions
+	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
 }
 
 const codexDangerousFlag = "--dangerously-bypass-approvals-and-sandbox"
 const codexAutoApproveFlag = "--full-auto"
+const codexIgnoreUserConfigFlag = "--ignore-user-config"
+const codexDisableSkillsConfig = "skills.include_instructions=false"
 
 var codexDangerousSupport sync.Map
 var codexAutoApproveSupport sync.Map
+var codexIgnoreUserConfigSupport sync.Map
 
 // errNoCodexJSON indicates no valid codex --json events were parsed.
 var errNoCodexJSON = errors.New("no valid codex --json events parsed from output")
@@ -51,11 +56,13 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		opts...,
 	)
 	return &CodexAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
-		SessionID: cfg.SessionID,
+		Command:                   cfg.Command,
+		Model:                     cfg.Model,
+		Reasoning:                 cfg.Reasoning,
+		Agentic:                   cfg.Agentic,
+		SessionID:                 cfg.SessionID,
+		SuppressSkillInstructions: a.SuppressSkillInstructions,
+		IgnoreUserConfig:          a.IgnoreUserConfig,
 	}
 }
 
@@ -80,6 +87,30 @@ func (a *CodexAgent) WithModel(model string) Agent {
 // WithSessionID returns a copy of the agent configured to resume a prior session.
 func (a *CodexAgent) WithSessionID(sessionID string) Agent {
 	return a.clone(withClonedSessionID(sessionID))
+}
+
+// WithCodexSkillsDisabled returns a copy of agent with Codex skill instructions
+// suppressed when the agent is Codex.
+func WithCodexSkillsDisabled(a Agent, disabled bool) Agent {
+	codexAgent, ok := a.(*CodexAgent)
+	if !ok {
+		return a
+	}
+	clone := *codexAgent
+	clone.SuppressSkillInstructions = disabled
+	return &clone
+}
+
+// WithCodexUserConfigIgnored returns a copy of agent configured to ignore the
+// Codex user config when the agent is Codex.
+func WithCodexUserConfigIgnored(a Agent, ignored bool) Agent {
+	codexAgent, ok := a.(*CodexAgent)
+	if !ok {
+		return a
+	}
+	clone := *codexAgent
+	clone.IgnoreUserConfig = ignored
+	return &clone
 }
 
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
@@ -144,6 +175,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		"exec",
 	}
 	args = append(args, "--json")
+	if a.IgnoreUserConfig {
+		args = append(args, codexIgnoreUserConfigFlag)
+	}
 	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)
 	}
@@ -165,6 +199,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	if a.Model != "" {
 		args = append(args, "-m", a.Model)
 	}
+	if a.SuppressSkillInstructions {
+		args = append(args, "-c", codexDisableSkillsConfig)
+	}
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
 	}
@@ -182,42 +219,129 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	return args
 }
 
-func codexSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
-	if cached, ok := codexDangerousSupport.Load(command); ok {
+func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
+	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
+	if cached, ok := codexDangerousSupport.Load(cacheKey); ok {
 		return cached.(bool), nil
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
+	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), codexDangerousFlag)
 	if err != nil && !supported {
-		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
 	}
-	codexDangerousSupport.Store(command, supported)
+	codexDangerousSupport.Store(cacheKey, supported)
 	return supported, nil
 }
 
 // codexSupportsNonInteractive checks that codex supports --sandbox,
 // needed for non-agentic review mode (--sandbox read-only).
-func codexSupportsNonInteractive(ctx context.Context, command string) (bool, error) {
-	if cached, ok := codexAutoApproveSupport.Load(command); ok {
+func codexSupportsNonInteractive(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
+	cacheKey := codexSupportCacheKey(command, ignoreUserConfig)
+	if cached, ok := codexAutoApproveSupport.Load(cacheKey); ok {
 		return cached.(bool), nil
 	}
-	cmd := exec.CommandContext(ctx, command, "exec", "--help")
+	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), "--sandbox")
 	if err != nil && !supported {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
 		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
 	}
-	codexAutoApproveSupport.Store(command, supported)
+	codexAutoApproveSupport.Store(cacheKey, supported)
 	return supported, nil
+}
+
+func codexSupportCacheKey(command string, ignoreUserConfig bool) string {
+	if !ignoreUserConfig {
+		return command
+	}
+	return command + "\x00" + codexIgnoreUserConfigFlag
+}
+
+func codexExecHelpArgs(ignoreUserConfig bool) []string {
+	args := []string{"exec"}
+	if ignoreUserConfig {
+		args = append(args, codexIgnoreUserConfigFlag)
+	}
+	return append(args, "--help")
+}
+
+// codexSupportsIgnoreUserConfig checks whether codex exec supports
+// --ignore-user-config, which is not available in older Codex CLIs.
+func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, error) {
+	if cached, ok := codexIgnoreUserConfigSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+
+	cmd := exec.CommandContext(ctx, command, "exec", codexIgnoreUserConfigFlag, "--help")
+	output, err := cmd.CombinedOutput()
+	supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
+	if supported {
+		codexIgnoreUserConfigSupport.Store(command, true)
+		return true, nil
+	}
+	if err == nil {
+		codexIgnoreUserConfigSupport.Store(command, false)
+		return false, nil
+	}
+
+	cmd = exec.CommandContext(ctx, command, "exec", "--help")
+	output, err = cmd.CombinedOutput()
+	supported = codexHelpShowsIgnoreUserConfigSupport(string(output))
+	if err != nil && !supported {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
+	}
+	codexIgnoreUserConfigSupport.Store(command, supported)
+	return supported, nil
+}
+
+func codexHelpShowsIgnoreUserConfigSupport(output string) bool {
+	if !strings.Contains(output, codexIgnoreUserConfigFlag) {
+		return false
+	}
+	lower := strings.ToLower(output)
+	for _, marker := range []string{
+		"unknown flag",
+		"unknown option",
+		"unrecognized flag",
+		"unrecognized option",
+		"unexpected argument",
+		"unexpected option",
+	} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use agentic mode if either per-job setting or global setting enables it
 	agenticMode := a.Agentic || AllowUnsafeAgents()
+	runAgent := a
+	if a.IgnoreUserConfig {
+		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
+		if err != nil {
+			return "", err
+		}
+		if !supported {
+			clone := *a
+			clone.IgnoreUserConfig = false
+			runAgent = &clone
+		}
+	}
 
 	if agenticMode {
-		supported, err := codexSupportsDangerousFlag(ctx, a.Command)
+		supported, err := codexSupportsDangerousFlag(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", err
 		}
@@ -230,7 +354,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	// non-interactive sandboxed execution.
 	autoApprove := false
 	if !agenticMode {
-		supported, err := codexSupportsNonInteractive(ctx, a.Command)
+		supported, err := codexSupportsNonInteractive(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", err
 		}
@@ -246,7 +370,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	if sandboxBroken && autoApprove {
 		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
 	}
-	args := a.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken, prompt)
+	args := runAgent.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken, prompt)
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",

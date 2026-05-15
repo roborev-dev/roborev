@@ -478,6 +478,59 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
+func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.Codex.DisableReviewSkills = true
+	cfg.Agent.Codex.IgnoreReviewUserConfig = true
+
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want bool
+	}{
+		{
+			name: "single commit review",
+			job:  storage.ReviewJob{JobType: storage.JobTypeReview},
+			want: true,
+		},
+		{
+			name: "range review",
+			job:  storage.ReviewJob{JobType: storage.JobTypeRange},
+			want: true,
+		},
+		{
+			name: "dirty review",
+			job:  storage.ReviewJob{JobType: storage.JobTypeDirty},
+			want: true,
+		},
+		{
+			name: "task job",
+			job:  storage.ReviewJob{JobType: storage.JobTypeTask},
+			want: false,
+		},
+		{
+			name: "classify job",
+			job:  storage.ReviewJob{JobType: storage.JobTypeClassify},
+			want: false,
+		},
+		{
+			name: "fix job",
+			job:  storage.ReviewJob{JobType: storage.JobTypeFix},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyCodexReviewSettings(agent.NewCodexAgent("codex"), &tt.job, cfg)
+			codexAgent, ok := got.(*agent.CodexAgent)
+			require.True(t, ok)
+			assert.Equal(t, tt.want, codexAgent.SuppressSkillInstructions)
+			assert.Equal(t, tt.want, codexAgent.IgnoreUserConfig)
+		})
+	}
+}
+
 func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

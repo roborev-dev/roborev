@@ -506,7 +506,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if job.PromptPrebuilt {
 		agentic = false
 	}
-	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(agentic).WithModel(job.Model)
+	a := applyCodexReviewSettings(
+		baseAgent.WithReasoning(reasoningLevel).WithAgentic(agentic).WithModel(job.Model),
+		job,
+		cfg,
+	)
 	if job.SessionID != "" {
 		if !agent.IsValidResumeSessionID(job.SessionID) {
 			log.Printf("[%s] Ignoring invalid session_id for job %d", workerID, job.ID)
@@ -777,6 +781,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Findings:     output,
 		WorktreePath: eventWorktreePath,
 	})
+}
+
+func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config.Config) agent.Agent {
+	if !job.IsReviewJob() {
+		return a
+	}
+	a = agent.WithCodexSkillsDisabled(
+		a,
+		config.ResolveDisableCodexReviewSkills(job.RepoPath, cfg),
+	)
+	a = agent.WithCodexUserConfigIgnored(
+		a,
+		config.ResolveIgnoreCodexReviewUserConfig(job.RepoPath, cfg),
+	)
+	return a
 }
 
 // failOrRetry attempts to retry the job, or marks it as failed if max retries reached.

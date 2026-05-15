@@ -447,6 +447,14 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		a, resolution.PreferredAgent, resolution.BackupAgent,
 		model, repoPath, cfg, workflow, reasoning,
 	)
+	a = agent.WithCodexSkillsDisabled(
+		a,
+		config.ResolveDisableCodexReviewSkills(repoPath, cfg),
+	)
+	a = agent.WithCodexUserConfigIgnored(
+		a,
+		config.ResolveIgnoreCodexReviewUserConfig(repoPath, cfg),
+	)
 
 	// Configure provider for pi agent
 	if provider != "" {

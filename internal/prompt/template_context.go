@@ -178,7 +178,7 @@ func (s *SubjectContext) BlankNextRangeSubject() bool {
 	if s == nil || s.Range == nil {
 		return false
 	}
-	for i := len(s.Range.Entries) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s.Range.Entries) {
 		if s.Range.Entries[i].Subject == "" {
 			continue
 		}
