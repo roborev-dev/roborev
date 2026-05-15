@@ -203,19 +203,10 @@ func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	assert.True(t, supported, "expected dangerous flag support")
 }
 
-func TestCodexSupportsIgnoreUserConfigAllowsNonZeroHelp(t *testing.T) {
-	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexIgnoreUserConfigFlag+"\"; exit 1\n")
-
-	supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
-	require.NoError(t, err)
-	assert.True(t, supported, "expected ignore-user-config support")
-}
-
-func TestCodexSupportsIgnoreUserConfigUsesIgnoredConfigHelp(t *testing.T) {
+func TestCodexSupportsIgnoreUserConfigDetectsSupport(t *testing.T) {
 	cmdPath := writeTempCommand(t, `#!/bin/sh
 case "$*" in
   "exec --ignore-user-config --help") echo "usage --ignore-user-config"; exit 0;;
-  "exec --help") echo "broken config" >&2; exit 1;;
 esac
 echo "unexpected args: $*" >&2
 exit 1
@@ -226,37 +217,23 @@ exit 1
 	assert.True(t, supported, "expected ignore-user-config support")
 }
 
-func TestCodexSupportsIgnoreUserConfigTreatsUnknownFlagAsUnsupported(t *testing.T) {
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-case "$*" in
-  "exec --ignore-user-config --help") echo "error: unknown flag: --ignore-user-config" >&2; exit 2;;
-  "exec --help") echo "usage --sandbox"; exit 0;;
-esac
-echo "unexpected args: $*" >&2
-exit 1
-`)
-
-	supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
-	require.NoError(t, err)
-	assert.False(t, supported, "expected unknown flag output to be unsupported")
-}
-
-func TestCodexSupportsIgnoreUserConfigFallsBackOnUnrecognizedErrorPhrasing(t *testing.T) {
+func TestCodexSupportsIgnoreUserConfigTreatsDirectProbeErrorsAsUnsupported(t *testing.T) {
 	cases := []struct {
 		name     string
 		errorMsg string
 	}{
+		{"unknown flag", "error: unknown flag: --ignore-user-config"},
 		{"no such option", "error: no such option: --ignore-user-config"},
 		{"invalid option", "error: invalid option '--ignore-user-config'"},
 		{"clap wasn't expected", "error: the argument '--ignore-user-config' wasn't expected"},
 		{"bare bad option", "error: bad option --ignore-user-config"},
+		{"echoes flag in plain help", "usage --ignore-user-config"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			script := fmt.Sprintf(`#!/bin/sh
 case "$*" in
   "exec --ignore-user-config --help") echo %q >&2; exit 2;;
-  "exec --help") echo "usage --sandbox"; exit 0;;
 esac
 echo "unexpected args: $*" >&2
 exit 1

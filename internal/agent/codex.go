@@ -274,6 +274,10 @@ func codexExecHelpArgs(ignoreUserConfig bool) []string {
 
 // codexSupportsIgnoreUserConfig checks whether codex exec supports
 // --ignore-user-config, which is not available in older Codex CLIs.
+// Only treats the flag as supported when codex exits cleanly with the
+// flag at the exec position — falling back to plain --help would
+// produce false positives if the flag is listed globally but rejected
+// in the exec subcommand.
 func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, error) {
 	if cached, ok := codexIgnoreUserConfigSupport.Load(command); ok {
 		return cached.(bool), nil
@@ -281,43 +285,16 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 
 	cmd := exec.CommandContext(ctx, command, "exec", codexIgnoreUserConfigFlag, "--help")
 	output, err := cmd.CombinedOutput()
-	if err == nil {
-		supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
-		codexIgnoreUserConfigSupport.Store(command, supported)
-		return supported, nil
-	}
-
-	cmd = exec.CommandContext(ctx, command, "exec", "--help")
-	output, err = cmd.CombinedOutput()
-	supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
-	if err != nil && !supported {
+	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
 		}
-		return false, fmt.Errorf("check %s exec --help: %w: %s", command, err, output)
+		codexIgnoreUserConfigSupport.Store(command, false)
+		return false, nil
 	}
+	supported := strings.Contains(string(output), codexIgnoreUserConfigFlag)
 	codexIgnoreUserConfigSupport.Store(command, supported)
 	return supported, nil
-}
-
-func codexHelpShowsIgnoreUserConfigSupport(output string) bool {
-	if !strings.Contains(output, codexIgnoreUserConfigFlag) {
-		return false
-	}
-	lower := strings.ToLower(output)
-	for _, marker := range []string{
-		"unknown flag",
-		"unknown option",
-		"unrecognized flag",
-		"unrecognized option",
-		"unexpected argument",
-		"unexpected option",
-	} {
-		if strings.Contains(lower, marker) {
-			return false
-		}
-	}
-	return true
 }
 
 func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
