@@ -40,7 +40,8 @@ roborev tui           # View reviews in interactive UI
 - **Auto-Fix** - `roborev fix` feeds review findings to an agent that
   applies fixes and commits. `roborev refine` iterates until reviews pass.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
-  refactoring, test fixtures, dead code) that agents can fix automatically.
+  refactoring, test fixtures, dead code, security) that agents can fix
+  automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
   OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
 - **Runs Locally** - No hosted service or additional infrastructure.
@@ -83,10 +84,11 @@ roborev analyze duplication ./...           # Find duplication
 roborev analyze refactor --fix *.go         # Suggest and apply refactors
 roborev analyze complexity --wait main.go   # Analyze and show results
 roborev analyze test-fixtures *_test.go     # Find test helper opportunities
+roborev analyze security ./...              # Find security risks in existing code
 ```
 
 Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
-`api-design`, `dead-code`, `architecture`.
+`api-design`, `dead-code`, `architecture`, `security`.
 
 Analysis jobs appear in the review queue. Use `roborev fix <id>` to
 apply findings later, or pass `--fix` to apply immediately.

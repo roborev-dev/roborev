@@ -55,6 +55,11 @@ var (
 		Description: "Review architectural patterns and structure",
 		promptFile:  "architecture.txt",
 	}
+	Security = AnalysisType{
+		Name:        "security",
+		Description: "Find concrete security risks in existing code",
+		promptFile:  "security.txt",
+	}
 )
 
 // AllTypes returns all available analysis types
@@ -66,6 +71,7 @@ var AllTypes = []AnalysisType{
 	APIDesign,
 	DeadCode,
 	Architecture,
+	Security,
 }
 
 // GetType returns an analysis type by name, or nil if not found

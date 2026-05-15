@@ -351,6 +351,7 @@ func TestListAnalysisTypes(t *testing.T) {
 		"api-design",
 		"dead-code",
 		"architecture",
+		"security",
 	}
 
 	for _, typ := range expectedTypes {
@@ -444,6 +445,32 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, int64(42), job.ID, "job.ID")
+}
+
+func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("main.go", "package main", "initial")
+
+	var gotReviewType string
+	ts, _ := newMockServer(t, MockServerOpts{
+		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+			var req daemon.EnqueueRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			gotReviewType = req.ReviewType
+
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     42,
+				Agent:  "test",
+				Status: storage.JobStatusQueued,
+			})
+		},
+	})
+
+	_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "security", analyzeOptions{agentName: "test"})
+	require.NoError(t, err, "enqueueAnalysisJob")
+
+	assert.Equal(t, "security", gotReviewType, "security analysis should resolve security workflow config")
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {

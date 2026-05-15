@@ -22,6 +22,7 @@ func TestGetType(t *testing.T) {
 		{"api-design", "api-design", false},
 		{"dead-code", "dead-code", false},
 		{"architecture", "architecture", false},
+		{"security", "security", false},
 		{"invalid", "", true},
 		{"", "", true},
 	}
@@ -50,6 +51,20 @@ func TestAllTypesHavePrompts(t *testing.T) {
 				"GetPrompt() returned suspiciously short prompt: %q", prompt)
 		})
 	}
+}
+
+func TestSecurityPromptRequiresActionableFindings(t *testing.T) {
+	prompt, err := Security.GetPrompt()
+	require.NoError(t, err, "GetPrompt()")
+
+	assert.Contains(t, prompt, "file path", "prompt should require file paths")
+	assert.Contains(t, prompt, "evidence", "prompt should require evidence")
+	assert.Contains(t, prompt, "severity", "prompt should require severity")
+	assert.Contains(t, prompt, "confidence", "prompt should require confidence")
+	assert.Contains(t, prompt, "trust boundary", "prompt should require trust-boundary reasoning")
+	assert.Contains(t, prompt, "suggested fix", "prompt should require mitigations")
+	assert.Contains(t, prompt, "exploitable", "prompt should require exploitability assessment")
+	assert.Contains(t, prompt, "concrete", "prompt should discourage generic findings")
 }
 
 func TestBuildPrompt(t *testing.T) {
