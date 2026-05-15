@@ -557,8 +557,10 @@ func TestIsValidKey(t *testing.T) {
 		{"agent.codex.ignore_review_user_config", true},
 		{"max_workers", true},
 		{"sync.enabled", true},
+		{"sync.repo_names", true},
 		{"ci.github_app_id", true},
 		{"ci.github_app_private_key", true},
+		{"hooks", true},
 		{"nonexistent", false},
 		{"fake.key", false},
 	}
@@ -589,7 +591,10 @@ func TestIsGlobalKey(t *testing.T) {
 		{"agent.codex.disable_review_skills", true},
 		{"agent.codex.ignore_review_user_config", true},
 		{"sync.enabled", true},
+		{"sync.repo_names", true},
+		{"hooks", true},
 		{"agent", false},
+		{"sync", false},
 		{"review_guidelines", false},
 		{"nonexistent", false},
 	}

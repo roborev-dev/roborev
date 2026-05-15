@@ -110,8 +110,13 @@ func hasLeafConfigKey(v reflect.Value, key string) bool {
 	if err != nil {
 		return false
 	}
-	_, isStruct := structType(field.Type())
-	return !isStruct
+	// Slices and maps are leaf values (e.g., []HookConfig is "hooks"); only
+	// direct structs and pointer-to-structs require dot-traversal.
+	t := field.Type()
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Kind() != reflect.Struct
 }
 
 // MaskValue returns a masked version of a sensitive value, showing only the last 4 chars.
