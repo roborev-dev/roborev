@@ -281,19 +281,15 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 
 	cmd := exec.CommandContext(ctx, command, "exec", codexIgnoreUserConfigFlag, "--help")
 	output, err := cmd.CombinedOutput()
-	supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
-	if supported {
-		codexIgnoreUserConfigSupport.Store(command, true)
-		return true, nil
-	}
 	if err == nil {
-		codexIgnoreUserConfigSupport.Store(command, false)
-		return false, nil
+		supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
+		codexIgnoreUserConfigSupport.Store(command, supported)
+		return supported, nil
 	}
 
 	cmd = exec.CommandContext(ctx, command, "exec", "--help")
 	output, err = cmd.CombinedOutput()
-	supported = codexHelpShowsIgnoreUserConfigSupport(string(output))
+	supported := codexHelpShowsIgnoreUserConfigSupport(string(output))
 	if err != nil && !supported {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr

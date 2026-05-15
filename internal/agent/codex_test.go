@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -238,6 +239,35 @@ exit 1
 	supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
 	require.NoError(t, err)
 	assert.False(t, supported, "expected unknown flag output to be unsupported")
+}
+
+func TestCodexSupportsIgnoreUserConfigFallsBackOnUnrecognizedErrorPhrasing(t *testing.T) {
+	cases := []struct {
+		name     string
+		errorMsg string
+	}{
+		{"no such option", "error: no such option: --ignore-user-config"},
+		{"invalid option", "error: invalid option '--ignore-user-config'"},
+		{"clap wasn't expected", "error: the argument '--ignore-user-config' wasn't expected"},
+		{"bare bad option", "error: bad option --ignore-user-config"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  "exec --ignore-user-config --help") echo %q >&2; exit 2;;
+  "exec --help") echo "usage --sandbox"; exit 0;;
+esac
+echo "unexpected args: $*" >&2
+exit 1
+`, tc.errorMsg)
+			cmdPath := writeTempCommand(t, script)
+
+			supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
+			require.NoError(t, err)
+			assert.False(t, supported, "expected %q to be treated as unsupported", tc.errorMsg)
+		})
+	}
 }
 
 func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
