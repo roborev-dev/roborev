@@ -86,15 +86,43 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"exec",
+		"resume",
 		"--json",
-		"--sandbox", "read-only",
-		"-C", "/repo",
+		"-c", codexReadOnlySandboxConfig,
 		"-m", "o4-mini",
 		"-c", `model_reasoning_effort="high"`,
-		"resume",
 		"session-123",
 		"-",
 	}, args)
+	assert.NotContains(t, args, "--sandbox")
+	assert.NotContains(t, args, "-C")
+	assert.NotContains(t, args, "--add-dir")
+	assert.Contains(t, args, codexReadOnlySandboxConfig)
+}
+
+func TestCodexBuildArgsWithSessionResumeAddsSnapshotDirectoriesViaConfig(t *testing.T) {
+	a := NewCodexAgent("codex").WithSessionID("session-123").(*CodexAgent)
+	snapshotDir, err := os.MkdirTemp("", "roborev-snapshot-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(snapshotDir) })
+	diffFile := snapshotDir + string(os.PathSeparator) + "roborev-snapshot-content.diff"
+	require.NoError(t, os.WriteFile(diffFile, []byte("diff --git a/x b/x\n"), 0o600))
+
+	args := a.buildArgs(
+		"/repo",
+		false,
+		true,
+		false,
+		"Read the diff from: `"+diffFile+"`",
+	)
+
+	assert.NotContains(t, args, "--add-dir")
+	assert.Contains(t, args, "-c")
+	assert.Contains(t, args, `default_permissions="roborev_review"`)
+	assert.Contains(t, args, fmt.Sprintf(
+		`permissions.roborev_review.filesystem={":project_roots"={"."="read"},%q="read"}`,
+		snapshotDir,
+	))
 }
 
 func TestCodexBuildArgsCanDisableSkills(t *testing.T) {
@@ -187,10 +215,10 @@ func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
 
 	cmdLine := a.CommandLine()
 
-	assert.Contains(t, cmdLine, "exec --json")
-	assert.Contains(t, cmdLine, "resume session-123")
+	assert.Contains(t, cmdLine, "exec resume --json")
 	assert.Contains(t, cmdLine, "session-123")
-	assert.Contains(t, cmdLine, "--sandbox read-only")
+	assert.NotContains(t, cmdLine, "--sandbox read-only")
+	assert.Contains(t, cmdLine, codexReadOnlySandboxConfig)
 	assert.NotContains(t, cmdLine, " -C ")
 	assert.False(t, strings.HasSuffix(cmdLine, " -"), "command line should omit stdin marker: %q", cmdLine)
 }
@@ -346,7 +374,10 @@ func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	args := readMockArgs(t, mock.ArgsFile)
 	require.GreaterOrEqual(t, len(args), 4)
 	assert.Equal(t, "exec", args[0])
-	assert.Equal(t, "resume", args[len(args)-3])
+	assert.Equal(t, "resume", args[1])
+	assertNotContainsArg(t, args, "--sandbox")
+	assertNotContainsArg(t, args, "-C")
+	assertContainsArg(t, args, codexReadOnlySandboxConfig)
 	assertContainsArg(t, args, "session-123")
 }
 
